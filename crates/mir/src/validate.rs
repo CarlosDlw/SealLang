@@ -62,6 +62,13 @@ pub enum ValidationError {
         /// The invalid target.
         target: BasicBlockId,
     },
+    /// A call's argument spans do not match its operands.
+    CallSpansMismatch {
+        /// The number of operands.
+        args: usize,
+        /// The number of recorded spans.
+        spans: usize,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -97,6 +104,10 @@ impl fmt::Display for ValidationError {
             Self::BlockTargetOutOfRange { block, target } => {
                 write!(f, "block {block:?} jumps to missing block {target:?}")
             }
+            Self::CallSpansMismatch { args, spans } => write!(
+                f,
+                "call has {args} argument(s) but {spans} argument span(s)"
+            ),
         }
     }
 }
@@ -196,7 +207,15 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
             check_operand(body, block, rhs)
         }
         Rvalue::Unary { operand, .. } => check_operand(body, block, operand),
-        Rvalue::Call { args, .. } => {
+        Rvalue::Call {
+            args, arg_spans, ..
+        } => {
+            if args.len() != arg_spans.len() {
+                return Err(ValidationError::CallSpansMismatch {
+                    args: args.len(),
+                    spans: arg_spans.len(),
+                });
+            }
             for arg in args {
                 check_operand(body, block, arg)?;
             }

@@ -24,11 +24,17 @@ fn a_call_in_value_position_writes_to_its_destination() {
     let (place, rvalue) = assignment(&body.block(body.entry).statements[0]);
     assert_eq!(place.local, Body::return_local());
 
-    let Rvalue::Call { func, args } = rvalue else {
+    let Rvalue::Call {
+        func,
+        args,
+        arg_spans,
+    } = rvalue
+    else {
         panic!("expected a call, got {rvalue:?}");
     };
     assert_eq!(fixture.symbol(hir.definitions().name(*func)), "identity");
     assert_eq!(args.len(), 1);
+    assert_eq!(arg_spans.len(), 1, "every argument records its span");
     assert!(matches!(
         args[0],
         Operand::Constant(Constant::Int { value: 1, .. })

@@ -155,7 +155,7 @@ impl<'a> Reporter<'a> {
                 "cannot pass `{name}` as an exclusive argument because it is borrowed"
             ))
             .code(codes::E5009.diag_code())
-            .primary(span, "")
+            .primary(span, "exclusive argument")
             .secondary(loan.span, "borrow occurs here");
         add_last_use(builder, loan, span)
             .note("an exclusive argument gives the callee sole access for the whole call")
@@ -172,28 +172,30 @@ impl<'a> Reporter<'a> {
     pub(crate) fn arguments_alias(
         &self,
         span: Span,
-        first: (&Place, usize),
-        second: (&Place, usize),
+        first: (&Place, Span, usize),
+        second: (&Place, Span, usize),
     ) {
         let first_name = self.place_text(first.0);
         let second_name = self.place_text(second.0);
         let message = if first_name == second_name {
             format!(
                 "arguments {} and {} both name `{first_name}`",
-                first.1 + 1,
-                second.1 + 1
+                first.2 + 1,
+                second.2 + 1
             )
         } else {
             format!(
                 "arguments {} (`{first_name}`) and {} (`{second_name}`) may name the same storage",
-                first.1 + 1,
-                second.1 + 1
+                first.2 + 1,
+                second.2 + 1
             )
         };
         self.dcx
             .error(message)
             .code(codes::E5010.diag_code())
             .primary(span, "")
+            .secondary(first.1, format!("argument {}", first.2 + 1))
+            .secondary(second.1, format!("argument {}", second.2 + 1))
             .note("the callee may access the pointee through both arguments, and one is exclusive")
             .help("pass references to distinct places")
             .emit();

@@ -64,6 +64,28 @@ fn named_arguments_report_their_positions() {
 }
 
 #[test]
+fn aliasing_arguments_carry_their_own_labels() {
+    let fixture = check_errors(
+        "func take(a: *mut i32, b: *mut i32) {}\n\n\
+         func main() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  take(r, r);\n  0\n}\n",
+    );
+    let diagnostic = fixture
+        .diagnostics()
+        .into_iter()
+        .find(|diagnostic| diagnostic.code().map(|code| code.as_str()) == Some("E5010"))
+        .expect("the arguments alias");
+    let labels: Vec<&str> = diagnostic
+        .labels()
+        .iter()
+        .map(|label| label.message.as_str())
+        .collect();
+    assert!(
+        labels.contains(&"argument 1") && labels.contains(&"argument 2"),
+        "each argument must be labeled, got {labels:?}"
+    );
+}
+
+#[test]
 fn an_aggregate_argument_counts_as_its_reference_fields() {
     let fixture = check_errors(
         "struct Holder {\n  p: *mut i32,\n}\n\n\

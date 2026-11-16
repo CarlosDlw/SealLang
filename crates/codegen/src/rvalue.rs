@@ -35,7 +35,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 let value = self.load_operand(operand)?;
                 self.unary(*op, value)
             }
-            Rvalue::Call { func, args } => self.call(*func, args),
+            Rvalue::Call { func, args, .. } => self.call(*func, args),
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
         }
     }

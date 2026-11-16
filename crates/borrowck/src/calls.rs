@@ -28,6 +28,8 @@ use crate::report::Reporter;
 pub(crate) struct CallSite<'a> {
     /// The arguments in parameter order.
     pub(crate) args: &'a [Operand],
+    /// The source span of each argument, matching `args` by position.
+    pub(crate) arg_spans: &'a [Span],
     /// The span of the call statement.
     pub(crate) span: Span,
     /// The may-name state before the call.
@@ -58,6 +60,8 @@ pub(crate) struct Outcome {
 /// One argument's reference facts.
 struct Argument {
     place: Place,
+    /// The argument's own source span, so the diagnostic points at it.
+    span: Span,
     /// Position in the source argument list, counted from one for people.
     position: usize,
     origins: Option<OriginSet>,
@@ -110,8 +114,10 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
         } else {
             Some(set)
         };
+        let span = site.arg_spans.get(position).copied().unwrap_or(site.span);
         arguments.push(Argument {
             place,
+            span,
             position,
             origins,
             kind,
@@ -128,7 +134,7 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
         for id in conflicting_loans(&site, origins, &argument.place) {
             site.reporter.exclusive_argument_borrowed(
                 &argument.place,
-                site.span,
+                argument.span,
                 &site.loans[id.index() as usize],
             );
         }
@@ -148,8 +154,8 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
             if origins::keys_overlap(left_origins, right_origins) {
                 site.reporter.arguments_alias(
                     site.span,
-                    (&left_arg.place, left_arg.position),
-                    (&right_arg.place, right_arg.position),
+                    (&left_arg.place, left_arg.span, left_arg.position),
+                    (&right_arg.place, right_arg.span, right_arg.position),
                 );
             }
         }

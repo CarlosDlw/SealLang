@@ -163,12 +163,17 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= operand_unknown(operand, context);
             check_operand(statement, operand, context);
         }
-        Rvalue::Call { func, args } => {
+        Rvalue::Call {
+            func,
+            args,
+            arg_spans,
+        } => {
             for arg in args {
                 check_operand(statement, arg, context);
             }
             let outcome = calls::check(calls::CallSite {
                 args,
+                arg_spans,
                 span: statement.span,
                 origins: context.origins,
                 holds: context.holds_at,

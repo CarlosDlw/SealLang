@@ -146,6 +146,12 @@ pub enum Rvalue {
         func: DefId,
         /// Arguments in evaluation order.
         args: Vec<Operand>,
+        /// The source range of each argument, matching `args` by position.
+        ///
+        /// Call diagnostics point at the argument that violates the contract
+        /// instead of the whole call, so lowering records one span per operand
+        /// and validation keeps the two lists in step.
+        arg_spans: Vec<Span>,
     },
     /// Builds an aggregate value from its fields.
     ///

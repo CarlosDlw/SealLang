@@ -3,6 +3,7 @@
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::place::Place;
+use crate::rvalue::Rvalue;
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 use crate::validate::ValidationError;
@@ -12,6 +13,30 @@ use super::support::{function, lower_clean};
 fn main_body(source: &str) -> Body {
     let (fixture, hir, mir) = lower_clean(source);
     function(&fixture, &hir, &mir, "main").clone()
+}
+
+#[test]
+fn calls_need_one_span_per_argument() {
+    let mut body = main_body(
+        "func identity(value: i32) -> i32 {\n  value\n}\n\n\
+         func main() -> i32 {\n  identity(1)\n}\n",
+    );
+    let statement = body.blocks[body.entry]
+        .statements
+        .first_mut()
+        .expect("main calls identity");
+    let StatementKind::Assign {
+        rvalue: Rvalue::Call { arg_spans, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        panic!("expected a call, got {:?}", statement.kind);
+    };
+    arg_spans.clear();
+    assert_eq!(
+        body.validate(),
+        Err(ValidationError::CallSpansMismatch { args: 1, spans: 0 })
+    );
 }
 
 #[test]

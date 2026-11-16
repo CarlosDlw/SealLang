@@ -584,6 +584,7 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Path(Res::Function(definition)) => Some(definition),
             _ => None,
         };
+        let arg_spans: Vec<Span> = args.iter().map(|arg| self.hir.expr(*arg).span).collect();
         let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
 
         let Some(function) = function else {
@@ -598,6 +599,7 @@ impl<'a> BodyLowering<'a> {
             Rvalue::Call {
                 func: function,
                 args,
+                arg_spans,
             },
             span,
         );
