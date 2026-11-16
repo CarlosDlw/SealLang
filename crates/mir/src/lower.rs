@@ -624,7 +624,7 @@ impl<'a> BodyLowering<'a> {
         match literal {
             Literal::Int { value, .. } => Constant::Int { value, ty },
             Literal::Float { value, .. } => Constant::Float { value, ty },
-            Literal::Str(symbol) => Constant::Str(symbol),
+            Literal::Str(symbol) => Constant::Str { value: symbol, ty },
             Literal::Char(value) => Constant::Char(value),
             Literal::Bool(value) => Constant::Bool(value),
         }

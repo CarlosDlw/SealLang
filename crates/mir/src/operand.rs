@@ -27,7 +27,12 @@ pub enum Constant {
     /// A character literal.
     Char(char),
     /// A string literal; the symbol holds the unescaped contents.
-    Str(Symbol),
+    Str {
+        /// The unescaped contents.
+        value: Symbol,
+        /// The `*str` type selected by the checker.
+        ty: TyId,
+    },
     /// The unit value.
     Unit,
 }
