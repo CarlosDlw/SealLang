@@ -144,6 +144,73 @@ fn overwriting_the_reference_ends_the_old_loan() {
 }
 
 #[test]
+fn a_reborrow_through_an_exclusive_reference_is_allowed() {
+    check_clean(
+        "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &mut *a;\n  *b = 2;\n  *a\n}\n",
+    );
+}
+
+#[test]
+fn an_exclusive_borrow_of_the_pointee_conflicts() {
+    let fixture = check_errors(
+        "func f(p: *mut i32) -> i32 {\n  let a = &mut *p;\n  let b = &mut *p;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
+fn writing_the_pointee_conflicts_with_a_live_borrow() {
+    let fixture =
+        check_errors("func f(p: *mut i32) -> i32 {\n  let a = &mut *p;\n  *p = 1;\n  *a\n}\n");
+    fixture.expect("E5008", "exclusively borrowed");
+}
+
+#[test]
+fn reading_the_pointee_conflicts_with_an_exclusive_borrow() {
+    let fixture = check_errors(
+        "func f(p: *mut i32) -> i32 {\n  let a = &mut *p;\n  let v = *p;\n  *a + v\n}\n",
+    );
+    fixture.expect("E5007", "exclusively borrowed");
+}
+
+#[test]
+fn a_copy_of_a_pointer_orders_its_borrows() {
+    let fixture = check_errors(
+        "func f(p: *mut i32) -> i32 {\n  let q = p;\n  let a = &mut *p;\n  let b = &mut *q;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
+fn a_shared_pointee_borrow_conflicts_with_an_exclusive_one() {
+    let fixture = check_errors(
+        "func f(p: *mut i32) -> i32 {\n  let a = &*p;\n  let b = &mut *p;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
+fn using_the_parent_while_a_reborrow_is_live_is_rejected() {
+    let fixture = check_errors(
+        "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &mut *a;\n  let v = *a;\n  *b + v\n}\n",
+    );
+    fixture.expect("E5007", "exclusively borrowed");
+}
+
+#[test]
+fn field_borrows_of_a_pointee_stay_precise() {
+    check_clean(
+        "struct P { x: i32, y: i32 }\n\
+         func f(p: *mut P) -> i32 {\n  let a = &mut (*p).x;\n  (*p).y = 1;\n  *a + (*p).y\n}\n",
+    );
+}
+
+#[test]
+fn a_shared_pointee_read_is_allowed() {
+    check_clean("func f(p: *mut i32) -> i32 {\n  let a = &*p;\n  let v = *p;\n  *a + v\n}\n");
+}
+
+#[test]
 fn a_branch_that_reborrows_keeps_both_loans_alive() {
     let fixture = check_errors(
         "func f(c: bool) -> i32 {\n  let mut x = 1;\n  let y = 2;\n  let mut r = &y;\n  if c {\n    r = &x;\n  }\n  x = 3;\n  *r\n}\n",

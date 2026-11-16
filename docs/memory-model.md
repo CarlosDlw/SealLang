@@ -98,11 +98,15 @@ usable. The kind is part of the type (`*T` versus `*mut T`), so the two never
 unify, and `&mut place` requires a writable place: a `mut` binding or a `*mut T`
 dereference (`E3017`).
 
-The checker does not compare places reached through a dereference with loans,
-because the pointer may have been copied. `*mut T` is therefore an exclusive
-reference to its pointee, not a unique pointer: two copies of one `*mut T` may
-alias, and accesses through them are not ordered. Tracking that aliasing is the
-work of the future `unsafe` layer. Two-phase borrows (reserve, then activate) are
+Conflicts compare storage, not syntax: a parallel may-alias analysis records the
+storage each reference value may name, so `*p` and `*q` conflict when `p` and
+`q` are copies or reborrows of the same pointer. Reborrowing is allowed because
+the new loan records the loans that authorized it: using the reborrow does not
+conflict with them, while using the parent conflicts with the reborrow. Two
+cases stay beyond the analysis: a reference read out of memory has an unknown
+target and conservatively conflicts with any live loan of storage it might name,
+and distinct parameters are assumed not to alias, which is part of the
+exclusive-reference contract. Two-phase borrows (reserve, then activate) are
 reserved for nested method-style calls once methods exist.
 
 For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
@@ -241,8 +245,8 @@ declaration.
   field borrows are as precise as the moves they guard.
 - **Codegen** may assume that no safe reference is null or dangling and that a
   `Copy` value has no destructor. It may not assume `noalias` for references:
-  accesses through a dereference are not compared with loans, so a `*mut T` copy
-  may alias another access.
+  call sites are not checked against the exclusive-reference contract, so two
+  `*mut T` parameters may alias.
 
 ## Invariants
 

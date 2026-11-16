@@ -3,8 +3,10 @@
 use seal_index::Idx;
 use seal_mir::{Body, Rvalue, StatementKind};
 
+use crate::holds::Holds;
 use crate::id::LoanId;
 use crate::loan::Loan;
+use crate::origins::{self, OriginSet, Origins};
 
 /// Collects every `&place` or `&mut place` and its position in the body.
 ///
@@ -26,6 +28,8 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
                 place: place.clone(),
                 span: statement.span,
                 kind: *kind,
+                keys: OriginSet::default(),
+                parents: Vec::new(),
             });
             row[position] = Some(id);
         }
@@ -33,4 +37,45 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
     }
 
     (loans, positions)
+}
+
+/// Fills in each loan's storage keys and authorizing loans.
+///
+/// Keys are resolved with the origin state before the borrow statement, and
+/// parents with the may-hold state at the same point. Together they decide
+/// which live loans a later access conflicts with.
+pub(crate) fn resolve(
+    body: &Body,
+    loans: &mut [Loan],
+    loan_at: &[Vec<Option<LoanId>>],
+    origins: &Origins,
+    holds: &Holds,
+) {
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (position, statement) in block.statements.iter().enumerate() {
+            let Some(id) = loan_at[block_index][position] else {
+                continue;
+            };
+            let StatementKind::Assign {
+                rvalue: Rvalue::Ref { place, .. },
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            let loan = &mut loans[id.index() as usize];
+            loan.keys = origins::keys_of(&origins.before[block_index][position], place);
+            let mut parents: Vec<LoanId> = origins::first_deref_base(place)
+                .map(|base| {
+                    holds.before[block_index][position]
+                        .at(&base)
+                        .into_iter()
+                        .collect()
+                })
+                .unwrap_or_default();
+            parents.sort_by_key(|parent| parent.index());
+            parents.dedup();
+            loan.parents = parents;
+        }
+    }
 }

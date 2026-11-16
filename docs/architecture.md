@@ -179,14 +179,19 @@ allowed to depend only on crates below it in the list.
     only with assigning or moving the borrowed place; two shared loans may
     overlap, and reads never conflict (`E5001`/`E5002`). A `*mut T` loan is
     exclusive: it conflicts with every other loan of the same place and with
-    reads, writes, and moves of it (`E5007`/`E5008`). `&mut place` requires a
+    reads, writes, and moves of it (`E5007`/`E5008`). A loan or access reached
+    through a reference is compared with the storage the reference may name, so
+    copies and reborrows are ordered; a reborrow records the loans that
+    authorized it and does not conflict with them. `&mut place` requires a
     writable place (`E3017`), and reading a non-`Copy` pointee by value is
     `E3018`.
 40. **Loans are tracked per point, not per region union.** A local's may-hold
     set is a forward dataflow fact: overwriting a reference drops the loans it
     carried, and a loan is active only while a live local may hold it. This
     accepts programs where a place becomes writable again after the last alias
-    dies, including inside loops.
+    dies, including inside loops. A parallel may-alias analysis with the same
+    shape records the storage each reference path may name; conflicts compare
+    those storages, and a reference read out of memory aliases conservatively.
 41. **A reference never outlives its storage.** A returned loan of a whole local
     is `E5004`; a loan through a reference (`&*parameter`) borrows data outside
     the frame and is accepted. The loans that the reference itself carries are

@@ -30,9 +30,18 @@
 //! (decision D6). A shared loan conflicts only with a write or a move of the
 //! borrowed place; two shared loans may overlap, and reads never conflict. An
 //! exclusive loan conflicts with every other loan of the same place, including
-//! another shared loan, and with reads, writes, and moves of it. Accesses
-//! through a dereference are not compared with loans: the checker does not
-//! track aliasing into borrowed data, because the pointer may have been copied.
+//! another shared loan, and with reads, writes, and moves of it.
+//!
+//! # Pointee aliasing
+//!
+//! Conflicts compare storage, not place syntax: `*p` and `*q` denote the same
+//! storage when `p` and `q` may point at the same place. A parallel flow-
+//! sensitive analysis records the storage each reference path may name;
+//! `&place` names `place`, copies share the set, and `&*pointer` names what the
+//! pointer names. A reborrow records the loans that authorized it, so using the
+//! reborrow is allowed while using the parent conflicts with it. A reference
+//! read out of memory has an unknown target and conservatively conflicts with
+//! every live loan of storage it might name.
 //!
 //! # Errors
 //!
@@ -49,6 +58,7 @@ mod init;
 mod liveness;
 mod loan;
 mod loans;
+mod origins;
 mod report;
 
 #[cfg(test)]

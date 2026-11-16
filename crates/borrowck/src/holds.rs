@@ -61,7 +61,7 @@ impl HoldState {
     /// Paths overlap when one is a prefix of the other: reading a whole
     /// aggregate includes references in its fields, and reading a field of a
     /// wholesale-assigned aggregate conservatively includes the aggregate's set.
-    fn at(&self, place: &Place) -> LoanSet {
+    pub(crate) fn at(&self, place: &Place) -> LoanSet {
         let mut set = LoanSet::default();
         for (path, loans) in &self.locals[place.local.index() as usize].paths {
             if overlaps(path, &place.projections) {

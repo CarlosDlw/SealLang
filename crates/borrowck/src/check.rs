@@ -14,6 +14,7 @@ use crate::init::{self, Init, InitInfo};
 use crate::liveness::{self, LocalSet};
 use crate::loan::Loan;
 use crate::loans;
+use crate::origins::{self, OriginState};
 use crate::report::Reporter;
 
 /// Facts shared by every check in one body at one program point.
@@ -22,6 +23,8 @@ struct Context<'a> {
     init: &'a InitPaths<LocalId>,
     active: &'a LoanSet,
     holds: &'a holds::Holds,
+    holds_at: &'a HoldState,
+    origins: &'a OriginState,
     hir: &'a Hir,
     body: &'a Body,
     reporter: &'a Reporter<'a>,
@@ -36,9 +39,11 @@ impl Context<'_> {
 
 /// Checks one body.
 pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Interner) {
-    let (loans, loan_at) = loans::collect(body);
+    let (mut loans, loan_at) = loans::collect(body);
     let liveness = liveness::analyze(body);
     let holds = holds::analyze(hir, body, &loans, &loan_at);
+    let origins = origins::analyze(hir, body);
+    loans::resolve(body, &mut loans, &loan_at, &origins, &holds);
     let init = init::analyze(body);
     let reporter = Reporter::new(hir, dcx, body, interner);
 
@@ -54,6 +59,8 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
                 init: &init.before[index][position],
                 active: &active,
                 holds: &holds,
+                holds_at: &holds.before[index][position],
+                origins: &origins.before[index][position],
                 hir,
                 body,
                 reporter: &reporter,
@@ -68,6 +75,8 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
             init: &init.exit[index],
             active: &active,
             holds: &holds,
+            holds_at: &holds.exit[index],
+            origins: &origins.exit[index],
             hir,
             body,
             reporter: &reporter,
@@ -109,10 +118,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>) {
         }
     }
 
-    if place.is_deref() {
-        return;
-    }
-    for id in overlapping(context.active, context.loans, place) {
+    for id in overlapping(context, place) {
         let loan = context.loan(id);
         if loan.kind.is_exclusive() {
             context
@@ -134,7 +140,7 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
     check_read(&read, statement.span, context);
 
     if matches!(operand, Operand::Move(_)) && !read.is_deref() {
-        for id in overlapping(context.active, context.loans, &read) {
+        for id in overlapping(context, &read) {
             let loan = context.loan(id);
             if loan.kind.is_exclusive() {
                 context
@@ -159,7 +165,7 @@ fn check_read(place: &Place, span: seal_span::Span, context: &Context<'_>) {
         }
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
-    for id in overlapping(context.active, context.loans, place) {
+    for id in overlapping(context, place) {
         let loan = context.loan(id);
         if loan.kind.is_exclusive() {
             context
@@ -181,7 +187,7 @@ fn check_borrow(place: &Place, kind: RefKind, span: seal_span::Span, context: &C
         Init::PartiallyMoved => context.reporter.borrow_partially_moved(place, span),
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
-    for id in overlapping(context.active, context.loans, place) {
+    for id in overlapping(context, place) {
         let loan = context.loan(id);
         if kind.is_exclusive() || loan.kind.is_exclusive() {
             context.reporter.borrow_conflict(place, kind, span, loan);
@@ -241,31 +247,51 @@ fn escaping_loans(
     }
 }
 
-/// Returns the live loans that overlap `place`, in loan order.
+/// Returns the live loans whose storage overlaps `place`, in loan order.
 ///
-/// Two places overlap when one is a prefix of the other: borrowing `p.x`
-/// prevents writing `p`, and borrowing `p` prevents writing `p.x`. Loans and
-/// places through a reference are not compared, because the checker does not
-/// track aliasing into borrowed data. The IDs are sorted so diagnostics do not
-/// depend on hash iteration order.
-fn overlapping(active: &LoanSet, loans: &[Loan], place: &Place) -> Vec<LoanId> {
-    if place.is_deref() {
+/// Storage overlap is decided by the may-name analysis, not by place syntax, so
+/// `*p` conflicts with a loan of the storage `p` may point at. The loans that
+/// authorize the access are excluded: a reference may use its own loan, and a
+/// reborrow may use the loans it was derived from. The IDs are sorted so
+/// diagnostics do not depend on hash iteration order.
+fn overlapping(context: &Context<'_>, place: &Place) -> Vec<LoanId> {
+    let keys = origins::keys_of(context.origins, place);
+    if keys.is_empty() {
         return Vec::new();
     }
-    let mut ids: Vec<LoanId> = active
+    let mut excluded = LoanSet::default();
+    if place.is_deref() {
+        if let Some(base) = origins::first_deref_base(place) {
+            for id in context.holds_at.at(&base) {
+                if origins::keys_overlap(&keys, &context.loan(id).keys) {
+                    excluded.insert(id);
+                }
+            }
+        }
+        expand_parents(context.loans, &mut excluded);
+    }
+    let mut ids: Vec<LoanId> = context
+        .active
         .iter()
         .copied()
         .filter(|id| {
-            let loan = &loans[id.index() as usize];
-            !loan.place.is_deref() && places_overlap(&loan.place, place)
+            !excluded.contains(id) && origins::keys_overlap(&keys, &context.loan(*id).keys)
         })
         .collect();
     ids.sort_by_key(|id| id.index());
     ids
 }
 
-fn places_overlap(left: &Place, right: &Place) -> bool {
-    left.local == right.local && (left.is_prefix_of(right) || right.is_prefix_of(left))
+/// Adds every loan that transitively authorized `ids`.
+fn expand_parents(loans: &[Loan], ids: &mut LoanSet) {
+    let mut stack: Vec<LoanId> = ids.iter().copied().collect();
+    while let Some(id) = stack.pop() {
+        for parent in &loans[id.index() as usize].parents {
+            if ids.insert(*parent) {
+                stack.push(*parent);
+            }
+        }
+    }
 }
 
 /// Checks a terminator: its reads, the return value, and reference escape.

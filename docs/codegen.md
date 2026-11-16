@@ -84,10 +84,9 @@ The ABI is defined by the language, not by a C header:
   needed.
 - A reference is one pointer-sized word in both kinds: `*T` and `*mut T` share a
   representation and differ only in the checks they enable, so the kind costs
-  nothing at run time. The backend does not emit `noalias` for them: the checker
-  does not compare accesses through a dereference with loans, so a copied
-  `*mut T` may alias another access. `noalias` becomes sound once that aliasing
-  is tracked.
+  nothing at run time. The backend does not emit `noalias` for them: call sites
+  are not checked against the exclusive-reference contract, so a callee cannot
+  assume that two `*mut T` parameters do not alias.
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 

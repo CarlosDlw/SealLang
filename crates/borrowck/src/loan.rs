@@ -4,6 +4,9 @@ use seal_mir::Place;
 use seal_span::Span;
 use seal_ty::RefKind;
 
+use crate::id::LoanId;
+use crate::origins::OriginSet;
+
 /// One `&place` or `&mut place` expression.
 ///
 /// The kind selects the conflict rules in [`crate::check`]: a shared loan
@@ -17,4 +20,13 @@ pub(crate) struct Loan {
     pub(crate) span: Span,
     /// Whether the borrow is shared or exclusive.
     pub(crate) kind: RefKind,
+    /// The storage the borrowed place may name, resolved when the loan is
+    /// created.
+    pub(crate) keys: OriginSet,
+    /// The loans that authorized the borrowed place, when it was reached
+    /// through a reference.
+    ///
+    /// A reborrow is derived from those loans, so using it does not conflict
+    /// with them; using the parent loan conflicts with the reborrow.
+    pub(crate) parents: Vec<LoanId>,
 }
