@@ -55,7 +55,7 @@ fn a_recovered_type_annotation_lowers_to_the_error_type() {
     let fixture = Fixture::new("func f() -> Nope { }");
     let hir = fixture.lower();
 
-    assert!(fixture.codes().iter().any(|code| code.as_str() == "E1004"));
+    assert!(fixture.codes().iter().any(|code| code.as_str() == "E2002"));
     let (_, body) = function(&fixture, &hir, "f");
     assert_eq!(
         hir.ty_ctxt().kind(body.ret.expect("recorded return type")),

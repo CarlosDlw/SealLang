@@ -16,14 +16,18 @@
 
 #![warn(missing_docs)]
 
+mod adt;
 mod ctxt;
 mod display;
 mod id;
 mod infer;
+mod init;
 mod kind;
 
+pub use adt::{AdtDef, AdtKind, FieldDef};
 pub use ctxt::TyCtxt;
 pub use display::TyDisplay;
-pub use id::{InferTyId, TyId};
+pub use id::{AdtId, InferTyId, TyId};
 pub use infer::{InferCtxt, UnifyError};
+pub use init::{InitPaths, InitState, place_type};
 pub use kind::{FloatTy, IntTy, TyKind, UintTy};

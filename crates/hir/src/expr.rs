@@ -3,52 +3,77 @@
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::DefId;
 use seal_span::Span;
+use seal_symbol::Symbol;
 
 use crate::id::{HirBlockId, HirExprId};
 use crate::res::Res;
 
 /// A storage location: a local definition plus its projections.
 ///
-/// References add dereference projections, so `*p` and `**p` are places rooted
-/// at the local that holds the reference. Aggregate fields are added inside
-/// [`Place`] when aggregates arrive, without changing how callers obtain one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// References add dereference projections, so `*p` is the place rooted at the
+/// local that holds the reference. Field names stay symbolic here: resolving
+/// them needs the base type, which type checking computes.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
     local: DefId,
-    derefs: u32,
+    projections: Vec<Projection>,
+}
+
+/// One step from a place to a sub-place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Projection {
+    /// Reads through a shared reference, written `*place`.
+    Deref,
+    /// Selects a named field of a struct place.
+    Field(Symbol),
 }
 
 impl Place {
     /// Creates the place for a whole local.
     #[inline]
-    pub const fn local(local: DefId) -> Self {
-        Self { local, derefs: 0 }
+    pub fn local(local: DefId) -> Self {
+        Self {
+            local,
+            projections: Vec::new(),
+        }
     }
 
     /// Returns the local definition this place starts from.
     #[inline]
-    pub const fn local_def(self) -> DefId {
+    pub const fn local_def(&self) -> DefId {
         self.local
     }
 
     /// Returns the place reached by one dereference.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the projection count would overflow `u32`. The parser bounds
-    /// nesting far below this, so the panic is an internal invariant check.
     #[inline]
-    pub fn deref(self) -> Self {
-        Self {
-            local: self.local,
-            derefs: self.derefs + 1,
-        }
+    pub fn deref(mut self) -> Self {
+        self.projections.push(Projection::Deref);
+        self
     }
 
-    /// Returns the number of dereference projections applied to the local.
+    /// Returns the place reached by selecting `name`.
     #[inline]
-    pub const fn derefs(self) -> u32 {
-        self.derefs
+    pub fn field(mut self, name: Symbol) -> Self {
+        self.projections.push(Projection::Field(name));
+        self
+    }
+
+    /// Returns the projections applied to the local, outermost last.
+    #[inline]
+    pub fn projections(&self) -> &[Projection] {
+        &self.projections
+    }
+
+    /// Returns `true` if any projection reads through a reference.
+    #[inline]
+    pub fn contains_deref(&self) -> bool {
+        self.projections.contains(&Projection::Deref)
+    }
+
+    /// Returns `true` if the place names the whole local.
+    #[inline]
+    pub fn is_whole(&self) -> bool {
+        self.projections.is_empty()
     }
 }
 
@@ -77,6 +102,22 @@ pub enum ExprKind {
     Deref {
         /// The reference being read.
         operand: HirExprId,
+    },
+    /// A field access on a place, written `base.name`.
+    Field {
+        /// The place the field is projected from.
+        base: HirExprId,
+        /// The field name, resolved against the base type by type checking.
+        name: Symbol,
+        /// The span of the field name.
+        name_span: Span,
+    },
+    /// A struct literal with resolved fields.
+    Struct {
+        /// The struct definition named by the literal.
+        adt: DefId,
+        /// Initializers in source order, one per valid source field.
+        fields: Vec<(DefId, HirExprId)>,
     },
     /// A prefix operation.
     Unary {

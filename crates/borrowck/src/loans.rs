@@ -23,7 +23,7 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
             };
             let id = LoanId::from_usize(loans.len());
             loans.push(Loan {
-                place: *place,
+                place: place.clone(),
                 span: statement.span,
             });
             row[position] = Some(id);

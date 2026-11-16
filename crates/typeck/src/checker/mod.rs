@@ -22,6 +22,16 @@ use seal_ty::{TyId, TyKind};
 use crate::results::{Signature, TypeckResults};
 use flow::Flow;
 
+/// Whether a place is being read or written.
+///
+/// Assignment targets must not require the place to be initialized, because
+/// assigning to it is what initializes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PlaceMode {
+    Read,
+    Write,
+}
+
 /// One type-checking pass over a lowered file.
 pub(crate) struct Checker<'a> {
     pub(super) hir: &'a Hir,
@@ -94,7 +104,7 @@ impl<'a> Checker<'a> {
         let mut flow = Flow::new();
         for (param, ty) in body.params.iter().zip(&signature.params) {
             self.results.record_local(param.def, *ty);
-            flow.mark_initialized(param.def);
+            flow.assign(param.def, &[]);
         }
         let _outcome = self.check_block(body.root, Some(self.ret), flow);
     }
@@ -137,17 +147,6 @@ impl<'a> Checker<'a> {
             format!("{what} cannot have the unsized type `{}`", self.ty_text(ty)),
         )
         .help("use a reference, such as `*str`, to store the value indirectly")
-        .emit();
-    }
-
-    pub(super) fn report_uninitialized(&self, local: DefId, span: Span) {
-        let name = self.interner.resolve(self.hir.definitions().name(local));
-        self.error(
-            codes::E3011,
-            span,
-            format!("`{name}` is possibly uninitialized"),
-        )
-        .help(format!("assign a value to `{name}` before reading it"))
         .emit();
     }
 

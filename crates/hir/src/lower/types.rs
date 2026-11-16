@@ -1,6 +1,7 @@
 //! Type lowering.
 
 use seal_ast::{TypeId, TypeKind};
+use seal_error_codes as codes;
 use seal_ty::{TyCtxt, TyId};
 
 use super::Lowering;
@@ -19,6 +20,36 @@ impl Lowering<'_> {
             TypeKind::Pointer(inner) => {
                 let inner = self.lower_type(inner);
                 self.hir.ty_ctxt_mut().ref_ty(inner)
+            }
+            TypeKind::Path(symbol) => {
+                if let Some(definition) = self.types.get(&symbol).copied() {
+                    let adt = self
+                        .hir
+                        .adt(definition)
+                        .expect("every struct definition reserves an aggregate");
+                    self.hir.ty_ctxt().adt_ty(adt)
+                } else {
+                    let span = self.ast.ty(ty).span;
+                    let name = self.interner.resolve(symbol);
+                    if self.globals.contains_key(&symbol) {
+                        self.error(
+                            codes::E2011,
+                            span,
+                            format!("`{name}` is a value, not a type"),
+                        )
+                        .help("annotations accept primitive types, references, and struct names")
+                        .emit();
+                    } else {
+                        self.error(
+                            codes::E2002,
+                            span,
+                            format!("cannot find type `{name}` in this scope"),
+                        )
+                        .help("declare it with `struct`, or use a built-in type")
+                        .emit();
+                    }
+                    self.hir.ty_ctxt_mut().error_ty()
+                }
             }
             TypeKind::Error => self.hir.ty_ctxt_mut().error_ty(),
         }

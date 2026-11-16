@@ -28,12 +28,10 @@ impl Parser<'_> {
                         .push_type(TypeKind::Primitive(primitive), token.span)
                 }
                 None => {
-                    let span = self.current_span();
-                    self.error(codes::E1004, span, format!("unknown type `{text}`"))
-                        .help("built-in types are the integer and float types, `bool`, `char`, `str`, and `*T`")
-                        .emit();
-                    self.bump();
-                    self.builder.push_type(TypeKind::Error, span)
+                    // Named types are resolved during lowering, where the type
+                    // namespace is known; the parser only records the name.
+                    let token = self.bump();
+                    self.builder.push_type(TypeKind::Path(symbol), token.span)
                 }
             }
         } else {

@@ -1,53 +1,50 @@
-//! Forward initialization analysis.
+//! Forward initialization analysis over move paths.
 
 use std::collections::VecDeque;
 
+use seal_def::DefId;
 use seal_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, Statement, StatementKind};
+use seal_ty::{InitPaths, InitState, TyCtxt, TyId};
 
-/// The initialization state of one local at one point.
+/// The initialization state of a place, as message selection needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Init {
-    /// Storage exists but no value was written.
+    /// No value is present.
     Uninitialized,
     /// A value is present.
     Initialized,
     /// A value was present and has been moved out.
     Moved,
+    /// The place is intact except for at least one field that was moved out.
+    PartiallyMoved,
 }
-
-/// The initialization state of every local.
-pub(crate) type InitState = Vec<Init>;
 
 /// The state before each statement and after each block.
 pub(crate) struct InitInfo {
     /// `before[block][statement]` is the state before that statement.
-    pub(crate) before: Vec<Vec<InitState>>,
+    pub(crate) before: Vec<Vec<InitPaths<LocalId>>>,
     /// `exit[block]` is the state after the block's last statement.
-    pub(crate) exit: Vec<InitState>,
+    pub(crate) exit: Vec<InitPaths<LocalId>>,
 }
 
 /// Computes definite initialization.
 ///
-/// The lattice joins with "initialized on every path": two different states
-/// join to uninitialized, because a read would not be safe on both. Parameters
-/// start initialized, every other local starts uninitialized, and an unreachable
+/// The lattice joins with "initialized on every path". Parameters start
+/// initialized, every other local starts uninitialized, and an unreachable
 /// block starts at the top element so dead code never reports a false error.
 pub(crate) fn analyze(body: &Body) -> InitInfo {
-    let local_count = body.locals.len();
-    let top = vec![Init::Initialized; local_count];
-    let entry: InitState = body
-        .locals
-        .iter()
-        .map(|declaration| {
-            if declaration.kind == LocalKind::Arg {
-                Init::Initialized
-            } else {
-                Init::Uninitialized
-            }
-        })
-        .collect();
+    let mut entry = InitPaths::new();
+    for (local, declaration) in body.locals.iter_enumerated() {
+        if declaration.kind == LocalKind::Arg {
+            entry.assign(local, &[]);
+        }
+    }
+    let mut top = InitPaths::new();
+    for local in body.locals.iter_enumerated().map(|(local, _)| local) {
+        top.assign(local, &[]);
+    }
 
-    let mut in_states: Vec<Option<InitState>> = vec![None; body.blocks.len()];
+    let mut in_states: Vec<Option<InitPaths<LocalId>>> = vec![None; body.blocks.len()];
     in_states[body.entry.index() as usize] = Some(entry);
     let mut queue = VecDeque::from([body.entry]);
 
@@ -62,7 +59,11 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
         for successor in body.block(block).terminator.kind.successors() {
             let slot = &mut in_states[successor.index() as usize];
             let changed = match slot {
-                Some(existing) => join(existing, &state),
+                Some(existing) => {
+                    let before = existing.clone();
+                    existing.join(&state);
+                    *existing != before
+                }
                 None => {
                     *slot = Some(state.clone());
                     true
@@ -92,59 +93,81 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
     InitInfo { before, exit }
 }
 
-/// Joins two states elementwise, keeping only what is initialized on both paths.
-fn join(existing: &mut InitState, other: &InitState) -> bool {
-    let mut changed = false;
-    for (slot, other) in existing.iter_mut().zip(other) {
-        let joined = if *slot == *other {
-            *slot
-        } else {
-            Init::Uninitialized
-        };
-        if *slot != joined {
-            *slot = joined;
-            changed = true;
-        }
-    }
-    changed
-}
-
 /// Applies one statement: moves happen during evaluation, then the destination
 /// is initialized.
-fn transfer(statement: &Statement, state: &mut InitState) {
+fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
     match rvalue {
-        Rvalue::Use(operand) => move_operand(*operand, state),
+        Rvalue::Use(operand) => move_operand(operand, state),
         Rvalue::Binary { lhs, rhs, .. } => {
-            move_operand(*lhs, state);
-            move_operand(*rhs, state);
+            move_operand(lhs, state);
+            move_operand(rhs, state);
         }
-        Rvalue::Unary { operand, .. } => move_operand(*operand, state),
+        Rvalue::Unary { operand, .. } => move_operand(operand, state),
         Rvalue::Call { args, .. } => {
             for arg in args {
-                move_operand(*arg, state);
+                move_operand(arg, state);
+            }
+        }
+        Rvalue::Aggregate { fields, .. } => {
+            for (_, operand) in fields {
+                move_operand(operand, state);
             }
         }
         Rvalue::Ref(_) => {}
     }
-    if !place.is_deref() {
-        state[place.local.index() as usize] = Init::Initialized;
+    if let Some((local, fields)) = path_of(place) {
+        state.assign(local, &fields);
     }
 }
 
-fn move_operand(operand: Operand, state: &mut InitState) {
-    if let Operand::Move(place) = operand {
-        mark_moved(place, state);
+fn move_operand(operand: &Operand, state: &mut InitPaths<LocalId>) {
+    if let Operand::Move(place) = operand
+        && let Some((local, fields)) = path_of(place)
+    {
+        state.move_out(local, &fields);
     }
 }
 
-fn mark_moved(place: Place, state: &mut InitState) {
-    if !place.is_deref() {
-        state[place.local.index() as usize] = Init::Moved;
+/// Splits a place into its root local and its field path, if it stays in this
+/// frame; reads through a reference say nothing about initialization here.
+fn path_of(place: &Place) -> Option<(LocalId, Vec<DefId>)> {
+    if place.is_deref() {
+        return None;
     }
+    let fields = place
+        .projections
+        .iter()
+        .filter_map(|projection| match projection {
+            seal_mir::Projection::Field(field) => Some(*field),
+            seal_mir::Projection::Deref => None,
+        })
+        .collect();
+    Some((place.local, fields))
 }
 
-/// Returns the state of a local for message selection.
-pub(crate) fn state_of(state: &InitState, local: LocalId) -> Init {
-    state[local.index() as usize]
+/// Returns the state of a place for message selection.
+pub(crate) fn state_of(
+    init: &InitPaths<LocalId>,
+    place: &Place,
+    tcx: &TyCtxt,
+    root_ty: TyId,
+) -> Init {
+    if place.is_deref() {
+        return Init::Initialized;
+    }
+    let fields: Vec<DefId> = place
+        .projections
+        .iter()
+        .filter_map(|projection| match projection {
+            seal_mir::Projection::Field(field) => Some(*field),
+            seal_mir::Projection::Deref => None,
+        })
+        .collect();
+    match init.state(place.local, &fields, tcx, root_ty) {
+        InitState::Initialized => Init::Initialized,
+        InitState::Moved => Init::Moved,
+        InitState::PartiallyMoved => Init::PartiallyMoved,
+        InitState::Uninitialized | InitState::PartiallyInitialized => Init::Uninitialized,
+    }
 }

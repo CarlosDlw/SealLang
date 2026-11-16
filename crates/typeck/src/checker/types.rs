@@ -54,7 +54,10 @@ impl Checker<'_> {
     }
 
     pub(super) fn ty_text(&self, ty: TyId) -> String {
-        self.hir.ty_ctxt().display(ty).to_string()
+        self.hir
+            .ty_ctxt()
+            .display_with(ty, self.interner)
+            .to_string()
     }
 
     pub(super) fn is_error(&self, ty: TyId) -> bool {

@@ -93,6 +93,13 @@ impl UnOp {
     }
 }
 
+/// The aggregate being built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AggregateKind {
+    /// A struct, identified by its definition.
+    Adt(DefId),
+}
+
 /// An expression that produces a value and can be assigned to a place.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Rvalue {
@@ -130,5 +137,16 @@ pub enum Rvalue {
         func: DefId,
         /// Arguments in evaluation order.
         args: Vec<Operand>,
+    },
+    /// Builds an aggregate value from its fields.
+    ///
+    /// Field operands appear in source order, which is evaluation order. A
+    /// field that is not `Copy` is moved out of its place, so building an
+    /// aggregate can end the lifetime of the places it reads.
+    Aggregate {
+        /// What is being built.
+        kind: AggregateKind,
+        /// Field initializers in evaluation order.
+        fields: Vec<(DefId, Operand)>,
     },
 }

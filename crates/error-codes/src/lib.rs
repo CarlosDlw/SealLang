@@ -402,6 +402,99 @@ Move the statement inside a `while` body, or remove it. `continue` inside an `if
 that is itself inside a loop targets the enclosing loop and is accepted.",
 };
 
+/// Two nominal types share one name.
+pub const E2005: ErrorCode = ErrorCode {
+    code: "E2005",
+    title: "type is defined twice",
+    explanation: "\
+Struct names live in the type namespace and must be unique in a program. Two
+structs with the same name would make every written type ambiguous.
+
+Rename one of the declarations. A struct and a function may share a name,
+because they live in different namespaces.",
+};
+
+/// A struct declares the same field name twice.
+pub const E2006: ErrorCode = ErrorCode {
+    code: "E2006",
+    title: "field is declared twice",
+    explanation: "\
+Each field name identifies exactly one field inside a struct. Declaring the name
+twice would make field access and struct literals depend on declaration order.
+
+Rename or remove one of the fields.",
+};
+
+/// A field access or literal names a field the struct does not have.
+pub const E2007: ErrorCode = ErrorCode {
+    code: "E2007",
+    title: "no such field",
+    explanation: "\
+Field access and struct literals name fields of a known struct type. A name that
+the struct does not declare cannot refer to storage.
+
+Check the spelling against the struct declaration. Fields are resolved by name,
+so a misspelled field is rejected even when another field has a similar type.",
+};
+
+/// A struct literal mentions one field more than once.
+pub const E2008: ErrorCode = ErrorCode {
+    code: "E2008",
+    title: "field is specified twice",
+    explanation: "\
+A struct literal builds one value per field. Specifying a field twice would make
+the result depend on which initializer wins, so the compiler rejects it.
+
+Write each field exactly once.",
+};
+
+/// A struct literal omits a field.
+pub const E2009: ErrorCode = ErrorCode {
+    code: "E2009",
+    title: "missing field in struct literal",
+    explanation: "\
+A struct value must initialize every field, because safe code never observes
+uninitialized storage. Seal has no default values and no `..base` update syntax,
+so each field appears in the literal.
+
+Add the missing initializer.",
+};
+
+/// A type name is used where a value is required.
+pub const E2010: ErrorCode = ErrorCode {
+    code: "E2010",
+    title: "type name used as a value",
+    explanation: "\
+A struct name introduces a type, not a value: it has no size and cannot be
+stored. Constructing a value requires a struct literal such as `Point { x: 1 }`.
+
+Use the name in a type position, or write a literal in a value position.",
+};
+
+/// A value name is used where a type is required.
+pub const E2011: ErrorCode = ErrorCode {
+    code: "E2011",
+    title: "expected a type, found a value",
+    explanation: "\
+Type positions accept primitive types, references, and struct names. A function
+or binding is a value and does not name a type, so it cannot appear in an
+annotation, parameter, field, or return type.
+
+Replace the name with a type, such as `i32` or `*Point`.",
+};
+
+/// A field is accessed on a value that is not a place.
+pub const E2012: ErrorCode = ErrorCode {
+    code: "E2012",
+    title: "field access requires a place",
+    explanation: "\
+Fields live inside storage: a binding, a parameter, a dereference, or another
+field. A computed value such as a struct literal or a call result has no storage
+to project, and Seal does not create hidden temporaries for field access.
+
+Store the value in a `let` binding and access the field through that binding.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -596,6 +689,33 @@ Write to the borrowed place directly by name, or copy the value into another
 binding and modify that.",
 };
 
+/// A field is accessed on a type that has no fields.
+pub const E3015: ErrorCode = ErrorCode {
+    code: "E3015",
+    title: "cannot access a field on this type",
+    explanation: "\
+Only struct values have named fields. Accessing `.x` on a scalar, a reference,
+or a type with no such field cannot name storage. Seal has no automatic
+dereference: a reference must be dereferenced explicitly before a field is
+accessed.
+
+Write `(*reference).field` for a reference, and check the field name against the
+struct declaration.",
+};
+
+/// A struct contains itself by value.
+pub const E3016: ErrorCode = ErrorCode {
+    code: "E3016",
+    title: "recursive type has infinite size",
+    explanation: "\
+A struct stored by value contains its fields inline, so a struct that contains
+itself by value would need infinite storage. Recursion is allowed through a
+reference, because the reference has a fixed size and the value lives elsewhere.
+
+Store the recursive field behind a reference such as `*Node`, or break the cycle
+by removing one of the fields.",
+};
+
 /// A place is assigned while a shared reference to it is live.
 pub const E5001: ErrorCode = ErrorCode {
     code: "E5001",
@@ -666,6 +786,19 @@ Assign a new value to the place before using it again, or borrow the value
 instead of moving it.",
 };
 
+/// A partially moved place is borrowed as a whole.
+pub const E5006: ErrorCode = ErrorCode {
+    code: "E5006",
+    title: "cannot borrow a partially moved place",
+    explanation: "\
+Moving a field out of a struct leaves the remaining storage valid, but the whole
+value is no longer intact. A shared reference to the whole place would promise
+access to a value that is missing one of its fields.
+
+Borrow only the fields that are still initialized, or reinitialize the moved
+field before borrowing the whole place.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -694,9 +827,10 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E3001,
-    E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014,
-    E5001, E5002, E5003, E5004, E5005, E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E2005,
+    E2006, E2007, E2008, E2009, E2010, E2011, E2012, E3001, E3002, E3003, E3004, E3005, E3006,
+    E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E5001, E5002, E5003,
+    E5004, E5005, E5006, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -802,7 +936,13 @@ mod tests {
             .map(|entry| entry.code())
             .filter(|code| code.starts_with("E20"))
             .collect();
-        assert_eq!(codes, ["E2001", "E2002", "E2003", "E2004"]);
+        assert_eq!(
+            codes,
+            [
+                "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
+                "E2010", "E2011", "E2012",
+            ]
+        );
     }
 
     #[test]
@@ -816,7 +956,7 @@ mod tests {
             codes,
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
-                "E3010", "E3011", "E3012", "E3013", "E3014",
+                "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016",
             ]
         );
     }
@@ -828,7 +968,10 @@ mod tests {
             .map(|entry| entry.code())
             .filter(|code| code.starts_with("E50"))
             .collect();
-        assert_eq!(codes, ["E5001", "E5002", "E5003", "E5004", "E5005"]);
+        assert_eq!(
+            codes,
+            ["E5001", "E5002", "E5003", "E5004", "E5005", "E5006"]
+        );
     }
 
     #[test]

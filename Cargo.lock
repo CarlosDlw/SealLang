@@ -123,6 +123,15 @@ name = "seal-index"
 version = "0.1.0"
 
 [[package]]
+name = "seal-layout"
+version = "0.1.0"
+dependencies = [
+ "seal-def",
+ "seal-symbol",
+ "seal-ty",
+]
+
+[[package]]
 name = "seal-lexer"
 version = "0.1.0"
 dependencies = [
@@ -224,8 +233,10 @@ dependencies = [
 name = "seal-ty"
 version = "0.1.0"
 dependencies = [
+ "seal-def",
  "seal-hash",
  "seal-index",
+ "seal-symbol",
 ]
 
 [[package]]

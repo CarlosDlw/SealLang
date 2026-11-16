@@ -190,6 +190,19 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// One field initializer in a struct literal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldInit {
+    /// The field name.
+    pub name: Symbol,
+    /// The span of the field name.
+    pub name_span: Span,
+    /// The value assigned to the field.
+    pub value: ExprId,
+    /// The span from the field name through the value.
+    pub span: Span,
+}
+
 /// An expression.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr {
@@ -215,6 +228,24 @@ pub enum ExprKind {
     Deref {
         /// The reference being read.
         operand: ExprId,
+    },
+    /// A field access, written `base.field`.
+    Field {
+        /// The expression the field is projected from.
+        base: ExprId,
+        /// The field name.
+        name: Symbol,
+        /// The span of the field name.
+        name_span: Span,
+    },
+    /// A struct literal, written `Name { field: value, ... }`.
+    Struct {
+        /// The struct name.
+        name: Symbol,
+        /// The span of the struct name.
+        name_span: Span,
+        /// Initializers in source order.
+        fields: Vec<FieldInit>,
     },
     /// A prefix operation.
     Unary {

@@ -8,7 +8,7 @@
 //! Prefix `&` and `*` are borrow and dereference, not the binary operators with
 //! the same spelling: prefix position decides, so `&x & y` is `(&x) & y`.
 
-use seal_ast::{AssignOp, BinaryOp, ExprId, ExprKind, Literal, UnaryOp, UpdateOp};
+use seal_ast::{AssignOp, BinaryOp, ExprId, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
 use seal_error_codes as codes;
 use seal_lexer::{NumericSuffix, TokenKind};
 use seal_symbol::Symbol;
@@ -38,6 +38,26 @@ impl Parser<'_> {
 
             if self.at(TokenKind::LParen) {
                 lhs = self.parse_call(lhs);
+                continue;
+            }
+
+            if self.at(TokenKind::Dot) {
+                self.bump();
+                let (name, name_span) = self.expect_ident("a field name after `.`");
+                let span = self
+                    .builder
+                    .ast()
+                    .expr(lhs)
+                    .span
+                    .cover(self.previous_span());
+                lhs = self.builder.push_expr(
+                    ExprKind::Field {
+                        base: lhs,
+                        name,
+                        name_span,
+                    },
+                    span,
+                );
                 continue;
             }
 
@@ -152,7 +172,11 @@ impl Parser<'_> {
             }
             TokenKind::Ident(symbol) => {
                 self.bump();
-                self.builder.push_expr(ExprKind::Path(symbol), token.span)
+                if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                    self.parse_struct_literal(symbol, token.span)
+                } else {
+                    self.builder.push_expr(ExprKind::Path(symbol), token.span)
+                }
             }
             TokenKind::Minus => {
                 self.bump();
@@ -201,8 +225,11 @@ impl Parser<'_> {
                 )
             }
             TokenKind::LParen => {
+                let allowed = self.struct_literal_allowed;
+                self.struct_literal_allowed = true;
                 self.bump();
                 let inner = self.parse_expr(0);
+                self.struct_literal_allowed = allowed;
                 let _ = self.expect(TokenKind::RParen, "`)`");
                 let span = token.span.cover(self.previous_span());
                 self.builder.push_expr(ExprKind::Paren(inner), span)
@@ -241,7 +268,7 @@ impl Parser<'_> {
         self.depth += 1;
 
         let _ = self.bump();
-        let condition = self.parse_expr(0);
+        let condition = self.parse_condition();
         let then_branch = self.parse_block();
         let else_branch = if self.eat(TokenKind::Else) {
             if self.at(TokenKind::If) {
@@ -276,8 +303,70 @@ impl Parser<'_> {
             .push_if(span, condition, then_branch, else_branch)
     }
 
+    /// Parses a condition, where a `{` starts the body rather than a struct
+    /// literal. Parentheses re-enable literals inside the condition.
+    pub(crate) fn parse_condition(&mut self) -> ExprId {
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = false;
+        let condition = self.parse_expr(0);
+        self.struct_literal_allowed = allowed;
+        condition
+    }
+
+    fn parse_struct_literal(&mut self, name: Symbol, start: seal_span::Span) -> ExprId {
+        self.bump();
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            let (field_name, field_name_span) = self.expect_ident("a field name");
+            let _ = self.expect(TokenKind::Colon, "`:` after the field name");
+            let allowed = self.struct_literal_allowed;
+            self.struct_literal_allowed = true;
+            let value = self.parse_expr(0);
+            self.struct_literal_allowed = allowed;
+            let span = field_name_span.cover(self.builder.ast().expr(value).span);
+            fields.push(FieldInit {
+                name: field_name,
+                name_span: field_name_span,
+                value,
+                span,
+            });
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RBrace) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` or `}}` in the struct literal, found {found}"),
+            )
+            .help("separate field initializers with `,`")
+            .emit();
+            if !can_start_expr(self.current_kind()) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct literal");
+        let span = start.cover(self.previous_span());
+        self.builder.push_expr(
+            ExprKind::Struct {
+                name,
+                name_span: start,
+                fields,
+            },
+            span,
+        )
+    }
+
     fn parse_call(&mut self, callee: ExprId) -> ExprId {
         self.bump();
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = true;
         let mut args: Vec<ExprId> = Vec::new();
         if !self.at(TokenKind::RParen) && !self.is_eof() {
             loop {
@@ -306,6 +395,7 @@ impl Parser<'_> {
                 self.ensure_progress(before);
             }
         }
+        self.struct_literal_allowed = allowed;
         let _ = self.expect(TokenKind::RParen, "`)` to close the call");
         let span = self
             .builder
@@ -347,7 +437,7 @@ impl Parser<'_> {
 
     fn is_assignable(&self, expr: ExprId) -> bool {
         match &self.builder.ast().expr(expr).kind {
-            ExprKind::Path(_) | ExprKind::Deref { .. } => true,
+            ExprKind::Path(_) | ExprKind::Deref { .. } | ExprKind::Field { .. } => true,
             ExprKind::Paren(inner) => self.is_assignable(*inner),
             _ => false,
         }

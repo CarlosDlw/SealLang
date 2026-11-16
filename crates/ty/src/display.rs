@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use seal_symbol::Interner;
+
 use crate::ctxt::TyCtxt;
 use crate::id::TyId;
 use crate::kind::TyKind;
@@ -13,7 +15,23 @@ impl TyCtxt {
     /// an [`InferCtxt`](crate::InferCtxt) should resolve the type first so the
     /// diagnostic shows what the variable was bound to.
     pub fn display(&self, ty: TyId) -> TyDisplay<'_> {
-        TyDisplay { ctxt: self, ty }
+        TyDisplay {
+            ctxt: self,
+            ty,
+            interner: None,
+        }
+    }
+
+    /// Returns a display adapter that resolves aggregate names.
+    ///
+    /// Types are interned without their names, so rendering a struct as the
+    /// user wrote it requires the interner that owns the symbol.
+    pub fn display_with<'a>(&'a self, ty: TyId, interner: &'a Interner) -> TyDisplay<'a> {
+        TyDisplay {
+            ctxt: self,
+            ty,
+            interner: Some(interner),
+        }
     }
 }
 
@@ -22,6 +40,7 @@ impl TyCtxt {
 pub struct TyDisplay<'a> {
     ctxt: &'a TyCtxt,
     ty: TyId,
+    interner: Option<&'a Interner>,
 }
 
 impl fmt::Display for TyDisplay<'_> {
@@ -33,11 +52,25 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Int(int) => fmt::Display::fmt(&int, f),
             TyKind::Uint(uint) => fmt::Display::fmt(&uint, f),
             TyKind::Float(float) => fmt::Display::fmt(&float, f),
-            TyKind::Ref(pointee) => write!(f, "*{}", self.ctxt.display(pointee)),
+            TyKind::Ref(pointee) => write!(f, "*{}", self.display(pointee)),
+            TyKind::Adt(adt) => match self.interner {
+                Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name)),
+                None => write!(f, "<struct#{}>", adt.index()),
+            },
             TyKind::Unit => f.write_str("()"),
             TyKind::Never => f.write_str("!"),
             TyKind::Error => f.write_str("<error>"),
             TyKind::Infer(var) => write!(f, "?T{}", var.index()),
+        }
+    }
+}
+
+impl TyDisplay<'_> {
+    fn display(&self, ty: TyId) -> TyDisplay<'_> {
+        TyDisplay {
+            ctxt: self.ctxt,
+            ty,
+            interner: self.interner,
         }
     }
 }

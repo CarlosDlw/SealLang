@@ -78,13 +78,14 @@ fn multiple_functions_keep_source_order() {
 }
 
 #[test]
-fn unknown_types_report_e1004_and_keep_the_function() {
-    let fixture = Fixture::new("func f(value: Missing) {}");
-    let ast = fixture.parse();
-    fixture.expect("E1004", "unknown type");
+fn named_types_are_kept_for_lowering_to_resolve() {
+    let (fixture, ast) = parse_clean("func f(value: Missing) {}");
     let declaration = sole_function(&ast);
     let param = ast.param(declaration.params[0]);
-    assert!(matches!(ast.ty(param.ty).kind, TypeKind::Error));
+    match ast.ty(param.ty).kind {
+        TypeKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "Missing"),
+        ref other => panic!("expected a named type, got {other:?}"),
+    }
 }
 
 #[test]

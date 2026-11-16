@@ -17,6 +17,7 @@ use crate::{Block, Hir, HirBlockId};
 mod expr;
 mod scope;
 mod stmt;
+mod structs;
 mod types;
 
 pub(crate) use types::intern_primitives;
@@ -33,7 +34,9 @@ pub(crate) struct Lowering<'a> {
     pub(super) hir: Hir,
     scopes: scope::Scopes,
     globals: FxHashMap<Symbol, DefId>,
+    types: FxHashMap<Symbol, DefId>,
     function_defs: FxHashMap<ItemId, DefId>,
+    struct_items: Vec<(ItemId, DefId)>,
     function: Option<DefId>,
     loop_depth: usize,
 }
@@ -47,56 +50,105 @@ impl<'a> Lowering<'a> {
             hir: Hir::empty(TyCtxt::new()),
             scopes: scope::Scopes::default(),
             globals: FxHashMap::default(),
+            types: FxHashMap::default(),
             function_defs: FxHashMap::default(),
+            struct_items: Vec::new(),
             function: None,
             loop_depth: 0,
         }
     }
 
     fn run(mut self) -> Hir {
-        self.collect_functions();
+        self.collect_items();
+        self.lower_structs();
+        self.validate_structs();
         self.lower_bodies();
         self.hir
     }
 
-    /// Creates a definition for every function before any body is lowered, so
-    /// calls work regardless of declaration order.
-    fn collect_functions(&mut self) {
+    /// Creates a definition for every item before any body is lowered, so calls
+    /// and type annotations work regardless of declaration order.
+    fn collect_items(&mut self) {
         let items: Vec<ItemId> = self.ast.program().items().to_vec();
         for item_id in items {
             let (name, name_span, span) = {
                 let item = self.ast.item(item_id);
-                let ItemKind::Func(declaration) = &item.kind else {
-                    continue;
-                };
-                (declaration.name, declaration.name_span, item.span)
+                match &item.kind {
+                    ItemKind::Func(declaration) => {
+                        (declaration.name, declaration.name_span, item.span)
+                    }
+                    ItemKind::Struct(declaration) => {
+                        (declaration.name, declaration.name_span, item.span)
+                    }
+                    ItemKind::Error => continue,
+                }
             };
-            let definition = self.define(DefData {
-                kind: DefKind::Function,
-                name,
-                name_span,
-                span,
-                parent: None,
-                mutable: false,
-            });
-            self.function_defs.insert(item_id, definition);
-
-            if let Some(first) = self.globals.get(&name).copied() {
-                let first_span = self.hir.definitions().get(first).name_span;
-                self.error(
-                    codes::E2001,
-                    name_span,
-                    format!(
-                        "the function `{}` is defined twice",
-                        self.interner.resolve(name)
-                    ),
-                )
-                .secondary(first_span, "first defined here")
-                .help("give each function a distinct name")
-                .emit();
+            let is_struct = matches!(self.ast.item(item_id).kind, ItemKind::Struct(_));
+            if is_struct {
+                self.collect_struct(item_id, name, name_span, span);
             } else {
-                self.globals.insert(name, definition);
+                self.collect_function(item_id, name, name_span, span);
             }
+        }
+    }
+
+    fn collect_function(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        let definition = self.define(DefData {
+            kind: DefKind::Function,
+            name,
+            name_span,
+            span,
+            parent: None,
+            mutable: false,
+        });
+        self.function_defs.insert(item_id, definition);
+
+        if let Some(first) = self.globals.get(&name).copied() {
+            let first_span = self.hir.definitions().get(first).name_span;
+            self.error(
+                codes::E2001,
+                name_span,
+                format!(
+                    "the function `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+            )
+            .secondary(first_span, "first defined here")
+            .help("give each function a distinct name")
+            .emit();
+        } else {
+            self.globals.insert(name, definition);
+        }
+    }
+
+    fn collect_struct(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        let definition = self.define(DefData {
+            kind: DefKind::Struct,
+            name,
+            name_span,
+            span,
+            parent: None,
+            mutable: false,
+        });
+        let adt = self.hir.ty_ctxt().push_adt(definition, name);
+        self.hir.insert_struct(definition, adt);
+        self.struct_items.push((item_id, definition));
+
+        if let Some(first) = self.types.get(&name).copied() {
+            let first_span = self.hir.definitions().get(first).name_span;
+            self.error(
+                codes::E2005,
+                name_span,
+                format!(
+                    "the type `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+            )
+            .secondary(first_span, "first defined here")
+            .help("give each struct a distinct name")
+            .emit();
+        } else {
+            self.types.insert(name, definition);
         }
     }
 
@@ -185,6 +237,16 @@ impl<'a> Lowering<'a> {
         }
         if let Some(&definition) = self.globals.get(&name) {
             return Some(Res::Function(definition));
+        }
+        if self.types.contains_key(&name) {
+            self.error(
+                codes::E2010,
+                span,
+                format!("`{}` is a type, not a value", self.interner.resolve(name)),
+            )
+            .help("construct it with a struct literal, such as `Name { field: value }`")
+            .emit();
+            return None;
         }
 
         self.error(

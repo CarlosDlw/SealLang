@@ -1,6 +1,6 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
-use seal_ast::{Ast, AstBuilder, ExprId, FnDecl, ItemId, ItemKind, ParamId, TypeId};
+use seal_ast::{Ast, AstBuilder, ExprId, FnDecl, ItemId, ItemKind, ParamId, StructDecl, TypeId};
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
@@ -24,6 +24,9 @@ pub(crate) struct Parser<'a> {
     pub(crate) builder: AstBuilder,
     pub(crate) items: Vec<ItemId>,
     pub(crate) depth: usize,
+    /// Whether a `{` after a name starts a struct literal. Conditions disable
+    /// it so the condition of `if`/`while` cannot swallow the body.
+    pub(crate) struct_literal_allowed: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -43,6 +46,7 @@ impl<'a> Parser<'a> {
             builder: AstBuilder::new(),
             items: Vec::new(),
             depth: 0,
+            struct_literal_allowed: true,
         }
     }
 
@@ -53,6 +57,9 @@ impl<'a> Parser<'a> {
             if self.at(TokenKind::Func) {
                 let item = self.parse_function();
                 self.items.push(item);
+            } else if self.at(TokenKind::Struct) {
+                let item = self.parse_struct();
+                self.items.push(item);
             } else {
                 let start = self.current_span();
                 let found = self.describe(self.current_kind());
@@ -61,9 +68,9 @@ impl<'a> Parser<'a> {
                     start,
                     format!("expected an item, found {found}"),
                 )
-                .help("top-level items start with `func`")
+                .help("top-level items start with `func` or `struct`")
                 .emit();
-                while !self.is_eof() && !self.at(TokenKind::Func) {
+                while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::Struct) {
                     self.bump();
                 }
                 let span = start.cover(self.previous_span());
@@ -151,6 +158,55 @@ impl<'a> Parser<'a> {
                 params,
                 ret,
                 body,
+            }),
+            span,
+        )
+    }
+
+    fn parse_struct(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (name, name_span) = self.expect_ident("a struct name");
+        let _ = self.expect(TokenKind::LBrace, "`{` after the struct name");
+
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            let (field_name, field_name_span) = self.expect_ident("a field name");
+            let _ = self.expect(TokenKind::Colon, "`:` after the field name");
+            let ty = self.parse_type();
+            let span = field_name_span.cover(self.builder.ast().ty(ty).span);
+            fields.push(
+                self.builder
+                    .push_field(field_name, field_name_span, ty, span),
+            );
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RBrace) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` between fields, found {found}"),
+            )
+            .help("separate fields with `,`")
+            .emit();
+            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::Struct(StructDecl {
+                name,
+                name_span,
+                fields,
             }),
             span,
         )
@@ -322,6 +378,7 @@ impl<'a> Parser<'a> {
 fn token_name(kind: TokenKind) -> Option<&'static str> {
     Some(match kind {
         TokenKind::Func => "func",
+        TokenKind::Struct => "struct",
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::Let => "let",

@@ -2,10 +2,13 @@
 
 use std::cell::RefCell;
 
-use seal_hash::FxHashMap;
+use seal_def::DefId;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_index::IndexVec;
+use seal_symbol::Symbol;
 
-use crate::id::{InferTyId, TyId};
+use crate::adt::{AdtDef, FieldDef};
+use crate::id::{AdtId, InferTyId, TyId};
 use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
 
 /// Interns types and answers structural queries about them.
@@ -22,6 +25,7 @@ use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
 pub struct TyCtxt {
     kinds: RefCell<IndexVec<TyId, TyKind>>,
     interner: RefCell<FxHashMap<TyKind, TyId>>,
+    adts: RefCell<IndexVec<AdtId, AdtDef>>,
 }
 
 impl TyCtxt {
@@ -55,6 +59,59 @@ impl TyCtxt {
     /// Returns `None` if `kind` was never interned.
     pub fn lookup(&self, kind: TyKind) -> Option<TyId> {
         self.interner.borrow().get(&kind).copied()
+    }
+
+    /// Reserves an aggregate slot for `def` and returns its ID.
+    ///
+    /// Fields are filled later, because a struct may refer to another struct
+    /// declared after it. Reserving first lets field types name the aggregate
+    /// before its declaration is complete.
+    pub fn push_adt(&self, def: DefId, name: Symbol) -> AdtId {
+        self.adts.borrow_mut().push(AdtDef {
+            def,
+            name,
+            kind: crate::adt::AdtKind::Struct,
+            fields: Vec::new(),
+        })
+    }
+
+    /// Fills the fields of a reserved aggregate.
+    pub fn fill_adt(&self, adt: AdtId, fields: Vec<FieldDef>) {
+        self.adts.borrow_mut()[adt].fields = fields;
+    }
+
+    /// Replaces one field type, used to quarantine a recursive field more
+    /// precisely than replacing the whole aggregate.
+    pub fn set_field_ty(&self, adt: AdtId, index: usize, ty: TyId) {
+        self.adts.borrow_mut()[adt].fields[index].ty = ty;
+    }
+
+    /// Returns a copy of the aggregate definition.
+    ///
+    /// Definitions are immutable once lowering finishes, so a copy keeps the
+    /// borrow short without exposing the cell.
+    pub fn adt(&self, adt: AdtId) -> AdtDef {
+        self.adts.borrow()[adt].clone()
+    }
+
+    /// Returns the number of aggregate definitions.
+    pub fn adt_len(&self) -> usize {
+        self.adts.borrow().len()
+    }
+
+    /// Returns the type naming `adt`.
+    pub fn adt_ty(&self, adt: AdtId) -> TyId {
+        self.intern(TyKind::Adt(adt))
+    }
+
+    /// Returns the field with the given definition in `adt`.
+    pub fn field(&self, adt: AdtId, def: DefId) -> Option<FieldDef> {
+        self.adts.borrow()[adt].field(def).copied()
+    }
+
+    /// Returns the field with the given name in `adt`.
+    pub fn field_by_name(&self, adt: AdtId, name: Symbol) -> Option<FieldDef> {
+        self.adts.borrow()[adt].field_by_name(name).copied()
     }
 
     /// Returns the number of interned types.
@@ -138,7 +195,10 @@ impl TyCtxt {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
-            TyKind::Str | TyKind::Infer(_) => false,
+            // A user-defined aggregate owns its fields; it becomes `Copy` only
+            // through an explicit opt-in, which the language does not have yet.
+            // Its fields remain individually copyable.
+            TyKind::Adt(_) | TyKind::Str | TyKind::Infer(_) => false,
         }
     }
 
@@ -147,7 +207,28 @@ impl TyCtxt {
     /// `str` is the only unsized kind in the current language; an unresolved
     /// inference variable reports `false` because its size is not known yet.
     pub fn is_sized(&self, ty: TyId) -> bool {
-        !matches!(self.kind(ty), TyKind::Str | TyKind::Infer(_))
+        self.is_sized_inner(ty, &mut FxHashSet::default())
+    }
+
+    fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
+        match self.kind(ty) {
+            TyKind::Str | TyKind::Infer(_) => false,
+            TyKind::Adt(adt) => {
+                if !visiting.insert(adt) {
+                    // A by-value cycle has no finite size; type checking reports
+                    // it and stops before layout.
+                    return false;
+                }
+                let def = self.adt(adt);
+                let sized = def
+                    .fields
+                    .iter()
+                    .all(|field| self.is_sized_inner(field.ty, visiting));
+                visiting.remove(&adt);
+                sized
+            }
+            _ => true,
+        }
     }
 
     /// Returns `true` if dropping a value of `ty` runs a destructor.
@@ -157,18 +238,51 @@ impl TyCtxt {
     /// their own destructor. An unresolved variable reports `false`; the caller
     /// must resolve it first, as with [`TyCtxt::is_copy`].
     pub fn needs_drop(&self, ty: TyId) -> bool {
+        self.needs_drop_inner(ty, &mut FxHashSet::default())
+    }
+
+    fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
-            TyKind::Bool
-            | TyKind::Char
-            | TyKind::Str
-            | TyKind::Int(_)
-            | TyKind::Uint(_)
-            | TyKind::Float(_)
-            | TyKind::Ref(_)
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error
-            | TyKind::Infer(_) => false,
+            TyKind::Adt(adt) => {
+                if !visiting.insert(adt) {
+                    return false;
+                }
+                let def = self.adt(adt);
+                let needs_drop = def
+                    .fields
+                    .iter()
+                    .any(|field| self.needs_drop_inner(field.ty, visiting));
+                visiting.remove(&adt);
+                needs_drop
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if `ty` is, or contains by value, a reference.
+    ///
+    /// Borrow checking uses this when a value carries loans inside an
+    /// aggregate: moving the aggregate must keep those loans alive.
+    pub fn contains_reference(&self, ty: TyId) -> bool {
+        self.contains_reference_inner(ty, &mut FxHashSet::default())
+    }
+
+    fn contains_reference_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
+        match self.kind(ty) {
+            TyKind::Ref(_) => true,
+            TyKind::Adt(adt) => {
+                if !visiting.insert(adt) {
+                    return false;
+                }
+                let def = self.adt(adt);
+                let contains = def
+                    .fields
+                    .iter()
+                    .any(|field| self.contains_reference_inner(field.ty, visiting));
+                visiting.remove(&adt);
+                contains
+            }
+            _ => false,
         }
     }
 }

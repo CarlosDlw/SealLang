@@ -11,14 +11,17 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
    synchronization; every cost is visible in the source.
 3. **No lifetime annotations.** Users never write region parameters; regions are
    inferred from liveness.
-4. **Room to grow.** Adding structs, arrays, slices, generics, and an `unsafe`
-   layer must not require redesigning the type system.
+4. **Room to grow.** Adding arrays, slices, generics, methods, visibility, and an
+   `unsafe` layer must not require redesigning the type system.
 
 ## Model
 
 Seal is a **value-semantics language with moves**. Every value has exactly one
 owner. Assignment, argument passing, and return move the value unless its type is
-`Copy`, in which case it is duplicated bitwise. `*T` is a **shared, non-owning,
+`Copy`, in which case it is duplicated bitwise. A `struct` is a **nominal**
+aggregate that owns its fields; the aggregate itself is never `Copy` in v0.1,
+which makes every whole-value transfer a visible move. A `Copy` field is still
+copied when it is read by name. `*T` is a **shared, non-owning,
 non-null reference**; exclusive access requires `*mut T`. References are checked
 statically by a borrow checker that computes regions from liveness, so no
 lifetime syntax exists. Values live on the stack, in static read-only memory, or
@@ -39,9 +42,12 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 ### D2 — `Copy` is a property of the type
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`, and
-`*T`/`*mut T`. Not copied: `str` (unsized), and every aggregate that is not
-entirely `Copy` or that has a destructor. `Copy` and `Drop` are mutually
-exclusive. v0.1 has no user-defined copy hooks.
+`*T`/`*mut T`. Not copied: `str` (unsized) and every struct value, even one whose
+fields are all `Copy`. Keeping aggregates non-`Copy` means ownership is explicit
+at every aggregate boundary; field reads still copy `Copy` fields individually.
+`Copy` and `Drop` are mutually exclusive, and v0.1 has no user-defined copy
+hooks. A future opt-in `Copy` for structs derives the property from the fields
+without changing the move path model.
 
 ### D3 — Ownership and destruction
 
@@ -123,12 +129,22 @@ uninitialized again. The checker performs definite-initialization analysis over
 the control-flow graph, so `let x: i32; if c { x = 1 } else { x = 2 } x` is
 accepted and a path that skips both assignments is not.
 
+Initialization is tracked per **move path**, not per local: fields of a struct
+initialize independently. `let mut p: Point; p.x = 1; p.y = 2;` initializes `p`
+field by field, reading `p.x` before assigning it is an error even after `p.y` is
+set, and a whole assignment `p = Point { … }` initializes every field at once.
+Writing a field requires the binding to be `mut`, because a field write does not
+initialize the binding as a whole; an uninitialized immutable binding is the
+only case where a first whole assignment is allowed without `mut`. Moving one
+field out marks that path moved and leaves its siblings usable.
+
 ### D10 — Values are sized
 
-Locals, parameters, return values, and by-value operands must have a size known
-at compile time. `str` is the only unsized type in v0.1 and can only appear
-behind a reference. Recursive types are only possible through a reference, which
-indirection makes finite.
+Locals, parameters, return values, by-value operands, and struct fields must have
+a size known at compile time. `str` is the only unsized type in v0.1 and can only
+appear behind a reference. Recursive types are only possible through a
+reference, which indirection makes finite; a struct that contains itself by value
+is `E3016`.
 
 ### D11 — No address-dependent semantics in safe code
 
@@ -144,18 +160,45 @@ types only unify when they are identical. Mixed-width arithmetic is an error.
 Widening and narrowing require explicit casts (added with the cast syntax), so
 no silent truncation or sign change can happen.
 
+### D13 — Structs are nominal and their layout is deterministic
+
+`struct Point { x: i32, y: i32 }` declares a nominal type: two structs with the
+same fields are distinct and never unify. A literal `Point { x: 1, y: 2 }` must
+initialize every field exactly once, and a type name is never a value (`E2010`).
+Field access applies to a place; there is no autodereference, so a reference
+field is read as `(*p).x` and a field of a temporary is rejected. Fields have no
+separate visibility in v0.1, and adding visibility later does not change the
+layout.
+
+`seal-layout` assigns offsets in declaration order with natural alignment and no
+reordering, so the layout is deterministic and reproducible. The struct owns its
+fields: moving the struct moves all of them, and moving one field out leaves the
+rest initialized, which is what the move-path initializer tracks (D9). A borrow
+may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Int`, `Uint`, `Float`, `Ref(TyId)`,
-  `Unit`, `Never`, `Error`, and `Infer`. `Ref` is D4's shared reference; there is
-  no nullable reference kind, because nullability is not a type.
+  `Adt(AdtId)`, `Unit`, `Never`, `Error`, and `Infer`. `Ref` is D4's shared
+  reference; there is no nullable reference kind, because nullability is not a
+  type.
+- Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
+  so `AdtId` identifies a nominal declaration while the definition holds the
+  ordered fields, their `DefId`s, names, and types.
+- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
+  aggregate fields with a cycle guard; no query can loop on a malformed
+declaration.
 - `Str` is a distinct kind, not an alias for `*u8`, because it is unsized and
   carries a length (D7).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
   `is_sized`, `needs_drop`), not flags stored in the type. They are derived from
-  the type's structure, so they cannot disagree with it.
+  the type's structure, so they cannot disagree with it. Struct values are not
+  `Copy` in v0.1 (D2), so the query returns `false` for `TyKind::Adt`.
+- `seal_ty::InitPaths` is the shared definite-initialization lattice; type
+  checking keys it by `DefId`, borrow checking by MIR `LocalId`, and both query
+  the same nearest-entry state over field paths.
 - Types are interned: two types are equal exactly when their `TyId`s are equal.
   During inference, equality is not enough, so `InferCtxt::unify` is the only
   comparison that decides assignability; `==` on IDs is for canonical types.
@@ -167,14 +210,17 @@ no silent truncation or sign change can happen.
 ## Consequences for later phases
 
 - **HIR** must represent *places* (base plus projections), not only values,
-  because moves, assignments, borrows, and drops operate on places.
+  because moves, assignments, borrows, and drops operate on places. HIR keeps
+  field names symbolic; lowering resolves them once types are known.
 - **Name resolution** gives every place a `DefId`; the borrow checker never
   resolves syntax.
-- **Type checking** decides the type of every expression and place, runs
-  definite-initialization analysis, and inserts drop obligations.
+- **Type checking** decides the type of every expression and place, resolves
+  every field projection, runs definite-initialization analysis over move paths,
+  and inserts drop obligations.
 - **Borrow checking** runs on MIR, where every move, borrow, and drop is an
   explicit statement in a control-flow graph; regions are inferred from the
-  liveness of those statements.
+  liveness of those statements, and place conflicts compare path prefixes so
+  field borrows are as precise as the moves they guard.
 - **Codegen** may assume that no safe reference is null or dangling, that a
   `Copy` value has no destructor, and that exclusive accesses do not overlap.
 
@@ -187,6 +233,15 @@ no silent truncation or sign change can happen.
 5. `Copy` and `Drop` never hold for the same type.
 6. A `Sized` value never contains an unsized value directly.
 7. Type layout and addresses never affect the meaning of safe programs.
+8. A struct literal initializes every field exactly once; unknown, missing, and
+   duplicate fields are rejected (`E2006`–`E2009`).
+9. A struct value is never `Copy` in v0.1; moving one field out leaves its
+   siblings initialized and usable.
+10. A struct cannot contain itself by value (`E3016`), and every field is
+    `Sized` (`E3010`).
+11. Layout is deterministic: declaration order, natural alignment, no
+    reordering, so offsets are stable across phases and targets with the same
+    data model.
 
 ## Reserved syntax
 
@@ -194,6 +249,8 @@ These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
 - `*mut T` — exclusive reference, with D6 aliasing.
+- Generics, methods, visibility, arrays, and `Drop` for aggregates — layers on
+  the nominal struct foundation, not redesigns of it.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

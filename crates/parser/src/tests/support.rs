@@ -5,8 +5,8 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::{
-    Ast, Block, BlockId, Expr, ExprId, ExprKind, FnDecl, ItemKind, ParamId, StmtId, StmtKind,
-    TypeId, TypeKind,
+    Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemKind, ParamId, StmtId,
+    StmtKind, TypeId, TypeKind,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -160,6 +160,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         exprs: BTreeSet::new(),
         stmts: BTreeSet::new(),
         blocks: BTreeSet::new(),
+        fields: BTreeSet::new(),
         types: BTreeSet::new(),
         params: BTreeSet::new(),
     };
@@ -173,6 +174,7 @@ struct Reachability<'a> {
     exprs: BTreeSet<ExprId>,
     stmts: BTreeSet<StmtId>,
     blocks: BTreeSet<BlockId>,
+    fields: BTreeSet<FieldDeclId>,
     types: BTreeSet<TypeId>,
     params: BTreeSet<ParamId>,
 }
@@ -199,6 +201,12 @@ impl Reachability<'_> {
                     }
                     self.check_block(declaration.body);
                 }
+                ItemKind::Struct(declaration) => {
+                    self.assert_span(declaration.name_span);
+                    for field in &declaration.fields {
+                        self.check_field(*field);
+                    }
+                }
                 ItemKind::Error => {}
             }
         }
@@ -217,6 +225,11 @@ impl Reachability<'_> {
             self.blocks.len(),
             self.ast.block_arena().len(),
             "unreachable block nodes"
+        );
+        assert_eq!(
+            self.fields.len(),
+            self.ast.field_arena().len(),
+            "unreachable field nodes"
         );
         assert_eq!(
             self.types.len(),
@@ -242,6 +255,17 @@ impl Reachability<'_> {
         let (span, name_span, ty) = {
             let param = self.ast.param(id);
             (param.span, param.name_span, param.ty)
+        };
+        self.assert_span(span);
+        self.assert_span(name_span);
+        self.check_type(ty);
+    }
+
+    fn check_field(&mut self, id: FieldDeclId) {
+        assert!(self.fields.insert(id), "field {id:?} visited twice");
+        let (span, name_span, ty) = {
+            let field = self.ast.field(id);
+            (field.span, field.name_span, field.ty)
         };
         self.assert_span(span);
         self.assert_span(name_span);
@@ -310,6 +334,22 @@ impl Reachability<'_> {
             ExprKind::Unary { operand, .. }
             | ExprKind::Borrow { operand }
             | ExprKind::Deref { operand } => self.check_expr(operand),
+            ExprKind::Field {
+                base, name_span, ..
+            } => {
+                self.assert_span(name_span);
+                self.check_expr(base);
+            }
+            ExprKind::Struct {
+                name_span, fields, ..
+            } => {
+                self.assert_span(name_span);
+                for field in fields {
+                    self.assert_span(field.name_span);
+                    self.assert_span(field.span);
+                    self.check_expr(field.value);
+                }
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.check_expr(lhs);
                 self.check_expr(rhs);

@@ -134,7 +134,7 @@ impl Parser<'_> {
 
     fn parse_while(&mut self) -> StmtId {
         let keyword = self.bump();
-        let condition = self.parse_expr(0);
+        let condition = self.parse_condition();
         let body = self.parse_block();
         let span = keyword.span.cover(self.previous_span());
         self.builder.push_while(span, condition, body)

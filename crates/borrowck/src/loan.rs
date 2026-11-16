@@ -7,7 +7,7 @@ use seal_span::Span;
 ///
 /// Every current loan is shared; an exclusive kind joins this struct with
 /// `*mut T` and changes only the conflict table in [`crate::check`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Loan {
     /// The borrowed place.
     pub(crate) place: Place,

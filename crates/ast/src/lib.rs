@@ -28,8 +28,8 @@ mod program;
 mod ty;
 
 pub use block::{Block, LetStmt, Stmt, StmtKind};
-pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, Literal, UnaryOp, UpdateOp};
-pub use id::{BlockId, ExprId, ItemId, ParamId, StmtId, TypeId};
-pub use item::{FnDecl, Item, ItemKind, Param};
+pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
+pub use id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId};
+pub use item::{FieldDecl, FnDecl, Item, ItemKind, Param, StructDecl};
 pub use program::{Ast, AstBuilder, Program};
 pub use ty::{PrimitiveType, Type, TypeKind};

@@ -1,13 +1,15 @@
-//! Assignment, compound assignment, and increment/decrement.
+//! Places: assignment, compound assignment, increment/decrement, and the
+//! initialization checks that read a place.
 
 use seal_ast::{AssignOp, UpdateOp};
 use seal_error_codes as codes;
 use seal_hir::HirExprId;
 use seal_span::Span;
-use seal_ty::TyId;
+use seal_ty::{InitState, TyId};
 
 use super::Checker;
 use super::flow::Flow;
+use crate::results::{PlaceProjection, ResolvedPlace};
 
 impl Checker<'_> {
     pub(super) fn check_assign(
@@ -26,22 +28,28 @@ impl Checker<'_> {
             return self.error_ty();
         };
 
+        let ty = self.infer_place(target, flow);
+        let resolved = self.results.place(target).cloned();
+
         // `*T` is read-only, so a dereference can be read but never assigned to.
-        if place.derefs() > 0 {
-            let ty = self.infer_expr(target, None, flow);
+        if place.contains_deref() {
             self.report_shared_write(target_span);
             self.check_expr(value, ty, flow);
             return self.unit();
         }
 
         let local = place.local_def();
-        let ty = self.local_type(local);
-        self.results.record_expr(target, ty);
         let plain = op == AssignOp::Assign;
         let mutable = self.hir.definitions().is_mutable(local);
-        // D9: an uninitialized immutable binding may be initialized once by
-        // assignment. Once it holds a value, a write needs `let mut`.
-        if !mutable && (!plain || flow.is_initialized(local)) {
+        let whole = resolved.as_ref().is_none_or(ResolvedPlace::is_whole);
+        let initialized = resolved
+            .as_ref()
+            .is_some_and(|place| self.place_state(place, flow) == InitState::Initialized);
+
+        // D9: an uninitialized immutable binding may be initialized once by a
+        // whole assignment. Field writes always require `mut`, because they do
+        // not initialize the binding as a whole.
+        if !mutable && (!plain || !whole || initialized) {
             let name = self.def_name(local);
             self.error(
                 codes::E3004,
@@ -52,14 +60,16 @@ impl Checker<'_> {
             .emit();
         }
         if !plain {
-            if !flow.is_initialized(local) && !flow.diverges {
-                self.report_uninitialized(local, target_span);
+            if !initialized {
+                self.report_place_uninitialized(resolved.as_ref(), target_span);
             }
             self.check_assign_op(op, ty, span);
         }
 
         self.check_expr(value, ty, flow);
-        flow.mark_initialized(local);
+        if let Some(place) = resolved {
+            flow.assign(place.local, &place.field_defs());
+        }
         self.unit()
     }
 
@@ -77,15 +87,15 @@ impl Checker<'_> {
             return self.error_ty();
         };
 
-        if place.derefs() > 0 {
-            self.infer_expr(target, None, flow);
+        let ty = self.infer_place(target, flow);
+        let resolved = self.results.place(target).cloned();
+
+        if place.contains_deref() {
             self.report_shared_write(target_span);
             return self.unit();
         }
 
         let local = place.local_def();
-        let ty = self.local_type(local);
-        self.results.record_expr(target, ty);
         if !self.hir.definitions().is_mutable(local) {
             let name = self.def_name(local);
             self.error(
@@ -96,8 +106,11 @@ impl Checker<'_> {
             .help("declare it with `let mut` to allow assignment")
             .emit();
         }
-        if !flow.is_initialized(local) && !flow.diverges {
-            self.report_uninitialized(local, target_span);
+        if !resolved
+            .as_ref()
+            .is_some_and(|place| self.place_state(place, flow) == InitState::Initialized)
+        {
+            self.report_place_uninitialized(resolved.as_ref(), target_span);
         }
         if !self.is_numeric(ty) && !self.is_error(ty) {
             self.error(
@@ -113,8 +126,65 @@ impl Checker<'_> {
             .emit();
         }
 
-        flow.mark_initialized(local);
+        if let Some(place) = resolved {
+            flow.assign(place.local, &place.field_defs());
+        }
         self.unit()
+    }
+
+    /// Requires a place expression to be initialized before it is read.
+    pub(super) fn require_initialized(&mut self, expr: HirExprId, flow: &Flow, span: Span) {
+        let Some(place) = self.results.place(expr).cloned() else {
+            return;
+        };
+        if place.contains_deref() {
+            return;
+        }
+        if self.place_state(&place, flow) != InitState::Initialized {
+            let text = self.place_text(&place);
+            self.error(
+                codes::E3011,
+                span,
+                format!("`{text}` is possibly uninitialized"),
+            )
+            .help(format!("assign a value to `{text}` before reading it"))
+            .emit();
+        }
+    }
+
+    /// Returns the initialization state of a resolved place.
+    pub(super) fn place_state(&self, place: &ResolvedPlace, flow: &Flow) -> InitState {
+        flow.state(
+            place.local,
+            &place.field_defs(),
+            place.root_ty,
+            self.hir.ty_ctxt(),
+        )
+    }
+
+    /// Renders a place as written, for diagnostics.
+    pub(super) fn place_text(&self, place: &ResolvedPlace) -> String {
+        let mut text = self.def_name(place.local).to_owned();
+        for projection in &place.projections {
+            if let PlaceProjection::Field(field) = projection {
+                text.push('.');
+                text.push_str(self.def_name(*field));
+            }
+        }
+        text
+    }
+
+    fn report_place_uninitialized(&self, place: Option<&ResolvedPlace>, span: Span) {
+        let text = place
+            .map(|place| self.place_text(place))
+            .unwrap_or_else(|| "this place".to_owned());
+        self.error(
+            codes::E3011,
+            span,
+            format!("`{text}` is possibly uninitialized"),
+        )
+        .help(format!("assign a value to `{text}` before reading it"))
+        .emit();
     }
 
     fn report_shared_write(&self, span: Span) {
@@ -134,7 +204,7 @@ impl Checker<'_> {
                 .emit();
         } else if !self.is_error_target(target) {
             self.error(codes::E3005, span, "invalid assignment target")
-                .help("assign to a local binding")
+                .help("assign to a local binding or one of its fields")
                 .emit();
         }
     }

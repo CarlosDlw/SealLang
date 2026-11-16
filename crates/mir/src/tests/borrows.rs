@@ -26,13 +26,7 @@ fn dereference_reads_through_the_reference() {
     let (place, rvalue) = assignment(&body.block(body.entry).statements[0]);
 
     assert_eq!(place.local, Body::return_local());
-    assert_eq!(
-        rvalue,
-        &Rvalue::Use(Operand::Copy(Place {
-            local: p,
-            derefs: 1,
-        }))
-    );
+    assert_eq!(rvalue, &Rvalue::Use(Operand::Copy(Place::local(p).deref())));
 }
 
 #[test]
@@ -42,13 +36,7 @@ fn borrowing_through_a_reference_borrows_the_projection() {
     let p = local_named(&fixture, body, "p");
     let (_, rvalue) = assignment(&body.block(body.entry).statements[0]);
 
-    assert_eq!(
-        rvalue,
-        &Rvalue::Ref(Place {
-            local: p,
-            derefs: 1,
-        })
-    );
+    assert_eq!(rvalue, &Rvalue::Ref(Place::local(p).deref()));
 }
 
 #[test]
@@ -66,5 +54,5 @@ fn a_borrowed_argument_is_passed_through_a_temporary() {
     let Rvalue::Call { args, .. } = call else {
         panic!("expected a call, got {call:?}");
     };
-    assert_eq!(args, &vec![Operand::Copy(*temp)]);
+    assert_eq!(args, &vec![Operand::Copy(temp.clone())]);
 }

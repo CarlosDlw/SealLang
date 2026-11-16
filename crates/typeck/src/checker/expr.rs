@@ -2,10 +2,19 @@
 
 use seal_hir::{ExprKind, HirBlockId, HirExprId, Res};
 use seal_span::Span;
-use seal_ty::TyId;
+use seal_symbol::Symbol;
+use seal_ty::{TyId, TyKind};
 
-use super::Checker;
 use super::flow::Flow;
+use super::{Checker, PlaceMode};
+use crate::results::{PlaceProjection, ResolvedPlace};
+
+/// The pieces of a field access needed to resolve and type it.
+struct FieldAccess {
+    base: HirExprId,
+    name: Symbol,
+    name_span: Span,
+}
 
 impl Checker<'_> {
     /// Checks `expr` against `expected`, reporting a mismatch at the expression.
@@ -22,6 +31,22 @@ impl Checker<'_> {
         expected: Option<TyId>,
         flow: &mut Flow,
     ) -> TyId {
+        self.infer_expr_mode(expr, expected, flow, PlaceMode::Read)
+    }
+
+    /// Types a place used as an assignment target: the place itself is not
+    /// required to be initialized, because the assignment initializes it.
+    pub(super) fn infer_place(&mut self, expr: HirExprId, flow: &mut Flow) -> TyId {
+        self.infer_expr_mode(expr, None, flow, PlaceMode::Write)
+    }
+
+    fn infer_expr_mode(
+        &mut self,
+        expr: HirExprId,
+        expected: Option<TyId>,
+        flow: &mut Flow,
+        mode: PlaceMode,
+    ) -> TyId {
         let (span, kind) = {
             let expr = self.hir.expr(expr);
             (expr.span, expr.kind.clone())
@@ -29,9 +54,33 @@ impl Checker<'_> {
 
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
-            ExprKind::Path(res) => self.path_ty(res, span, flow),
+            ExprKind::Path(res) => self.check_path(expr, res, span, flow, mode),
             ExprKind::Borrow { operand } => self.check_borrow(operand, flow),
-            ExprKind::Deref { operand } => self.check_deref(operand, flow, span),
+            ExprKind::Deref { operand } => {
+                let ty = self.check_deref(operand, flow, span);
+                if let Some(mut place) = self.results.place(operand).cloned() {
+                    place.projections.push(PlaceProjection::Deref);
+                    place.ty = ty;
+                    self.results.record_place(expr, place);
+                }
+                ty
+            }
+            ExprKind::Field {
+                base,
+                name,
+                name_span,
+            } => self.check_field(
+                expr,
+                FieldAccess {
+                    base,
+                    name,
+                    name_span,
+                },
+                span,
+                flow,
+                mode,
+            ),
+            ExprKind::Struct { adt, fields } => self.check_struct_literal(adt, &fields, flow, span),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)
@@ -57,12 +106,28 @@ impl Checker<'_> {
         ty
     }
 
-    fn path_ty(&mut self, res: Res, span: Span, flow: &mut Flow) -> TyId {
+    fn check_path(
+        &mut self,
+        expr: HirExprId,
+        res: Res,
+        span: Span,
+        flow: &Flow,
+        mode: PlaceMode,
+    ) -> TyId {
         match res {
             Res::Local(local) => {
                 let ty = self.local_type(local);
-                if !flow.diverges && !flow.is_initialized(local) && !self.is_error(ty) {
-                    self.report_uninitialized(local, span);
+                self.results.record_place(
+                    expr,
+                    ResolvedPlace {
+                        local,
+                        root_ty: ty,
+                        projections: Vec::new(),
+                        ty,
+                    },
+                );
+                if mode == PlaceMode::Read && !self.is_error(ty) {
+                    self.require_initialized(expr, flow, span);
                 }
                 ty
             }
@@ -71,6 +136,103 @@ impl Checker<'_> {
                 self.error_ty()
             }
         }
+    }
+
+    fn check_field(
+        &mut self,
+        expr: HirExprId,
+        access: FieldAccess,
+        span: Span,
+        flow: &mut Flow,
+        mode: PlaceMode,
+    ) -> TyId {
+        let FieldAccess {
+            base,
+            name,
+            name_span,
+        } = access;
+        // The base of a field is a place, so infer it without requiring the
+        // whole place to be initialized: only the selected field is read.
+        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        let (ty, field) = match self.hir.ty_ctxt().kind(base_ty) {
+            TyKind::Adt(adt) => match self.hir.ty_ctxt().field_by_name(adt, name) {
+                Some(field) => (field.ty, Some(field.def)),
+                None => {
+                    self.error(
+                        seal_error_codes::E2007,
+                        name_span,
+                        format!(
+                            "the type `{}` has no field `{}`",
+                            self.ty_text(base_ty),
+                            self.interner.resolve(name)
+                        ),
+                    )
+                    .help("check the field name against the struct declaration")
+                    .emit();
+                    (self.error_ty(), None)
+                }
+            },
+            TyKind::Ref(_) => {
+                self.error(
+                    seal_error_codes::E3015,
+                    span,
+                    "cannot access a field through a shared reference",
+                )
+                .help("dereference it first, as in `(*value).field`")
+                .emit();
+                (self.error_ty(), None)
+            }
+            TyKind::Error => (base_ty, None),
+            _ => {
+                self.error(
+                    seal_error_codes::E3015,
+                    span,
+                    format!("a value of type `{}` has no fields", self.ty_text(base_ty)),
+                )
+                .help("only struct values have named fields")
+                .emit();
+                (self.error_ty(), None)
+            }
+        };
+
+        if let (Some(field), Some(mut place)) = (field, self.results.place(base).cloned()) {
+            place.projections.push(PlaceProjection::Field(field));
+            place.ty = ty;
+            self.results.record_place(expr, place);
+        }
+        if mode == PlaceMode::Read && !self.is_error(ty) {
+            self.require_initialized(expr, flow, span);
+        }
+        ty
+    }
+
+    fn check_struct_literal(
+        &mut self,
+        definition: seal_def::DefId,
+        fields: &[(seal_def::DefId, HirExprId)],
+        flow: &mut Flow,
+        span: Span,
+    ) -> TyId {
+        let Some(adt) = self.hir.adt(definition) else {
+            return self.error_ty();
+        };
+        let ty = self.hir.ty_ctxt().adt_ty(adt);
+        for (field, value) in fields {
+            let field_ty = match self.hir.ty_ctxt().field(adt, *field) {
+                Some(field) => field.ty,
+                None => {
+                    self.error(
+                        seal_error_codes::E2007,
+                        span,
+                        "this struct literal names a field that no longer exists",
+                    )
+                    .emit();
+                    self.error_ty()
+                }
+            };
+            self.check_expr(*value, field_ty, flow);
+        }
+        ty
     }
 
     /// Checks that `condition` has type `bool`.

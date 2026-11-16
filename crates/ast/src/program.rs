@@ -6,8 +6,8 @@ use seal_symbol::Symbol;
 
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
 use crate::expr::{Expr, ExprKind};
-use crate::id::{BlockId, ExprId, ItemId, ParamId, StmtId, TypeId};
-use crate::item::{Item, ItemKind, Param};
+use crate::id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId};
+use crate::item::{FieldDecl, Item, ItemKind, Param};
 use crate::ty::{Type, TypeKind};
 
 /// The items of one source file, in source order.
@@ -45,6 +45,7 @@ impl Program {
 pub struct Ast {
     items: IndexVec<ItemId, Item>,
     params: IndexVec<ParamId, Param>,
+    fields: IndexVec<FieldDeclId, FieldDecl>,
     blocks: IndexVec<BlockId, Block>,
     stmts: IndexVec<StmtId, Stmt>,
     exprs: IndexVec<ExprId, Expr>,
@@ -69,6 +70,12 @@ impl Ast {
     #[inline]
     pub fn param(&self, id: ParamId) -> &Param {
         &self.params[id]
+    }
+
+    /// Returns a struct field declaration.
+    #[inline]
+    pub fn field(&self, id: FieldDeclId) -> &FieldDecl {
+        &self.fields[id]
     }
 
     /// Returns a block.
@@ -105,6 +112,12 @@ impl Ast {
     #[inline]
     pub fn param_arena(&self) -> &IndexVec<ParamId, Param> {
         &self.params
+    }
+
+    /// Returns all field declaration nodes, indexable by [`FieldDeclId`].
+    #[inline]
+    pub fn field_arena(&self) -> &IndexVec<FieldDeclId, FieldDecl> {
+        &self.fields
     }
 
     /// Returns all block nodes, indexable by [`BlockId`].
@@ -156,6 +169,22 @@ impl AstBuilder {
     /// Adds a parameter and returns its ID.
     pub fn push_param(&mut self, name: Symbol, name_span: Span, ty: TypeId, span: Span) -> ParamId {
         self.ast.params.push(Param {
+            name,
+            name_span,
+            ty,
+            span,
+        })
+    }
+
+    /// Adds a struct field declaration and returns its ID.
+    pub fn push_field(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        ty: TypeId,
+        span: Span,
+    ) -> FieldDeclId {
+        self.ast.fields.push(FieldDecl {
             name,
             name_span,
             ty,

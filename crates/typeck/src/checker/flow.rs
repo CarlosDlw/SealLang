@@ -1,57 +1,57 @@
-//! Definite-initialization state.
+//! Definite-initialization state over move paths.
 
 use seal_def::DefId;
-use seal_hash::FxHashSet;
+use seal_ty::{InitPaths, InitState, TyCtxt, TyId};
 
-/// Which locals are definitely initialized at one program point, and whether
-/// that point is unreachable.
+/// Which move paths are definitely initialized at one program point, and
+/// whether that point is unreachable.
 #[derive(Clone, Debug)]
 pub(crate) struct Flow {
-    initialized: FxHashSet<DefId>,
+    init: InitPaths<DefId>,
     pub(crate) diverges: bool,
 }
 
 impl Flow {
     pub(crate) fn new() -> Self {
         Self {
-            initialized: FxHashSet::default(),
+            init: InitPaths::new(),
             diverges: false,
         }
     }
 
-    pub(crate) fn is_initialized(&self, local: DefId) -> bool {
-        self.initialized.contains(&local)
+    /// Returns the initialization state of a place.
+    pub(crate) fn state(
+        &self,
+        local: DefId,
+        fields: &[DefId],
+        root_ty: TyId,
+        tcx: &TyCtxt,
+    ) -> InitState {
+        self.init.state(local, fields, tcx, root_ty)
     }
 
-    pub(crate) fn mark_initialized(&mut self, local: DefId) {
-        self.initialized.insert(local);
-    }
-
-    pub(crate) fn mark_uninitialized(&mut self, local: DefId) {
-        self.initialized.remove(&local);
+    /// Records that a place was assigned, covering its descendants.
+    pub(crate) fn assign(&mut self, local: DefId, fields: &[DefId]) {
+        self.init.assign(local, fields);
     }
 
     /// Joins the states after the two arms of a conditional.
     ///
-    /// A local is initialized afterwards only when both continuing paths
+    /// A place is initialized afterwards only when both continuing paths
     /// initialize it. A path that diverged never reaches the join, so its state
     /// is ignored. When both paths diverge, the join is unreachable.
     pub(crate) fn merge(&mut self, then: Self, otherwise: Self) {
         if then.diverges && otherwise.diverges {
             self.diverges = true;
-            self.initialized = then.initialized;
+            self.init = then.init;
         } else if then.diverges {
             *self = otherwise;
         } else if otherwise.diverges {
             *self = then;
         } else {
-            let mut initialized = FxHashSet::default();
-            for local in &then.initialized {
-                if otherwise.initialized.contains(local) {
-                    initialized.insert(*local);
-                }
-            }
-            self.initialized = initialized;
+            let mut init = then.init;
+            init.join(&otherwise.init);
+            self.init = init;
             self.diverges = false;
         }
     }

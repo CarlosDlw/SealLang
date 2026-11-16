@@ -5,6 +5,10 @@
 pub enum DefKind {
     /// A function item.
     Function,
+    /// A struct item.
+    Struct,
+    /// A struct field declaration.
+    Field,
     /// A function parameter.
     Param,
     /// A `let` binding.
@@ -23,6 +27,8 @@ impl DefKind {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Function => "function",
+            Self::Struct => "struct",
+            Self::Field => "field",
             Self::Param => "parameter",
             Self::Binding => "binding",
         }
@@ -44,6 +50,8 @@ mod tests {
     fn descriptions_are_distinct() {
         let descriptions = [
             DefKind::Function.description(),
+            DefKind::Struct.description(),
+            DefKind::Field.description(),
             DefKind::Param.description(),
             DefKind::Binding.description(),
         ];

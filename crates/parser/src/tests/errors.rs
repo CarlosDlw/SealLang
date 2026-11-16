@@ -64,7 +64,7 @@ fn every_parser_error_has_a_stable_code() {
         ("let x = 1;", "E1001"),
         ("func f()", "E1002"),
         ("func main() { ; }", "E1003"),
-        ("func f(a: Missing) {}", "E1004"),
+        ("func f(a:) {}", "E1004"),
         ("func () {}", "E1005"),
         ("func main() { 1 = 2 }", "E1006"),
         ("func main() { let x; }", "E1007"),

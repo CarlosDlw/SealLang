@@ -322,6 +322,18 @@ impl Reachability<'_> {
             ExprKind::Unary { operand, .. }
             | ExprKind::Borrow { operand }
             | ExprKind::Deref { operand } => self.check_expr(operand),
+            ExprKind::Field { base, .. } => self.check_expr(base),
+            ExprKind::Struct { adt, fields } => {
+                let data = self.hir.definitions().get(adt);
+                assert_eq!(data.kind, DefKind::Struct);
+                self.assert_span(data.span);
+                for (field, value) in fields {
+                    let field_data = self.hir.definitions().get(field);
+                    assert_eq!(field_data.kind, DefKind::Field);
+                    assert_eq!(field_data.parent, Some(adt));
+                    self.check_expr(value);
+                }
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.check_expr(lhs);
                 self.check_expr(rhs);

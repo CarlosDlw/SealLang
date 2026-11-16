@@ -37,7 +37,7 @@ mod res;
 mod tests;
 
 pub use body::{Block, Body, ParamData, Stmt, StmtKind};
-pub use expr::{Expr, ExprKind, Place};
+pub use expr::{Expr, ExprKind, Place, Projection};
 pub use id::{BodyId, HirBlockId, HirExprId, HirStmtId};
 pub use primitives::primitive_kind;
 pub use res::Res;
@@ -48,7 +48,7 @@ use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
 use seal_symbol::Interner;
-use seal_ty::TyCtxt;
+use seal_ty::{AdtId, TyCtxt};
 
 /// The lowered representation of one file.
 #[derive(Debug)]
@@ -60,6 +60,7 @@ pub struct Hir {
     exprs: IndexVec<HirExprId, Expr>,
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
+    structs: FxHashMap<DefId, AdtId>,
 }
 
 impl Hir {
@@ -135,15 +136,26 @@ impl Hir {
     /// Returns the place denoted by `expr`, when it denotes storage.
     ///
     /// A local path is a place rooted at its definition; `*reference` is the
-    /// place reached by one dereference. Borrows and values are not places.
-    /// Assignment and update targets are expressions, so this is how a consumer
-    /// asks whether the target is assignable without matching on the tree.
+    /// place reached by one dereference; a field access projects from its base
+    /// place. Borrows, calls, and literals are not places. Assignment and update
+    /// targets are expressions, so this is how a consumer asks whether the
+    /// target is assignable without matching on the tree.
     pub fn place(&self, expr: HirExprId) -> Option<Place> {
         match self.exprs[expr].kind {
             ExprKind::Path(Res::Local(def)) => Some(Place::local(def)),
             ExprKind::Deref { operand } => self.place(operand).map(Place::deref),
+            ExprKind::Field { base, name, .. } => self.place(base).map(|place| place.field(name)),
             _ => None,
         }
+    }
+
+    /// Returns the aggregate reserved for the struct definition `def`.
+    pub fn adt(&self, def: DefId) -> Option<AdtId> {
+        self.structs.get(&def).copied()
+    }
+
+    pub(crate) fn insert_struct(&mut self, def: DefId, adt: AdtId) {
+        self.structs.insert(def, adt);
     }
 
     /// Returns all blocks, indexable by [`HirBlockId`].
@@ -171,6 +183,7 @@ impl Hir {
             exprs: IndexVec::new(),
             ty_ctxt,
             body_of: FxHashMap::default(),
+            structs: FxHashMap::default(),
         }
     }
 

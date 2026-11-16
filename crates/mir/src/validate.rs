@@ -143,7 +143,7 @@ pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
     for (block, data) in body.blocks.iter_enumerated() {
         for statement in &data.statements {
             let StatementKind::Assign { place, rvalue } = &statement.kind;
-            check_place(body, block, *place)?;
+            check_place(body, block, place.clone())?;
             check_rvalue(body, block, rvalue)?;
         }
         match &data.terminator.kind {
@@ -153,7 +153,7 @@ pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
                 targets,
                 otherwise,
             } => {
-                check_operand(body, block, *discriminant)?;
+                check_operand(body, block, discriminant)?;
                 for target in targets {
                     check_target(body, block, target.target)?;
                 }
@@ -179,7 +179,7 @@ fn check_place(body: &Body, block: BasicBlockId, place: Place) -> Result<(), Val
 fn check_operand(
     body: &Body,
     block: BasicBlockId,
-    operand: Operand,
+    operand: &Operand,
 ) -> Result<(), ValidationError> {
     if let Some(place) = operand.place() {
         check_place(body, block, place)?;
@@ -189,16 +189,22 @@ fn check_operand(
 
 fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(), ValidationError> {
     match rvalue {
-        Rvalue::Use(operand) => check_operand(body, block, *operand),
-        Rvalue::Ref(place) => check_place(body, block, *place),
+        Rvalue::Use(operand) => check_operand(body, block, operand),
+        Rvalue::Ref(place) => check_place(body, block, place.clone()),
         Rvalue::Binary { lhs, rhs, .. } => {
-            check_operand(body, block, *lhs)?;
-            check_operand(body, block, *rhs)
+            check_operand(body, block, lhs)?;
+            check_operand(body, block, rhs)
         }
-        Rvalue::Unary { operand, .. } => check_operand(body, block, *operand),
+        Rvalue::Unary { operand, .. } => check_operand(body, block, operand),
         Rvalue::Call { args, .. } => {
             for arg in args {
-                check_operand(body, block, *arg)?;
+                check_operand(body, block, arg)?;
+            }
+            Ok(())
+        }
+        Rvalue::Aggregate { fields, .. } => {
+            for (_, operand) in fields {
+                check_operand(body, block, operand)?;
             }
             Ok(())
         }

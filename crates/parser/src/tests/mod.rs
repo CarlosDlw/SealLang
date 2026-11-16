@@ -6,4 +6,5 @@ mod exprs;
 mod items;
 mod recovery;
 mod stmts;
+mod structs;
 mod support;

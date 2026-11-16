@@ -5,6 +5,58 @@ use seal_hash::FxHashMap;
 use seal_hir::HirExprId;
 use seal_ty::TyId;
 
+/// One step from a place to a sub-place, with the field resolved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PlaceProjection {
+    /// Reads through a shared reference.
+    Deref,
+    /// Selects a struct field by its definition.
+    Field(DefId),
+}
+
+/// A place resolved by type checking.
+///
+/// HIR keeps field names symbolic because resolving them needs the base type.
+/// The checker records the resolved form once, and later phases (MIR lowering,
+/// move analysis) consume it instead of resolving again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedPlace {
+    /// The local or parameter the place starts from.
+    pub local: DefId,
+    /// The declared type of that local.
+    pub root_ty: TyId,
+    /// The projections in application order.
+    pub projections: Vec<PlaceProjection>,
+    /// The type of the selected place.
+    pub ty: TyId,
+}
+
+impl ResolvedPlace {
+    /// Returns `true` if any projection reads through a reference.
+    pub fn contains_deref(&self) -> bool {
+        self.projections.contains(&PlaceProjection::Deref)
+    }
+
+    /// Returns `true` if the place names the whole local.
+    pub fn is_whole(&self) -> bool {
+        self.projections.is_empty()
+    }
+
+    /// Returns the field definitions selected by the place.
+    ///
+    /// Dereferences do not contribute: initialization is only tracked inside one
+    /// frame's storage.
+    pub fn field_defs(&self) -> Vec<DefId> {
+        self.projections
+            .iter()
+            .filter_map(|projection| match projection {
+                PlaceProjection::Field(field) => Some(*field),
+                PlaceProjection::Deref => None,
+            })
+            .collect()
+    }
+}
+
 /// A function signature as seen by callers.
 ///
 /// Parameters whose declared type is unsized are normalized to the error type,
@@ -29,6 +81,7 @@ pub struct TypeckResults {
     expr_ty: FxHashMap<HirExprId, TyId>,
     local_ty: FxHashMap<DefId, TyId>,
     signatures: FxHashMap<DefId, Signature>,
+    places: FxHashMap<HirExprId, ResolvedPlace>,
 }
 
 impl TypeckResults {
@@ -47,6 +100,11 @@ impl TypeckResults {
         self.signatures.get(&function)
     }
 
+    /// Returns the resolved place denoted by `expr`, if it denotes storage.
+    pub fn place(&self, expr: HirExprId) -> Option<&ResolvedPlace> {
+        self.places.get(&expr)
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -57,6 +115,7 @@ impl TypeckResults {
             expr_ty: FxHashMap::default(),
             local_ty: FxHashMap::default(),
             signatures: FxHashMap::default(),
+            places: FxHashMap::default(),
         }
     }
 
@@ -66,6 +125,10 @@ impl TypeckResults {
 
     pub(crate) fn record_local(&mut self, local: DefId, ty: TyId) {
         self.local_ty.insert(local, ty);
+    }
+
+    pub(crate) fn record_place(&mut self, expr: HirExprId, place: ResolvedPlace) {
+        self.places.insert(expr, place);
     }
 
     pub(crate) fn insert_signature(&mut self, function: DefId, signature: Signature) {

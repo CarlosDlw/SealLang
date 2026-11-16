@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::id::{InferTyId, TyId};
+use crate::id::{AdtId, InferTyId, TyId};
 
 /// A signed integer type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -161,8 +161,8 @@ impl fmt::Display for FloatTy {
 /// The meaning of a type.
 ///
 /// The variants mirror the language surface: scalars, the unsized `str`, shared
-/// references, the unit and never types, and the two non-user types (`Error` and
-/// `Infer`). Aggregates are added when the language gains them.
+/// references, nominal aggregates, the unit and never types, and the two
+/// non-user types (`Error` and `Infer`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     /// The boolean type `bool`.
@@ -181,6 +181,8 @@ pub enum TyKind {
     Float(FloatTy),
     /// A shared, non-owning reference, written `*T`.
     Ref(TyId),
+    /// A nominal aggregate type, such as a struct.
+    Adt(AdtId),
     /// The unit type `()`.
     Unit,
     /// The never type `!`, the type of expressions that do not return.

@@ -1,6 +1,7 @@
 //! Type syntax.
 
 use seal_span::Span;
+use seal_symbol::Symbol;
 
 use crate::id::TypeId;
 
@@ -113,6 +114,8 @@ pub enum TypeKind {
     Primitive(PrimitiveType),
     /// A pointer to another type.
     Pointer(TypeId),
+    /// A named type, resolved against the type namespace during lowering.
+    Path(Symbol),
     /// Syntax the parser could not turn into a type.
     Error,
 }

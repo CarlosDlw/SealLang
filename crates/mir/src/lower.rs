@@ -13,8 +13,8 @@ use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
-use crate::place::Place;
-use crate::rvalue::{BinOp, Rvalue, UnOp};
+use crate::place::{Place, Projection};
+use crate::rvalue::{AggregateKind, BinOp, Rvalue, UnOp};
 use crate::statement::Statement;
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
 
@@ -343,12 +343,28 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(dest, Rvalue::Ref(place), span);
                 }
             }
-            ExprKind::Deref { .. } => {
+            ExprKind::Deref { .. } | ExprKind::Field { .. } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(expr);
                     let ty = self.expr_ty(expr);
                     let operand = self.place_operand(place, ty);
                     self.assign_operand(dest, operand, span);
+                }
+            }
+            ExprKind::Struct { adt, fields } => {
+                if let Some(dest) = dest {
+                    let fields = fields
+                        .iter()
+                        .map(|(field, value)| (*field, self.lower_operand(*value)))
+                        .collect();
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::Aggregate {
+                            kind: AggregateKind::Adt(adt),
+                            fields,
+                        },
+                        span,
+                    );
                 }
             }
             ExprKind::Unary { op, operand } => {
@@ -433,8 +449,12 @@ impl<'a> BodyLowering<'a> {
         );
 
         self.current = Some(short_block);
-        if let Some(dest) = dest {
-            self.assign_constant(dest, Constant::Bool(matches!(op, LogicalOp::Or)), span);
+        if let Some(dest) = &dest {
+            self.assign_constant(
+                dest.clone(),
+                Constant::Bool(matches!(op, LogicalOp::Or)),
+                span,
+            );
         }
         self.terminate_goto(join_block, span);
 
@@ -473,7 +493,7 @@ impl<'a> BodyLowering<'a> {
         );
 
         self.current = Some(then_block);
-        self.lower_block(then_branch, dest);
+        self.lower_block(then_branch, dest.clone());
         if self.current.is_some() {
             self.terminate_goto(join_block, span);
         }
@@ -509,7 +529,7 @@ impl<'a> BodyLowering<'a> {
             }
             _ => {
                 let rhs = self.lower_operand(value);
-                let lhs = self.place_operand(target_place, target_ty);
+                let lhs = self.place_operand(target_place.clone(), target_ty);
                 self.assign_rvalue(
                     target_place,
                     Rvalue::Binary {
@@ -530,7 +550,7 @@ impl<'a> BodyLowering<'a> {
     fn lower_update(&mut self, op: UpdateOp, target: HirExprId, dest: Option<Place>, span: Span) {
         let target_place = self.place_of_expr(target);
         let target_ty = self.expr_ty(target);
-        let lhs = self.place_operand(target_place, target_ty);
+        let lhs = self.place_operand(target_place.clone(), target_ty);
         let rhs = Operand::Constant(self.constant_one(target_ty));
         let op = match op {
             UpdateOp::Increment => BinOp::Add,
@@ -588,13 +608,13 @@ impl<'a> BodyLowering<'a> {
                 self.place_operand(place, ty)
             }
             ExprKind::Path(Res::Function(_)) | ExprKind::Error => Operand::Constant(Constant::Unit),
-            ExprKind::Deref { .. } => {
+            ExprKind::Deref { .. } | ExprKind::Field { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)
             }
             _ => {
                 let temp = self.new_temp(ty, span);
-                self.lower_expr_into(expr, Some(temp));
+                self.lower_expr_into(expr, Some(temp.clone()));
                 self.place_operand(temp, ty)
             }
         }
@@ -629,15 +649,19 @@ impl<'a> BodyLowering<'a> {
     }
 
     fn place_of_expr(&self, expr: HirExprId) -> Place {
-        let place = self
-            .hir
-            .place(expr)
-            .expect("type checking rejects non-place assignment targets");
-        let local = self.place_of_local(place.local_def());
-        Place {
-            local: local.local,
-            derefs: place.derefs(),
-        }
+        let place = self.typeck.place(expr).unwrap_or_else(|| {
+            panic!("expression {expr:?} has no resolved place; this is a compiler bug")
+        });
+        let local = self.place_of_local(place.local).local;
+        let projections = place
+            .projections
+            .iter()
+            .map(|projection| match projection {
+                seal_typeck::PlaceProjection::Deref => Projection::Deref,
+                seal_typeck::PlaceProjection::Field(field) => Projection::Field(*field),
+            })
+            .collect();
+        Place::with_projections(local, projections)
     }
 
     fn place_of_local(&self, local: DefId) -> Place {

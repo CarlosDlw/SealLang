@@ -33,7 +33,7 @@ pub enum Constant {
 }
 
 /// A value read by an operation.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
     /// Reads a place without taking ownership; valid because the type is `Copy`.
     Copy(Place),
@@ -46,9 +46,9 @@ pub enum Operand {
 impl Operand {
     /// Returns the place this operand reads, if it reads one.
     #[inline]
-    pub const fn place(self) -> Option<Place> {
+    pub fn place(&self) -> Option<Place> {
         match self {
-            Self::Copy(place) | Self::Move(place) => Some(place),
+            Self::Copy(place) | Self::Move(place) => Some(place.clone()),
             Self::Constant(_) => None,
         }
     }

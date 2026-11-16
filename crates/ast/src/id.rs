@@ -17,6 +17,11 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Identifies a struct field declaration.
+    pub struct FieldDeclId;
+}
+
+newtype_index! {
     /// Identifies a block.
     pub struct BlockId;
 }

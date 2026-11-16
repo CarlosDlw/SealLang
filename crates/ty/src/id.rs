@@ -13,3 +13,12 @@ newtype_index! {
     /// Index of an inference variable in an [`InferCtxt`](crate::InferCtxt).
     pub struct InferTyId;
 }
+
+newtype_index! {
+    /// Index of an aggregate definition in a [`TyCtxt`](crate::TyCtxt).
+    ///
+    /// The ID names the nominal definition, not the type: two fields with the
+    /// same IDs denote the same aggregate even when their fields are written in
+    /// different places.
+    pub struct AdtId;
+}

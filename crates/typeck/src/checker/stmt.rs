@@ -81,9 +81,7 @@ fn check_stmt(checker: &mut Checker<'_>, statement: HirStmtId, mut flow: Flow) -
             };
             checker.results.record_local(local, local_ty);
             if init.is_some() || declared.is_none() {
-                flow.mark_initialized(local);
-            } else {
-                flow.mark_uninitialized(local);
+                flow.assign(local, &[]);
             }
         }
         StmtKind::Return(value) => {

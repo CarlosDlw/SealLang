@@ -42,7 +42,7 @@ mod results;
 #[cfg(test)]
 mod tests;
 
-pub use results::{Signature, TypeckResults};
+pub use results::{PlaceProjection, ResolvedPlace, Signature, TypeckResults};
 
 use seal_diagnostics::DiagCtxt;
 use seal_hir::Hir;

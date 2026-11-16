@@ -26,7 +26,8 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, inference variables, unification, and the `Copy`/`Sized`/`Drop` queries from the memory model. |
+| `seal-ty` | Interned semantic types and aggregates, inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-layout` | Deterministic struct layout: field offsets, alignment, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
@@ -188,6 +189,42 @@ allowed to depend only on crates below it in the list.
     after type checking reported no errors, so every place, operand, and edge is
     well formed; `seal-mir` validation runs first, and a structural failure is
     an internal compiler error rather than a user diagnostic.
+44. **Aggregates are nominal and structural.** A struct declaration interns an
+    `AdtId`; its type is `TyKind::Adt`, never a structural tuple. Two structs
+    with identical fields are different types, and `Copy`, `Sized`, `Drop`, and
+    `contains_reference` are derived by walking the field types, with a cycle
+    guard so a malformed declaration cannot hang a query.
+45. **Struct literals are complete.** Every field appears exactly once, every
+    named field exists, every field initializer has the declared field type, and
+    a literal in value position is rejected in favor of a type name
+    (`E2005`–`E2010`). Duplicate field names and duplicate struct names are
+    rejected at declaration.
+46. **Fields are places, not accessors.** `p.x` denotes storage: it needs a
+    place base (`E2012`), never autodereferences a `*T` (`E3015` tells the user
+    to write `(*p).x`), and selects a field whose resolved `DefId` is recorded
+    once by the checker for MIR. Reading a field reads only that field's move
+    path; it does not require sibling fields to be initialized.
+47. **Structs own their fields and are not `Copy`.** A struct value moves as a
+    whole; a `Copy` field still copies when read. Field writes require the root
+    binding to be `mut` (`E3004`), because a field write does not initialize the
+    binding as a whole. Field-by-field initialization needs a declared type and
+    `mut`, and a whole assignment initializes every field at once.
+48. **Recursion needs indirection.** A struct cannot contain itself by value
+    (`E3016`); a reference field breaks the cycle. A struct field must be
+    `Sized` (`E3010`).
+49. **Layout is deterministic.** `seal-layout` assigns offsets in declaration
+    order with natural alignment and no reordering, so the same types produce
+    the same layout in every phase and on every target with the same data model.
+50. **MIR places carry projections.** A `Place` is a local plus
+    `Projection::{Deref, Field(DefId)}`; a struct literal lowers to
+    `Rvalue::Aggregate` with field operands in evaluation order, and a non-`Copy`
+    field read is a `Move`. Validation checks every projected place's local.
+51. **Move paths reach into aggregates.** Type checking and borrow checking
+    share `seal_ty::InitPaths`: a field assignment initializes only that path,
+    reading an uninitialized field is `E3011`/`E5003`, and a read of a field
+    whose sibling moved is allowed. Borrow conflicts compare path prefixes, so
+    borrowing `p.x` leaves `p.y` writable and borrowing `p` blocks both. A
+    whole-place borrow with a moved field is `E5006`.
 
 ## Extension points
 
@@ -215,10 +252,11 @@ allowed to depend only on crates below it in the list.
 - **New control-flow construct.** Lower it to blocks and `Goto`/`SwitchInt`
   edges; `while` shows the loop-target stack and `&&`/`||` the short-circuit
   shape. Every new edge must go through `validate`'s target check.
-- **New projection.** `Place` is already the unit of storage, so add the
-  projection layer inside `seal-mir` and update validation; consumers that take
-  a `Place` need no signature change. A projection that can name partial
-  storage must also teach `seal-borrowck`'s conflict check to compare ranges.
+- **New projection.** `Place` carries `Projection::{Deref, Field(DefId)}`; a
+  new projection (array index, slice range) is a variant in `seal-mir` plus a
+  resolved counterpart in `seal-typeck`. Update `seal-borrowck`'s prefix
+  comparison and `seal-layout` when the projection selects storage with an
+  address; the walk that reads and writes places otherwise stays unchanged.
 - **New loan kind.** `*mut T` adds an exclusive kind to `seal-borrowck`'s loan
   table: extend the conflict check so exclusive loans reject overlapping reads
   and borrows, and keep the may-hold analysis unchanged. Two-phase borrows then
@@ -227,6 +265,10 @@ allowed to depend only on crates below it in the list.
   liveness, may-hold, and initialization, and report through the `E5xxx` range;
   `check` walks every body in block order, so a new pass slots in without
   changing the driver.
+- **New aggregate kind.** Structs use the `AdtDef`/`FieldDef` arena and
+  `TyKind::Adt`; an enum or tuple adds an `AdtKind`, reuses the same arena, and
+  extends `seal-layout` with its discriminant. Structural queries must keep
+  their cycle guard, because declarations can refer to each other.
 - **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
   unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
   and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both

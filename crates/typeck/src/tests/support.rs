@@ -120,6 +120,10 @@ impl Fixture {
     pub(crate) fn symbol(&self, symbol: Symbol) -> String {
         self.interner.resolve(symbol).to_owned()
     }
+
+    pub(crate) fn interner(&self) -> &Interner {
+        &self.interner
+    }
 }
 
 pub(crate) fn check_clean(source: &str) -> (Fixture, Hir, TypeckResults) {
@@ -196,6 +200,13 @@ pub(crate) fn local_ty(results: &TypeckResults, local: DefId) -> TyId {
 
 pub(crate) fn ty_text(hir: &Hir, ty: TyId) -> String {
     hir.ty_ctxt().display(ty).to_string()
+}
+
+/// Renders a type with struct names resolved through the fixture interner.
+pub(crate) fn ty_text_with(fixture: &Fixture, hir: &Hir, ty: TyId) -> String {
+    hir.ty_ctxt()
+        .display_with(ty, fixture.interner())
+        .to_string()
 }
 
 pub(crate) fn expect_ty(hir: &Hir, ty: TyId, expected: &str) {
