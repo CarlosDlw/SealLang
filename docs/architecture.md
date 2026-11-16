@@ -220,7 +220,11 @@ allowed to depend only on crates below it in the list.
 50. **MIR places carry projections.** A `Place` is a local plus
     `Projection::{Deref, Field(DefId)}`; a struct literal lowers to
     `Rvalue::Aggregate` with field operands in evaluation order, and a non-`Copy`
-    field read is a `Move`. Validation checks every projected place's local.
+    field read is a `Move`. Validation checks every projected place's local. A
+    dereference of a reference value (`*identity(&v)`, `*&x`) has no local to
+    project from, so lowering stores the reference in a temporary and projects
+    through it; the read still copies, because the place is reached through a
+    reference.
 51. **Move paths reach into aggregates.** Type checking and borrow checking
     share `seal_ty::InitPaths`: a field assignment initializes only that path,
     reading an uninitialized field is `E3011`/`E5003`, and a read of a field

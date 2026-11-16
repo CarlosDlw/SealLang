@@ -15,7 +15,10 @@
 //! [`Rvalue::Call`](crate::Rvalue::Call) is a statement rather than a terminator:
 //! Seal has no unwinding, so a call cannot leave the block on a failure path.
 //! Borrows are [`Rvalue::Ref`](crate::Rvalue::Ref) statements, and reads through
-//! a reference carry a dereference projection on the [`Place`](crate::Place).
+//! a reference carry a dereference projection on the [`Place`](crate::Place). A
+//! dereference whose operand is itself a value, as in `*identity(&v)` or `*&x`,
+//! lowers that reference into a temporary first: HIR calls the expression a
+//! value rather than a place, but it still denotes storage.
 //!
 //! # Lowering
 //!

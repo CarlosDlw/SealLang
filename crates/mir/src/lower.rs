@@ -7,7 +7,7 @@ use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId,
 use seal_index::IndexVec;
 use seal_span::Span;
 use seal_ty::{TyId, TyKind};
-use seal_typeck::TypeckResults;
+use seal_typeck::{PlaceProjection, ResolvedPlace, TypeckResults};
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -650,17 +650,38 @@ impl<'a> BodyLowering<'a> {
         }
     }
 
-    fn place_of_expr(&self, expr: HirExprId) -> Place {
-        let place = self.typeck.place(expr).unwrap_or_else(|| {
-            panic!("expression {expr:?} has no resolved place; this is a compiler bug")
-        });
+    /// Lowers the storage denoted by `expr`.
+    ///
+    /// Type checking records a place for every projection rooted at a local. A
+    /// dereference of a reference *value* — `*identity(&v)` or `*&x` — has no
+    /// local to start from, because the reference itself is a temporary.
+    /// Lowering stores that reference in a temporary and reads through it, so
+    /// the expression still denotes storage and still copies on read.
+    fn place_of_expr(&mut self, expr: HirExprId) -> Place {
+        if let Some(place) = self.typeck.place(expr) {
+            return self.resolved_place(place);
+        }
+
+        let kind = self.hir.expr(expr).kind.clone();
+        let span = self.hir.expr(expr).span;
+        let ExprKind::Deref { operand } = kind else {
+            panic!("expression {expr:?} is not a place; this is a compiler bug");
+        };
+        let reference_ty = self.expr_ty(operand);
+        let reference = self.new_temp(reference_ty, span);
+        self.lower_expr_into(operand, Some(reference.clone()));
+        reference.deref()
+    }
+
+    /// Converts a place resolved by type checking into a MIR place.
+    fn resolved_place(&self, place: &ResolvedPlace) -> Place {
         let local = self.place_of_local(place.local).local;
         let projections = place
             .projections
             .iter()
             .map(|projection| match projection {
-                seal_typeck::PlaceProjection::Deref => Projection::Deref,
-                seal_typeck::PlaceProjection::Field(field) => Projection::Field(*field),
+                PlaceProjection::Deref => Projection::Deref,
+                PlaceProjection::Field(field) => Projection::Field(*field),
             })
             .collect();
         Place::with_projections(local, projections)

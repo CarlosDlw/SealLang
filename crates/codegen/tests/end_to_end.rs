@@ -212,6 +212,16 @@ fn debug_executable_contains_dwarf_types_functions_and_variables() {
 }
 
 #[test]
+fn a_dereference_of_a_returned_reference_runs() {
+    let source = "func identity(p: *i32) -> *i32 {\n  p\n}\n\n\
+                  func main() -> i32 {\n  let x = 41;\n  *identity(&x) + 1\n}\n";
+    let output = TempOutput::new("deref-reference-value");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("code generation succeeds");
+    assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
 fn object_and_assembly_output_do_not_require_an_entry_point() {
     let source = "func add(a: i32, b: i32) -> i32 { a + b }";
 

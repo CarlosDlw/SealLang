@@ -17,6 +17,19 @@ fn writing_while_a_borrow_is_live_is_rejected() {
 }
 
 #[test]
+fn reading_through_a_borrow_expression_is_allowed() {
+    check_clean("func f() -> i32 {\n  let x = 1;\n  *&x\n}\n");
+}
+
+#[test]
+fn reading_through_a_returned_reference_is_allowed() {
+    check_clean(
+        "func identity(p: *i32) -> *i32 {\n  p\n}\n\n\
+         func f() -> i32 {\n  let x = 2;\n  *identity(&x) + 1\n}\n",
+    );
+}
+
+#[test]
 fn two_shared_borrows_may_overlap() {
     check_clean("func f() -> i32 {\n  let x = 1;\n  let a = &x;\n  let b = &x;\n  *a + *b\n}\n");
 }
