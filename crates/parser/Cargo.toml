@@ -1,0 +1,17 @@
+[package]
+name = "seal-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+seal-ast.workspace = true
+seal-diagnostics.workspace = true
+seal-error-codes.workspace = true
+seal-lexer.workspace = true
+seal-span.workspace = true
+seal-symbol.workspace = true
+
+[lints]
+workspace = true

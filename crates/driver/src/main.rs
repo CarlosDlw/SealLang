@@ -94,11 +94,17 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         let Some(file) = session.source_map().file(file_id) else {
             continue;
         };
-        // The token stream will feed the parser; until it lands, lexing is the
-        // phase that validates the source.
-        let _lexed = session.profiler().time("lex", || {
+        let errors_before_lexing = session.diag().error_count();
+        let lexed = session.profiler().time("lex", || {
             seal_lexer::lex(&file, session.diag(), session.interner())
         });
+        // A lexical error leaves `Error` tokens behind, and parsing them only
+        // adds secondary syntax errors; the parser runs on a clean token stream.
+        if session.diag().error_count() == errors_before_lexing {
+            let _ast = session.profiler().time("parse", || {
+                seal_parser::parse(&lexed, session.diag(), session.interner())
+            });
+        }
     }
 
     if let Some(error) = session.diag().emitter_error() {
@@ -117,7 +123,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (parser, type checking, codegen) plug in here, consuming the
-    // token stream produced above.
+    // Later phases (name resolution, type checking, codegen) plug in here,
+    // consuming the tree produced above.
     Ok(ExitCode::SUCCESS)
 }

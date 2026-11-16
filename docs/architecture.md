@@ -1,9 +1,9 @@
-# Seal compiler architecture — foundation and lexer
+# Seal compiler architecture — foundation, lexer, and parser
 
-This document covers the compiler foundation and the first phase, the lexer. The
-foundation is the set of crates that every later phase (parser, name resolution,
-type checking, MIR, codegen) depends on. It is kept in sync with the code;
-changes to a public invariant must change this file in the same commit.
+This document covers the compiler foundation and the first two phases, the lexer
+and the parser. The foundation is the set of crates that every later phase (name
+resolution, type checking, MIR, codegen) depends on. It is kept in sync with the
+code; changes to a public invariant must change this file in the same commit.
 
 ## Workspace layout
 
@@ -21,6 +21,8 @@ allowed to depend only on crates below it in the list.
 | `seal-diagnostics` | Structured diagnostics, `ErrorGuaranteed`, dedup, rich/JSON/silent emitters, ICE. |
 | `seal-error-codes` | Stable code registry (`E0xxx`–`E9xxx`) with long-form explanations. |
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
+| `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
+| `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -66,6 +68,21 @@ allowed to depend only on crates below it in the list.
     characters are rejected everywhere, raw control characters are rejected in
     literals, non-ASCII whitespace and bare carriage returns are rejected, and a
     BOM is only accepted at the start of a file.
+14. **The AST is total.** Parsing always returns a tree with a program, even for
+    hostile or truncated input: invalid syntax becomes an `Error` item, statement,
+    expression, or type carrying the offending span, so later phases and editors
+    can traverse the tree without special-casing missing nodes.
+15. **The AST owns its nodes.** Nodes live in dense arenas and refer to each
+    other only through typed, non-zero IDs. Every node is reachable from the
+    program, every ID resolves, and the parser is the only writer, through
+    `AstBuilder`; consumers never mutate the tree.
+16. **Spans are exact and nested.** Every node span lies inside the file, a
+    parent's span covers its children, and `seal_ast` keeps the span of each name
+    and literal so later phases can point at the original text instead of rescanning.
+17. **Parsing terminates and recovers.** Every loop asserts progress, recursion
+    is bounded by `MAX_DEPTH`, and recovery synchronizes at `;`, `}`, `func`, and
+    end of file. The same token stream always produces the same tree, and a
+    malformed construct costs one error rather than a cascade.
 
 ## Extension points
 
@@ -76,6 +93,10 @@ allowed to depend only on crates below it in the list.
 - **New diagnostic.** Allocate the next code in the phase's range in
   `seal-error-codes`, write the explanation, and emit through `DiagCtxt`. Add a
   fixture test using `seal-test-support`.
+- **New syntax.** Add the node to `seal-ast` and a `push_*` method to
+  `AstBuilder`, parse it in `seal-parser`, and give it a recovery path plus a
+  span that covers its children. Precedence lives in `expr.rs`'s operator
+  tables, so a new binary operator is one entry and one enum variant.
 - **New token or keyword.** Add the variant to `TokenKind`, classify it in the
   scanner (keywords live in `seal-lexer`'s keyword table), and add a maximal
   munch test; keywords are reserved words, not identifiers with a flag.

@@ -246,6 +246,107 @@ tab, `\\n` for a newline, or `\\u{...}` for an arbitrary code point. A tab is
 allowed literally inside a string, but `\\t` is clearer.",
 };
 
+/// The parser expected a top-level item.
+pub const E1001: ErrorCode = ErrorCode {
+    code: "E1001",
+    title: "expected an item",
+    explanation: "\
+A source file is a sequence of items, and the only item Seal currently defines is
+a function declaration. The parser found a token that cannot start one.
+
+Start the declaration with `func`, or remove the stray text. Items are not nested:
+functions are declared at the top level of the file, never inside another function.",
+};
+
+/// The parser expected a particular token.
+pub const E1002: ErrorCode = ErrorCode {
+    code: "E1002",
+    title: "expected a token",
+    explanation: "\
+The grammar required a specific token at this point, such as a `;`, `)`, `}`, or
+`->`, but the parser found something else. The message names the expected token
+and the token that was found.
+
+Check the surrounding delimiters. Because Seal statements are terminated by `;`,
+a missing semicolon is the most common cause of this error.",
+};
+
+/// The parser expected an expression.
+pub const E1003: ErrorCode = ErrorCode {
+    code: "E1003",
+    title: "expected an expression",
+    explanation: "\
+An expression was required but the parser found a token that cannot start one.
+Expressions are literals, names, parenthesized expressions, calls, and unary or
+binary operations on those.
+
+A common cause is a missing operand, as in `let x = ;`, or an operator from
+another language. Add an operand or remove the operator.",
+};
+
+/// The parser expected a type.
+pub const E1004: ErrorCode = ErrorCode {
+    code: "E1004",
+    title: "expected a type",
+    explanation: "\
+A type annotation needs a type name after the `:` or `->`. Seal currently has the
+integer types, `f32`, `f64`, `bool`, `char`, `str`, and pointer types written
+`*T`.
+
+Write one of those names, or a pointer to one. Names that are not built-in types
+are reported here too, because user-defined types do not exist yet.",
+};
+
+/// The parser expected an identifier.
+pub const E1005: ErrorCode = ErrorCode {
+    code: "E1005",
+    title: "expected an identifier",
+    explanation: "\
+This position needs a name: a function name, a parameter name, or a binding name.
+The parser found a keyword, a literal, or punctuation instead.
+
+Identifiers start with a letter or `_` and continue with letters, digits, and
+underscores; Unicode identifiers are accepted.",
+};
+
+/// An assignment or update has a target that cannot be assigned.
+pub const E1006: ErrorCode = ErrorCode {
+    code: "E1006",
+    title: "invalid assignment target",
+    explanation: "\
+The left side of an assignment, or the operand of `++`/`--`, must be a place: a
+variable name (possibly parenthesized). Literals, calls, and arithmetic results
+are values, not places, so they cannot be assigned to.
+
+Assign to a `let` binding instead, or remove the operation.",
+};
+
+/// A `let` binding has neither a type nor an initializer.
+pub const E1007: ErrorCode = ErrorCode {
+    code: "E1007",
+    title: "let binding needs a type or an initializer",
+    explanation: "\
+`let x;` leaves the compiler with no way to know the binding's type. A binding
+must either have a type annotation (`let x: i32;`) or an initializer
+(`let x = 1;`), or both.
+
+Add one of them. The initializer can still be assigned later, so a type-only
+binding is useful when the first assignment is conditional.",
+};
+
+/// Recursive syntax exceeds the parser's nesting limit.
+pub const E1008: ErrorCode = ErrorCode {
+    code: "E1008",
+    title: "code is nested too deeply",
+    explanation: "\
+The parser protects the process stack with a nesting limit for expressions and
+types. Valid programs stay far below it; hitting the limit usually means deeply
+nested parentheses, unary operators, or pointer types, such as generated code.
+
+Simplify the expression or split it into several `let` bindings. The limit exists
+so malformed or hostile input reports an error instead of crashing the compiler.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -274,7 +375,7 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -296,7 +397,7 @@ pub fn explain(code: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{ALL, E0001, E0002, E0003, E0012, E9001, E9002, explain, lookup};
+    use super::{ALL, E0001, E0002, E0003, E0012, E1001, E1008, E9001, E9002, explain, lookup};
 
     #[test]
     fn codes_are_unique_and_well_formed() {
@@ -354,6 +455,23 @@ mod tests {
         }
         assert_eq!(E9001.code()[1..2].parse::<u8>().expect("digit"), 9);
         assert_eq!(E9002.code()[1..2].parse::<u8>().expect("digit"), 9);
+    }
+
+    #[test]
+    fn parser_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E10"))
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008",
+            ]
+        );
+        assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
+        assert_eq!(E1008.code()[1..2].parse::<u8>().expect("digit"), 1);
     }
 
     #[test]

@@ -93,6 +93,17 @@ impl Span {
     pub const fn contains_span(self, other: Span) -> bool {
         self.lo.0 <= other.lo.0 && other.hi.0 <= self.hi.0
     }
+
+    /// Returns the smallest span covering both spans.
+    ///
+    /// Callers must only combine spans from the same file. Parsers use this to
+    /// extend a node's span from its first token to its last; combining spans
+    /// from different files would produce a range that crosses the inter-file gap
+    /// and is rejected by [`crate::SourceMap::file_of`].
+    #[inline]
+    pub fn cover(self, other: Span) -> Span {
+        Span::new(self.lo.min(other.lo), self.hi.max(other.hi))
+    }
 }
 
 impl fmt::Debug for Span {
@@ -123,6 +134,24 @@ mod tests {
         assert!(span.is_empty());
         assert_eq!(span.len(), 0);
         assert!(!span.contains(BytePos::from_u32(5)));
+    }
+
+    #[test]
+    fn covering_spans_extends_to_both_ends() {
+        let first = Span::new(BytePos::from_u32(10), BytePos::from_u32(12));
+        let second = Span::new(BytePos::from_u32(12), BytePos::from_u32(20));
+        assert_eq!(
+            first.cover(second),
+            Span::new(BytePos::from_u32(10), BytePos::from_u32(20))
+        );
+        assert_eq!(second.cover(first), first.cover(second));
+        assert_eq!(first.cover(first), first);
+
+        let empty = Span::new(BytePos::from_u32(15), BytePos::from_u32(15));
+        assert_eq!(
+            first.cover(empty),
+            Span::new(BytePos::from_u32(10), BytePos::from_u32(15))
+        );
     }
 
     #[test]
