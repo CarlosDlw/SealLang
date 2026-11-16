@@ -4,6 +4,8 @@ This document covers the compiler foundation and the first two phases, the lexer
 and the parser. The foundation is the set of crates that every later phase (name
 resolution, type checking, MIR, codegen) depends on. It is kept in sync with the
 code; changes to a public invariant must change this file in the same commit.
+The memory model that the type representation encodes is decided in
+[`memory-model.md`](memory-model.md).
 
 ## Workspace layout
 
@@ -23,6 +25,7 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
+| `seal-ty` | Interned semantic types, inference variables, unification, and the `Copy`/`Sized`/`Drop` queries from the memory model. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -79,7 +82,17 @@ allowed to depend only on crates below it in the list.
 16. **Spans are exact and nested.** Every node span lies inside the file, a
     parent's span covers its children, and `seal_ast` keeps the span of each name
     and literal so later phases can point at the original text instead of rescanning.
-17. **Parsing terminates and recovers.** Every loop asserts progress, recursion
+17. **Types are canonical.** Every type is interned, so two types are equal
+    exactly when their IDs are equal; the arena never holds two equal kinds, and
+    comparing two types never walks the structure.
+18. **Unification is sound.** Only inference variables are bound, every binding
+    passes an occurs check, and no implicit conversion exists: distinct scalar
+    types never unify. `Error` is the only type that absorbs another, and it is
+    only built after a diagnostic was reported.
+19. **Memory classification is derived.** `Copy`, `Sized`, and `Drop` are
+    queries over the interned type, never flags stored beside it, so they cannot
+    contradict the type or the memory model.
+20. **Parsing terminates and recovers.** Every loop asserts progress, recursion
     is bounded by `MAX_DEPTH`, and recovery synchronizes at `;`, `}`, `func`, and
     end of file. The same token stream always produces the same tree, and a
     malformed construct costs one error rather than a cascade.
@@ -97,6 +110,10 @@ allowed to depend only on crates below it in the list.
   `AstBuilder`, parse it in `seal-parser`, and give it a recovery path plus a
   span that covers its children. Precedence lives in `expr.rs`'s operator
   tables, so a new binary operator is one entry and one enum variant.
+- **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
+  unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
+  and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both
+  arena elements and interning keys.
 - **New token or keyword.** Add the variant to `TokenKind`, classify it in the
   scanner (keywords live in `seal-lexer`'s keyword table), and add a maximal
   munch test; keywords are reserved words, not identifiers with a flag.

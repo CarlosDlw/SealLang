@@ -1,0 +1,292 @@
+//! Type interning, construction, and the memory-model queries.
+
+use seal_hash::FxHashMap;
+use seal_index::IndexVec;
+
+use crate::id::{InferTyId, TyId};
+use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
+
+/// Interns types and answers structural queries about them.
+///
+/// Interning makes type equality a single integer comparison: two types are the
+/// same if and only if their [`TyId`]s are equal. Every constructor goes through
+/// [`TyCtxt::intern`], so the arena never holds two equal kinds.
+#[derive(Clone, Debug, Default)]
+pub struct TyCtxt {
+    kinds: IndexVec<TyId, TyKind>,
+    interner: FxHashMap<TyKind, TyId>,
+}
+
+impl TyCtxt {
+    /// Creates an empty context.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Interns `kind` and returns its canonical ID.
+    pub fn intern(&mut self, kind: TyKind) -> TyId {
+        if let Some(&id) = self.interner.get(&kind) {
+            return id;
+        }
+        let id = self.kinds.push(kind);
+        self.interner.insert(kind, id);
+        id
+    }
+
+    /// Returns the kind of `ty`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ty` did not come from this context. IDs from another context
+    /// are a programming error, not user input.
+    pub fn kind(&self, ty: TyId) -> TyKind {
+        self.kinds[ty]
+    }
+
+    /// Returns the number of interned types.
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    /// Returns `true` if no type has been interned.
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+
+    /// Returns the `bool` type.
+    pub fn bool_ty(&mut self) -> TyId {
+        self.intern(TyKind::Bool)
+    }
+
+    /// Returns the `char` type.
+    pub fn char_ty(&mut self) -> TyId {
+        self.intern(TyKind::Char)
+    }
+
+    /// Returns the unsized `str` type.
+    pub fn str_ty(&mut self) -> TyId {
+        self.intern(TyKind::Str)
+    }
+
+    /// Returns the unit type `()`.
+    pub fn unit_ty(&mut self) -> TyId {
+        self.intern(TyKind::Unit)
+    }
+
+    /// Returns the never type `!`.
+    pub fn never_ty(&mut self) -> TyId {
+        self.intern(TyKind::Never)
+    }
+
+    /// Returns the error type used during recovery.
+    pub fn error_ty(&mut self) -> TyId {
+        self.intern(TyKind::Error)
+    }
+
+    /// Returns a signed integer type.
+    pub fn int_ty(&mut self, int: IntTy) -> TyId {
+        self.intern(TyKind::Int(int))
+    }
+
+    /// Returns an unsigned integer type.
+    pub fn uint_ty(&mut self, uint: UintTy) -> TyId {
+        self.intern(TyKind::Uint(uint))
+    }
+
+    /// Returns a floating-point type.
+    pub fn float_ty(&mut self, float: FloatTy) -> TyId {
+        self.intern(TyKind::Float(float))
+    }
+
+    /// Returns the shared reference type `*T`.
+    pub fn ref_ty(&mut self, pointee: TyId) -> TyId {
+        self.intern(TyKind::Ref(pointee))
+    }
+
+    /// Returns the type standing for the inference variable `var`.
+    pub fn infer_ty(&mut self, var: InferTyId) -> TyId {
+        self.intern(TyKind::Infer(var))
+    }
+
+    /// Returns `true` if values of `ty` are duplicated bitwise instead of moved.
+    ///
+    /// This is decision D2 of the memory model. An unresolved inference variable
+    /// reports `false`: whether it is `Copy` is not known yet, so a caller that
+    /// might move the value must resolve the type first.
+    pub fn is_copy(&self, ty: TyId) -> bool {
+        match self.kind(ty) {
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::Ref(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => true,
+            TyKind::Str | TyKind::Infer(_) => false,
+        }
+    }
+
+    /// Returns `true` if `ty` has a size known at compile time.
+    ///
+    /// `str` is the only unsized kind in the current language; an unresolved
+    /// inference variable reports `false` because its size is not known yet.
+    pub fn is_sized(&self, ty: TyId) -> bool {
+        !matches!(self.kind(ty), TyKind::Str | TyKind::Infer(_))
+    }
+
+    /// Returns `true` if dropping a value of `ty` runs a destructor.
+    ///
+    /// No current type has one: scalars, references, `str`, `()`, and `!` are
+    /// trivially disposable. Aggregates will compute this from their fields and
+    /// their own destructor. An unresolved variable reports `false`; the caller
+    /// must resolve it first, as with [`TyCtxt::is_copy`].
+    pub fn needs_drop(&self, ty: TyId) -> bool {
+        match self.kind(ty) {
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Str
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::Ref(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error
+            | TyKind::Infer(_) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
+
+    use super::TyCtxt;
+
+    #[test]
+    fn interning_is_deduplicated() {
+        let mut ctxt = TyCtxt::new();
+        let first = ctxt.int_ty(IntTy::I32);
+        let second = ctxt.int_ty(IntTy::I32);
+        assert_eq!(first, second);
+        assert_eq!(ctxt.len(), 1);
+        assert!(!ctxt.is_empty());
+    }
+
+    #[test]
+    fn distinct_kinds_get_distinct_ids() {
+        let mut ctxt = TyCtxt::new();
+        let ids = [
+            ctxt.bool_ty(),
+            ctxt.char_ty(),
+            ctxt.str_ty(),
+            ctxt.unit_ty(),
+            ctxt.never_ty(),
+            ctxt.error_ty(),
+            ctxt.int_ty(IntTy::I8),
+            ctxt.int_ty(IntTy::I64),
+            ctxt.uint_ty(UintTy::U8),
+            ctxt.uint_ty(UintTy::Usize),
+            ctxt.float_ty(FloatTy::F32),
+            ctxt.float_ty(FloatTy::F64),
+        ];
+        let unique: std::collections::BTreeSet<_> = ids.iter().map(|id| id.index()).collect();
+        assert_eq!(unique.len(), ids.len());
+        assert_eq!(ctxt.len(), ids.len());
+    }
+
+    #[test]
+    fn kind_round_trips() {
+        let mut ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I16);
+        assert_eq!(ctxt.kind(int), TyKind::Int(IntTy::I16));
+        let ptr = ctxt.ref_ty(int);
+        assert_eq!(ctxt.kind(ptr), TyKind::Ref(int));
+        let unit = ctxt.unit_ty();
+        let error = ctxt.error_ty();
+        assert_eq!(ctxt.kind(unit), TyKind::Unit);
+        assert_eq!(ctxt.kind(error), TyKind::Error);
+    }
+
+    #[test]
+    fn references_are_interned_structurally() {
+        let mut ctxt = TyCtxt::new();
+        let inner = ctxt.int_ty(IntTy::I32);
+        let first = ctxt.ref_ty(inner);
+        let second = ctxt.ref_ty(inner);
+        assert_eq!(first, second);
+
+        let nested = ctxt.ref_ty(first);
+        assert_eq!(ctxt.kind(nested), TyKind::Ref(first));
+        assert_ne!(nested, first);
+        assert_eq!(ctxt.len(), 3);
+    }
+
+    #[test]
+    fn scalars_and_references_are_copy() {
+        let mut ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let pointer = ctxt.ref_ty(int);
+        for ty in [
+            int,
+            ctxt.uint_ty(UintTy::U128),
+            ctxt.float_ty(FloatTy::F64),
+            ctxt.bool_ty(),
+            ctxt.char_ty(),
+            ctxt.unit_ty(),
+            ctxt.never_ty(),
+            pointer,
+        ] {
+            assert!(ctxt.is_copy(ty), "{ty:?} must be Copy");
+        }
+    }
+
+    #[test]
+    fn str_is_neither_copy_nor_sized() {
+        let mut ctxt = TyCtxt::new();
+        let str_ty = ctxt.str_ty();
+        assert!(!ctxt.is_copy(str_ty));
+        assert!(!ctxt.is_sized(str_ty));
+
+        let reference = ctxt.ref_ty(str_ty);
+        assert!(ctxt.is_copy(reference));
+        assert!(ctxt.is_sized(reference));
+    }
+
+    #[test]
+    fn inference_variables_report_unknown_classification() {
+        let mut infer = crate::InferCtxt::new();
+        let mut ctxt = TyCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        assert!(!ctxt.is_copy(var));
+        assert!(!ctxt.is_sized(var));
+        assert!(!ctxt.needs_drop(var));
+    }
+
+    #[test]
+    fn no_current_type_needs_drop() {
+        let mut ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        for ty in [
+            int,
+            ctxt.str_ty(),
+            ctxt.ref_ty(int),
+            ctxt.unit_ty(),
+            ctxt.never_ty(),
+            ctxt.error_ty(),
+        ] {
+            assert!(!ctxt.needs_drop(ty));
+        }
+    }
+
+    #[test]
+    fn constructors_are_stable() {
+        let mut ctxt = TyCtxt::new();
+        let first = ctxt.bool_ty();
+        let second = ctxt.bool_ty();
+        assert_eq!(first, second);
+        assert_eq!(ctxt.kind(first), TyKind::Bool);
+    }
+}

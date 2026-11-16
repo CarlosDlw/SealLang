@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-ty"
+version = "0.1.0"
+dependencies = [
+ "seal-hash",
+ "seal-index",
+]
+
+[[package]]
 name = "seal-unicode"
 version = "0.1.0"
 dependencies = [

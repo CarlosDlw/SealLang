@@ -1,0 +1,13 @@
+[package]
+name = "seal-ty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+seal-hash.workspace = true
+seal-index.workspace = true
+
+[lints]
+workspace = true

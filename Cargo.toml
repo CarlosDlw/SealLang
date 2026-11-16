@@ -18,6 +18,7 @@ seal-span = { path = "crates/span" }
 seal-lexer = { path = "crates/lexer" }
 seal-ast = { path = "crates/ast" }
 seal-parser = { path = "crates/parser" }
+seal-ty = { path = "crates/ty" }
 seal-diagnostics = { path = "crates/diagnostics" }
 seal-error-codes = { path = "crates/error-codes" }
 seal-version = { path = "crates/version" }
