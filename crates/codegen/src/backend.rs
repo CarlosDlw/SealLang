@@ -316,36 +316,48 @@ pub(crate) fn declare_functions<'ctx>(
         let returns = body.local(Body::return_local()).ty;
         let function_type = mapper.function_type(&parameters, returns)?;
         let function = module.add_function(&name, function_type, Some(Linkage::External));
-        if noalias_functions.contains(&body.owner) {
-            add_noalias(context, function, hir, body);
-        }
+        add_reference_attributes(
+            context,
+            function,
+            hir,
+            body,
+            noalias_functions.contains(&body.owner),
+        );
         functions.insert(body.owner, function);
     }
     Ok(functions)
 }
 
-/// Marks every exclusive-reference parameter of `body` as `noalias`.
+/// Adds the attributes every reference parameter can carry.
 ///
-/// The facts already proved that the callee never reaches the pointee through
-/// an unknown pointer and that every call site keeps the argument disjoint from
-/// every other reference. A `*mut str` parameter is a fat pointer, which LLVM
-/// cannot annotate, so it keeps the ordinary ABI.
-fn add_noalias<'ctx>(
+/// A shared `*T` parameter is always `readonly`: the type system forbids writing
+/// through it, so the promise holds without a whole-program proof. An exclusive
+/// `*mut T` parameter is `noalias` only when the facts proved that the callee
+/// never reaches the pointee through an unknown pointer and that every call site
+/// keeps the argument disjoint from every other reference. A `*str` or `*mut
+/// str` parameter is a fat pointer, which LLVM cannot annotate, so it keeps the
+/// ordinary ABI.
+fn add_reference_attributes<'ctx>(
     context: &'ctx Context,
     function: FunctionValue<'ctx>,
     hir: &Hir,
     body: &Body,
+    noalias: bool,
 ) {
-    let kind = Attribute::get_named_enum_kind_id("noalias");
     for (index, parameter) in body.args().enumerate() {
-        let is_plain_exclusive = matches!(
-            hir.ty_ctxt().kind(parameter.ty),
-            TyKind::Ref {
-                kind: RefKind::Exclusive,
-                pointee,
-            } if !matches!(hir.ty_ctxt().kind(pointee), TyKind::Str)
-        );
-        if is_plain_exclusive {
+        let TyKind::Ref { kind, pointee } = hir.ty_ctxt().kind(parameter.ty) else {
+            continue;
+        };
+        if matches!(hir.ty_ctxt().kind(pointee), TyKind::Str) {
+            continue;
+        }
+        let attribute = match kind {
+            RefKind::Shared => Some("readonly"),
+            RefKind::Exclusive if noalias => Some("noalias"),
+            RefKind::Exclusive => None,
+        };
+        if let Some(attribute) = attribute {
+            let kind = Attribute::get_named_enum_kind_id(attribute);
             let attribute = context.create_enum_attribute(kind, 0);
             function.add_attribute(AttributeLoc::Param(index as u32), attribute);
         }

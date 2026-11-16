@@ -1,8 +1,8 @@
-//! `noalias` emission tests.
+//! Reference parameter attribute tests.
 //!
-//! The attribute is an optimization gated by borrow checking's facts, so these
-//! tests inspect the declared LLVM functions directly instead of running the
-//! program.
+//! `readonly` follows from the type system, while `noalias` is an optimization
+//! gated by borrow checking's facts. These tests inspect the declared LLVM
+//! functions directly instead of running the program.
 
 use inkwell::context::Context;
 use seal_session::{Options, Session};
@@ -63,6 +63,28 @@ fn an_exclusive_parameter_is_noalias_when_the_proof_closes() {
          func main() -> i32 {\n  let mut value = 1;\n  bump(&mut value);\n  value\n}\n",
     );
     assert!(ir.contains("noalias"), "expected `noalias` in:\n{ir}");
+}
+
+#[test]
+fn a_shared_parameter_is_readonly() {
+    let ir = module_ir(
+        "func sum(a: *i32, b: *i32) -> i32 {\n  *a + *b\n}\n\n\
+         func main() -> i32 {\n  let x = 21;\n  let r = &x;\n  sum(r, r)\n}\n",
+    );
+    assert!(ir.contains("readonly"), "expected `readonly` in:\n{ir}");
+    assert!(
+        !ir.contains("noalias"),
+        "shared references are not exclusive: {ir}"
+    );
+}
+
+#[test]
+fn a_fat_pointer_parameter_keeps_the_ordinary_abi() {
+    let ir = module_ir(
+        "func show(text: *str) {}\n\n\
+         func main() -> i32 {\n  show(\"seal\");\n  0\n}\n",
+    );
+    assert!(!ir.contains("readonly"), "unexpected attribute in:\n{ir}");
 }
 
 #[test]

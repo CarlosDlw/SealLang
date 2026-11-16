@@ -90,8 +90,10 @@ The ABI is defined by the language, not by a C header:
   of unknown target, and every call site proves its reference arguments name
   disjoint storage. The proof covers every call site in the compiled program;
   calling an exported function from foreign code with aliasing pointers is
-  outside it. A `*mut str` parameter is a fat pointer, which LLVM cannot
-  annotate, so it keeps the ordinary ABI.
+  outside it. A shared `*T` parameter is `readonly`: the type system forbids
+  writing through it, so that promise needs no whole-program proof. A `*str` or
+  `*mut str` parameter is a fat pointer, which LLVM cannot annotate, so it keeps
+  the ordinary ABI.
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 

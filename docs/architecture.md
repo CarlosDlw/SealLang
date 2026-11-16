@@ -306,6 +306,8 @@ allowed to depend only on crates below it in the list.
     unknown target, and every call site proves its reference arguments are
     known and disjoint. A function outside the set keeps the ordinary ABI and
     remains correct; the attribute never decides whether a program is accepted.
+    A shared `*T` parameter is always `readonly`, because the type system
+    forbids writing through it.
 
 ## Extension points
 
