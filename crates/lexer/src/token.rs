@@ -164,10 +164,20 @@ pub enum TokenKind {
 
     /// `func`
     Func,
+    /// `if`
+    If,
+    /// `else`
+    Else,
     /// `let`
     Let,
     /// `mut`
     Mut,
+    /// `while`
+    While,
+    /// `break`
+    Break,
+    /// `continue`
+    Continue,
     /// `return`
     Return,
     /// `true`

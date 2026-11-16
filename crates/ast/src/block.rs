@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{ExprId, StmtId, TypeId};
+use crate::id::{BlockId, ExprId, StmtId, TypeId};
 
 /// A braced block.
 ///
@@ -35,7 +35,19 @@ pub enum StmtKind {
     Let(LetStmt),
     /// A `return`, with an optional value.
     Return(Option<ExprId>),
-    /// An expression evaluated for its effects; it ended with `;`.
+    /// A `while` loop.
+    While {
+        /// Evaluated before every iteration; it must have type `bool`.
+        condition: ExprId,
+        /// The loop body.
+        body: BlockId,
+    },
+    /// A `break`, which exits the innermost loop.
+    Break,
+    /// A `continue`, which starts the next iteration of the innermost loop.
+    Continue,
+    /// An expression evaluated for its effects; it ended with `;`, or it is a
+    /// block-like expression used as a statement.
     Expr(ExprId),
     /// Syntax the parser could not turn into a statement.
     Error,

@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::ExprId;
+use crate::id::{BlockId, ExprId};
 
 /// A binary operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -249,6 +249,19 @@ pub enum ExprKind {
     },
     /// A parenthesized expression. Kept so formatting and spans stay faithful.
     Paren(ExprId),
+    /// A conditional expression.
+    ///
+    /// The value of the expression is the value of the branch that runs. An
+    /// `else if` chain is represented as a block whose tail is another `If`, so
+    /// every branch is a block and later phases see one shape.
+    If {
+        /// The condition, which must have type `bool`.
+        condition: ExprId,
+        /// The block evaluated when the condition is `true`.
+        then_branch: BlockId,
+        /// The block evaluated when the condition is `false`, if any.
+        else_branch: Option<BlockId>,
+    },
     /// Syntax the parser could not turn into an expression.
     Error,
 }

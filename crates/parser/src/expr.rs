@@ -192,6 +192,7 @@ impl Parser<'_> {
                 let span = token.span.cover(self.previous_span());
                 self.builder.push_expr(ExprKind::Paren(inner), span)
             }
+            TokenKind::If => self.parse_if_expr(token.span),
             TokenKind::Error => {
                 self.bump();
                 self.builder.push_expr(ExprKind::Error, token.span)
@@ -211,6 +212,53 @@ impl Parser<'_> {
                 self.builder.push_expr(ExprKind::Error, token.span)
             }
         }
+    }
+
+    /// Parses `if condition block ("else" (block | if ...))?`.
+    ///
+    /// `else if` becomes a synthetic block whose tail is the nested `if`, so
+    /// every branch is a block. The recursion for `else if` is bounded by the
+    /// same depth limit as every other nested construct.
+    fn parse_if_expr(&mut self, start: seal_span::Span) -> ExprId {
+        if self.depth >= MAX_DEPTH {
+            return self.depth_error_expr(start);
+        }
+        self.depth += 1;
+
+        let _ = self.bump();
+        let condition = self.parse_expr(0);
+        let then_branch = self.parse_block();
+        let else_branch = if self.eat(TokenKind::Else) {
+            if self.at(TokenKind::If) {
+                let nested_start = self.current_span();
+                let nested = self.parse_if_expr(nested_start);
+                let nested_span = self.builder.ast().expr(nested).span;
+                Some(
+                    self.builder
+                        .push_block(nested_span, Vec::new(), Some(nested)),
+                )
+            } else if self.at(TokenKind::LBrace) {
+                Some(self.parse_block())
+            } else {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `{{` or `if` after `else`, found {found}"),
+                )
+                .help("write `else { ... }` or `else if ...`")
+                .emit();
+                let span = self.current_span();
+                Some(self.builder.push_block(span, Vec::new(), None))
+            }
+        } else {
+            None
+        };
+
+        self.depth -= 1;
+        let span = start.cover(self.previous_span());
+        self.builder
+            .push_if(span, condition, then_branch, else_branch)
     }
 
     fn parse_call(&mut self, callee: ExprId) -> ExprId {

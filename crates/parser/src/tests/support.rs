@@ -5,8 +5,8 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::{
-    Ast, Block, BlockId, Expr, ExprId, ExprKind, FnDecl, ItemKind, Param, ParamId, Stmt, StmtId,
-    StmtKind, Type, TypeId, TypeKind,
+    Ast, Block, BlockId, Expr, ExprId, ExprKind, FnDecl, ItemKind, ParamId, StmtId, StmtKind,
+    TypeId, TypeKind,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -154,180 +154,202 @@ pub(crate) fn parse_clean(source: &str) -> (Fixture, Ast) {
 /// Verifies that every ID reference resolves, every node span is inside the
 /// file, and every arena node is reachable from the program.
 pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
-    let mut exprs = BTreeSet::new();
-    let mut stmts = BTreeSet::new();
-    let mut blocks = BTreeSet::new();
-    let mut types = BTreeSet::new();
-    let mut params = BTreeSet::new();
+    let mut reachability = Reachability {
+        fixture,
+        ast,
+        exprs: BTreeSet::new(),
+        stmts: BTreeSet::new(),
+        blocks: BTreeSet::new(),
+        types: BTreeSet::new(),
+        params: BTreeSet::new(),
+    };
+    reachability.run();
+}
 
-    assert_eq!(
-        ast.item_arena().len(),
-        ast.program().len(),
-        "every item must be reachable from the program"
-    );
+/// Walks the tree once, recording every node it sees.
+struct Reachability<'a> {
+    fixture: &'a Fixture,
+    ast: &'a Ast,
+    exprs: BTreeSet<ExprId>,
+    stmts: BTreeSet<StmtId>,
+    blocks: BTreeSet<BlockId>,
+    types: BTreeSet<TypeId>,
+    params: BTreeSet<ParamId>,
+}
 
-    for item_id in ast.program().items() {
-        let item = ast.item(*item_id);
-        assert_span(fixture, item.span);
-        match &item.kind {
-            ItemKind::Func(declaration) => {
-                assert_span(fixture, declaration.name_span);
-                if let Some(ret) = declaration.ret {
-                    check_type(fixture, ast, ret, &mut types);
+impl Reachability<'_> {
+    fn run(&mut self) {
+        assert_eq!(
+            self.ast.item_arena().len(),
+            self.ast.program().len(),
+            "every item must be reachable from the program"
+        );
+
+        for item_id in self.ast.program().items() {
+            let item = self.ast.item(*item_id);
+            self.assert_span(item.span);
+            match &item.kind {
+                ItemKind::Func(declaration) => {
+                    self.assert_span(declaration.name_span);
+                    if let Some(ret) = declaration.ret {
+                        self.check_type(ret);
+                    }
+                    for param_id in &declaration.params {
+                        self.check_param(*param_id);
+                    }
+                    self.check_block(declaration.body);
                 }
-                for param_id in &declaration.params {
-                    check_param(fixture, ast, *param_id, &mut types, &mut params);
+                ItemKind::Error => {}
+            }
+        }
+
+        assert_eq!(
+            self.exprs.len(),
+            self.ast.expr_arena().len(),
+            "unreachable expression nodes"
+        );
+        assert_eq!(
+            self.stmts.len(),
+            self.ast.stmt_arena().len(),
+            "unreachable statement nodes"
+        );
+        assert_eq!(
+            self.blocks.len(),
+            self.ast.block_arena().len(),
+            "unreachable block nodes"
+        );
+        assert_eq!(
+            self.types.len(),
+            self.ast.type_arena().len(),
+            "unreachable type nodes"
+        );
+        assert_eq!(
+            self.params.len(),
+            self.ast.param_arena().len(),
+            "unreachable parameter nodes"
+        );
+    }
+
+    fn assert_span(&self, span: Span) {
+        assert!(
+            self.fixture.file.contains_span(span),
+            "span {span:?} is outside the file"
+        );
+    }
+
+    fn check_param(&mut self, id: ParamId) {
+        assert!(self.params.insert(id), "parameter {id:?} visited twice");
+        let (span, name_span, ty) = {
+            let param = self.ast.param(id);
+            (param.span, param.name_span, param.ty)
+        };
+        self.assert_span(span);
+        self.assert_span(name_span);
+        self.check_type(ty);
+    }
+
+    fn check_block(&mut self, id: BlockId) {
+        if !self.blocks.insert(id) {
+            return;
+        }
+        let (span, statement_count, tail) = {
+            let block = self.ast.block(id);
+            (block.span, block.statements.len(), block.tail)
+        };
+        self.assert_span(span);
+        for index in 0..statement_count {
+            let statement = self.ast.block(id).statements[index];
+            self.check_stmt(statement);
+        }
+        if let Some(tail) = tail {
+            self.check_expr(tail);
+        }
+    }
+
+    fn check_stmt(&mut self, id: StmtId) {
+        assert!(self.stmts.insert(id), "statement {id:?} visited twice");
+        let (span, kind) = {
+            let statement = self.ast.stmt(id);
+            (statement.span, statement.kind.clone())
+        };
+        self.assert_span(span);
+        match kind {
+            StmtKind::Let(binding) => {
+                self.assert_span(binding.name_span);
+                if let Some(ty) = binding.ty {
+                    self.check_type(ty);
                 }
-                check_block(
-                    fixture,
-                    ast,
-                    declaration.body,
-                    &mut stmts,
-                    &mut blocks,
-                    &mut exprs,
-                    &mut types,
-                );
+                if let Some(init) = binding.init {
+                    self.check_expr(init);
+                }
             }
-            ItemKind::Error => {}
-        }
-    }
-
-    assert_eq!(
-        exprs.len(),
-        ast.expr_arena().len(),
-        "unreachable expression nodes"
-    );
-    assert_eq!(
-        stmts.len(),
-        ast.stmt_arena().len(),
-        "unreachable statement nodes"
-    );
-    assert_eq!(
-        blocks.len(),
-        ast.block_arena().len(),
-        "unreachable block nodes"
-    );
-    assert_eq!(
-        types.len(),
-        ast.type_arena().len(),
-        "unreachable type nodes"
-    );
-    assert_eq!(
-        params.len(),
-        ast.param_arena().len(),
-        "unreachable parameter nodes"
-    );
-}
-
-fn assert_span(fixture: &Fixture, span: Span) {
-    assert!(
-        fixture.file.contains_span(span),
-        "span {span:?} is outside the file"
-    );
-}
-
-fn check_param(
-    fixture: &Fixture,
-    ast: &Ast,
-    id: ParamId,
-    types: &mut BTreeSet<TypeId>,
-    params: &mut BTreeSet<ParamId>,
-) {
-    assert!(params.insert(id), "parameter {id:?} visited twice");
-    let param: &Param = ast.param(id);
-    assert_span(fixture, param.span);
-    assert_span(fixture, param.name_span);
-    check_type(fixture, ast, param.ty, types);
-}
-
-fn check_block(
-    fixture: &Fixture,
-    ast: &Ast,
-    id: BlockId,
-    stmts: &mut BTreeSet<StmtId>,
-    blocks: &mut BTreeSet<BlockId>,
-    exprs: &mut BTreeSet<ExprId>,
-    types: &mut BTreeSet<TypeId>,
-) {
-    if !blocks.insert(id) {
-        return;
-    }
-    let block = ast.block(id);
-    assert_span(fixture, block.span);
-    for statement in &block.statements {
-        check_stmt(fixture, ast, *statement, stmts, exprs, types);
-    }
-    if let Some(tail) = block.tail {
-        check_expr(fixture, ast, tail, exprs);
-    }
-}
-
-fn check_stmt(
-    fixture: &Fixture,
-    ast: &Ast,
-    id: StmtId,
-    stmts: &mut BTreeSet<StmtId>,
-    exprs: &mut BTreeSet<ExprId>,
-    types: &mut BTreeSet<TypeId>,
-) {
-    assert!(stmts.insert(id), "statement {id:?} visited twice");
-    let statement: &Stmt = ast.stmt(id);
-    assert_span(fixture, statement.span);
-    match &statement.kind {
-        StmtKind::Let(binding) => {
-            assert_span(fixture, binding.name_span);
-            if let Some(ty) = binding.ty {
-                check_type(fixture, ast, ty, types);
+            StmtKind::Return(value) => {
+                if let Some(value) = value {
+                    self.check_expr(value);
+                }
             }
-            if let Some(init) = binding.init {
-                check_expr(fixture, ast, init, exprs);
+            StmtKind::While { condition, body } => {
+                self.check_expr(condition);
+                self.check_block(body);
             }
+            StmtKind::Expr(expr) => self.check_expr(expr),
+            StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
         }
-        StmtKind::Return(value) => {
-            if let Some(value) = value {
-                check_expr(fixture, ast, *value, exprs);
-            }
-        }
-        StmtKind::Expr(expr) => check_expr(fixture, ast, *expr, exprs),
-        StmtKind::Error => {}
     }
-}
 
-fn check_expr(fixture: &Fixture, ast: &Ast, id: ExprId, exprs: &mut BTreeSet<ExprId>) {
-    if !exprs.insert(id) {
-        return;
-    }
-    let expr = ast.expr(id);
-    assert_span(fixture, expr.span);
-    match &expr.kind {
-        ExprKind::Unary { operand, .. } => check_expr(fixture, ast, *operand, exprs),
-        ExprKind::Binary { lhs, rhs, .. } => {
-            check_expr(fixture, ast, *lhs, exprs);
-            check_expr(fixture, ast, *rhs, exprs);
+    fn check_expr(&mut self, id: ExprId) {
+        if !self.exprs.insert(id) {
+            return;
         }
-        ExprKind::Assign { target, value, .. } => {
-            check_expr(fixture, ast, *target, exprs);
-            check_expr(fixture, ast, *value, exprs);
-        }
-        ExprKind::Update { operand, .. } => check_expr(fixture, ast, *operand, exprs),
-        ExprKind::Call { callee, args } => {
-            check_expr(fixture, ast, *callee, exprs);
-            for arg in args {
-                check_expr(fixture, ast, *arg, exprs);
+        let (span, kind) = {
+            let expr = self.ast.expr(id);
+            (expr.span, expr.kind.clone())
+        };
+        self.assert_span(span);
+        match kind {
+            ExprKind::Unary { operand, .. } => self.check_expr(operand),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.check_expr(lhs);
+                self.check_expr(rhs);
             }
+            ExprKind::Assign { target, value, .. } => {
+                self.check_expr(target);
+                self.check_expr(value);
+            }
+            ExprKind::Update { operand, .. } => self.check_expr(operand),
+            ExprKind::Call { callee, args } => {
+                self.check_expr(callee);
+                for arg in args {
+                    self.check_expr(arg);
+                }
+            }
+            ExprKind::Paren(inner) => self.check_expr(inner),
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_expr(condition);
+                self.check_block(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.check_block(else_branch);
+                }
+            }
+            ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
         }
-        ExprKind::Paren(inner) => check_expr(fixture, ast, *inner, exprs),
-        ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
     }
-}
 
-fn check_type(fixture: &Fixture, ast: &Ast, id: TypeId, types: &mut BTreeSet<TypeId>) {
-    if !types.insert(id) {
-        return;
-    }
-    let ty: &Type = ast.ty(id);
-    assert_span(fixture, ty.span);
-    if let TypeKind::Pointer(inner) = ty.kind {
-        check_type(fixture, ast, inner, types);
+    fn check_type(&mut self, id: TypeId) {
+        if !self.types.insert(id) {
+            return;
+        }
+        let (span, kind) = {
+            let ty = self.ast.ty(id);
+            (ty.span, ty.kind.clone())
+        };
+        self.assert_span(span);
+        if let TypeKind::Pointer(inner) = kind {
+            self.check_type(inner);
+        }
     }
 }

@@ -3,7 +3,7 @@
 use seal_ast::{ExprKind, Literal, StmtKind};
 use seal_lexer::TokenKind;
 
-use crate::tests::support::{Fixture, body, parse_clean, sole_function};
+use crate::tests::support::{Fixture, assert_invariants, body, parse_clean, sole_function};
 
 #[test]
 fn let_bindings_cover_every_form() {
@@ -218,4 +218,172 @@ fn expression_keyword_tokens_are_not_paths() {
     // silently accept `let` as an expression.
     assert!(matches!(TokenKind::Let, TokenKind::Let));
     fixture.expect("E1003", "expected an expression");
+}
+
+#[test]
+fn if_is_an_expression_with_two_block_branches() {
+    let (fixture, ast) = parse_clean("func main() -> i32 { if true { 1 } else { 2 } }");
+    assert_invariants(&fixture, &ast);
+    let declaration = sole_function(&ast);
+    let block = body(&ast, declaration);
+    assert!(block.statements.is_empty());
+    let tail = block.tail.expect("if is the tail expression");
+    let (condition, then_branch, else_branch) = match &ast.expr(tail).kind {
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => (*condition, *then_branch, *else_branch),
+        other => panic!("expected an if expression, got {other:?}"),
+    };
+    assert!(matches!(
+        ast.expr(condition).kind,
+        ExprKind::Lit(Literal::Bool(true))
+    ));
+    let then_tail = ast.block(then_branch).tail.expect("then value");
+    assert!(matches!(
+        ast.expr(then_tail).kind,
+        ExprKind::Lit(Literal::Int { value: 1, .. })
+    ));
+    let else_branch = else_branch.expect("if has an else branch");
+    let else_tail = ast.block(else_branch).tail.expect("else value");
+    assert!(matches!(
+        ast.expr(else_tail).kind,
+        ExprKind::Lit(Literal::Int { value: 2, .. })
+    ));
+}
+
+#[test]
+fn else_if_desugars_into_a_nested_if_in_a_block() {
+    let (fixture, ast) =
+        parse_clean("func main() -> i32 { if false { 0 } else if true { 1 } else { 2 } }");
+    assert_invariants(&fixture, &ast);
+    let declaration = sole_function(&ast);
+    let tail = body(&ast, declaration).tail.expect("if tail");
+    let else_branch = match &ast.expr(tail).kind {
+        ExprKind::If { else_branch, .. } => (*else_branch).expect("else branch"),
+        other => panic!("expected an if expression, got {other:?}"),
+    };
+    let else_block = ast.block(else_branch);
+    assert!(else_block.statements.is_empty());
+    let nested = else_block.tail.expect("nested if is the block value");
+    let final_else = match &ast.expr(nested).kind {
+        ExprKind::If { else_branch, .. } => (*else_branch).expect("final else"),
+        other => panic!("expected a nested if, got {other:?}"),
+    };
+    let final_tail = ast.block(final_else).tail.expect("final value");
+    assert!(matches!(
+        ast.expr(final_tail).kind,
+        ExprKind::Lit(Literal::Int { value: 2, .. })
+    ));
+}
+
+#[test]
+fn a_block_like_expression_is_a_statement_without_a_semicolon() {
+    let (_, ast) = parse_clean("func main() -> i32 { if true { return 0; } 1 }");
+    let declaration = sole_function(&ast);
+    let block = body(&ast, declaration);
+    assert_eq!(block.statements.len(), 1);
+    assert!(matches!(
+        ast.stmt(block.statements[0]).kind,
+        StmtKind::Expr(_)
+    ));
+    let tail = block.tail.expect("value after the if");
+    assert!(matches!(
+        ast.expr(tail).kind,
+        ExprKind::Lit(Literal::Int { value: 1, .. })
+    ));
+}
+
+#[test]
+fn while_parses_its_condition_and_body() {
+    let (fixture, ast) = parse_clean("func main() { while true { break; continue; } }");
+    assert_invariants(&fixture, &ast);
+    let declaration = sole_function(&ast);
+    let block = body(&ast, declaration);
+    assert_eq!(block.statements.len(), 1);
+    let (condition, body_id) = match &ast.stmt(block.statements[0]).kind {
+        StmtKind::While { condition, body } => (*condition, *body),
+        other => panic!("expected a while statement, got {other:?}"),
+    };
+    assert!(matches!(
+        ast.expr(condition).kind,
+        ExprKind::Lit(Literal::Bool(true))
+    ));
+    let loop_body = ast.block(body_id);
+    assert_eq!(loop_body.statements.len(), 2);
+    assert!(matches!(
+        ast.stmt(loop_body.statements[0]).kind,
+        StmtKind::Break
+    ));
+    assert!(matches!(
+        ast.stmt(loop_body.statements[1]).kind,
+        StmtKind::Continue
+    ));
+}
+
+#[test]
+fn break_requires_a_semicolon() {
+    let fixture = Fixture::new("func main() { while true { break } }");
+    let ast = fixture.parse();
+    fixture.expect("E1002", "`break`");
+    assert_invariants(&fixture, &ast);
+}
+
+#[test]
+fn a_missing_condition_keeps_the_then_block() {
+    let fixture = Fixture::new("func main() -> i32 { if { 1 } else { 2 } }");
+    let ast = fixture.parse();
+    fixture.expect("E1003", "expected an expression");
+    assert_eq!(fixture.codes(), vec!["E1003".to_owned()]);
+    assert_invariants(&fixture, &ast);
+    let declaration = sole_function(&ast);
+    let tail = body(&ast, declaration).tail.expect("if tail");
+    let (then_branch, else_branch) = match &ast.expr(tail).kind {
+        ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => (*then_branch, (*else_branch).expect("else branch")),
+        other => panic!("expected an if expression, got {other:?}"),
+    };
+    let then_tail = ast.block(then_branch).tail.expect("then value");
+    assert!(matches!(
+        ast.expr(then_tail).kind,
+        ExprKind::Lit(Literal::Int { value: 1, .. })
+    ));
+    let else_tail = ast.block(else_branch).tail.expect("else value");
+    assert!(matches!(
+        ast.expr(else_tail).kind,
+        ExprKind::Lit(Literal::Int { value: 2, .. })
+    ));
+}
+
+#[test]
+fn else_requires_a_block_or_another_if() {
+    let fixture = Fixture::new("func main() -> i32 { if true { 1 } else 2 }");
+    let ast = fixture.parse();
+    fixture.expect("E1002", "`else`");
+    assert_invariants(&fixture, &ast);
+}
+
+#[test]
+fn deeply_nested_ifs_report_e1008() {
+    let mut source = String::from("func main() { ");
+    for _ in 0..300 {
+        source.push_str("if true { ");
+    }
+    source.push('0');
+    for _ in 0..300 {
+        source.push_str(" }");
+    }
+    source.push_str(" }");
+
+    let fixture = Fixture::new(&source);
+    let _ast = fixture.parse();
+    assert!(
+        fixture.codes().iter().any(|code| code == "E1008"),
+        "expected E1008, got {:?}",
+        fixture.codes()
+    );
 }

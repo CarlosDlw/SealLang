@@ -16,10 +16,18 @@
 //! block      = "{" statement* expr? "}"
 //! statement  = "let" "mut"? IDENT (":" type)? ("=" expr)? ";"
 //!            | "return" expr? ";"
-//!            | expr ";"
+//!            | "while" expr block
+//!            | "break" ";"
+//!            | "continue" ";"
+//!            | expr ";"?
 //! expr       = assignment and binary expressions over literals, names,
-//!              calls, and parenthesized expressions
+//!              calls, `if`, and parenthesized expressions
+//! if_expr    = "if" expr block ("else" (block | if_expr))?
 //! ```
+//!
+//! `if` is an expression whose value is the block that runs; without `else` its
+//! type is unit. A block-like expression used as a statement needs no semicolon.
+//! `break` and `continue` act on the innermost enclosing loop.
 //!
 //! Bindings are immutable unless `mut` is written; the AST records the flag, so
 //! the checker never has to infer mutability from how a name is used.

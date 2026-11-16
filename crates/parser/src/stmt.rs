@@ -1,8 +1,9 @@
 //! Blocks and statements.
 
-use seal_ast::{BlockId, StmtId};
+use seal_ast::{BlockId, ExprKind, StmtId};
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
+use seal_span::Span;
 
 use crate::parser::Parser;
 
@@ -26,6 +27,15 @@ impl Parser<'_> {
             } else if self.at(TokenKind::Return) {
                 let statement = self.parse_return();
                 statements.push(statement);
+            } else if self.at(TokenKind::While) {
+                let statement = self.parse_while();
+                statements.push(statement);
+            } else if self.at(TokenKind::Break) {
+                let statement = self.parse_break();
+                statements.push(statement);
+            } else if self.at(TokenKind::Continue) {
+                let statement = self.parse_continue();
+                statements.push(statement);
             } else {
                 let expr = self.parse_expr(0);
                 let expr_span = self.builder.ast().expr(expr).span;
@@ -35,6 +45,9 @@ impl Parser<'_> {
                 } else if self.at(TokenKind::RBrace) || self.is_eof() {
                     tail = Some(expr);
                     break;
+                } else if matches!(self.builder.ast().expr(expr).kind, ExprKind::If { .. }) {
+                    // Block-like expressions are statements without a `;`.
+                    statements.push(self.builder.push_expr_stmt(expr_span, expr));
                 } else {
                     let found = self.describe(self.current_kind());
                     self.error(
@@ -112,6 +125,40 @@ impl Parser<'_> {
             .push_let(span, name, name_span, mutable, ty, init)
     }
 
+    fn parse_while(&mut self) -> StmtId {
+        let keyword = self.bump();
+        let condition = self.parse_expr(0);
+        let body = self.parse_block();
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_while(span, condition, body)
+    }
+
+    fn parse_break(&mut self) -> StmtId {
+        let span = self.finish_loop_control("break");
+        self.builder.push_break(span)
+    }
+
+    fn parse_continue(&mut self) -> StmtId {
+        let span = self.finish_loop_control("continue");
+        self.builder.push_continue(span)
+    }
+
+    /// Consumes a `break`/`continue` keyword and its required semicolon.
+    fn finish_loop_control(&mut self, keyword: &str) -> Span {
+        let token = self.bump();
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `;` after `{keyword}`, found {found}"),
+            )
+            .help(format!("end the `{keyword}` with `;`"))
+            .emit();
+        }
+        token.span.cover(self.previous_span())
+    }
+
     fn parse_return(&mut self) -> StmtId {
         let keyword = self.bump();
         let value = if self.at(TokenKind::Semicolon) || self.at(TokenKind::RBrace) || self.is_eof()
@@ -141,6 +188,10 @@ impl Parser<'_> {
             && !self.at(TokenKind::Semicolon)
             && !self.at(TokenKind::Let)
             && !self.at(TokenKind::Return)
+            && !self.at(TokenKind::While)
+            && !self.at(TokenKind::Break)
+            && !self.at(TokenKind::Continue)
+            && !self.at(TokenKind::If)
         {
             self.bump();
         }

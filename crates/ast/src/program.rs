@@ -207,6 +207,30 @@ impl AstBuilder {
         })
     }
 
+    /// Adds a `while` statement and returns its ID.
+    pub fn push_while(&mut self, span: Span, condition: ExprId, body: BlockId) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::While { condition, body },
+            span,
+        })
+    }
+
+    /// Adds a `break` statement and returns its ID.
+    pub fn push_break(&mut self, span: Span) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::Break,
+            span,
+        })
+    }
+
+    /// Adds a `continue` statement and returns its ID.
+    pub fn push_continue(&mut self, span: Span) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::Continue,
+            span,
+        })
+    }
+
     /// Adds an expression statement and returns its ID.
     pub fn push_expr_stmt(&mut self, span: Span, expr: ExprId) -> StmtId {
         self.ast.stmts.push(Stmt {
@@ -219,6 +243,24 @@ impl AstBuilder {
     pub fn push_error_stmt(&mut self, span: Span) -> StmtId {
         self.ast.stmts.push(Stmt {
             kind: StmtKind::Error,
+            span,
+        })
+    }
+
+    /// Adds an `if` expression and returns its ID.
+    pub fn push_if(
+        &mut self,
+        span: Span,
+        condition: ExprId,
+        then_branch: BlockId,
+        else_branch: Option<BlockId>,
+    ) -> ExprId {
+        self.ast.exprs.push(Expr {
+            kind: ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            },
             span,
         })
     }

@@ -11,8 +11,13 @@ use crate::token::TokenKind;
 pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
     Some(match text {
         "func" => TokenKind::Func,
+        "if" => TokenKind::If,
+        "else" => TokenKind::Else,
         "let" => TokenKind::Let,
         "mut" => TokenKind::Mut,
+        "while" => TokenKind::While,
+        "break" => TokenKind::Break,
+        "continue" => TokenKind::Continue,
         "return" => TokenKind::Return,
         "true" => TokenKind::True,
         "false" => TokenKind::False,

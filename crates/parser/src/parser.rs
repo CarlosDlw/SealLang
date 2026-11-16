@@ -322,8 +322,13 @@ impl<'a> Parser<'a> {
 fn token_name(kind: TokenKind) -> Option<&'static str> {
     Some(match kind {
         TokenKind::Func => "func",
+        TokenKind::If => "if",
+        TokenKind::Else => "else",
         TokenKind::Let => "let",
         TokenKind::Mut => "mut",
+        TokenKind::While => "while",
+        TokenKind::Break => "break",
+        TokenKind::Continue => "continue",
         TokenKind::Return => "return",
         TokenKind::True => "true",
         TokenKind::False => "false",
@@ -381,6 +386,7 @@ pub(crate) fn is_expression_stop(kind: TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Eof
+            | TokenKind::LBrace
             | TokenKind::RBrace
             | TokenKind::RParen
             | TokenKind::RBracket
@@ -408,6 +414,7 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::PlusPlus
             | TokenKind::MinusMinus
             | TokenKind::LParen
+            | TokenKind::If
             | TokenKind::Error
     )
 }

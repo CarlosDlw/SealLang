@@ -108,7 +108,9 @@ fn ambiguous_runs_split_by_maximal_munch() {
 
 #[test]
 fn keywords_are_not_identifiers() {
-    let fixture = Fixture::new("func funcx let mut mutx _return return true false");
+    let fixture = Fixture::new(
+        "func funcx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
+    );
     let lexed = fixture.lex();
     fixture.assert_clean();
     assert_eq!(
@@ -116,9 +118,19 @@ fn keywords_are_not_identifiers() {
         [
             TokenKind::Func,
             TokenKind::Ident(fixture.interner.intern("funcx")),
+            TokenKind::If,
+            TokenKind::Ident(fixture.interner.intern("iffy")),
+            TokenKind::Else,
+            TokenKind::Ident(fixture.interner.intern("elsex")),
             TokenKind::Let,
             TokenKind::Mut,
             TokenKind::Ident(fixture.interner.intern("mutx")),
+            TokenKind::While,
+            TokenKind::Ident(fixture.interner.intern("whilex")),
+            TokenKind::Break,
+            TokenKind::Ident(fixture.interner.intern("breakx")),
+            TokenKind::Continue,
+            TokenKind::Ident(fixture.interner.intern("continuex")),
             TokenKind::Ident(fixture.interner.intern("_return")),
             TokenKind::Return,
             TokenKind::True,

@@ -99,6 +99,10 @@ allowed to depend only on crates below it in the list.
     is bounded by `MAX_DEPTH`, and recovery synchronizes at `;`, `}`, `func`, and
     end of file. The same token stream always produces the same tree, and a
     malformed construct costs one error rather than a cascade.
+22. **Control flow is structured.** `if` is an expression with block branches,
+    `else if` is a block whose tail is another `if`, `while` is a statement with
+    a block body, and `break`/`continue` target the innermost loop. A block-like
+    expression used as a statement needs no semicolon.
 
 ## Extension points
 

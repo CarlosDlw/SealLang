@@ -15,7 +15,13 @@ fn example(name: &str) -> String {
 
 #[test]
 fn all_examples_lex_cleanly() {
-    for name in ["0001_main.sl", "0002_variables.sl", "0003_operators.sl"] {
+    for name in [
+        "0001_main.sl",
+        "0002_variables.sl",
+        "0003_operators.sl",
+        "004_conditionals.sl",
+        "005_while_loop.sl",
+    ] {
         let source = example(name);
         let fixture = Fixture::new(&source);
         let lexed = fixture.lex();

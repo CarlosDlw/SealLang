@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use seal_ast::{ExprKind, Literal, StmtKind};
 
-use crate::tests::support::{body, parse_clean, sole_function, tail};
+use crate::tests::support::{assert_invariants, body, function, parse_clean, sole_function, tail};
 
 fn example(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -16,10 +16,29 @@ fn example(name: &str) -> String {
 
 #[test]
 fn all_examples_parse_without_diagnostics() {
+    for (name, items) in [
+        ("0001_main.sl", 1),
+        ("0002_variables.sl", 1),
+        ("0003_operators.sl", 1),
+        ("004_conditionals.sl", 3),
+        ("005_while_loop.sl", 2),
+    ] {
+        let source = example(name);
+        let (fixture, ast) = parse_clean(&source);
+        assert_eq!(
+            ast.program().len(),
+            items,
+            "{name} declares {items} function(s)"
+        );
+        assert_invariants(&fixture, &ast);
+    }
+}
+
+#[test]
+fn entry_point_examples_define_a_parameterless_main_returning_i32() {
     for name in ["0001_main.sl", "0002_variables.sl", "0003_operators.sl"] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);
-        assert_eq!(ast.program().len(), 1, "{name} declares one function");
         let declaration = sole_function(&ast);
         assert_eq!(fixture.symbol(declaration.name), "main", "{name}");
         assert_eq!(declaration.params.len(), 0, "{name}");
@@ -69,4 +88,33 @@ fn operators_example_has_expression_statements_and_a_tail() {
         ref other => panic!("expected path tail, got {other:?}"),
     }
     assert!(fixture.file.text().contains("+="));
+}
+
+#[test]
+fn conditionals_example_uses_if_as_an_expression() {
+    let source = example("004_conditionals.sl");
+    let (fixture, ast) = parse_clean(&source);
+    assert_invariants(&fixture, &ast);
+    let classify = function(&ast, 0);
+    assert_eq!(fixture.symbol(classify.name), "classify");
+    assert_eq!(classify.params.len(), 1);
+    assert!(matches!(tail(&ast, classify).kind, ExprKind::If { .. }));
+}
+
+#[test]
+fn while_example_contains_loops_and_loop_control() {
+    let source = example("005_while_loop.sl");
+    let (fixture, ast) = parse_clean(&source);
+    assert_invariants(&fixture, &ast);
+    let sum = function(&ast, 0);
+    assert_eq!(fixture.symbol(sum.name), "sum_odd_below");
+    assert!(
+        body(&ast, sum)
+            .statements
+            .iter()
+            .any(|statement| matches!(ast.stmt(*statement).kind, StmtKind::While { .. }))
+    );
+    let text = fixture.file.text();
+    assert!(text.contains("continue;"));
+    assert!(text.contains("break;"));
 }
