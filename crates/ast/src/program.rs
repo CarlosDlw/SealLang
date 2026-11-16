@@ -183,6 +183,7 @@ impl AstBuilder {
         span: Span,
         name: Symbol,
         name_span: Span,
+        mutable: bool,
         ty: Option<TypeId>,
         init: Option<ExprId>,
     ) -> StmtId {
@@ -190,6 +191,7 @@ impl AstBuilder {
             kind: StmtKind::Let(LetStmt {
                 name,
                 name_span,
+                mutable,
                 ty,
                 init,
             }),

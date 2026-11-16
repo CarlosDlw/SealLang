@@ -323,6 +323,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
     Some(match kind {
         TokenKind::Func => "func",
         TokenKind::Let => "let",
+        TokenKind::Mut => "mut",
         TokenKind::Return => "return",
         TokenKind::True => "true",
         TokenKind::False => "false",

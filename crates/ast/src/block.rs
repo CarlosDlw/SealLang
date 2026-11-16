@@ -48,6 +48,8 @@ pub struct LetStmt {
     pub name: Symbol,
     /// The span of the name.
     pub name_span: Span,
+    /// Whether the binding was declared `mut` and can be reassigned.
+    pub mutable: bool,
     /// The optional type annotation.
     pub ty: Option<TypeId>,
     /// The optional initializer.

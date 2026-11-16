@@ -7,7 +7,8 @@ use crate::tests::support::{Fixture, body, parse_clean, sole_function};
 
 #[test]
 fn let_bindings_cover_every_form() {
-    let (fixture, ast) = parse_clean("func main() { let a: i32 = 1; let b = 2; let c: i32; a }");
+    let (fixture, ast) =
+        parse_clean("func main() { let a: i32 = 1; let mut b = 2; let mut c: i32; a }");
     let declaration = sole_function(&ast);
     let block = body(&ast, declaration);
     assert_eq!(block.statements.len(), 3);
@@ -15,6 +16,7 @@ fn let_bindings_cover_every_form() {
     match &ast.stmt(block.statements[0]).kind {
         StmtKind::Let(binding) => {
             assert_eq!(fixture.symbol(binding.name), "a");
+            assert!(!binding.mutable);
             assert!(binding.ty.is_some());
             assert!(binding.init.is_some());
         }
@@ -23,6 +25,7 @@ fn let_bindings_cover_every_form() {
     match &ast.stmt(block.statements[1]).kind {
         StmtKind::Let(binding) => {
             assert_eq!(fixture.symbol(binding.name), "b");
+            assert!(binding.mutable);
             assert!(binding.ty.is_none());
             assert!(binding.init.is_some());
         }
@@ -30,12 +33,44 @@ fn let_bindings_cover_every_form() {
     }
     match &ast.stmt(block.statements[2]).kind {
         StmtKind::Let(binding) => {
+            assert_eq!(fixture.symbol(binding.name), "c");
+            assert!(binding.mutable);
             assert!(binding.ty.is_some());
             assert!(binding.init.is_none());
         }
         other => panic!("expected let, got {other:?}"),
     }
     assert!(block.tail.is_some());
+}
+
+#[test]
+fn bindings_are_immutable_unless_declared_mut() {
+    let (fixture, ast) = parse_clean("func main() { let fixed = 1; let mut changing = 2; }");
+    let declaration = sole_function(&ast);
+    let block = body(&ast, declaration);
+    assert_eq!(block.statements.len(), 2);
+
+    match &ast.stmt(block.statements[0]).kind {
+        StmtKind::Let(binding) => {
+            assert_eq!(fixture.symbol(binding.name), "fixed");
+            assert!(!binding.mutable);
+        }
+        other => panic!("expected let, got {other:?}"),
+    }
+    match &ast.stmt(block.statements[1]).kind {
+        StmtKind::Let(binding) => {
+            assert_eq!(fixture.symbol(binding.name), "changing");
+            assert!(binding.mutable);
+        }
+        other => panic!("expected let, got {other:?}"),
+    }
+}
+
+#[test]
+fn mut_is_a_keyword_not_a_binding_name() {
+    let fixture = Fixture::new("func main() { let mut = 1; }");
+    let _ = fixture.parse();
+    fixture.expect("E1005", "a binding name");
 }
 
 #[test]

@@ -14,12 +14,15 @@
 //! param      = IDENT ":" type
 //! type       = "*" type | PRIMITIVE
 //! block      = "{" statement* expr? "}"
-//! statement  = "let" IDENT (":" type)? ("=" expr)? ";"
+//! statement  = "let" "mut"? IDENT (":" type)? ("=" expr)? ";"
 //!            | "return" expr? ";"
 //!            | expr ";"
 //! expr       = assignment and binary expressions over literals, names,
 //!              calls, and parenthesized expressions
 //! ```
+//!
+//! Bindings are immutable unless `mut` is written; the AST records the flag, so
+//! the checker never has to infer mutability from how a name is used.
 //!
 //! # Recovery
 //!

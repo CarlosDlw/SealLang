@@ -166,6 +166,8 @@ pub enum TokenKind {
     Func,
     /// `let`
     Let,
+    /// `mut`
+    Mut,
     /// `return`
     Return,
     /// `true`

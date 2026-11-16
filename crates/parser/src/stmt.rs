@@ -73,6 +73,7 @@ impl Parser<'_> {
 
     fn parse_let(&mut self) -> StmtId {
         let keyword = self.bump();
+        let mutable = self.eat(TokenKind::Mut);
         let (name, name_span) = self.expect_ident("a binding name");
         let ty = if self.eat(TokenKind::Colon) {
             Some(self.parse_type())
@@ -107,7 +108,8 @@ impl Parser<'_> {
         }
 
         let span = keyword.span.cover(self.previous_span());
-        self.builder.push_let(span, name, name_span, ty, init)
+        self.builder
+            .push_let(span, name, name_span, mutable, ty, init)
     }
 
     fn parse_return(&mut self) -> StmtId {

@@ -92,7 +92,10 @@ allowed to depend only on crates below it in the list.
 19. **Memory classification is derived.** `Copy`, `Sized`, and `Drop` are
     queries over the interned type, never flags stored beside it, so they cannot
     contradict the type or the memory model.
-20. **Parsing terminates and recovers.** Every loop asserts progress, recursion
+20. **Bindings are immutable unless declared `mut`.** The lexer reserves `mut`,
+    the AST records the flag per binding, and no later phase infers mutability
+    from how a name is used.
+21. **Parsing terminates and recovers.** Every loop asserts progress, recursion
     is bounded by `MAX_DEPTH`, and recovery synchronizes at `;`, `}`, `func`, and
     end of file. The same token stream always produces the same tree, and a
     malformed construct costs one error rather than a cascade.

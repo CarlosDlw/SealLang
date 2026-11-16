@@ -32,7 +32,7 @@ func main() -> i32 {
   let v = 64 >> 2;
   
   // assignment operatos
-  let a1 = 0;
+  let mut a1 = 0;
 
   a1 += 10;
   a1 -= 5;
@@ -40,12 +40,12 @@ func main() -> i32 {
   a1 /= 2;
   a1 %= 2;
   
-  let bits = 1;
+  let mut bits = 1;
   bits <<= 4;
   bits >>= 2; // too: &=, |=, ^=
   
   // increment | decrement
-  let b1 = 10;
+  let mut b1 = 10;
 
   b1++;
   ++b1;

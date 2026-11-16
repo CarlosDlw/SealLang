@@ -96,12 +96,21 @@ as a distinct owning type that implements `Drop`; allocation failure is returned
 as a value, not hidden behind an abort. Reallocation and growth are explicit
 operations of that type, never implicit on assignment.
 
-### D8 — Bindings are mutable by default
+### D8 — Bindings are immutable by default
 
-`let a1 = 0; a1 += 10;` is valid, as the language examples require. Immutability
-is expressed by types and references (`*T` is read-only), not by the binding.
-The cost is that accidental mutation is not caught by the binding; a lint can
-flag bindings that are never reassigned.
+`let x = 1;` binds `x` immutably: assignment, compound assignment, `++`/`--`, and
+any other write through the name are errors. `let mut x = 1;` opts in to
+mutation. Parameters are immutable; a function that needs to mutate an argument
+binds it again with `let mut`.
+
+Binding mutability is independent of ownership: an immutable binding can still
+own a value and move it elsewhere, and making a binding mutable does not change
+how its value is borrowed. `*T` stays read-only regardless of the binding;
+exclusive access requires `*mut T`.
+
+Alternatives rejected: mutable by default (weaker intent, and switching after
+users write code is a breaking change), per-place mutability flags (more syntax
+for no additional guarantee).
 
 ### D9 — Initialization is tracked
 
