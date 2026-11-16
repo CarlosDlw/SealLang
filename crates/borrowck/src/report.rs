@@ -78,7 +78,8 @@ impl<'a> Reporter<'a> {
         let builder = self
             .dcx
             .error(format!(
-                "cannot read `{name}` because it is exclusively borrowed"
+                "cannot read `{name}` because {}",
+                self.exclusive_borrow_phrase(&name, loan)
             ))
             .code(codes::E5007.diag_code())
             .primary(span, "")
@@ -94,7 +95,8 @@ impl<'a> Reporter<'a> {
         let builder = self
             .dcx
             .error(format!(
-                "cannot assign to `{name}` because it is exclusively borrowed"
+                "cannot assign to `{name}` because {}",
+                self.exclusive_borrow_phrase(&name, loan)
             ))
             .code(codes::E5008.diag_code())
             .primary(span, "")
@@ -110,7 +112,8 @@ impl<'a> Reporter<'a> {
         let builder = self
             .dcx
             .error(format!(
-                "cannot move out of `{name}` because it is exclusively borrowed"
+                "cannot move out of `{name}` because {}",
+                self.exclusive_borrow_phrase(&name, loan)
             ))
             .code(codes::E5008.diag_code())
             .primary(span, "")
@@ -156,7 +159,7 @@ impl<'a> Reporter<'a> {
             .secondary(loan.span, "borrow occurs here");
         add_last_use(builder, loan, span)
             .note("an exclusive argument gives the callee sole access for the whole call")
-            .help("end the borrow before the call, or pass a shared reference instead")
+            .help("move the call after the borrow's last use, or end the borrow first")
             .emit();
     }
 
@@ -215,7 +218,7 @@ impl<'a> Reporter<'a> {
                 "cannot return a reference to `{name}`, which is a local of this function"
             ))
             .code(codes::E5004.diag_code())
-            .primary(span, "")
+            .primary(span, "returned here")
             .secondary(loan.span, "borrow created here")
             .help("return a reference to a parameter, or to data the caller owns")
             .emit();
@@ -252,6 +255,20 @@ impl<'a> Reporter<'a> {
             .primary(span, "")
             .help("borrow only the fields that are still initialized, or reinitialize the moved field")
             .emit();
+    }
+
+    /// Explains which place an exclusive loan blocks.
+    ///
+    /// An access through a reference (`(*alias)`) names the storage it reaches,
+    /// while the loan names the place the user borrowed; pointing at the loan's
+    /// place is what makes the cause of the conflict obvious.
+    fn exclusive_borrow_phrase(&self, access: &str, loan: &Loan) -> String {
+        let borrowed = self.place_text(&loan.place);
+        if borrowed == access {
+            "it is exclusively borrowed".to_owned()
+        } else {
+            format!("`{borrowed}` is exclusively borrowed")
+        }
     }
 
     /// Renders a place with source names, including field names.

@@ -47,7 +47,6 @@ struct BodyLowering<'a> {
     hir: &'a Hir,
     typeck: &'a TypeckResults,
     owner: DefId,
-    span: Span,
     locals: IndexVec<LocalId, LocalDecl>,
     local_of: FxHashMap<DefId, LocalId>,
     blocks: IndexVec<BasicBlockId, BlockBuilder>,
@@ -71,7 +70,6 @@ impl<'a> BodyLowering<'a> {
             hir,
             typeck,
             owner: body.owner,
-            span,
             locals: IndexVec::new(),
             local_of: FxHashMap::default(),
             blocks: IndexVec::new(),
@@ -108,9 +106,17 @@ impl<'a> BodyLowering<'a> {
     }
 
     fn run(mut self, body: &HirBody) -> Body {
+        // A tail expression is the returned value, so the implicit return
+        // belongs to that expression. The block span covers the braces and
+        // would point at the whole function body in diagnostics.
+        let return_span = self
+            .hir
+            .block(body.root)
+            .tail
+            .map(|tail| self.hir.expr(tail).span);
         self.lower_block(body.root, Some(self.return_place()));
         if self.current.is_some() {
-            let span = self.span;
+            let span = return_span.unwrap_or_else(|| self.hir.block(body.root).span);
             self.terminate(TerminatorKind::Return, span);
         }
         self.finish()
@@ -247,11 +253,12 @@ impl<'a> BodyLowering<'a> {
             }
             StmtKind::Return(value) => {
                 let dest = self.return_place();
+                let return_span = value.map_or(span, |value| self.hir.expr(value).span);
                 match value {
                     Some(value) => self.lower_expr_into(value, Some(dest)),
                     None => self.assign_constant(dest, Constant::Unit, span),
                 }
-                self.terminate(TerminatorKind::Return, span);
+                self.terminate(TerminatorKind::Return, return_span);
             }
             StmtKind::While { condition, body } => self.lower_while(condition, body, span),
             StmtKind::Break => {

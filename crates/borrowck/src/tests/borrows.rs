@@ -206,6 +206,14 @@ fn field_borrows_of_a_pointee_stay_precise() {
 }
 
 #[test]
+fn a_read_through_a_shared_alias_names_the_exclusive_storage() {
+    let fixture = check_errors(
+        "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &x;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5007", "because `x` is exclusively borrowed");
+}
+
+#[test]
 fn a_shared_pointee_read_is_allowed() {
     check_clean("func f(p: *mut i32) -> i32 {\n  let a = &*p;\n  let v = *p;\n  *a + v\n}\n");
 }

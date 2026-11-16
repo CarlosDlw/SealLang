@@ -115,6 +115,26 @@ func main() -> i32 { 0 }
 }
 
 #[test]
+fn a_returned_local_reference_points_at_the_returned_expression() {
+    let file = SourceFile::new(
+        "return-label",
+        r#"func pick() -> *i32 {
+  let value = 41;
+  &value
+}
+
+func main() -> i32 { 0 }
+"#,
+    );
+    let output = file.check();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[E5004]") && stderr.contains("returned here"),
+        "expected the returned expression to be labeled: {stderr}"
+    );
+}
+
+#[test]
 fn returning_a_reference_through_a_local_borrow_reports_e5004() {
     reject(
         "return-through-value",
