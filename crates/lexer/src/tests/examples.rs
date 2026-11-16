@@ -21,6 +21,7 @@ fn all_examples_lex_cleanly() {
         "0003_operators.sl",
         "004_conditionals.sl",
         "005_while_loop.sl",
+        "007_runtime_panic.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

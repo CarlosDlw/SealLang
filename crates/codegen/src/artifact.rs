@@ -1,8 +1,9 @@
 //! Writing object, assembly, and executable artifacts.
 //!
 //! Object and assembly output are written atomically through `seal-fs`. An
-//! executable is linked from a temporary object in the output directory; the
-//! temporary file is removed on every path, including linker failure.
+//! executable is linked from a temporary object and the embedded runtime
+//! archive in the output directory; both temporary files are removed on every
+//! path, including linker failure.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -20,11 +21,12 @@ pub(crate) fn emit_artifact(
     machine: &TargetMachine,
     emit: Emit,
     output: &Path,
+    runtime: &[u8],
 ) -> Result<(), CodegenError> {
     match emit {
         Emit::Object => write_buffer(module, machine, FileType::Object, output),
         Emit::Assembly => write_buffer(module, machine, FileType::Assembly, output),
-        Emit::Executable => link_executable(module, machine, output),
+        Emit::Executable => link_executable(module, machine, output, runtime),
     }
 }
 
@@ -51,6 +53,7 @@ fn link_executable(
     module: &Module<'_>,
     machine: &TargetMachine,
     output: &Path,
+    runtime: &[u8],
 ) -> Result<(), CodegenError> {
     let object = machine
         .write_to_memory_buffer(module, FileType::Object)
@@ -80,9 +83,24 @@ fn link_executable(
         )
     })?;
 
+    let runtime_path = directory.join(format!(
+        ".{}.{}.seal_rt{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        if cfg!(windows) { ".lib" } else { ".a" }
+    ));
+    let _runtime_guard = TempFile(runtime_path.clone());
+    seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
+        CodegenError::artifact(
+            &runtime_path,
+            format!("cannot write the temporary runtime archive: {error}"),
+        )
+    })?;
+
     let linker = linker_command();
     let result = Command::new(&linker)
         .arg(&object_path)
+        .arg(&runtime_path)
         .arg("-o")
         .arg(output)
         .output();

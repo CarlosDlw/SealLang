@@ -33,7 +33,7 @@ allowed to depend only on crates below it in the list.
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, terminators, and structural validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, escaping references, `E5xxx` diagnostics. |
-| `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts (`E6xxx`). |
+| `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
@@ -244,16 +244,26 @@ allowed to depend only on crates below it in the list.
     offsets, and a source location per statement and terminator, all finalized
     before verification and optimization.
 56. **Arithmetic cannot silently invoke LLVM undefined behavior.** Integer
-    division and remainder trap on a zero divisor and on the signed minimum
-    divided by `-1`; shift amounts are masked to the operand width. Integer
-    arithmetic wraps, floats follow IEEE, and no overflow check is inserted.
+    division and remainder panic through the runtime on a zero divisor and on
+    the signed minimum divided by `-1`, reporting the source location and
+    exiting with status 101; shift amounts are masked to the operand width.
+    Integer arithmetic wraps, floats follow IEEE, and no overflow check is
+    inserted.
 57. **Artifacts are all-or-nothing.** Object and assembly output are written
-    atomically. Executables are linked from a temporary object that is removed
-    on success and on every failure path; the linker's stderr is part of the
-    diagnostic.
+    atomically. Executables are linked from a temporary object and the embedded
+    runtime archive, both removed on success and on every failure path; the
+    linker's stderr is part of the diagnostic.
 58. **Targets are explicit.** The LLVM triple and target machine come from
     `seal-target`, never from the host. An unavailable backend is `E6002`, and a
-    missing linker or unsupported cross-link is `E6003`.
+    missing linker, unsupported cross-link, or runtime/target mismatch is
+    `E6003`.
+59. **The runtime is minimal and self-contained.** The embedded C11 runtime
+    allocates no memory, takes no locks, and uses no stdio, locale, or `atexit`
+    handlers.
+    Writes transfer exactly the requested bytes, retrying `EINTR` and partial
+    writes; panics never unwind and always terminate with status 101. The
+    archive is host-specific and linked only into executables, so object and
+    assembly output stay target-independent.
 
 ## Extension points
 

@@ -832,7 +832,9 @@ pub const E6003: ErrorCode = ErrorCode {
     explanation: "\
 The compiler produced valid machine code but could not write the requested file
 or could not run the system linker. The linker error is included with the
-diagnostic.
+diagnostic. Linking an executable also needs the embedded runtime to match the
+target architecture and operating system; the bundled runtime is built for the
+compiler host, so use `--emit=obj` when compiling for a different target.
 
 Check that the output directory exists and is writable, that a C toolchain is
 installed, and that the target's linker and sysroot are available. Nothing is

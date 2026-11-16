@@ -10,7 +10,7 @@ use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use seal_def::DefId;
 use seal_hir::Hir;
 use seal_mir::{Body, LocalId, LocalKind, StatementKind, SwitchTarget, TerminatorKind};
-use seal_span::Span;
+use seal_span::{SourceMap, Span};
 use seal_symbol::Interner;
 use seal_ty::{TyCtxt, TyId};
 
@@ -42,6 +42,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) constants: &'a Constants<'a, 'ctx>,
     /// Symbol interner.
     pub(crate) interner: &'a Interner,
+    /// Source map, used for runtime panic locations.
+    pub(crate) source_map: &'a SourceMap,
     /// Debug information, when requested.
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
     /// This function's debug subprogram.
@@ -60,6 +62,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     pub(crate) constants: &'a Constants<'a, 'ctx>,
     pub(crate) interner: &'a Interner,
+    pub(crate) source_map: &'a SourceMap,
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
     pub(crate) scope: Option<DISubprogram<'ctx>>,
     pub(crate) allocas: Vec<PointerValue<'ctx>>,
@@ -92,6 +95,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             mapper: self.mapper,
             constants: self.constants,
             interner: self.interner,
+            source_map: self.source_map,
             debug: self.debug,
             scope: self.scope,
             allocas: Vec::with_capacity(self.body.locals.len()),
@@ -111,7 +115,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             for statement in &block.statements {
                 self.set_span(statement.span);
                 let StatementKind::Assign { place, rvalue } = &statement.kind;
-                let value = self.emit_rvalue(rvalue)?;
+                let value = self.emit_rvalue(rvalue, statement.span)?;
                 let destination = self.place_ptr(place)?;
                 self.build(self.builder.build_store(destination, value), "assignment")?;
             }
@@ -258,14 +262,6 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         } else {
             ty.const_int(value as u64, false)
         }
-    }
-
-    pub(crate) fn trap_function(&self) -> FunctionValue<'ctx> {
-        if let Some(function) = self.module.get_function("llvm.trap") {
-            return function;
-        }
-        let function_type = self.context.void_type().fn_type(&[], false);
-        self.module.add_function("llvm.trap", function_type, None)
     }
 
     /// Returns the local slot's alloca.

@@ -22,6 +22,7 @@ fn all_examples_parse_without_diagnostics() {
         ("0003_operators.sl", 1),
         ("004_conditionals.sl", 3),
         ("005_while_loop.sl", 2),
+        ("007_runtime_panic.sl", 1),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);
@@ -36,7 +37,12 @@ fn all_examples_parse_without_diagnostics() {
 
 #[test]
 fn entry_point_examples_define_a_parameterless_main_returning_i32() {
-    for name in ["0001_main.sl", "0002_variables.sl", "0003_operators.sl"] {
+    for name in [
+        "0001_main.sl",
+        "0002_variables.sl",
+        "0003_operators.sl",
+        "007_runtime_panic.sl",
+    ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);
         let declaration = sole_function(&ast);

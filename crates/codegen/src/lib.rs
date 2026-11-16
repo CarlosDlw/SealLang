@@ -13,8 +13,12 @@
 //!    subroutine and aggregate types, parameters, bindings, and one location per
 //!    statement and terminator.
 //! 4. The module is verified, optimized at the requested level, and emitted.
-//!    Executables are linked from a temporary object with the system C toolchain.
+//!    Executables are linked from a temporary object and the embedded C runtime
+//!    archive with the system C toolchain.
 //!
+//! Runtime failures (division by zero and signed division overflow) call
+//! `seal_panic`, which writes a structured diagnostic to standard error and
+//! exits with status 101. The runtime never allocates or uses stdio.
 //! # Layout
 //!
 //! Aggregates are LLVM structs in declaration order. Scalars use their size as
@@ -46,7 +50,9 @@ mod function;
 mod names;
 mod operand;
 mod options;
+mod panic;
 mod place;
+mod runtime;
 mod rvalue;
 mod types;
 

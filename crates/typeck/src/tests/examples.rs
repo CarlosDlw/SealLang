@@ -4,13 +4,14 @@ use std::path::PathBuf;
 
 use super::support::{check_clean, expect_ty, function, let_binding, local_ty, statements};
 
-const EXAMPLES: [&str; 6] = [
+const EXAMPLES: [&str; 7] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
     "004_conditionals.sl",
     "005_while_loop.sl",
     "006_structs.sl",
+    "007_runtime_panic.sl",
 ];
 
 fn source(name: &str) -> String {

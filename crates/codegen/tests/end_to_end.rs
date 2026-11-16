@@ -13,6 +13,7 @@ use seal_session::{OptLevel, Options, Session};
 use seal_span::FileName;
 
 const STRUCTS: &str = include_str!("../../../examples/006_structs.sl");
+const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -46,7 +47,29 @@ fn compile(
     opt_level: OptLevel,
     debug_info: bool,
 ) -> Result<(), CodegenError> {
-    let session = Session::new(Options::default()).expect("session starts");
+    compile_for_target(
+        source,
+        output,
+        emit,
+        opt_level,
+        debug_info,
+        seal_target::host_triple(),
+    )
+}
+
+fn compile_for_target(
+    source: &str,
+    output: &Path,
+    emit: Emit,
+    opt_level: OptLevel,
+    debug_info: bool,
+    target: seal_target::TargetTriple,
+) -> Result<(), CodegenError> {
+    let session = Session::new(Options {
+        target,
+        ..Options::default()
+    })
+    .expect("session starts");
     let file = session
         .add_file(FileName::virtual_name("test.sl"), source.to_owned())
         .unwrap_or_else(|_| panic!("source registers"));
@@ -99,6 +122,10 @@ fn compile(
 
 fn run(path: &Path) -> std::process::ExitStatus {
     Command::new(path).status().expect("artifact runs")
+}
+
+fn run_captured(path: &Path) -> std::process::Output {
+    Command::new(path).output().expect("artifact runs")
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -281,23 +308,143 @@ fn string_literals_lower_to_fat_pointers() {
     assert_eq!(run(output.path()).code(), Some(0));
 }
 
-#[cfg(unix)]
 #[test]
-fn integer_division_by_zero_traps() {
-    use std::os::unix::process::ExitStatusExt;
+fn cross_target_executables_require_a_matching_runtime() {
+    let triple = if cfg!(target_arch = "x86_64") {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    let target = seal_target::TargetTriple::parse(triple).expect("test triple is valid");
+    let source = "func main() -> i32 { 0 }";
 
-    let output = TempOutput::new("division");
+    let executable = TempOutput::new("cross");
+    let error = compile_for_target(
+        source,
+        executable.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+        target.clone(),
+    )
+    .expect_err("an executable needs a runtime for its target");
+    match error {
+        CodegenError::Artifact { detail, .. } => {
+            assert!(detail.contains("embedded runtime"));
+            assert!(detail.contains("--emit=obj"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let object = TempOutput::new("cross.o");
+    compile_for_target(
+        source,
+        object.path(),
+        Emit::Object,
+        OptLevel::O0,
+        false,
+        target,
+    )
+    .expect("object emission does not need the runtime");
+    assert!(
+        std::fs::metadata(object.path())
+            .expect("object exists")
+            .len()
+            > 0
+    );
+}
+
+#[test]
+fn division_by_zero_panics_with_the_source_location() {
+    let output = TempOutput::new("division-zero");
     compile(
-        "func main() -> i32 { let zero = 0; 10 / zero }",
+        "// one\n// two\nfunc main() -> i32 {\n    let zero = 0;\n    10 / zero\n}\n",
         output.path(),
         Emit::Executable,
         OptLevel::O0,
         false,
     )
     .expect("division compiles");
-    let status = run(output.path());
-    assert!(
-        status.signal().is_some(),
-        "division by zero must trap, got {status:?}"
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to divide by zero at <test.sl>:5:5\n"
+    );
+}
+
+#[test]
+fn runtime_panic_example_matches_the_documented_contract() {
+    let output = TempOutput::new("runtime-panic-example");
+    compile(
+        RUNTIME_PANIC,
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect("the runtime panic example compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to divide by zero at <test.sl>:5:3\n"
+    );
+}
+
+#[test]
+fn signed_division_overflow_panics() {
+    let output = TempOutput::new("division-overflow");
+    compile(
+        "func main() -> i32 {\n    let minimum: i32 = -2147483647 - 1;\n    let minus_one: i32 = -1;\n    minimum / minus_one\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("division compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to divide with overflow at <test.sl>:4:5\n"
+    );
+}
+
+#[test]
+fn remainder_by_zero_panics() {
+    let output = TempOutput::new("remainder-zero");
+    compile(
+        "// one\n// two\n// three\n// four\n// five\n// six\n// seven\n// eight\n// nine\nfunc main() -> i32 {\n    let zero = 0;\n    10 % zero\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect("remainder compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to calculate the remainder with a divisor of zero at <test.sl>:12:5\n"
+    );
+}
+
+#[test]
+fn signed_remainder_overflow_panics() {
+    let output = TempOutput::new("remainder-overflow");
+    compile(
+        "func main() -> i32 {\n    let minimum: i32 = -2147483647 - 1;\n    let minus_one: i32 = -1;\n    minimum % minus_one\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("remainder compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to calculate the remainder with overflow at <test.sl>:4:5\n"
     );
 }

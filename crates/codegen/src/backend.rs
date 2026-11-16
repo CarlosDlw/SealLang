@@ -56,6 +56,17 @@ pub struct Artifact {
 
 /// Lowers checked MIR to LLVM IR and produces the requested artifact.
 pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifact, CodegenError> {
+    if options.emit == Emit::Executable && !crate::runtime::supports(input.target) {
+        return Err(CodegenError::artifact(
+            &options.output,
+            format!(
+                "the embedded runtime was built for the host (`{}`), not for `{}`; \
+                 use --emit=obj and link the object with a runtime for the target",
+                seal_target::host_triple(),
+                input.target
+            ),
+        ));
+    }
     Target::initialize_all(&InitializationConfig::default());
     let triple = TargetTriple::create(input.target.triple().as_str());
     let target = Target::from_triple(&triple).map_err(|error| {
@@ -149,6 +160,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             mapper: &mapper,
             constants: &constants,
             interner: input.interner,
+            source_map: input.source_map,
             debug: debug.as_ref(),
             scope,
         }
@@ -183,7 +195,13 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             })?;
     }
 
-    artifact::emit_artifact(&module, &machine, options.emit, &options.output)?;
+    artifact::emit_artifact(
+        &module,
+        &machine,
+        options.emit,
+        &options.output,
+        crate::runtime::ARCHIVE,
+    )?;
     Ok(Artifact {
         path: options.output.clone(),
         emit: options.emit,

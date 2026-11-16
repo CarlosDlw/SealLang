@@ -96,9 +96,11 @@ permits `unsafe`; every other compiler crate keeps `unsafe_code = "forbid"`.
 
 Code generation must not leave undefined behavior on ordinary arithmetic:
 
-- `/` and `%` trap (through `llvm.trap`) when the divisor is zero, and for signed
+- `/` and `%` panic through the runtime when the divisor is zero, and for signed
   integers when the dividend is the minimum and the divisor is `-1`. LLVM treats
-  both cases as undefined; Seal makes them deterministic traps instead.
+  both cases as undefined; Seal makes them deterministic runtime failures.
+  Division and remainder use distinct messages for a zero divisor and for
+  overflow.
 - Shifts mask the amount to `width - 1` bits, so an oversized shift has a defined
   result instead of target-dependent undefined behavior.
 - Integer add, subtract, and multiply wrap in two's complement. No operation
@@ -109,13 +111,34 @@ Code generation must not leave undefined behavior on ordinary arithmetic:
 - Bitwise operators require integer operands (or `bool` for `!`), which the type
   checker enforces before code generation.
 
+## Native runtime
+
+`build.rs` compiles `runtime/seal_rt.c` with the `cc` crate and embeds the
+resulting archive in the compiler. The runtime is minimal C11 with no
+allocation, locks, stdio, locale, or `atexit` handlers:
+
+- `seal_write` writes exactly the requested bytes to a descriptor, retrying
+  `EINTR` and partial writes. `seal_print` and `seal_eprint` select stdout and
+  stderr; on Windows they map the descriptor to `STD_OUTPUT_HANDLE` or
+  `STD_ERROR_HANDLE` and use `WriteFile`.
+- `seal_panic` is `noreturn`, `nounwind`, and `cold`. It writes
+  `panic: <message> at <file>:<line>:<column>\n` to standard error and
+  terminates with status 101, without flushing or unwinding. Generated calls
+  are followed by `unreachable`.
+- The archive is linked after the generated object and only into executables;
+  unused members do not enter the output. Object and assembly emission never
+  need the runtime.
+- The archive is built for the compiler host. `--emit=exe` for another
+  architecture or OS is rejected with `E6003`; `--emit=obj` remains available
+  for cross-compilation.
+
 ## Failures
 
 | Code | Meaning |
 |------|---------|
 | `E6001` | The executable has no usable `main`, or `main` has parameters or a return type other than `i32`/`()`. |
 | `E6002` | LLVM has no backend for the requested triple or cannot create a target machine. |
-| `E6003` | The artifact could not be written, the linker could not run, or linking failed. |
+| `E6003` | The artifact could not be written, the linker could not run, linking failed, or an executable was requested for a target that does not match the embedded runtime. |
 
 Broken compiler invariants (invalid MIR reaching codegen, an unresolved inference
 type, invalid generated IR, or a failed optimization pipeline) are internal
@@ -129,8 +152,8 @@ compiler errors, not user diagnostics.
 - **New MIR rvalue or operand.** Add an arm to `FunctionLowerer::emit_rvalue` (or
   `load_operand`); places, debug locations, and verification stay unchanged.
 - **New target.** `seal-target` supplies the triple, pointer width, and data
-  model; LLVM supplies the backend. Cross-linking needs a matching linker and
-  sysroot, while `--emit=obj` works without either.
+  model; LLVM supplies the backend. Cross-linking needs a matching linker,
+  sysroot, and runtime archive, while `--emit=obj` works without them.
 - **New debug metadata.** Add it to `DebugContext` and finalize it before
   verification. Metadata must describe the IR that was actually generated.
 
@@ -145,5 +168,7 @@ cargo build --workspace
 
 The end-to-end tests compile and run `examples/006_structs.sl` in debug and
 release, check DWARF sections and names, exercise object and assembly output
-without `main`, verify entry-point diagnostics, and confirm that division by zero
-traps.
+without `main`, verify entry-point diagnostics, and confirm panic messages and
+status 101 for zero divisors and signed overflow in both `/` and `%`, and reject
+executable linking when the embedded runtime does not match the target.
+`examples/007_runtime_panic.sl` pins the user-visible panic message and location.

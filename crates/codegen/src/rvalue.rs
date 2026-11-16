@@ -1,15 +1,16 @@
 //! Evaluating right-hand sides.
 //!
-//! Integer division and remainder trap instead of invoking LLVM's undefined
-//! behaviour for a zero divisor or for the signed minimum divided by minus one.
-//! Shifts mask the amount to the operand width, so an oversized shift is defined
-//! and deterministic rather than target-dependent.
+//! Integer division and remainder panic through the runtime instead of invoking
+//! LLVM's undefined behaviour for a zero divisor or for the signed minimum
+//! divided by minus one. Shifts mask the amount to the operand width, so an
+//! oversized shift is defined and deterministic rather than target-dependent.
 
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, IntValue, ValueKind};
 use inkwell::{FloatPredicate, IntPredicate};
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_mir::{AggregateKind, BinOp, Rvalue, UnOp};
+use seal_span::Span;
 use seal_ty::TyKind;
 
 use crate::error::CodegenError;
@@ -20,6 +21,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     pub(crate) fn emit_rvalue(
         &self,
         rvalue: &Rvalue,
+        span: Span,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
@@ -28,7 +30,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 let ty = self.operand_type(lhs)?;
                 let lhs = self.load_operand(lhs)?;
                 let rhs = self.load_operand(rhs)?;
-                self.binary(*op, lhs, rhs, ty)
+                self.binary(*op, lhs, rhs, ty, span)
             }
             Rvalue::Unary { op, operand } => {
                 let value = self.load_operand(operand)?;
@@ -45,6 +47,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         lhs: BasicValueEnum<'ctx>,
         rhs: BasicValueEnum<'ctx>,
         ty: seal_ty::TyId,
+        span: Span,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match (lhs, rhs) {
             (BasicValueEnum::IntValue(lhs), BasicValueEnum::IntValue(rhs)) => {
@@ -53,7 +56,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                         "integer operands of a binary operation have different widths",
                     ));
                 }
-                self.integer_binary(op, lhs, rhs, ty)
+                self.integer_binary(op, lhs, rhs, ty, span)
             }
             (BasicValueEnum::FloatValue(lhs), BasicValueEnum::FloatValue(rhs)) => {
                 self.float_binary(op, lhs, rhs)
@@ -70,6 +73,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         lhs: IntValue<'ctx>,
         rhs: IntValue<'ctx>,
         ty: seal_ty::TyId,
+        span: Span,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let signed = matches!(self.tcx.kind(ty), TyKind::Int(_));
         let value = match op {
@@ -83,7 +87,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 "multiplication",
             )?,
             BinOp::Div => {
-                self.guard_divisor(lhs, rhs, signed)?;
+                self.guard_divisor(lhs, rhs, signed, op, span)?;
                 if signed {
                     self.build(
                         self.builder.build_int_signed_div(lhs, rhs, "divide"),
@@ -97,7 +101,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 }
             }
             BinOp::Rem => {
-                self.guard_divisor(lhs, rhs, signed)?;
+                self.guard_divisor(lhs, rhs, signed, op, span)?;
                 if signed {
                     self.build(
                         self.builder.build_int_signed_rem(lhs, rhs, "remainder"),
@@ -319,15 +323,33 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         lhs: IntValue<'ctx>,
         rhs: IntValue<'ctx>,
         signed: bool,
+        op: BinOp,
+        span: Span,
     ) -> Result<(), CodegenError> {
+        let (zero_message, overflow_message) = match op {
+            BinOp::Div => (
+                "attempt to divide by zero",
+                "attempt to divide with overflow",
+            ),
+            BinOp::Rem => (
+                "attempt to calculate the remainder with a divisor of zero",
+                "attempt to calculate the remainder with overflow",
+            ),
+            _ => {
+                return Err(CodegenError::internal(
+                    "a non-division operation reached the division guard",
+                ));
+            }
+        };
+
         let ty = rhs.get_type();
         let zero = ty.const_zero();
-        let mut invalid = self.build(
+        let is_zero = self.build(
             self.builder
                 .build_int_compare(IntPredicate::EQ, rhs, zero, "divisor_is_zero"),
             "divisor check",
         )?;
-        if signed {
+        let overflow = if signed {
             let width = ty.get_bit_width();
             let minus_one = if width > 64 {
                 ty.const_int_arbitrary_precision(&[u64::MAX, u64::MAX])
@@ -353,35 +375,59 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 ),
                 "dividend check",
             )?;
-            let overflow = self.build(
-                self.builder
-                    .build_and(is_minus_one, is_minimum, "division_overflows"),
-                "overflow check",
-            )?;
-            invalid = self.build(
-                self.builder.build_or(invalid, overflow, "invalid_division"),
-                "overflow check",
-            )?;
-        }
-        let valid = self.build(
-            self.builder.build_not(invalid, "division_is_valid"),
-            "division guard",
-        )?;
+            Some(
+                self.build(
+                    self.builder
+                        .build_and(is_minus_one, is_minimum, "division_overflows"),
+                    "overflow check",
+                )?,
+            )
+        } else {
+            None
+        };
+
+        let zero_block = self
+            .context
+            .append_basic_block(self.function, "division.zero");
         let continuation = self
             .context
             .append_basic_block(self.function, "division.continue");
-        let trap = self
-            .context
-            .append_basic_block(self.function, "division.trap");
-        self.build(
-            self.builder
-                .build_conditional_branch(valid, continuation, trap),
-            "division branch",
-        )?;
-        self.builder.position_at_end(trap);
-        let trap_function = self.trap_function();
-        self.build(self.builder.build_call(trap_function, &[], ""), "trap call")?;
-        self.build(self.builder.build_unreachable(), "trap terminator")?;
+        let overflow_block = overflow.map(|_| {
+            self.context
+                .append_basic_block(self.function, "division.overflow")
+        });
+
+        match (overflow, overflow_block) {
+            (Some(overflow), Some(overflow_block)) => {
+                let check_block = self
+                    .context
+                    .append_basic_block(self.function, "division.check_overflow");
+                self.build(
+                    self.builder
+                        .build_conditional_branch(is_zero, zero_block, check_block),
+                    "division branch",
+                )?;
+                self.builder.position_at_end(check_block);
+                self.build(
+                    self.builder
+                        .build_conditional_branch(overflow, overflow_block, continuation),
+                    "overflow branch",
+                )?;
+                self.builder.position_at_end(zero_block);
+                self.panic_at(span, zero_message)?;
+                self.builder.position_at_end(overflow_block);
+                self.panic_at(span, overflow_message)?;
+            }
+            _ => {
+                self.build(
+                    self.builder
+                        .build_conditional_branch(is_zero, zero_block, continuation),
+                    "division branch",
+                )?;
+                self.builder.position_at_end(zero_block);
+                self.panic_at(span, zero_message)?;
+            }
+        }
         self.builder.position_at_end(continuation);
         Ok(())
     }

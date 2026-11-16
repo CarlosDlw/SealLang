@@ -137,6 +137,7 @@ dependencies = [
 name = "seal-codegen"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "inkwell",
  "seal-ast",
  "seal-borrowck",
