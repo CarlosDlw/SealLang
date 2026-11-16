@@ -111,7 +111,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                     seal_hir::lower(&ast, session.diag(), session.interner())
                 });
                 if session.diag().error_count() == errors_before_lexing {
-                    let _typeck = session.profiler().time("typeck", || {
+                    let typeck = session.profiler().time("typeck", || {
                         seal_typeck::check(
                             &hir,
                             session.diag(),
@@ -119,6 +119,18 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                             session.target().pointer_width(),
                         )
                     });
+                    // Lowering relies on the invariants the checker establishes,
+                    // so it runs only when no error was reported.
+                    if session.diag().error_count() == errors_before_lexing {
+                        let mir = session
+                            .profiler()
+                            .time("mir", || seal_mir::lower(&hir, &typeck));
+                        if let Err(error) = mir.validate() {
+                            session
+                                .diag()
+                                .bug(format!("MIR lowering produced an invalid body: {error}"));
+                        }
+                    }
                 }
             }
         }
@@ -140,7 +152,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (MIR, borrow checking, codegen) plug in here, consuming the
-    // checked tree produced above.
+    // Later phases (move analysis, borrow checking, codegen) plug in here,
+    // consuming the MIR produced above.
     Ok(ExitCode::SUCCESS)
 }

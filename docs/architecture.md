@@ -1,11 +1,12 @@
-# Seal compiler architecture — foundation through type checking
+# Seal compiler architecture — foundation through MIR
 
-This document covers the compiler foundation and the first four phases: the
-lexer, the parser, HIR lowering with name resolution, and type checking. The
-foundation is the set of crates that every later phase (MIR, borrow checking,
-codegen) depends on. It is kept in sync with the code; changes to a public
-invariant must change this file in the same commit. The memory model that the
-type representation encodes is decided in [`memory-model.md`](memory-model.md).
+This document covers the compiler foundation and the first five phases: the
+lexer, the parser, HIR lowering with name resolution, type checking, and MIR
+lowering. The foundation is the set of crates that every later phase (borrow
+checking, codegen) depends on. It is kept in sync with the code; changes to a
+public invariant must change this file in the same commit. The memory model that
+the type representation encodes is decided in
+[`memory-model.md`](memory-model.md).
 
 ## Workspace layout
 
@@ -29,6 +30,7 @@ allowed to depend only on crates below it in the list.
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, terminators, and structural validation. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -137,6 +139,32 @@ allowed to depend only on crates below it in the list.
 31. **Stored values are sized.** Locals, parameters, and return values cannot
     have `str`; literals must fit the integer or float type selected for them,
     using the target pointer width for `isize` and `usize`.
+32. **MIR is a control-flow graph.** Every body has one entry block and a return
+    place at local zero; parameters are locals `1..=arg_count`, bindings and
+    temporaries follow, and every local declares its type. Every block ends in
+    exactly one terminator, so there is no implicit fallthrough, and validation
+    rejects a body whose place or edge names a missing local or block.
+33. **Evaluation order is preserved.** Operands are lowered left to right before
+    the operation that consumes them, statements keep source order, and a call
+    is a statement (`Rvalue::Call`) because Seal has no unwinding, so a call
+    has exactly one successor.
+34. **Short-circuiting is control flow.** `&&` and `||` lower to `SwitchInt`
+    graphs whose short-circuit block stores the constant result, so the right
+    operand is evaluated only on the path that needs it. MIR has no `BinOp` for
+    them.
+35. **Loops and branches are explicit.** `if`, `while`, `break`, and `continue`
+    lower to blocks and edges; boolean conditions use `SwitchInt` with `1` for
+    true, `continue` jumps to the condition block, and `break` to the loop exit.
+    A condition is always evaluated in its own block, once per test.
+36. **Lowering assumes a clean check.** MIR is produced only from a HIR tree
+    that type checking accepted without errors, so every value expression has a
+    type, every assignment target is a local place, and every local has a
+    storage type. The driver validates the lowered tree and reports a structural
+    failure as an internal compiler error.
+37. **Divergence does not truncate the graph.** A `return` terminates its block,
+    but lowering keeps processing the rest of the source, so unreachable blocks
+    may exist and must stay structurally valid. Validation does not require
+    reachability; removing dead blocks belongs to a later pass.
 
 ## Extension points
 
@@ -154,7 +182,19 @@ allowed to depend only on crates below it in the list.
 - **New operator.** Add the AST variant and its parser precedence, then add an
   arm to `seal-typeck`'s operator table with the operand family it accepts and
   tests for each accepted and rejected family. Operators never convert their
-  operands; a mixed-type use is `E3002` or `E3001`.
+  operands; a mixed-type use is `E3002` or `E3001`. Finally add the matching
+  `BinOp` or `UnOp` variant in `seal-mir` and lower it in `lower.rs`'s operator
+  tables.
+- **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
+  `validate` about every place and operand it carries, lower it from `seal-hir`,
+  and extend `successors` only if it can change control flow. `Rvalue::Call` is
+  the template for a value-producing operation with one successor.
+- **New control-flow construct.** Lower it to blocks and `Goto`/`SwitchInt`
+  edges; `while` shows the loop-target stack and `&&`/`||` the short-circuit
+  shape. Every new edge must go through `validate`'s target check.
+- **New projection.** `Place` is already the unit of storage, so add the
+  projection layer inside `seal-mir` and update validation; consumers that take
+  a `Place` need no signature change.
 - **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
   unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
   and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both

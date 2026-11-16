@@ -54,6 +54,7 @@ dependencies = [
  "seal-error-codes",
  "seal-hir",
  "seal-lexer",
+ "seal-mir",
  "seal-parser",
  "seal-session",
  "seal-target",
@@ -119,6 +120,24 @@ dependencies = [
  "quote",
  "seal-hash",
  "syn",
+]
+
+[[package]]
+name = "seal-mir"
+version = "0.1.0"
+dependencies = [
+ "seal-ast",
+ "seal-def",
+ "seal-diagnostics",
+ "seal-hash",
+ "seal-hir",
+ "seal-index",
+ "seal-lexer",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+ "seal-ty",
+ "seal-typeck",
 ]
 
 [[package]]
