@@ -249,6 +249,27 @@ pub enum ExprKind {
         /// Initializers in source order.
         fields: Vec<FieldInit>,
     },
+    /// An array literal, written `[a, b, c]`.
+    Array {
+        /// Elements in source order; an empty literal has no elements.
+        elements: Vec<ExprId>,
+    },
+    /// A repeated array literal, written `[value; length]`.
+    ArrayRepeat {
+        /// The element expression, evaluated once.
+        value: ExprId,
+        /// The number of elements.
+        length: u64,
+        /// The span of the length literal, for diagnostics.
+        length_span: Span,
+    },
+    /// An array index, written `base[index]`.
+    Index {
+        /// The array place being indexed.
+        base: ExprId,
+        /// The index expression.
+        index: ExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.

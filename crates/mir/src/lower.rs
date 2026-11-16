@@ -350,12 +350,37 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(dest, Rvalue::Ref { place, kind }, span);
                 }
             }
-            ExprKind::Deref { .. } | ExprKind::Field { .. } => {
+            ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(expr);
                     let ty = self.expr_ty(expr);
                     let operand = self.place_operand(place, ty);
                     self.assign_operand(dest, operand, span);
+                }
+            }
+            ExprKind::Array { elements } => {
+                let ty = self.expr_ty(expr);
+                let elements: Vec<Operand> = elements
+                    .iter()
+                    .map(|element| self.lower_operand(*element))
+                    .collect();
+                if let Some(dest) = dest {
+                    self.assign_rvalue(dest, Rvalue::Array { elements, ty }, span);
+                }
+            }
+            ExprKind::ArrayRepeat { value, length } => {
+                let ty = self.expr_ty(expr);
+                let value = self.lower_operand(value);
+                if let Some(dest) = dest {
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::Repeat {
+                            value,
+                            count: length,
+                            ty,
+                        },
+                        span,
+                    );
                 }
             }
             ExprKind::Struct { adt, fields } => {
@@ -619,7 +644,7 @@ impl<'a> BodyLowering<'a> {
                 self.place_operand(place, ty)
             }
             ExprKind::Path(Res::Function(_)) | ExprKind::Error => Operand::Constant(Constant::Unit),
-            ExprKind::Deref { .. } | ExprKind::Field { .. } => {
+            ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)
             }
@@ -667,8 +692,8 @@ impl<'a> BodyLowering<'a> {
     /// Lowering stores that reference in a temporary and reads through it, so
     /// the expression still denotes storage and still copies on read.
     fn place_of_expr(&mut self, expr: HirExprId) -> Place {
-        if let Some(place) = self.typeck.place(expr) {
-            return self.resolved_place(place);
+        if let Some(place) = self.typeck.place(expr).cloned() {
+            return self.resolved_place(&place);
         }
 
         let kind = self.hir.expr(expr).kind.clone();
@@ -683,17 +708,87 @@ impl<'a> BodyLowering<'a> {
     }
 
     /// Converts a place resolved by type checking into a MIR place.
-    fn resolved_place(&self, place: &ResolvedPlace) -> Place {
+    ///
+    /// Index expressions are evaluated here, in source order, and a runtime
+    /// index receives a bounds check before any projection uses it. The check
+    /// becomes an explicit two-block graph, so code generation never has to
+    /// invent control flow while computing an address.
+    fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
         let local = self.place_of_local(place.local).local;
-        let projections = place
-            .projections
-            .iter()
-            .map(|projection| match projection {
-                PlaceProjection::Deref => Projection::Deref,
-                PlaceProjection::Field(field) => Projection::Field(*field),
-            })
-            .collect();
+        let mut projections = Vec::with_capacity(place.projections.len());
+        for projection in &place.projections {
+            match projection {
+                PlaceProjection::Deref => projections.push(Projection::Deref),
+                PlaceProjection::Field(field) => projections.push(Projection::Field(*field)),
+                PlaceProjection::Index {
+                    index,
+                    constant,
+                    length,
+                } => {
+                    let span = self.hir.expr(*index).span;
+                    let ty = self.expr_ty(*index);
+                    let temp = self.new_temp(ty, span);
+                    self.lower_expr_into(*index, Some(temp.clone()));
+                    if constant.is_none() {
+                        self.emit_bounds_check(temp.local, *length, span);
+                    }
+                    projections.push(Projection::Index {
+                        local: temp.local,
+                        constant: *constant,
+                    });
+                }
+            }
+        }
         Place::with_projections(local, projections)
+    }
+
+    /// Branches to a panic block when `index` is not less than `length`.
+    fn emit_bounds_check(&mut self, index: LocalId, length: u64, span: Span) {
+        let some = |kind| {
+            self.hir
+                .ty_ctxt()
+                .lookup(kind)
+                .expect("HIR lowering interns every primitive type")
+        };
+        let bool_ty = some(TyKind::Bool);
+        let usize_ty = some(TyKind::Uint(seal_ty::UintTy::Usize));
+
+        let condition = self.new_temp(bool_ty, span);
+        self.assign_rvalue(
+            condition.clone(),
+            Rvalue::Binary {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Constant(Constant::Int {
+                    value: u128::from(length),
+                    ty: usize_ty,
+                }),
+                span,
+            },
+            span,
+        );
+
+        let success = self.new_block();
+        let panic = self.new_block();
+        self.terminate(
+            TerminatorKind::SwitchInt {
+                discriminant: Operand::Copy(condition),
+                targets: vec![SwitchTarget {
+                    value: 1,
+                    target: success,
+                }],
+                otherwise: panic,
+            },
+            span,
+        );
+        self.current = Some(panic);
+        self.terminate(
+            TerminatorKind::Panic {
+                message: format!("index out of bounds: the length is {length}"),
+            },
+            span,
+        );
+        self.current = Some(success);
     }
 
     fn place_of_local(&self, local: DefId) -> Place {

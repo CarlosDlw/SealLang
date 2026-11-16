@@ -21,6 +21,20 @@ impl Parser<'_> {
             let span = start.cover(self.builder.ast().ty(pointee).span);
             self.builder
                 .push_type(TypeKind::Pointer { pointee, mutable }, span)
+        } else if self.eat(TokenKind::LBracket) {
+            let element = self.parse_type();
+            let _ = self.expect(TokenKind::Semicolon, "`;` after the array element type");
+            let (length, length_span) = self.parse_array_length("array length");
+            let _ = self.expect(TokenKind::RBracket, "`]` to close the array type");
+            let span = start.cover(self.previous_span());
+            self.builder.push_type(
+                TypeKind::Array {
+                    element,
+                    length,
+                    length_span,
+                },
+                span,
+            )
         } else if let TokenKind::Ident(symbol) = self.current_kind() {
             let text = self.interner.resolve(symbol);
             match PrimitiveType::from_name(text) {
@@ -66,6 +80,7 @@ fn is_type_stop(kind: TokenKind) -> bool {
             | TokenKind::LBrace
             | TokenKind::RBrace
             | TokenKind::RParen
+            | TokenKind::RBracket
             | TokenKind::Comma
             | TokenKind::Semicolon
             | TokenKind::Eq

@@ -310,6 +310,35 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                     )
                     .as_type()
             }
+            TyKind::Array { element, length } => {
+                let layout = self.mapper.layout(ty)?;
+                let element = self.di_type(element)?;
+                // One subscript describes the whole dimension. Building one
+                // range per element would allocate memory proportional to the
+                // array length while emitting debug information.
+                let mut subscripts = Vec::new();
+                if length != 0 {
+                    let upper = i64::try_from(length).map_err(|_| {
+                        CodegenError::internal(format!(
+                            "array length {length} does not fit debug information"
+                        ))
+                    })?;
+                    subscripts.push(0..upper);
+                }
+                let size_bits = layout.size().checked_mul(8).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "array type {ty:?} is too large for debug information"
+                    ))
+                })?;
+                self.builder
+                    .create_array_type(
+                        element,
+                        size_bits,
+                        bits_u32(layout.align() * 8)?,
+                        &subscripts,
+                    )
+                    .as_type()
+            }
             TyKind::Adt(adt) => self.adt_type(adt)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {

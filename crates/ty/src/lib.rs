@@ -29,5 +29,5 @@ pub use ctxt::TyCtxt;
 pub use display::TyDisplay;
 pub use id::{AdtId, InferTyId, TyId};
 pub use infer::{InferCtxt, UnifyError};
-pub use init::{InitPaths, InitState, place_type};
+pub use init::{InitPaths, InitState, PathElem, place_type};
 pub use kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};

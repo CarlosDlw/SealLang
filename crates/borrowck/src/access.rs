@@ -50,13 +50,29 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
                 operand_uses(operand, uses);
             }
         }
+        Rvalue::Array { elements, .. } => {
+            for element in elements {
+                operand_uses(element, uses);
+            }
+        }
+        Rvalue::Repeat { value, .. } => operand_uses(value, uses),
     }
 }
 
 /// Adds the local an operand reads.
 pub(crate) fn operand_uses(operand: &Operand, uses: &mut LocalSet) {
     if let Some(place) = operand.place() {
-        uses.insert(place.local);
+        place_uses(&place, uses);
+    }
+}
+
+/// Adds the root local and every local used to compute an index projection.
+fn place_uses(place: &seal_mir::Place, uses: &mut LocalSet) {
+    uses.insert(place.local);
+    for projection in &place.projections {
+        if let seal_mir::Projection::Index { local, .. } = projection {
+            uses.insert(*local);
+        }
     }
 }
 
@@ -67,6 +83,6 @@ pub(crate) fn terminator_uses(kind: &TerminatorKind, uses: &mut LocalSet) {
         TerminatorKind::Return => {
             uses.insert(Body::return_local());
         }
-        TerminatorKind::Goto(_) | TerminatorKind::Unreachable => {}
+        TerminatorKind::Goto(_) | TerminatorKind::Panic { .. } | TerminatorKind::Unreachable => {}
     }
 }

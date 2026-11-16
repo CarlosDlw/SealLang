@@ -1,5 +1,6 @@
 //! HIR lowering and name-resolution tests.
 
+mod arrays;
 mod borrows;
 mod control_flow;
 mod examples;

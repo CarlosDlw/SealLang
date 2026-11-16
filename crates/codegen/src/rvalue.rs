@@ -37,7 +37,147 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             }
             Rvalue::Call { func, args, .. } => self.call(*func, args),
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
+            Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
+            Rvalue::Repeat { value, count, ty } => self.array_repeat(value, *count, *ty),
         }
+    }
+
+    fn array_aggregate(
+        &self,
+        elements: &[seal_mir::Operand],
+        ty: seal_ty::TyId,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let (_, length) = match self.tcx.kind(ty) {
+            TyKind::Array { element, length } => (element, length),
+            other => {
+                return Err(CodegenError::internal(format!(
+                    "array construction has non-array type `{other:?}`"
+                )));
+            }
+        };
+        if elements.len() as u64 != length {
+            return Err(CodegenError::internal(format!(
+                "array construction has {} elements for a length of {length}",
+                elements.len()
+            )));
+        }
+        let array_type = self.mapper.basic(ty)?.into_array_type();
+        let mut aggregate = array_type.const_zero();
+        for (index, element) in elements.iter().enumerate() {
+            let value = self.load_operand(element)?;
+            let next = self.build(
+                self.builder
+                    .build_insert_value(aggregate, value, index as u32, "array element"),
+                "array element",
+            )?;
+            aggregate = match next {
+                inkwell::values::AggregateValueEnum::ArrayValue(value) => value,
+                other => {
+                    return Err(CodegenError::internal(format!(
+                        "array construction produced {other:?}"
+                    )));
+                }
+            };
+        }
+        Ok(aggregate.into())
+    }
+
+    fn array_repeat(
+        &self,
+        value: &seal_mir::Operand,
+        count: u64,
+        ty: seal_ty::TyId,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let element_ty = match self.tcx.kind(ty) {
+            TyKind::Array { element, length } if length == count => element,
+            TyKind::Array { length, .. } => {
+                return Err(CodegenError::internal(format!(
+                    "array repeat has count {count} for a length of {length}"
+                )));
+            }
+            other => {
+                return Err(CodegenError::internal(format!(
+                    "array repeat has non-array type `{other:?}`"
+                )));
+            }
+        };
+        let array_type = self.mapper.basic(ty)?.into_array_type();
+        if count == 0 {
+            return Ok(array_type.const_zero().into());
+        }
+
+        let value = self.load_operand(value)?;
+        let usize_type = self.mapper.usize_type()?;
+        let storage = self.entry_alloca(array_type.into(), "array.repeat")?;
+        let index_storage = self.entry_alloca(usize_type.into(), "array.index")?;
+        self.build(
+            self.builder
+                .build_store(index_storage, usize_type.const_zero()),
+            "repeat index init",
+        )?;
+
+        let loop_block = self
+            .context
+            .append_basic_block(self.function, "array.repeat.loop");
+        let body_block = self
+            .context
+            .append_basic_block(self.function, "array.repeat.body");
+        let done_block = self
+            .context
+            .append_basic_block(self.function, "array.repeat.done");
+        self.build(
+            self.builder.build_unconditional_branch(loop_block),
+            "repeat branch",
+        )?;
+
+        self.builder.position_at_end(loop_block);
+        let index = self
+            .build(
+                self.builder
+                    .build_load(usize_type, index_storage, "array index"),
+                "repeat index load",
+            )?
+            .into_int_value();
+        let condition = self.build(
+            self.builder.build_int_compare(
+                IntPredicate::ULT,
+                index,
+                usize_type.const_int(count, false),
+                "array index in range",
+            ),
+            "repeat comparison",
+        )?;
+        self.build(
+            self.builder
+                .build_conditional_branch(condition, body_block, done_block),
+            "repeat branch",
+        )?;
+
+        self.builder.position_at_end(body_block);
+        let element = self.index_ptr(storage, index, element_ty)?;
+        self.build(
+            self.builder.build_store(element, value),
+            "repeat element store",
+        )?;
+        let next = self.build(
+            self.builder
+                .build_int_add(index, usize_type.const_int(1, false), "next"),
+            "repeat index increment",
+        )?;
+        self.build(
+            self.builder.build_store(index_storage, next),
+            "repeat index store",
+        )?;
+        self.build(
+            self.builder.build_unconditional_branch(loop_block),
+            "repeat back edge",
+        )?;
+
+        self.builder.position_at_end(done_block);
+        self.build(
+            self.builder.build_load(array_type, storage, "array result"),
+            "repeat result",
+        )
     }
 
     fn binary(

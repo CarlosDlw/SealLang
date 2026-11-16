@@ -104,6 +104,14 @@ impl<'ctx> TypeMapper<'ctx> {
                 TyKind::Str => BasicTypeEnum::StructType(self.string_ref),
                 _ => BasicTypeEnum::PointerType(self.pointer()),
             },
+            TyKind::Array { element, length } => {
+                let length = u32::try_from(length).map_err(|_| {
+                    CodegenError::internal(format!(
+                        "array length {length} does not fit an LLVM array type"
+                    ))
+                })?;
+                BasicTypeEnum::ArrayType(self.basic(element)?.array_type(length))
+            }
             TyKind::Adt(adt) => BasicTypeEnum::StructType(self.adt(adt)),
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
             TyKind::Str => {

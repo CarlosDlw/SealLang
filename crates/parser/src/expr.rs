@@ -41,6 +41,11 @@ impl Parser<'_> {
                 continue;
             }
 
+            if self.at(TokenKind::LBracket) {
+                lhs = self.parse_index(lhs);
+                continue;
+            }
+
             if self.at(TokenKind::Dot) {
                 self.bump();
                 let (name, name_span) = self.expect_ident("a field name after `.`");
@@ -236,6 +241,7 @@ impl Parser<'_> {
                 let span = token.span.cover(self.previous_span());
                 self.builder.push_expr(ExprKind::Paren(inner), span)
             }
+            TokenKind::LBracket => self.parse_array_literal(token.span),
             TokenKind::If => self.parse_if_expr(token.span),
             TokenKind::Error => {
                 self.bump();
@@ -365,6 +371,77 @@ impl Parser<'_> {
         )
     }
 
+    /// Parses an array literal or a repeated array literal.
+    ///
+    /// `[]` is an empty array; `[a, b, c]` has one element per expression; and
+    /// `[value; N]` evaluates `value` once and copies it into `N` elements.
+    fn parse_array_literal(&mut self, start: seal_span::Span) -> ExprId {
+        self.bump();
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = true;
+
+        if self.eat(TokenKind::RBracket) {
+            self.struct_literal_allowed = allowed;
+            let span = start.cover(self.previous_span());
+            return self.builder.push_expr(
+                ExprKind::Array {
+                    elements: Vec::new(),
+                },
+                span,
+            );
+        }
+
+        let before = self.index;
+        let first = self.parse_expr(0);
+        if self.eat(TokenKind::Semicolon) {
+            let (length, length_span) = self.parse_array_length("repeat count");
+            let _ = self.expect(TokenKind::RBracket, "`]` to close the array literal");
+            self.struct_literal_allowed = allowed;
+            let span = start.cover(self.previous_span());
+            return self.builder.push_expr(
+                ExprKind::ArrayRepeat {
+                    value: first,
+                    length,
+                    length_span,
+                },
+                span,
+            );
+        }
+
+        let mut elements = vec![first];
+        while self.eat(TokenKind::Comma) {
+            if self.at(TokenKind::RBracket) || self.is_eof() {
+                break;
+            }
+            elements.push(self.parse_expr(0));
+        }
+        if !self.at(TokenKind::RBracket) && !self.is_eof() && self.index == before {
+            self.ensure_progress(before);
+        }
+        let _ = self.expect(TokenKind::RBracket, "`]` to close the array literal");
+        self.struct_literal_allowed = allowed;
+        let span = start.cover(self.previous_span());
+        self.builder.push_expr(ExprKind::Array { elements }, span)
+    }
+
+    /// Parses `base[index]`, an array place projection.
+    fn parse_index(&mut self, base: ExprId) -> ExprId {
+        self.bump();
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = true;
+        let index = self.parse_expr(0);
+        self.struct_literal_allowed = allowed;
+        let _ = self.expect(TokenKind::RBracket, "`]` after the index");
+        let span = self
+            .builder
+            .ast()
+            .expr(base)
+            .span
+            .cover(self.previous_span());
+        self.builder
+            .push_expr(ExprKind::Index { base, index }, span)
+    }
+
     fn parse_call(&mut self, callee: ExprId) -> ExprId {
         self.bump();
         let allowed = self.struct_literal_allowed;
@@ -439,7 +516,10 @@ impl Parser<'_> {
 
     fn is_assignable(&self, expr: ExprId) -> bool {
         match &self.builder.ast().expr(expr).kind {
-            ExprKind::Path(_) | ExprKind::Deref { .. } | ExprKind::Field { .. } => true,
+            ExprKind::Path(_)
+            | ExprKind::Deref { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Index { .. } => true,
             ExprKind::Paren(inner) => self.is_assignable(*inner),
             _ => false,
         }

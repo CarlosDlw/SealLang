@@ -303,6 +303,24 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
                 }
             }
         }
+        Rvalue::Array { elements, .. } => {
+            state.clear(place);
+            if destination_holds_references {
+                let mut origins = OriginSet::default();
+                for operand in elements {
+                    origins.extend(&operand_origins(hir, body, state, operand));
+                }
+                state.assign(place, origins);
+            }
+        }
+        Rvalue::Repeat { value, .. } => {
+            let origins = operand_origins(hir, body, state, value);
+            if destination_holds_references {
+                state.assign(place, origins);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Binary { .. } | Rvalue::Unary { .. } => state.clear(place),
     }
 }
@@ -445,7 +463,10 @@ fn field_path(projections: &[Projection]) -> Vec<DefId> {
         .iter()
         .filter_map(|projection| match projection {
             Projection::Field(field) => Some(*field),
-            Projection::Deref => None,
+            // Array indices are intentionally absent from storage keys: any
+            // element may alias any other when only the runtime value is known,
+            // so treating the whole array as one storage key is conservative.
+            Projection::Deref | Projection::Index { .. } => None,
         })
         .collect()
 }
@@ -464,6 +485,10 @@ pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
                     .ty_ctxt()
                     .field(adt, *field)
                     .map_or(ty, |field| field.ty),
+                _ => ty,
+            },
+            Projection::Index { .. } => match hir.ty_ctxt().kind(ty) {
+                TyKind::Array { element, .. } => element,
                 _ => ty,
             },
         };

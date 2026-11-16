@@ -32,6 +32,15 @@ pub enum TerminatorKind {
     },
     /// Returns from the function, using the return place as the value.
     Return,
+    /// Stops the program with a runtime panic.
+    ///
+    /// Bounds checks use this terminator: the check branches to the panic block
+    /// when the index is outside the array. The message is part of the MIR so
+    /// code generation does not have to reconstruct the reason.
+    Panic {
+        /// The message written to standard error.
+        message: String,
+    },
     /// Control never reaches this point.
     Unreachable,
 }
@@ -48,7 +57,7 @@ impl TerminatorKind {
                 .map(|target| target.target)
                 .chain(std::iter::once(*otherwise))
                 .collect(),
-            Self::Return | Self::Unreachable => Vec::new(),
+            Self::Return | Self::Panic { .. } | Self::Unreachable => Vec::new(),
         }
     }
 }

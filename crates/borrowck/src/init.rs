@@ -2,9 +2,8 @@
 
 use std::collections::VecDeque;
 
-use seal_def::DefId;
 use seal_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, Statement, StatementKind};
-use seal_ty::{InitPaths, InitState, TyCtxt, TyId};
+use seal_ty::{InitPaths, InitState, PathElem, TyCtxt, TyId};
 
 /// The initialization state of a place, as message selection needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +113,12 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
                 move_operand(operand, state);
             }
         }
+        Rvalue::Array { elements, .. } => {
+            for element in elements {
+                move_operand(element, state);
+            }
+        }
+        Rvalue::Repeat { value, .. } => move_operand(value, state),
         Rvalue::Ref { .. } => {}
     }
     if let Some((local, fields)) = path_of(place) {
@@ -131,19 +136,20 @@ fn move_operand(operand: &Operand, state: &mut InitPaths<LocalId>) {
 
 /// Splits a place into its root local and its field path, if it stays in this
 /// frame; reads through a reference say nothing about initialization here.
-fn path_of(place: &Place) -> Option<(LocalId, Vec<DefId>)> {
-    if place.is_deref() {
-        return None;
+fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
+    let mut path = Vec::new();
+    for projection in &place.projections {
+        match projection {
+            seal_mir::Projection::Deref => return None,
+            seal_mir::Projection::Field(field) => path.push(PathElem::Field(*field)),
+            seal_mir::Projection::Index {
+                constant: Some(index),
+                ..
+            } => path.push(PathElem::Index(*index)),
+            seal_mir::Projection::Index { constant: None, .. } => break,
+        }
     }
-    let fields = place
-        .projections
-        .iter()
-        .filter_map(|projection| match projection {
-            seal_mir::Projection::Field(field) => Some(*field),
-            seal_mir::Projection::Deref => None,
-        })
-        .collect();
-    Some((place.local, fields))
+    Some((place.local, path))
 }
 
 /// Returns the state of a place for message selection.
@@ -156,15 +162,19 @@ pub(crate) fn state_of(
     if place.is_deref() {
         return Init::Initialized;
     }
-    let fields: Vec<DefId> = place
-        .projections
-        .iter()
-        .filter_map(|projection| match projection {
-            seal_mir::Projection::Field(field) => Some(*field),
-            seal_mir::Projection::Deref => None,
-        })
-        .collect();
-    match init.state(place.local, &fields, tcx, root_ty) {
+    let mut path = Vec::new();
+    for projection in &place.projections {
+        match projection {
+            seal_mir::Projection::Deref => return Init::Initialized,
+            seal_mir::Projection::Field(field) => path.push(PathElem::Field(*field)),
+            seal_mir::Projection::Index {
+                constant: Some(index),
+                ..
+            } => path.push(PathElem::Index(*index)),
+            seal_mir::Projection::Index { constant: None, .. } => break,
+        }
+    }
+    match init.state(place.local, &path, tcx, root_ty) {
         InitState::Initialized => Init::Initialized,
         InitState::Moved => Init::Moved,
         InitState::PartiallyMoved => Init::PartiallyMoved,

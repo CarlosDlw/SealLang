@@ -288,6 +288,11 @@ impl<'a> Reporter<'a> {
                             .resolve(self.hir.definitions().get(*field).name),
                     );
                 }
+                Projection::Index {
+                    constant: Some(index),
+                    ..
+                } => text.push_str(&format!("[{index}]")),
+                Projection::Index { constant: None, .. } => text.push_str("[..]"),
             }
         }
         text

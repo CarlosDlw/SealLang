@@ -11,7 +11,7 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
    synchronization; every cost is visible in the source.
 3. **No lifetime annotations.** Users never write region parameters; regions are
    inferred from liveness.
-4. **Room to grow.** Adding arrays, slices, generics, methods, visibility, and an
+4. **Room to grow.** Adding slices, generics, methods, visibility, and an
    `unsafe` layer must not require redesigning the type system.
 
 ## Model
@@ -41,13 +41,15 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 
 ### D2 — `Copy` is a property of the type
 
-Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`, and
-`*T`/`*mut T`. Not copied: `str` (unsized) and every struct value, even one whose
-fields are all `Copy`. Keeping aggregates non-`Copy` means ownership is explicit
-at every aggregate boundary; field reads still copy `Copy` fields individually.
-`Copy` and `Drop` are mutually exclusive, and v0.1 has no user-defined copy
-hooks. A future opt-in `Copy` for structs derives the property from the fields
-without changing the move path model.
+Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
+`*T`/`*mut T`, and an array whose element type is `Copy`. Not copied: `str`
+(unsized) and every struct value, even one whose fields are all `Copy`. Arrays
+gain nothing from an explicit opt-in because their elements already decide
+whether a bitwise copy is safe. Keeping structs non-`Copy` means ownership is
+explicit at every aggregate boundary; field reads still copy `Copy` fields
+individually. `Copy` and `Drop` are mutually exclusive, and v0.1 has no
+user-defined copy hooks. A future opt-in `Copy` for structs derives the property
+from the fields without changing the move path model.
 
 ### D3 — Ownership and destruction
 
@@ -164,21 +166,25 @@ the control-flow graph, so `let x: i32; if c { x = 1 } else { x = 2 } x` is
 accepted and a path that skips both assignments is not.
 
 Initialization is tracked per **move path**, not per local: fields of a struct
-initialize independently. `let mut p: Point; p.x = 1; p.y = 2;` initializes `p`
-field by field, reading `p.x` before assigning it is an error even after `p.y` is
-set, and a whole assignment `p = Point { … }` initializes every field at once.
-Writing a field requires the binding to be `mut`, because a field write does not
+and constant elements of an array initialize independently. `let mut p: Point;
+p.x = 1; p.y = 2;` initializes `p` field by field, reading `p.x` before assigning
+it is an error even after `p.y` is set, and a whole assignment `p = Point { … }`
+initializes every field at once. The same rule applies to `a[0]` and `a[1]`; a
+write through a runtime index is more conservative and requires the whole array
+to be initialized, because the compiler cannot prove which element is written.
+Writing a field or element requires the binding to be `mut`, because it does not
 initialize the binding as a whole; an uninitialized immutable binding is the
 only case where a first whole assignment is allowed without `mut`. Moving one
-field out marks that path moved and leaves its siblings usable.
+field or element out marks that path moved and leaves its siblings usable.
 
 ### D10 — Values are sized
 
 Locals, parameters, return values, by-value operands, and struct fields must have
 a size known at compile time. `str` is the only unsized type in v0.1 and can only
-appear behind a reference. Recursive types are only possible through a
-reference, which indirection makes finite; a struct that contains itself by value
-is `E3016`.
+appear behind a reference. An array is sized when its element is, and its size
+must fit the target address space (`E3023`). Recursive types are only possible
+through a reference, which indirection makes finite; a struct that contains
+itself by value is `E3016`.
 
 ### D11 — No address-dependent semantics in safe code
 
@@ -215,16 +221,15 @@ may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Int`, `Uint`, `Float`,
-  `Ref { kind: RefKind, pointee }`, `Adt(AdtId)`, `Unit`, `Never`, `Error`, and
-  `Infer`. `RefKind` is `Shared` (`*T`) or `Exclusive` (`*mut T`); the kind is
-  part of the type, so the two never unify. There is no nullable reference kind,
-  because nullability is not a type.
+  `Ref { kind: RefKind, pointee }`, `Array { element, length }`, `Adt(AdtId)`,
+  `Unit`, `Never`, `Error`, and `Infer`. `RefKind` is `Shared` (`*T`) or
+  `Exclusive` (`*mut T`); the kind is part of the type, so the two never unify.
+  There is no nullable reference kind, because nullability is not a type.
 - Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
   so `AdtId` identifies a nominal declaration while the definition holds the
-  ordered fields, their `DefId`s, names, and types.
-- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
-  aggregate fields with a cycle guard; no query can loop on a malformed
-declaration.
+  ordered fields, their `DefId`s, names, and types.- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
+  aggregate fields and array elements with a cycle guard; no query can loop on a
+  malformed declaration.
 - `Str` is a distinct kind, not an alias for `*u8`, because it is unsized and
   carries a length (D7).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
@@ -233,7 +238,8 @@ declaration.
   `Copy` in v0.1 (D2), so the query returns `false` for `TyKind::Adt`.
 - `seal_ty::InitPaths` is the shared definite-initialization lattice; type
   checking keys it by `DefId`, borrow checking by MIR `LocalId`, and both query
-  the same nearest-entry state over field paths.
+  the same nearest-entry state over paths of struct fields and constant array
+  indices.
 - Types are interned: two types are equal exactly when their `TyId`s are equal.
   During inference, equality is not enough, so `InferCtxt::unify` is the only
   comparison that decides assignability; `==` on IDs is for canonical types.
@@ -286,8 +292,8 @@ declaration.
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- Generics, methods, visibility, arrays, and `Drop` for aggregates — layers on
-  the nominal struct foundation, not redesigns of it.
+- Generics, methods, visibility, slices, and `Drop` for aggregates — layers on
+  the nominal struct and array foundation, not redesigns of it.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

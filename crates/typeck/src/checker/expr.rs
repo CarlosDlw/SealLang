@@ -1,5 +1,6 @@
 //! Expression checking.
 
+use seal_ast::Literal;
 use seal_hir::{ExprKind, HirBlockId, HirExprId, Res};
 use seal_span::Span;
 use seal_symbol::Symbol;
@@ -98,6 +99,13 @@ impl Checker<'_> {
                 mode,
             ),
             ExprKind::Struct { adt, fields } => self.check_struct_literal(adt, &fields, flow, span),
+            ExprKind::Array { elements } => self.check_array(&elements, expected, flow, span),
+            ExprKind::ArrayRepeat { value, length } => {
+                self.check_array_repeat(value, length, expected, flow, span)
+            }
+            ExprKind::Index { base, index } => {
+                self.check_index(expr, base, index, span, flow, mode)
+            }
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)
@@ -222,6 +230,170 @@ impl Checker<'_> {
             self.require_initialized(expr, flow, span);
         }
         ty
+    }
+
+    fn check_array(
+        &mut self,
+        elements: &[HirExprId],
+        expected: Option<TyId>,
+        flow: &mut Flow,
+        span: Span,
+    ) -> TyId {
+        let expected_parts = expected.and_then(|ty| self.array_parts(ty));
+        if elements.is_empty() {
+            if let Some((element, length)) = expected_parts {
+                let expected = expected.expect("an array with a known element type");
+                if length != 0 {
+                    self.mismatch(span, expected, self.array_ty(element, 0));
+                    return self.error_ty();
+                }
+                return expected;
+            }
+            if let Some(expected) = expected {
+                self.mismatch(span, expected, self.array_ty(self.error_ty(), 0));
+                return self.error_ty();
+            }
+            self.error(
+                seal_error_codes::E3019,
+                span,
+                "cannot infer the element type of an empty array",
+            )
+            .help("annotate the binding with an array type, such as `[i32; 0]`")
+            .emit();
+            return self.error_ty();
+        }
+
+        let element_expected = expected_parts.map(|(element, _)| element);
+        let first = self.infer_expr(elements[0], element_expected, flow);
+        let element_ty = element_expected.unwrap_or(first);
+        for element in &elements[1..] {
+            self.check_expr(*element, element_ty, flow);
+        }
+
+        let actual = self.array_ty(element_ty, elements.len() as u64);
+        if let Some((_, length)) = expected_parts
+            && length != elements.len() as u64
+        {
+            self.mismatch(span, expected.expect("an expected array type"), actual);
+            return self.error_ty();
+        }
+        if expected.is_none() && self.array_exceeds_address_space(actual) {
+            self.report_array_too_large(span, actual, "array literal");
+            return self.error_ty();
+        }
+        actual
+    }
+
+    fn check_array_repeat(
+        &mut self,
+        value: HirExprId,
+        length: u64,
+        expected: Option<TyId>,
+        flow: &mut Flow,
+        span: Span,
+    ) -> TyId {
+        let expected_parts = expected.and_then(|ty| self.array_parts(ty));
+        let element_expected = expected_parts.map(|(element, _)| element);
+        let value_ty = self.infer_expr(value, element_expected, flow);
+        if !self.is_error(value_ty) && !self.is_copy(value_ty) {
+            self.error(
+                seal_error_codes::E3020,
+                self.hir.expr(value).span,
+                format!(
+                    "cannot repeat a value of type `{}` because it is not `Copy`",
+                    self.ty_text(value_ty)
+                ),
+            )
+            .help("build each element separately, or use a `Copy` element type")
+            .emit();
+        }
+
+        let actual = self.array_ty(value_ty, length);
+        if let Some((_, expected_length)) = expected_parts
+            && expected_length != length
+        {
+            self.mismatch(span, expected.expect("an expected array type"), actual);
+            return self.error_ty();
+        }
+        if expected.is_none() && self.array_exceeds_address_space(actual) {
+            self.report_array_too_large(span, actual, "array repeat");
+            return self.error_ty();
+        }
+        actual
+    }
+
+    fn check_index(
+        &mut self,
+        expr: HirExprId,
+        base: HirExprId,
+        index: HirExprId,
+        span: Span,
+        flow: &mut Flow,
+        mode: PlaceMode,
+    ) -> TyId {
+        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        let Some((element, length)) = self.array_parts(base_ty) else {
+            self.check_expr(index, self.usize_ty(), flow);
+            if !self.is_error(base_ty) {
+                self.error(
+                    seal_error_codes::E3021,
+                    span,
+                    format!("cannot index a value of type `{}`", self.ty_text(base_ty)),
+                )
+                .help("only fixed-size arrays can be indexed")
+                .emit();
+            }
+            return self.error_ty();
+        };
+
+        let index_ty = self.infer_expr(index, Some(self.usize_ty()), flow);
+        if index_ty != self.usize_ty() && !self.is_error(index_ty) {
+            self.mismatch(self.hir.expr(index).span, self.usize_ty(), index_ty);
+        }
+
+        let index_span = self.hir.expr(index).span;
+        let constant = match self.hir.expr(index).kind {
+            ExprKind::Lit(Literal::Int {
+                value, ref suffix, ..
+            }) if suffix.is_none_or(|suffix| self.interner.resolve(suffix) == "usize") => {
+                if value >= u128::from(length) {
+                    self.error(
+                        seal_error_codes::E3022,
+                        index_span,
+                        format!(
+                            "array index `{value}` is out of bounds for an array of length {length}"
+                        ),
+                    )
+                    .help(if length == 0 {
+                        "an array of length 0 has no valid indices"
+                    } else {
+                        "the last valid index is `length - 1`"
+                    })
+                    .emit();
+                    None
+                } else {
+                    Some(value as u64)
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(mut place) = self.results.place(base).cloned() {
+            place.projections.push(PlaceProjection::Index {
+                index,
+                constant,
+                length,
+            });
+            place.ty = element;
+            self.results.record_place(expr, place);
+        }
+        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow)
+            && !self.is_error(element)
+            && index_ty == self.usize_ty()
+        {
+            self.require_initialized(expr, flow, span);
+        }
+        element
     }
 
     fn check_struct_literal(

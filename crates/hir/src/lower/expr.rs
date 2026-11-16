@@ -62,6 +62,30 @@ impl Lowering<'_> {
                 name_span,
                 fields,
             } => self.lower_struct_literal(name, name_span, &fields),
+            AstExprKind::Array { elements } => ExprKind::Array {
+                elements: elements
+                    .iter()
+                    .map(|element| self.lower_expr(*element))
+                    .collect(),
+            },
+            AstExprKind::ArrayRepeat { value, length, .. } => ExprKind::ArrayRepeat {
+                value: self.lower_expr(value),
+                length,
+            },
+            AstExprKind::Index { base, index } => {
+                let base = self.lower_expr(base);
+                let index = self.lower_expr(index);
+                if self.hir.place(base).is_none() {
+                    let span = self.ast.expr(expr).span;
+                    self.error(codes::E2013, span, "indexing requires a place")
+                        .help("store the array in a `let` binding and index that binding")
+                        .emit();
+                }
+                // Keep the node even when the base is not a place: the checker
+                // can still type the array and the index, and every lowered
+                // expression stays reachable from its parent.
+                ExprKind::Index { base, index }
+            }
             AstExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
                 op,
                 lhs: self.lower_expr(lhs),

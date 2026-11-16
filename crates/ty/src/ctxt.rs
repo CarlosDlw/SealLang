@@ -99,6 +99,19 @@ impl TyCtxt {
         self.adts.borrow().len()
     }
 
+    /// Returns the fixed-size array type `[element; length]`.
+    pub fn array_ty(&self, element: TyId, length: u64) -> TyId {
+        self.intern(TyKind::Array { element, length })
+    }
+
+    /// Returns the element type and length of `ty` when it is an array.
+    pub fn array_parts(&self, ty: TyId) -> Option<(TyId, u64)> {
+        match self.kind(ty) {
+            TyKind::Array { element, length } => Some((element, length)),
+            _ => None,
+        }
+    }
+
     /// Returns the type naming `adt`.
     pub fn adt_ty(&self, adt: AdtId) -> TyId {
         self.intern(TyKind::Adt(adt))
@@ -213,6 +226,10 @@ impl TyCtxt {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
+            // An array copies exactly when its element copies. Unlike a struct,
+            // it gains nothing from an explicit opt-in: its elements already
+            // decide whether a bitwise copy is safe.
+            TyKind::Array { element, .. } => self.is_copy(element),
             // A user-defined aggregate owns its fields; it becomes `Copy` only
             // through an explicit opt-in, which the language does not have yet.
             // Its fields remain individually copyable.
@@ -231,6 +248,7 @@ impl TyCtxt {
     fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
             TyKind::Str | TyKind::Infer(_) => false,
+            TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     // A by-value cycle has no finite size; type checking reports
@@ -261,6 +279,7 @@ impl TyCtxt {
 
     fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
+            TyKind::Array { element, .. } => self.needs_drop_inner(element, visiting),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -288,6 +307,7 @@ impl TyCtxt {
     fn contains_reference_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
             TyKind::Ref { .. } => true,
+            TyKind::Array { element, .. } => self.contains_reference_inner(element, visiting),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -321,6 +341,9 @@ impl TyCtxt {
     ) -> bool {
         match self.kind(ty) {
             TyKind::Ref { kind, .. } => kind.is_exclusive(),
+            TyKind::Array { element, .. } => {
+                self.contains_exclusive_reference_inner(element, visiting)
+            }
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -504,5 +527,39 @@ mod tests {
         let second = ctxt.bool_ty();
         assert_eq!(first, second);
         assert_eq!(ctxt.kind(first), TyKind::Bool);
+    }
+
+    #[test]
+    fn arrays_derive_their_properties_from_the_element() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let array = ctxt.array_ty(int, 4);
+        assert_eq!(
+            ctxt.kind(array),
+            TyKind::Array {
+                element: int,
+                length: 4
+            }
+        );
+        assert_eq!(ctxt.array_parts(array), Some((int, 4)));
+        assert!(ctxt.is_copy(array));
+        assert!(ctxt.is_sized(array));
+        assert!(!ctxt.needs_drop(array));
+        assert!(!ctxt.contains_reference(array));
+        assert!(!ctxt.contains_exclusive_reference(array));
+
+        let reference = ctxt.ref_ty(int);
+        let references = ctxt.array_ty(reference, 2);
+        assert!(ctxt.contains_reference(references));
+        assert!(!ctxt.contains_exclusive_reference(references));
+
+        let exclusive = ctxt.mut_ref_ty(int);
+        let exclusives = ctxt.array_ty(exclusive, 2);
+        assert!(ctxt.contains_reference(exclusives));
+        assert!(ctxt.contains_exclusive_reference(exclusives));
+
+        let str_array = ctxt.array_ty(ctxt.str_ty(), 1);
+        assert!(!ctxt.is_copy(str_array));
+        assert!(!ctxt.is_sized(str_array));
     }
 }

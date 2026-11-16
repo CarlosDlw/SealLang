@@ -486,6 +486,7 @@ dependencies = [
  "seal-error-codes",
  "seal-hash",
  "seal-hir",
+ "seal-layout",
  "seal-lexer",
  "seal-parser",
  "seal-span",

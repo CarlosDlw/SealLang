@@ -274,6 +274,36 @@ fn transfer(
                 }
             }
         }
+        Rvalue::Array { elements, .. } => {
+            state.clear(place);
+            if destination_has_reference {
+                let mut loans = LoanSet::default();
+                for operand in elements {
+                    match operand.place() {
+                        Some(source) if source.is_deref() => {
+                            loans.extend(all_loans.iter().copied())
+                        }
+                        Some(source) => loans.extend(state.at(&source)),
+                        None => {}
+                    }
+                }
+                if !loans.is_empty() {
+                    state.assign(place, loans);
+                }
+            }
+        }
+        Rvalue::Repeat { value, .. } => {
+            let loans = match value.place() {
+                Some(source) if source.is_deref() => all_loans.clone(),
+                Some(source) => state.at(&source),
+                None => LoanSet::default(),
+            };
+            if destination_has_reference {
+                state.assign(place, loans);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Binary { .. } | Rvalue::Unary { .. } => state.clear(place),
     }
 }

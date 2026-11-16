@@ -340,6 +340,21 @@ impl Reachability<'_> {
                 self.assert_span(name_span);
                 self.check_expr(base);
             }
+            ExprKind::Array { elements } => {
+                for element in elements {
+                    self.check_expr(element);
+                }
+            }
+            ExprKind::ArrayRepeat {
+                value, length_span, ..
+            } => {
+                self.assert_span(length_span);
+                self.check_expr(value);
+            }
+            ExprKind::Index { base, index } => {
+                self.check_expr(base);
+                self.check_expr(index);
+            }
             ExprKind::Struct {
                 name_span, fields, ..
             } => {
@@ -390,8 +405,17 @@ impl Reachability<'_> {
             (ty.span, ty.kind.clone())
         };
         self.assert_span(span);
-        if let TypeKind::Pointer { pointee, .. } = kind {
-            self.check_type(pointee);
+        match kind {
+            TypeKind::Pointer { pointee, .. } => self.check_type(pointee),
+            TypeKind::Array {
+                element,
+                length_span,
+                ..
+            } => {
+                self.assert_span(length_span);
+                self.check_type(element);
+            }
+            _ => {}
         }
     }
 }

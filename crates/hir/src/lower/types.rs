@@ -25,6 +25,12 @@ impl Lowering<'_> {
                     self.hir.ty_ctxt_mut().ref_ty(pointee)
                 }
             }
+            TypeKind::Array {
+                element, length, ..
+            } => {
+                let element = self.lower_type(element);
+                self.hir.ty_ctxt_mut().array_ty(element, length)
+            }
             TypeKind::Path(symbol) => {
                 if let Some(definition) = self.types.get(&symbol).copied() {
                     let adt = self

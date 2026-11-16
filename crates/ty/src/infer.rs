@@ -95,6 +95,18 @@ impl InferCtxt {
                     pointee: found,
                 },
             ) if expected_kind == found_kind => self.unify(ctxt, expected, found),
+            (
+                TyKind::Array {
+                    element: expected_element,
+                    length: expected_length,
+                },
+                TyKind::Array {
+                    element: found_element,
+                    length: found_length,
+                },
+            ) if expected_length == found_length => {
+                self.unify(ctxt, expected_element, found_element)
+            }
             _ => Err(UnifyError::Mismatch { expected, found }),
         }
     }
@@ -106,11 +118,20 @@ impl InferCtxt {
     /// ambiguous.
     pub fn resolve_deep(&mut self, ctxt: &mut TyCtxt, ty: TyId) -> TyId {
         let shallow = self.resolve_shallow(ctxt, ty);
-        if let TyKind::Ref { kind, pointee } = ctxt.kind(shallow) {
-            let resolved = self.resolve_deep(ctxt, pointee);
-            if resolved != pointee {
-                return ctxt.ref_ty_with(kind, resolved);
+        match ctxt.kind(shallow) {
+            TyKind::Ref { kind, pointee } => {
+                let resolved = self.resolve_deep(ctxt, pointee);
+                if resolved != pointee {
+                    return ctxt.ref_ty_with(kind, resolved);
+                }
             }
+            TyKind::Array { element, length } => {
+                let resolved = self.resolve_deep(ctxt, element);
+                if resolved != element {
+                    return ctxt.array_ty(resolved, length);
+                }
+            }
+            _ => {}
         }
         shallow
     }
@@ -145,6 +166,7 @@ impl InferCtxt {
         match ctxt.kind(ty) {
             TyKind::Infer(other) => other == var,
             TyKind::Ref { pointee, .. } => self.occurs(ctxt, var, pointee),
+            TyKind::Array { element, .. } => self.occurs(ctxt, var, element),
             _ => false,
         }
     }
@@ -390,5 +412,45 @@ mod tests {
         let unit = ctxt.unit_ty();
         infer.unify(&ctxt, int, int).expect("identical types unify");
         infer.unify(&ctxt, unit, unit).expect("unit unifies");
+    }
+
+    #[test]
+    fn arrays_unify_element_wise_and_keep_their_length() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer
+            .unify(&ctxt, ctxt.array_ty(var, 3), ctxt.array_ty(int, 3))
+            .expect("elements unify");
+        assert_eq!(infer.resolve_shallow(&ctxt, var), int);
+
+        let error = infer
+            .unify(&ctxt, ctxt.array_ty(int, 2), ctxt.array_ty(int, 3))
+            .expect_err("lengths are part of the type");
+        assert!(matches!(error, UnifyError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn the_occurs_check_looks_through_arrays() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let array = ctxt.array_ty(var, 1);
+        assert!(matches!(
+            infer.unify(&ctxt, var, array),
+            Err(UnifyError::Occurs { .. })
+        ));
+    }
+
+    #[test]
+    fn deep_resolution_rebuilds_array_types() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let array = ctxt.array_ty(var, 2);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer.unify(&ctxt, var, int).expect("variable binds");
+        assert_eq!(infer.resolve_deep(&mut ctxt, array), ctxt.array_ty(int, 2));
     }
 }

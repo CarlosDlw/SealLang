@@ -5,7 +5,7 @@ use inkwell::builder::{Builder, BuilderError};
 use inkwell::context::Context;
 use inkwell::debug_info::DISubprogram;
 use inkwell::module::Module;
-use inkwell::types::IntType;
+use inkwell::types::{BasicTypeEnum, IntType};
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use seal_def::DefId;
 use seal_hir::Hir;
@@ -120,7 +120,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 self.build(self.builder.build_store(destination, value), "assignment")?;
             }
             self.set_span(block.terminator.span);
-            self.emit_terminator(&block.terminator.kind)?;
+            self.emit_terminator(&block.terminator)?;
         }
         if self.debug.is_some() {
             self.builder.unset_current_debug_location();
@@ -181,8 +181,8 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         Ok(())
     }
 
-    fn emit_terminator(&self, terminator: &TerminatorKind) -> Result<(), CodegenError> {
-        match terminator {
+    fn emit_terminator(&self, terminator: &seal_mir::Terminator) -> Result<(), CodegenError> {
+        match &terminator.kind {
             TerminatorKind::Goto(target) => {
                 self.build(
                     self.builder
@@ -227,6 +227,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 )?;
                 self.build(self.builder.build_return(Some(&value)), "return")?;
             }
+            TerminatorKind::Panic { message } => {
+                self.panic_at(terminator.span, message)?;
+            }
             TerminatorKind::Unreachable => {
                 self.build(self.builder.build_unreachable(), "unreachable")?;
             }
@@ -267,6 +270,29 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     /// Returns the local slot's alloca.
     pub(crate) fn alloca(&self, local: LocalId) -> PointerValue<'ctx> {
         self.allocas[local.index() as usize]
+    }
+
+    /// Allocates a temporary in the entry block and restores the builder.
+    ///
+    /// Temps created while lowering an expression must not grow the stack each
+    /// time the surrounding loop runs, so their storage belongs to the function
+    /// prologue even though their value is computed in place.
+    pub(crate) fn entry_alloca(
+        &self,
+        ty: BasicTypeEnum<'ctx>,
+        name: &str,
+    ) -> Result<PointerValue<'ctx>, CodegenError> {
+        let current = self.builder.get_insert_block();
+        if let Some(first) = self.entry.get_first_instruction() {
+            self.builder.position_before(&first);
+        } else {
+            self.builder.position_at_end(self.entry);
+        }
+        let alloca = self.build(self.builder.build_alloca(ty, name), "entry storage")?;
+        if let Some(current) = current {
+            self.builder.position_at_end(current);
+        }
+        Ok(alloca)
     }
 
     /// Returns the type of a local.

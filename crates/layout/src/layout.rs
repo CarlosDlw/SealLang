@@ -50,6 +50,8 @@ pub enum LayoutError {
     Unknown(TyId),
     /// The field index does not belong to the aggregate.
     UnknownField(AdtId, usize),
+    /// The type's size does not fit in `u64`.
+    TooLarge(TyId),
 }
 
 impl fmt::Display for LayoutError {
@@ -61,6 +63,7 @@ impl fmt::Display for LayoutError {
             Self::UnknownField(adt, index) => {
                 write!(f, "aggregate {adt:?} has no field {index}")
             }
+            Self::TooLarge(ty) => write!(f, "type {ty:?} is too large to lay out"),
         }
     }
 }
@@ -117,6 +120,14 @@ impl<'a> LayoutCtxt<'a> {
                 _ => Layout::new(pointer, pointer),
             },
             TyKind::Unit | TyKind::Never | TyKind::Error => Layout::new(0, 1),
+            TyKind::Array { element, length } => {
+                let element_layout = self.layout_inner(element, stack)?;
+                let size = element_layout
+                    .size
+                    .checked_mul(length)
+                    .ok_or(LayoutError::TooLarge(ty))?;
+                Layout::new(size, element_layout.align)
+            }
             TyKind::Str => return Err(LayoutError::Unsized(ty)),
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
             TyKind::Adt(adt) => {
@@ -345,5 +356,37 @@ mod tests {
         let ctxt = TyCtxt::new();
         assert_eq!(ctxt.adt_len(), 0);
         assert_eq!(ctxt.kind(ctxt.int_ty(IntTy::I32)), TyKind::Int(IntTy::I32));
+    }
+
+    #[test]
+    fn arrays_repeat_the_element_size_and_alignment() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let array = ctxt.array_ty(int, 3);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(array),
+            Ok(Layout::new(12, 4))
+        );
+        let empty = ctxt.array_ty(int, 0);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(empty),
+            Ok(Layout::new(0, 4))
+        );
+        let nested = ctxt.array_ty(array, 2);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(nested),
+            Ok(Layout::new(24, 4))
+        );
+    }
+
+    #[test]
+    fn an_array_that_overflows_the_size_is_rejected() {
+        let ctxt = TyCtxt::new();
+        let u16_ty = ctxt.uint_ty(seal_ty::UintTy::U16);
+        let array = ctxt.array_ty(u16_ty, u64::MAX);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(array),
+            Err(LayoutError::TooLarge(array))
+        );
     }
 }

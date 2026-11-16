@@ -170,7 +170,8 @@ pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
                 }
                 check_target(body, block, *otherwise)?;
             }
-            TerminatorKind::Return | TerminatorKind::Unreachable => {}
+            TerminatorKind::Return | TerminatorKind::Panic { .. } | TerminatorKind::Unreachable => {
+            }
         }
     }
 
@@ -183,6 +184,16 @@ fn check_place(body: &Body, block: BasicBlockId, place: Place) -> Result<(), Val
             block,
             local: place.local,
         });
+    }
+    for projection in &place.projections {
+        if let crate::place::Projection::Index { local, .. } = projection
+            && local.index() as usize >= body.locals.len()
+        {
+            return Err(ValidationError::PlaceOutOfRange {
+                block,
+                local: *local,
+            });
+        }
     }
     Ok(())
 }
@@ -227,6 +238,13 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
             }
             Ok(())
         }
+        Rvalue::Array { elements, .. } => {
+            for element in elements {
+                check_operand(body, block, element)?;
+            }
+            Ok(())
+        }
+        Rvalue::Repeat { value, .. } => check_operand(body, block, value),
     }
 }
 

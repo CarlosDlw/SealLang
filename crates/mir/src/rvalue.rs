@@ -164,4 +164,20 @@ pub enum Rvalue {
         /// Field initializers in evaluation order.
         fields: Vec<(DefId, Operand)>,
     },
+    /// Builds a fixed-size array from its elements.
+    Array {
+        /// Elements in source order.
+        elements: Vec<Operand>,
+        /// The array type, which carries the element type and length.
+        ty: seal_ty::TyId,
+    },
+    /// Builds an array by copying one value into every element.
+    Repeat {
+        /// The value copied into each element.
+        value: Operand,
+        /// The number of elements.
+        count: u64,
+        /// The array type, which carries the element type and length.
+        ty: seal_ty::TyId,
+    },
 }

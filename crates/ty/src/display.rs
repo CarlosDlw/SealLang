@@ -55,6 +55,9 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Ref { kind, pointee } => {
                 write!(f, "{}{}", kind.prefix(), self.display(pointee))
             }
+            TyKind::Array { element, length } => {
+                write!(f, "[{}; {length}]", self.display(element))
+            }
             TyKind::Adt(adt) => match self.interner {
                 Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name)),
                 None => write!(f, "<struct#{}>", adt.index()),
@@ -131,5 +134,17 @@ mod tests {
         let second = infer.fresh_ty_var(&mut ctxt);
         assert_eq!(ctxt.display(first).to_string(), "?T0");
         assert_eq!(ctxt.display(second).to_string(), "?T1");
+    }
+
+    #[test]
+    fn arrays_render_with_their_element_and_length() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        assert_eq!(ctxt.display(ctxt.array_ty(int, 4)).to_string(), "[i32; 4]");
+        assert_eq!(
+            ctxt.display(ctxt.array_ty(ctxt.array_ty(int, 2), 3))
+                .to_string(),
+            "[[i32; 2]; 3]"
+        );
     }
 }

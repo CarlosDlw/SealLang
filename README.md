@@ -110,9 +110,9 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 ## Status
 
-The current language surface is functions, nominal structs, shared and exclusive
-references, `let` bindings with definite initialization, `if`, `while`, `break`,
-`continue`, `return`, and the usual arithmetic, comparison, logical, and bitwise
-operators. Arrays, slices, generics, methods, enums, and an `unsafe` layer are
-not part of the surface yet; the memory model records how they fit without
-redesigning the type system.
+The current language surface is functions, nominal structs, fixed-size arrays,
+shared and exclusive references, `let` bindings with definite initialization,
+`if`, `while`, `break`, `continue`, `return`, and the usual arithmetic,
+comparison, logical, and bitwise operators. Slices, generics, methods, enums,
+and an `unsafe` layer are not part of the surface yet; the memory model records
+how they fit without redesigning the type system.

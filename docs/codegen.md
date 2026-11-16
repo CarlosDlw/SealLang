@@ -17,7 +17,8 @@ assembly output do not require an entry point; executables do.
    types. Declaring first lets a body call a function declared later.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
    block, and explicit loads/stores for places. Field projections use struct
-   GEPs; dereferences load the reference and continue from its pointee.
+   GEPs; array indices use a byte offset after the MIR bounds check; dereferences
+   load the reference and continue from its pointee.
 3. **Debug information.** When requested, a `DISubprogram`, parameter and binding
    variables, aggregate types, and a `DILocation` per statement and terminator
    are emitted alongside the IR.
@@ -75,10 +76,21 @@ The ABI is defined by the language, not by a C header:
   writing a place is a load or store; moving is a bitwise transfer because no
   current type has a destructor.
 - Structs are LLVM structs with fields in declaration order, natural alignment,
-  and no reordering. Scalars use their size as alignment, references use the
-  target pointer width, `bool` is one byte, and `()`/`!` are zero-sized structs.
-  The layout comes from `seal-layout`, so code generation and semantic layout
-  cannot disagree.
+  and no reordering. Arrays are LLVM arrays of their element type: the element
+  size already includes its trailing padding, so the array stride matches
+  `seal-layout`. Scalars use their size as alignment, references use the target
+  pointer width, `bool` is one byte, and `()`/`!` are zero-sized structs. The
+  layout comes from `seal-layout`, so code generation and semantic layout cannot
+  disagree.
+- Array indexing evaluates the index once, checks it against the length, and
+  then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
+  unsafe operation and every compiler crate except the debug bridge forbids
+  `unsafe`, so the address is formed with `ptrtoint`, integer addition, and
+  `inttoptr` after the bounds check. The result addresses the same element and
+  keeps the workspace's safety policy intact.
+- `[value; N]` evaluates `value` once and fills a temporary array in a loop. The
+  temporary is allocated in the entry block, so a repeat inside a loop does not
+  grow the stack on every iteration.
 - `*str` is the fat pointer `{ data, length }`. A literal becomes a private,
   unnamed constant array plus its byte length; no run-time terminator scan is
   needed.
@@ -108,6 +120,7 @@ The ABI is defined by the language, not by a C header:
 - `DW_TAG_structure_type` for every struct, with member names, bit offsets, and
   sizes from `seal-layout`;
 - pointer and fat-pointer types, including `&str` as a two-member struct;
+- array types with their element type, length, size, and alignment;
 - a line-table entry for every statement and terminator, so debuggers stop on
   source lines rather than function boundaries.
 
@@ -136,6 +149,9 @@ Code generation must not leave undefined behavior on ordinary arithmetic:
 - Float arithmetic and comparisons use IEEE semantics. Ordered comparisons
   (`OEQ`, `OLT`, ...) make a comparison with NaN false, and `!=` uses `UNE`, so
   `NaN != NaN` is true.
+- A runtime array index is checked against the array length before the element
+  address is formed. An out-of-range index calls `seal_panic` with
+  `index out of bounds: the length is N` and exits with status 101.
 - Bitwise operators require integer operands (or `bool` for `!`), which the type
   checker enforces before code generation.
 
@@ -210,11 +226,14 @@ cargo test --workspace
 cargo build --workspace
 ```
 
-The end-to-end tests compile and run `examples/006_structs.sl` in debug and
-release, check DWARF sections and names, exercise object and assembly output
-without `main`, verify entry-point diagnostics, and confirm panic messages and
-status 101 for zero divisors and signed overflow in both `/` and `%`, and reject
+The end-to-end tests compile and run `examples/006_structs.sl` and
+`examples/009_arrays.sl` in debug and release, check DWARF sections and names,
+exercise object and assembly output without `main`, verify entry-point
+diagnostics, and confirm panic messages and status 101 for zero divisors, signed
+overflow in both `/` and `%`, and out-of-range array indices, and reject
 executable linking when the embedded runtime does not match the target.
 `examples/007_runtime_panic.sl` pins the user-visible panic message and location.
-The driver tests export the embedded archive with `--emit-runtime` and reuse it
-with `--runtime-archive` to link that example.
+Array tests also cover literals, repeats, zero-length arrays, copy semantics,
+arrays in structs, structs in arrays, function parameters, dynamic writes, and
+repeats inside loops. The driver tests export the embedded archive with
+`--emit-runtime` and reuse it with `--runtime-archive` to link that example.

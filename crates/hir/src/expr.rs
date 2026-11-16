@@ -26,6 +26,8 @@ pub enum Projection {
     Deref,
     /// Selects a named field of a struct place.
     Field(Symbol),
+    /// Selects an array element by an index expression.
+    Index(crate::id::HirExprId),
 }
 
 impl Place {
@@ -55,6 +57,13 @@ impl Place {
     #[inline]
     pub fn field(mut self, name: Symbol) -> Self {
         self.projections.push(Projection::Field(name));
+        self
+    }
+
+    /// Returns the place reached by indexing with `index`.
+    #[inline]
+    pub fn index(mut self, index: crate::id::HirExprId) -> Self {
+        self.projections.push(Projection::Index(index));
         self
     }
 
@@ -120,6 +129,25 @@ pub enum ExprKind {
         adt: DefId,
         /// Initializers in source order, one per valid source field.
         fields: Vec<(DefId, HirExprId)>,
+    },
+    /// An array literal.
+    Array {
+        /// Elements in source order; an empty literal has no elements.
+        elements: Vec<HirExprId>,
+    },
+    /// A repeated array literal, written `[value; length]`.
+    ArrayRepeat {
+        /// The value copied into each element.
+        value: HirExprId,
+        /// The number of elements.
+        length: u64,
+    },
+    /// An array index place, written `base[index]`.
+    Index {
+        /// The array place being indexed.
+        base: HirExprId,
+        /// The index expression.
+        index: HirExprId,
     },
     /// A prefix operation.
     Unary {

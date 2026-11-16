@@ -15,6 +15,7 @@ use seal_span::FileName;
 const STRUCTS: &str = include_str!("../../../examples/006_structs.sl");
 const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl");
 const EXCLUSIVE: &str = include_str!("../../../examples/008_exclusive_references.sl");
+const ARRAYS: &str = include_str!("../../../examples/009_arrays.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -571,4 +572,120 @@ fn signed_remainder_overflow_panics() {
         String::from_utf8_lossy(&result.stderr),
         "panic: attempt to calculate the remainder with overflow at <test.sl>:4:5\n"
     );
+}
+
+#[test]
+fn arrays_work_in_debug_and_release_builds() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "arrays-debug"),
+        (OptLevel::O2, false, "arrays-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            ARRAYS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("array example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(71),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn a_dynamic_array_index_panics_before_the_access() {
+    let output = TempOutput::new("array-bounds");
+    compile(
+        "func main() -> i32 {\n  let a = [1, 2, 3];\n  let i: usize = 3;\n  a[i]\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the bounds check compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("index out of bounds: the length is 3"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("at <test.sl>:4:5"), "{stderr}");
+}
+
+#[test]
+fn arrays_of_structs_and_structs_with_array_fields_run() {
+    let source = "struct Row { values: [i32; 2] }\n\
+                  func main() -> i32 {\n\
+                    let row = Row { values: [40, 1] };\n\
+                    let rows = [row, Row { values: [0, 1] }];\n\
+                    rows[0].values[0] + rows[0].values[1]\n\
+                  }\n";
+    let output = TempOutput::new("array-aggregates");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("aggregate arrays compile");
+    assert_eq!(run(output.path()).code(), Some(41));
+}
+
+#[test]
+fn zero_length_arrays_and_copy_assignments_run() {
+    let source = "func main() -> i32 {\n\
+                    let empty: [i32; 0] = [];\n\
+                    let values = [1, 2];\n\
+                    let copy = values;\n\
+                    values[0] + copy[0]\n\
+                  }\n";
+    let output = TempOutput::new("array-empty-copy");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("empty arrays and copies compile");
+    assert_eq!(run(output.path()).code(), Some(2));
+}
+
+#[test]
+fn dynamic_array_writes_round_trip() {
+    let source = "func main() -> i32 {\n\
+                    let mut a = [1, 2, 3, 4];\n\
+                    let i: usize = 1;\n\
+                    let j: usize = 3;\n\
+                    a[i] = 10;\n\
+                    a[j] = a[i] + 5;\n\
+                    a[0] + a[1] + a[2] + a[3]\n\
+                  }\n";
+    let output = TempOutput::new("array-writes");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("dynamic writes compile");
+    assert_eq!(run(output.path()).code(), Some(29));
+}
+
+#[test]
+fn a_repeated_array_inside_a_loop_allocates_its_temporary_once() {
+    let source = "func main() -> i32 {\n\
+                    let mut i = 0;\n\
+                    let mut total = 0;\n\
+                    while i < 1000 {\n\
+                      let values = [1; 4];\n\
+                      total += values[0];\n\
+                      i += 1;\n\
+                    }\n\
+                    total\n\
+                  }\n";
+    let output = TempOutput::new("array-repeat-loop");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("repeat inside a loop compiles");
+    assert_eq!(run(output.path()).code(), Some(232));
+}
+
+#[test]
+fn arrays_pass_by_value_through_function_parameters() {
+    let source = "func first(values: [i32; 3]) -> i32 { values[0] }\n\
+                  func main() -> i32 { first([41, 1, 2]) + 1 }\n";
+    let output = TempOutput::new("array-parameter");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("array parameters compile");
+    assert_eq!(run(output.path()).code(), Some(42));
 }

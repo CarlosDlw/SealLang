@@ -1,7 +1,7 @@
 //! Definite-initialization state over move paths.
 
 use seal_def::DefId;
-use seal_ty::{InitPaths, InitState, TyCtxt, TyId};
+use seal_ty::{InitPaths, InitState, PathElem, TyCtxt, TyId};
 
 /// Which move paths are definitely initialized at one program point, and
 /// whether that point is unreachable.
@@ -23,16 +23,16 @@ impl Flow {
     pub(crate) fn state(
         &self,
         local: DefId,
-        fields: &[DefId],
+        path: &[PathElem],
         root_ty: TyId,
         tcx: &TyCtxt,
     ) -> InitState {
-        self.init.state(local, fields, tcx, root_ty)
+        self.init.state(local, path, tcx, root_ty)
     }
 
     /// Records that a place was assigned, covering its descendants.
-    pub(crate) fn assign(&mut self, local: DefId, fields: &[DefId]) {
-        self.init.assign(local, fields);
+    pub(crate) fn assign(&mut self, local: DefId, path: &[PathElem]) {
+        self.init.assign(local, path);
     }
 
     /// Joins the states after the two arms of a conditional.

@@ -11,6 +11,13 @@ pub enum Projection {
     Deref,
     /// Selects a struct field by its definition.
     Field(DefId),
+    /// Selects an array element by a runtime index.
+    Index {
+        /// The local holding the evaluated `usize` index.
+        local: LocalId,
+        /// The constant index when the source used an in-range literal.
+        constant: Option<u64>,
+    },
 }
 
 /// A storage location: a local plus the projections applied to it.
@@ -53,6 +60,13 @@ impl Place {
     #[inline]
     pub fn field(mut self, field: DefId) -> Self {
         self.projections.push(Projection::Field(field));
+        self
+    }
+
+    /// Returns the place reached by indexing an array.
+    #[inline]
+    pub fn index(mut self, local: LocalId, constant: Option<u64>) -> Self {
+        self.projections.push(Projection::Index { local, constant });
         self
     }
 

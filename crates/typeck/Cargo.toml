@@ -12,6 +12,7 @@ seal-diagnostics.workspace = true
 seal-error-codes.workspace = true
 seal-hash.workspace = true
 seal-hir.workspace = true
+seal-layout.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
 seal-ty.workspace = true

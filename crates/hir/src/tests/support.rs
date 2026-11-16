@@ -323,6 +323,16 @@ impl Reachability<'_> {
             | ExprKind::Borrow { operand, .. }
             | ExprKind::Deref { operand } => self.check_expr(operand),
             ExprKind::Field { base, .. } => self.check_expr(base),
+            ExprKind::Array { elements } => {
+                for element in elements {
+                    self.check_expr(element);
+                }
+            }
+            ExprKind::ArrayRepeat { value, .. } => self.check_expr(value),
+            ExprKind::Index { base, index } => {
+                self.check_expr(base);
+                self.check_expr(index);
+            }
             ExprKind::Struct { adt, fields } => {
                 let data = self.hir.definitions().get(adt);
                 assert_eq!(data.kind, DefKind::Struct);

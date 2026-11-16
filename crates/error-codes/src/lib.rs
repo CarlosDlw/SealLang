@@ -347,6 +347,21 @@ Simplify the expression or split it into several `let` bindings. The limit exist
 so malformed or hostile input reports an error instead of crashing the compiler.",
 };
 
+/// An array length is not a supported literal.
+pub const E1009: ErrorCode = ErrorCode {
+    code: "E1009",
+    title: "invalid array length",
+    explanation: "\
+A fixed-size array is written `[T; N]`, where `N` is the number of elements.
+Seal lengths are compile-time constants, so the grammar requires a non-negative
+integer literal; at this stage there are no `const` items or constant
+expressions to evaluate.
+
+Write a literal such as `[i32; 4]` or `[0u8; 16]`. The literal may be unsuffixed
+or suffixed `usize`, and must fit in a 32-bit unsigned value because the backend
+represents array lengths with 32 bits.",
+};
+
 /// A definition is declared twice in the same scope.
 pub const E2001: ErrorCode = ErrorCode {
     code: "E2001",
@@ -493,6 +508,19 @@ field. A computed value such as a struct literal or a call result has no storage
 to project, and Seal does not create hidden temporaries for field access.
 
 Store the value in a `let` binding and access the field through that binding.",
+};
+
+/// An index expression is applied to a value with no storage.
+pub const E2013: ErrorCode = ErrorCode {
+    code: "E2013",
+    title: "indexing requires a place",
+    explanation: "\
+An array index selects storage inside an array: a binding, a parameter, a
+dereference, a field, or another index. A computed value such as an array
+literal or a call result has no storage to project, and Seal does not create
+hidden temporaries for indexing.
+
+Store the array in a `let` binding and index that binding.",
 };
 
 /// Expression types do not match.
@@ -743,6 +771,71 @@ Borrow the pointee instead, as in `&*reference`, or copy the fields you need int
 a new value.",
 };
 
+/// An empty array literal has no element type to infer.
+pub const E3019: ErrorCode = ErrorCode {
+    code: "E3019",
+    title: "cannot infer array element type",
+    explanation: "\
+An empty array literal `[]` contains no value that could determine its element
+type. Unlike a non-empty literal, there is no first element whose type the rest
+of the array can follow.
+
+Give the binding, parameter, or return position a type annotation such as
+`[i32; 0]`, or write at least one element.",
+};
+
+/// A repeated array literal would copy a non-`Copy` value.
+pub const E3020: ErrorCode = ErrorCode {
+    code: "E3020",
+    title: "cannot repeat a non-`Copy` value",
+    explanation: "\
+`[value; N]` builds an array by copying `value` into every element. A type that
+is not `Copy` owns its contents and cannot be duplicated bitwise, so repeating
+it would create several owners of the same storage.
+
+Use an explicit literal when each element can be constructed separately. Struct
+values are not `Copy` in Seal, while scalars, references, and arrays of `Copy`
+elements are.",
+};
+
+/// An index expression is applied to a type that is not an array.
+pub const E3021: ErrorCode = ErrorCode {
+    code: "E3021",
+    title: "cannot index this type",
+    explanation: "\
+The `base[index]` syntax selects an element of a fixed-size array. Seal has no
+slices, strings are not indexable, and there is no overloading or automatic
+dereference, so the base must have an array type such as `[i32; 4]`.
+
+Dereference a reference first, as in `(*array)[index]`, and make sure the base
+is an array rather than a scalar or a struct.",
+};
+
+/// A constant array index is outside the array bounds.
+pub const E3022: ErrorCode = ErrorCode {
+    code: "E3022",
+    title: "array index is out of bounds",
+    explanation: "\
+An array of length `N` has valid indices `0..N`. When the index is a literal,
+the compiler knows the value and rejects it before the program runs, instead of
+leaving a guaranteed panic in the generated code.
+
+The last valid index is `length - 1`. For an empty array, no index is valid.",
+};
+
+/// An array is too large for the target's address space.
+pub const E3023: ErrorCode = ErrorCode {
+    code: "E3023",
+    title: "array is too large for the target",
+    explanation: "\
+The size of an array is the element size multiplied by its length. On a target
+with 32-bit pointers, a type whose size exceeds `usize::MAX` cannot be stored in
+memory or addressed by one pointer.
+
+Use a smaller length or a smaller element type. The check runs against the
+selected target, not the host.",
+};
+
 /// A place is assigned while a shared reference to it is live.
 pub const E5001: ErrorCode = ErrorCode {
     code: "E5001",
@@ -959,11 +1052,11 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E2005,
-    E2006, E2007, E2008, E2009, E2010, E2011, E2012, E3001, E3002, E3003, E3004, E3005, E3006,
-    E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E5001,
-    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001,
-    E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
+    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E3001, E3002, E3003, E3004,
+    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
+    E3018, E3019, E3020, E3021, E3022, E3023, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
+    E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -985,7 +1078,7 @@ pub fn explain(code: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{ALL, E0001, E0002, E0003, E0012, E1001, E1008, E9001, E9002, explain, lookup};
+    use super::{ALL, E0001, E0002, E0003, E0012, E1001, E1009, E9001, E9002, explain, lookup};
 
     #[test]
     fn codes_are_unique_and_well_formed() {
@@ -1055,11 +1148,11 @@ mod tests {
         assert_eq!(
             codes,
             [
-                "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008",
+                "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008", "E1009",
             ]
         );
         assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
-        assert_eq!(E1008.code()[1..2].parse::<u8>().expect("digit"), 1);
+        assert_eq!(E1009.code()[1..2].parse::<u8>().expect("digit"), 1);
     }
 
     #[test]
@@ -1073,7 +1166,7 @@ mod tests {
             codes,
             [
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
-                "E2010", "E2011", "E2012",
+                "E2010", "E2011", "E2012", "E2013",
             ]
         );
     }
@@ -1090,6 +1183,7 @@ mod tests {
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
+                "E3019", "E3020", "E3021", "E3022", "E3023",
             ]
         );
     }

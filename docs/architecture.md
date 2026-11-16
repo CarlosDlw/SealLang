@@ -26,13 +26,13 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types and aggregates, inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
-| `seal-layout` | Deterministic struct layout: field offsets, alignment, and size derived from `TyCtxt` types. |
+| `seal-ty` | Interned semantic types, aggregates, and arrays; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-layout` | Deterministic struct and array layout: field offsets, alignment, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, terminators, and structural validation. |
-| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, escaping references, `E5xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, array lengths and bounds, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index projections and bounds checks, terminators, and structural validation. |
+| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, array element paths, escaping references, `E5xxx` diagnostics. |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
@@ -141,8 +141,10 @@ allowed to depend only on crates below it in the list.
     the state from before the loop. An uninitialized immutable binding may be
     initialized once by assignment; reassigning it needs `let mut`.
 31. **Stored values are sized.** Locals, parameters, and return values cannot
-    have `str`; literals must fit the integer or float type selected for them,
-    using the target pointer width for `isize` and `usize`.
+    have `str`; an array is sized when its element is, and its total size must fit
+    the target address space (`E3023`). Literals must fit the integer or float
+    type selected for them, using the target pointer width for `isize` and
+    `usize`.
 32. **MIR is a control-flow graph.** Every body has one entry block and a return
     place at local zero; parameters are locals `1..=arg_count`, bindings and
     temporaries follow, and every local declares its type. Every block ends in
@@ -253,7 +255,8 @@ allowed to depend only on crates below it in the list.
 53. **Every local has storage.** Locals, parameters, and the return place are
     `alloca` slots; reads and writes are loads and stores, and calls use the
     checked signature. Aggregates are built with `insertvalue` in declaration
-    order and projected with struct GEPs, so evaluation order and layout agree.
+    order, struct fields are projected with struct GEPs, and arrays with a
+    bounds-checked element offset, so evaluation order and layout agree.
 54. **The ABI is compiler-owned.** Seal functions use the `seal.<name>` symbol;
     the C `main` wrapper is the only `main`. A user `main` takes no parameters
     and returns `i32` or `()`. `*str` is `{ data, length }`; `()`/`!` are
@@ -342,11 +345,13 @@ allowed to depend only on crates below it in the list.
 - **New control-flow construct.** Lower it to blocks and `Goto`/`SwitchInt`
   edges; `while` shows the loop-target stack and `&&`/`||` the short-circuit
   shape. Every new edge must go through `validate`'s target check.
-- **New projection.** `Place` carries `Projection::{Deref, Field(DefId)}`; a
-  new projection (array index, slice range) is a variant in `seal-mir` plus a
-  resolved counterpart in `seal-typeck`. Update `seal-borrowck`'s prefix
-  comparison and `seal-layout` when the projection selects storage with an
-  address; the walk that reads and writes places otherwise stays unchanged.
+- **New projection.** `Place` carries
+  `Projection::{Deref, Field(DefId), Index { local, constant }}`; a new
+  projection (slice range, dereference of a smart pointer) is a variant in
+  `seal-mir` plus a resolved counterpart in `seal-typeck`. Update
+  `seal-borrowck`'s prefix comparison and `seal-layout` when the projection
+  selects storage with an address; the walk that reads and writes places
+  otherwise stays unchanged.
 - **New loan kind.** A loan kind is a field on `seal-borrowck`'s `Loan` plus a
   rule in the centralized conflict check; the may-hold analysis is
   kind-agnostic. Two-phase borrows become a reservation state on the same facts.

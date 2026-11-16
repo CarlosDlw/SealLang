@@ -350,6 +350,53 @@ impl<'a> Parser<'a> {
         self.builder.push_type(seal_ast::TypeKind::Error, span)
     }
 
+    /// Parses a fixed array length, written as an integer literal whose type
+    /// is `usize` (either unsuffixed or suffixed `usize`).
+    ///
+    /// Array lengths are type-level constants; Seal does not have `const`
+    /// items yet, so the grammar accepts a literal instead of an expression.
+    pub(crate) fn parse_array_length(&mut self, context: &str) -> (u64, Span) {
+        let token = self.current();
+        let TokenKind::Int { value, suffix, .. } = token.kind else {
+            let found = self.describe(token.kind);
+            self.error(
+                codes::E1009,
+                token.span,
+                format!("expected an array length, found {found}"),
+            )
+            .help(format!(
+                "write the {context} as a non-negative integer literal"
+            ))
+            .emit();
+            return (0, token.span);
+        };
+        self.bump();
+
+        if let Some(suffix) = suffix
+            && suffix.as_str() != "usize"
+        {
+            self.error(
+                codes::E1009,
+                token.span,
+                format!("an array length must be `usize`, not `{}`", suffix.as_str()),
+            )
+            .help("remove the suffix, or write `usize`")
+            .emit();
+        }
+
+        if value > u128::from(u32::MAX) {
+            self.error(codes::E1009, token.span, "array length is too large")
+                .help(format!(
+                    "the maximum supported array length is {} elements",
+                    u32::MAX
+                ))
+                .emit();
+            return (0, token.span);
+        }
+
+        (value as u64, token.span)
+    }
+
     /// Advances one token if the caller consumed nothing, preventing hangs.
     pub(crate) fn ensure_progress(&mut self, before: usize) {
         if self.index == before && !self.is_eof() {
@@ -473,6 +520,7 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::PlusPlus
             | TokenKind::MinusMinus
             | TokenKind::LParen
+            | TokenKind::LBracket
             | TokenKind::If
             | TokenKind::Error
     )

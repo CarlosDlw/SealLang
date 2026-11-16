@@ -121,6 +121,15 @@ pub enum TypeKind {
     },
     /// A named type, resolved against the type namespace during lowering.
     Path(Symbol),
+    /// A fixed-size array, written `[T; N]`.
+    Array {
+        /// The type of each element.
+        element: TypeId,
+        /// The number of elements.
+        length: u64,
+        /// The span of the length literal, for diagnostics.
+        length_span: Span,
+    },
     /// Syntax the parser could not turn into a type.
     Error,
 }

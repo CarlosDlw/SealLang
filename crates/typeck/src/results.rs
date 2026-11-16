@@ -3,7 +3,7 @@
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::HirExprId;
-use seal_ty::{RefKind, TyId};
+use seal_ty::{PathElem, RefKind, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,6 +12,15 @@ pub enum PlaceProjection {
     Deref,
     /// Selects a struct field by its definition.
     Field(DefId),
+    /// Selects an array element.
+    Index {
+        /// The index expression, evaluated by MIR lowering.
+        index: HirExprId,
+        /// The constant value when the index is a literal in range.
+        constant: Option<u64>,
+        /// The array length, used for the runtime bounds check.
+        length: u64,
+    },
 }
 
 /// A place resolved by type checking.
@@ -49,18 +58,33 @@ impl ResolvedPlace {
         self.projections.is_empty()
     }
 
-    /// Returns the field definitions selected by the place.
+    /// Returns the move path selected by the place.
     ///
     /// Dereferences do not contribute: initialization is only tracked inside one
-    /// frame's storage.
-    pub fn field_defs(&self) -> Vec<DefId> {
+    /// frame's storage. A dynamic index stops the path at the array it selects,
+    /// because its element is not known at compile time; the whole array then
+    /// covers the access conservatively.
+    pub fn path(&self) -> Vec<PathElem> {
+        let mut path = Vec::new();
+        for projection in &self.projections {
+            match projection {
+                PlaceProjection::Deref => break,
+                PlaceProjection::Field(field) => path.push(PathElem::Field(*field)),
+                PlaceProjection::Index {
+                    constant: Some(index),
+                    ..
+                } => path.push(PathElem::Index(*index)),
+                PlaceProjection::Index { constant: None, .. } => break,
+            }
+        }
+        path
+    }
+
+    /// Returns `true` when the place indexes an array with a runtime value.
+    pub fn has_dynamic_index(&self) -> bool {
         self.projections
             .iter()
-            .filter_map(|projection| match projection {
-                PlaceProjection::Field(field) => Some(*field),
-                PlaceProjection::Deref => None,
-            })
-            .collect()
+            .any(|projection| matches!(projection, PlaceProjection::Index { constant: None, .. }))
     }
 }
 

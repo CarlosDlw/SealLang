@@ -220,6 +220,13 @@ pub enum TyKind {
         /// The referenced type.
         pointee: TyId,
     },
+    /// A fixed-size array `[T; N]`.
+    Array {
+        /// The type of every element.
+        element: TyId,
+        /// The number of elements.
+        length: u64,
+    },
     /// A nominal aggregate type, such as a struct.
     Adt(AdtId),
     /// The unit type `()`.

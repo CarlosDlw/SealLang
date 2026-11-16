@@ -35,6 +35,7 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | String reference | `*str` | 2 × pointer | pointer | yes | yes | no |
 | String pointee | `str` | unsized | unsized | no | no | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
+| Array | `[T; N]` | N × size(T) | align(T) | yes, if `T` is | yes, if `T` is | no |
 | Unit | not writable | 0 | 1 | yes | yes | no |
 | Never | not writable | 0 | 1 | yes | yes | no |
 | Error | internal | 0 | 1 | yes | yes | no |
@@ -190,6 +191,46 @@ An aggregate may contain itself only behind a reference. A recursive field by
 value has no finite size and is rejected during type checking before layout
 runs.
 
+## Arrays
+
+A fixed-size array is written `[T; N]`: one element type and one non-negative
+length. The length is an integer literal, unsuffixed or suffixed `usize`, and
+cannot exceed `u32::MAX` (LLVM's array length limit). The length is part of the
+type: `[i32; 2]` and `[i32; 3]` never unify.
+
+```seal
+let mut values: [i32; 4] = [1, 2, 3, 4];
+values[1] = 20;
+let zeros = [0; 8];
+let empty: [i32; 0] = [];
+```
+
+An array literal keeps source order. `[value; N]` evaluates `value` once and
+copies it into every element, so the element type must be `Copy`; this is checked
+even when `N` is zero. `[]` has no element from which to infer a type, so it needs
+an expected array type (`E3019`). A literal whose element or length disagrees
+with its annotation is a normal type mismatch.
+
+Indexing is written `base[index]` and selects a place, so it can be read,
+assigned, borrowed, or projected further. The index type is exactly `usize`;
+an unsuffixed integer literal adopts `usize`. A constant out-of-range index is
+`E3022` at compile time. A runtime index is evaluated once and bounds-checked
+before the access; an out-of-range value panics with status 101. Indexing a
+non-array is `E3021`, and indexing a value that is not a place is `E2013`.
+
+The size is `N × size(T)` and the alignment is `align(T)`. A zero-length array
+occupies no bytes but keeps the element alignment. Nested arrays multiply their
+sizes. A type whose size overflows or exceeds the target address space is
+`E3023`. Arrays derive `Copy`, `Sized`, and `Drop` from their element: an array
+of references is `Copy`, an array of structs is not, and an array of `str` is
+unsized.
+
+Initialization is tracked per element. `let mut a: [i32; 2]; a[0] = 1; a[1] = 2;`
+initializes the array field by field, reading `a[0]` before its assignment is an
+error, and a whole assignment initializes every element at once. A write through
+a runtime index requires the whole array to be initialized, because the compiler
+cannot prove which element remains untouched.
+
 ## Unit, never, and internal types
 
 `()` is the unit type: it is the result of a function with no `->` clause and of
@@ -214,9 +255,9 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. `str` and every struct are not, even when all their fields are `Copy`. |
-| `Sized` | Every type has a compile-time size except `str` and an unresolved `Infer`. A struct is sized when every field is. |
-| `needs_drop` | No current type runs a destructor. A struct will derive the answer from its fields once a type with a destructor exists. |
+| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str` and every struct are not, even when all their fields are `Copy`. |
+| `Sized` | Every type has a compile-time size except `str` and an unresolved `Infer`. A struct is sized when every field is; an array is sized when its element is. |
+| `needs_drop` | No current type runs a destructor. An array and a struct derive the answer from their elements or fields once a type with a destructor exists. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the
@@ -237,6 +278,9 @@ Layout is deterministic and defined by the language, not by the host C ABI:
    alignment, so trailing padding belongs to the value.
 5. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
    its own.
+6. An array has the element's alignment and `length × size(element)` bytes. It
+   adds no padding between elements beyond the element's own size, which already
+   includes its trailing padding.
 
 | Type | Size | Align | Offsets |
 |------|-----:|------:|---------|
@@ -244,19 +288,22 @@ Layout is deterministic and defined by the language, not by the host C ABI:
 | `Mixed { flag: bool, value: i32, small: i8 }` | 12 | 4 | `flag` at 0, `value` at 4, `small` at 8 |
 | `Segment { start: Point, end: Point }` | 16 | 4 | `start` at 0, `end` at 8 |
 | `Empty {}` | 0 | 1 | none |
+| `[i32; 4]` | 16 | 4 | elements at 0, 4, 8, 12 |
+| `[u8; 0]` | 0 | 1 | none |
 | `*i32` on a 64-bit target | 8 | 8 | none |
 | `*str` on a 64-bit target | 16 | 8 | data at 0, length at 8 |
 
 Code generation materializes one stack slot per local, uses struct GEPs for
-fields, and passes references as pointers — or as a `{ data, length }` pair for
-`*str`. `()` and `!` are zero-sized structs in the ABI.
+fields, indexes arrays with a bounds-checked byte offset, and passes references
+as pointers — or as a `{ data, length }` pair for `*str`. `()` and `!` are
+zero-sized structs in the ABI.
 
 ## Growth
 
 Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
-and its interning key before it can appear in a signature. Arrays and slices
-will extend the layout rules with element stride and length; generics will
-instantiate the same rules per concrete argument; owning heap types will add
-field-derived destructors. None of these requires changing the identity,
-layout, or ownership model above: `TyId` equality, declaration-order layout, and
-the move/borrow rules stay the same.
+and its interning key before it can appear in a signature. Slices will reuse the
+element stride and add a runtime length; generics will instantiate the same
+rules per concrete argument; owning heap types will add field-derived
+destructors. None of these requires changing the identity, layout, or ownership
+model above: `TyId` equality, declaration-order layout, and the move/borrow
+rules stay the same.

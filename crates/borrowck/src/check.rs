@@ -192,6 +192,16 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 check_operand(statement, operand, context);
             }
         }
+        Rvalue::Array { elements, .. } => {
+            for element in elements {
+                unknown |= operand_unknown(element, context);
+                check_operand(statement, element, context);
+            }
+        }
+        Rvalue::Repeat { value, .. } => {
+            unknown |= operand_unknown(value, context);
+            check_operand(statement, value, context);
+        }
     }
 
     if !place_is_reported(context, place) {
@@ -461,6 +471,8 @@ fn check_terminator(
             }
             false
         }
-        TerminatorKind::Goto(_) | TerminatorKind::Unreachable => false,
+        TerminatorKind::Goto(_) | TerminatorKind::Panic { .. } | TerminatorKind::Unreachable => {
+            false
+        }
     }
 }

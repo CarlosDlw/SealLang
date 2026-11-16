@@ -54,6 +54,20 @@ impl Checker<'_> {
             .as_ref()
             .is_some_and(|place| self.place_state(place, flow) == InitState::Initialized);
 
+        // A runtime index cannot prove which element is written, so the whole
+        // array must already be initialized; otherwise the write would leave
+        // the other elements in an unknown state.
+        if plain
+            && resolved
+                .as_ref()
+                .is_some_and(ResolvedPlace::has_dynamic_index)
+            && !initialized
+        {
+            self.report_place_uninitialized(resolved.as_ref(), target_span);
+            self.check_expr(value, ty, flow);
+            return self.unit();
+        }
+
         // D9: an uninitialized immutable binding may be initialized once by a
         // whole assignment. Field writes always require `mut`, because they do
         // not initialize the binding as a whole.
@@ -76,7 +90,7 @@ impl Checker<'_> {
 
         self.check_expr(value, ty, flow);
         if let Some(place) = resolved {
-            flow.assign(place.local, &place.field_defs());
+            flow.assign(place.local, &place.path());
         }
         self.unit()
     }
@@ -127,7 +141,7 @@ impl Checker<'_> {
         self.check_update_numeric(op, ty, span);
 
         if let Some(place) = resolved {
-            flow.assign(place.local, &place.field_defs());
+            flow.assign(place.local, &place.path());
         }
         self.unit()
     }
@@ -156,7 +170,7 @@ impl Checker<'_> {
     pub(super) fn place_state(&self, place: &ResolvedPlace, flow: &Flow) -> InitState {
         flow.state(
             place.local,
-            &place.field_defs(),
+            &place.path(),
             place.root_ty,
             self.hir.ty_ctxt(),
         )
@@ -166,9 +180,19 @@ impl Checker<'_> {
     pub(super) fn place_text(&self, place: &ResolvedPlace) -> String {
         let mut text = self.def_name(place.local).to_owned();
         for projection in &place.projections {
-            if let PlaceProjection::Field(field) = projection {
-                text.push('.');
-                text.push_str(self.def_name(*field));
+            match projection {
+                PlaceProjection::Field(field) => {
+                    text.push('.');
+                    text.push_str(self.def_name(*field));
+                }
+                PlaceProjection::Index {
+                    constant: Some(index),
+                    ..
+                } => {
+                    text.push_str(&format!("[{index}]"));
+                }
+                PlaceProjection::Index { constant: None, .. } => text.push_str("[..]"),
+                PlaceProjection::Deref => {}
             }
         }
         text

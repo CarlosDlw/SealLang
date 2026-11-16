@@ -80,6 +80,16 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
         | ExprKind::Borrow { operand, .. }
         | ExprKind::Deref { operand } => collect_expr(hir, *operand, stmts, exprs),
         ExprKind::Field { base, .. } => collect_expr(hir, *base, stmts, exprs),
+        ExprKind::Array { elements } => {
+            for element in elements {
+                collect_expr(hir, *element, stmts, exprs);
+            }
+        }
+        ExprKind::ArrayRepeat { value, .. } => collect_expr(hir, *value, stmts, exprs),
+        ExprKind::Index { base, index } => {
+            collect_expr(hir, *base, stmts, exprs);
+            collect_expr(hir, *index, stmts, exprs);
+        }
         ExprKind::Struct { fields, .. } => {
             for (_, value) in fields {
                 collect_expr(hir, *value, stmts, exprs);
