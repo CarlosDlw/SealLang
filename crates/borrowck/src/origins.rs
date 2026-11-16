@@ -136,7 +136,7 @@ impl OriginState {
     ///
     /// Paths overlap when one is a prefix of the other, matching the may-hold
     /// analysis: reading a whole aggregate includes references in its fields.
-    fn at(&self, place: &Place) -> OriginSet {
+    pub(crate) fn at(&self, place: &Place) -> OriginSet {
         let mut set = OriginSet::default();
         for (path, origins) in &self.locals[place.local.index() as usize].paths {
             if overlaps(path, &place.projections) {
@@ -451,7 +451,7 @@ fn field_path(projections: &[Projection]) -> Vec<DefId> {
 }
 
 /// Returns the type of `place`.
-fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
+pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
     let mut ty = body.local(place.local).ty;
     for projection in &place.projections {
         ty = match projection {

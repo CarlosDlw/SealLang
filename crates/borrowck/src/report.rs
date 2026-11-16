@@ -143,6 +143,38 @@ impl<'a> Reporter<'a> {
             .emit();
     }
 
+    /// An exclusive argument conflicts with a live loan of its pointee.
+    pub(crate) fn exclusive_argument_borrowed(&self, argument: &Place, span: Span, loan: &Loan) {
+        let name = self.place_text(argument);
+        let builder = self
+            .dcx
+            .error(format!(
+                "cannot pass `{name}` as an exclusive argument because it is borrowed"
+            ))
+            .code(codes::E5009.diag_code())
+            .primary(span, "")
+            .secondary(loan.span, "borrow occurs here");
+        add_last_use(builder, loan, span)
+            .note("an exclusive argument gives the callee sole access for the whole call")
+            .help("end the borrow before the call, or pass a shared reference instead")
+            .emit();
+    }
+
+    /// An exclusive argument may name the same storage as another argument.
+    pub(crate) fn arguments_alias(&self, span: Span, first: &Place, second: &Place) {
+        let first_name = self.place_text(first);
+        let second_name = self.place_text(second);
+        self.dcx
+            .error(format!(
+                "reference arguments `{second_name}` and `{first_name}` may name the same storage"
+            ))
+            .code(codes::E5010.diag_code())
+            .primary(span, "")
+            .note("the callee may access the pointee through both arguments, and one is exclusive")
+            .help("pass references to distinct places")
+            .emit();
+    }
+
     /// A read reaches a place before every path initializes it.
     pub(crate) fn use_of_uninitialized(&self, place: &Place, span: Span) {
         let name = self.place_text(place);

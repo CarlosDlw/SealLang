@@ -58,6 +58,9 @@ mod runtime;
 mod rvalue;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
 pub use options::{CodegenOptions, Emit};

@@ -110,7 +110,7 @@ fn compile_for_target_with_runtime(
     let mir = seal_mir::lower(&hir, &typeck);
     mir.validate()
         .expect("MIR lowering preserves its invariants");
-    seal_borrowck::check(&hir, &mir, session.diag(), session.interner());
+    let aliasing = seal_borrowck::check(&hir, &mir, session.diag(), session.interner());
     assert!(!session.diag().has_errors(), "borrow checking failed");
 
     seal_codegen::emit(
@@ -121,6 +121,7 @@ fn compile_for_target_with_runtime(
             interner: session.interner(),
             target: session.target(),
             file,
+            noalias_functions: aliasing.noalias_functions(),
         },
         &CodegenOptions {
             emit,

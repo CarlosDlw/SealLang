@@ -303,6 +303,39 @@ impl TyCtxt {
             _ => false,
         }
     }
+
+    /// Returns `true` if `ty` is, or contains by value, an exclusive reference.
+    ///
+    /// The call-site checker uses this when an aggregate argument carries a
+    /// `*mut T` field: passing it grants the callee write access to the field's
+    /// pointee, so the storage has to stay disjoint from every exclusive
+    /// argument. The walk has the same cycle guard as [`Self::contains_reference`].
+    pub fn contains_exclusive_reference(&self, ty: TyId) -> bool {
+        self.contains_exclusive_reference_inner(ty, &mut FxHashSet::default())
+    }
+
+    fn contains_exclusive_reference_inner(
+        &self,
+        ty: TyId,
+        visiting: &mut FxHashSet<AdtId>,
+    ) -> bool {
+        match self.kind(ty) {
+            TyKind::Ref { kind, .. } => kind.is_exclusive(),
+            TyKind::Adt(adt) => {
+                if !visiting.insert(adt) {
+                    return false;
+                }
+                let def = self.adt(adt);
+                let contains = def
+                    .fields
+                    .iter()
+                    .any(|field| self.contains_exclusive_reference_inner(field.ty, visiting));
+                visiting.remove(&adt);
+                contains
+            }
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]

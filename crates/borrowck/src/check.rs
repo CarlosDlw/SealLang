@@ -8,6 +8,8 @@ use seal_mir::{
 use seal_symbol::Interner;
 use seal_ty::{InitPaths, RefKind};
 
+use crate::aliasing::{BodyFacts, CallSites};
+use crate::calls;
 use crate::holds::{self, HoldState, LoanSet};
 use crate::id::LoanId;
 use crate::init::{self, Init, InitInfo};
@@ -37,8 +39,14 @@ impl Context<'_> {
     }
 }
 
-/// Checks one body.
-pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Interner) {
+/// Checks one body and records the alias facts its parameters depend on.
+pub(crate) fn check_body(
+    hir: &Hir,
+    body: &Body,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    calls: &mut CallSites,
+) -> BodyFacts {
     let (mut loans, loan_at) = loans::collect(body);
     let liveness = liveness::analyze(body);
     let holds = holds::analyze(hir, body, &loans, &loan_at);
@@ -48,6 +56,7 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
     let init = init::analyze(body);
     let reporter = Reporter::new(hir, dcx, body, interner);
 
+    let mut unknown = false;
     for (block_id, block) in body.blocks.iter_enumerated() {
         let index = block_id.index() as usize;
         for (position, statement) in block.statements.iter().enumerate() {
@@ -66,7 +75,7 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
                 body,
                 reporter: &reporter,
             };
-            check_statement(statement, &context);
+            unknown |= check_statement(statement, &context, calls);
         }
         // A terminator still reads locals, so the loans those locals hold are
         // live there too: `if *r == 0` must see the borrow that `r` carries.
@@ -82,8 +91,9 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
             body,
             reporter: &reporter,
         };
-        check_terminator(index, block, &init, &context);
+        unknown |= check_terminator(index, block, &init, &context);
     }
+    BodyFacts { unknown }
 }
 
 /// Returns the loans carried by locals that are live at this point.
@@ -124,24 +134,52 @@ fn record_last_uses(
 }
 
 /// Checks one statement: reads first, then the write to its destination.
-fn check_statement(statement: &Statement, context: &Context<'_>) {
+///
+/// Returns whether the statement reached storage through a reference whose
+/// target the may-name analysis does not model.
+fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut CallSites) -> bool {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
+    let mut unknown = origins::keys_of(context.origins, place).is_unknown();
 
     match rvalue {
-        Rvalue::Use(operand) => check_operand(statement, operand, context),
-        Rvalue::Ref { place, kind } => check_borrow(place, *kind, statement.span, context),
+        Rvalue::Use(operand) => {
+            unknown |= operand_unknown(operand, context);
+            check_operand(statement, operand, context);
+        }
+        Rvalue::Ref { place, kind } => {
+            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            check_borrow(place, *kind, statement.span, context);
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
+            unknown |= operand_unknown(lhs, context) || operand_unknown(rhs, context);
             check_operand(statement, lhs, context);
             check_operand(statement, rhs, context);
         }
-        Rvalue::Unary { operand, .. } => check_operand(statement, operand, context),
-        Rvalue::Call { args, .. } => {
+        Rvalue::Unary { operand, .. } => {
+            unknown |= operand_unknown(operand, context);
+            check_operand(statement, operand, context);
+        }
+        Rvalue::Call { func, args } => {
             for arg in args {
                 check_operand(statement, arg, context);
             }
+            let outcome = calls::check(calls::CallSite {
+                args,
+                span: statement.span,
+                origins: context.origins,
+                holds: context.holds_at,
+                loans: context.loans,
+                active: context.active,
+                hir: context.hir,
+                body: context.body,
+                reporter: context.reporter,
+            });
+            unknown |= outcome.unknown;
+            calls.record(*func, outcome.proven);
         }
         Rvalue::Aggregate { fields, .. } => {
             for (_, operand) in fields {
+                unknown |= operand_unknown(operand, context);
                 check_operand(statement, operand, context);
             }
         }
@@ -159,6 +197,14 @@ fn check_statement(statement: &Statement, context: &Context<'_>) {
                 .assign_while_borrowed(place, statement.span, loan);
         }
     }
+    unknown
+}
+
+/// Returns whether reading `operand` reaches storage through an unknown target.
+fn operand_unknown(operand: &Operand, context: &Context<'_>) -> bool {
+    operand
+        .place()
+        .is_some_and(|place| origins::keys_of(context.origins, &place).is_unknown())
 }
 
 /// Checks an operand's read and, when it moves, its conflict with live loans.
@@ -297,7 +343,7 @@ fn overlapping(context: &Context<'_>, place: &Place) -> Vec<LoanId> {
                 }
             }
         }
-        expand_parents(context.loans, &mut excluded);
+        crate::loan::expand_parents(context.loans, &mut excluded);
     }
     let mut ids: Vec<LoanId> = context
         .active
@@ -311,28 +357,20 @@ fn overlapping(context: &Context<'_>, place: &Place) -> Vec<LoanId> {
     ids
 }
 
-/// Adds every loan that transitively authorized `ids`.
-fn expand_parents(loans: &[Loan], ids: &mut LoanSet) {
-    let mut stack: Vec<LoanId> = ids.iter().copied().collect();
-    while let Some(id) = stack.pop() {
-        for parent in &loans[id.index() as usize].parents {
-            if ids.insert(*parent) {
-                stack.push(*parent);
-            }
-        }
-    }
-}
-
 /// Checks a terminator: its reads, the return value, and reference escape.
+///
+/// Returns whether the terminator reached storage through an unknown target.
 fn check_terminator(
     block_index: usize,
     block: &BasicBlock,
     init: &InitInfo,
     context: &Context<'_>,
-) {
+) -> bool {
     match &block.terminator.kind {
         TerminatorKind::SwitchInt { discriminant, .. } => {
+            let mut unknown = false;
             if let Some(place) = discriminant.place() {
+                unknown = origins::keys_of(context.origins, &place).is_unknown();
                 let exit = &init.exit[block_index];
                 let context = Context {
                     init: exit,
@@ -340,6 +378,7 @@ fn check_terminator(
                 };
                 check_read(&place, block.terminator.span, &context);
             }
+            unknown
         }
         TerminatorKind::Return => {
             let exit = &init.exit[block_index];
@@ -374,7 +413,8 @@ fn check_terminator(
                     .reporter
                     .return_local_reference(loan, block.terminator.span);
             }
+            false
         }
-        TerminatorKind::Goto(_) | TerminatorKind::Unreachable => {}
+        TerminatorKind::Goto(_) | TerminatorKind::Unreachable => false,
     }
 }

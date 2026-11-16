@@ -97,7 +97,7 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
             .diag()
             .bug(format!("MIR lowering produced an invalid body: {error}"));
     }
-    session.profiler().time("borrowck", || {
+    let aliasing = session.profiler().time("borrowck", || {
         seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
     });
     if session.diag().error_count() != errors {
@@ -124,6 +124,7 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
         interner: session.interner(),
         target: session.target(),
         file: file_id,
+        noalias_functions: aliasing.noalias_functions(),
     };
     let result = session
         .profiler()

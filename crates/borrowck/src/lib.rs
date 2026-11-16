@@ -43,6 +43,24 @@
 //! read out of memory has an unknown target and conservatively conflicts with
 //! every live loan of storage it might name.
 //!
+//! # Call sites
+//!
+//! Passing a reference to a call gives the callee access to its pointee. An
+//! exclusive argument grants sole access for the whole call, so the checker
+//! rejects a call whose exclusive argument overlaps a live loan (`E5009`) and a
+//! call whose reference arguments may name the same storage when one of them is
+//! exclusive (`E5010`). Argument storage is compared with the may-name
+//! analysis, so copies and reborrows are ordered.
+//!
+//! # `noalias` facts
+//!
+//! The backend may only assume that an exclusive parameter does not alias when
+//! the whole program upholds the grant. [`check`] therefore also returns
+//! [`AliasingFacts`]: a function is included when its body never reaches storage
+//! through a reference of unknown target and every call site proves the
+//! exclusive contract. The facts gate an optimization; they never decide whether
+//! a program is accepted.
+//!
 //! # Errors
 //!
 //! Diagnostics are `E5xxx` and are emitted through the caller's [`DiagCtxt`],
@@ -51,6 +69,8 @@
 #![warn(missing_docs)]
 
 mod access;
+mod aliasing;
+mod calls;
 mod check;
 mod holds;
 mod id;
@@ -65,26 +85,39 @@ mod report;
 mod tests;
 
 use seal_diagnostics::DiagCtxt;
+use seal_hash::FxHashMap;
 use seal_hir::Hir;
 use seal_mir::{Body, Mir};
 use seal_symbol::Interner;
 
-/// Checks every body in `mir`.
+pub use aliasing::AliasingFacts;
+
+/// Checks every body in `mir` and returns the facts the backend needs to mark
+/// exclusive-reference parameters `noalias`.
 ///
 /// The caller must have lowered `mir` from a HIR tree that type checking
 /// accepted, which guarantees that every place, edge, and operand is well
 /// formed. Errors are reported through `dcx`; a body with an error still gets
-/// the rest of its checks, so one mistake does not hide another.
-pub fn check(hir: &Hir, mir: &Mir, dcx: &DiagCtxt, interner: &Interner) {
+/// the rest of its checks, so one mistake does not hide another. The facts are
+/// computed even when a diagnostic was emitted, but the driver only reaches
+/// code generation when there are no errors.
+pub fn check(hir: &Hir, mir: &Mir, dcx: &DiagCtxt, interner: &Interner) -> AliasingFacts {
+    let mut calls = aliasing::CallSites::default();
+    let mut bodies = FxHashMap::default();
     for body in mir.bodies().iter() {
-        check_body(hir, body, dcx, interner);
+        let facts = check::check_body(hir, body, dcx, interner, &mut calls);
+        bodies.insert(body.owner, facts);
     }
+    aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls)
 }
 
 /// Checks one body.
 ///
 /// This is the unit [`check`] iterates over; it is public so later passes and
-/// tests can analyze a single body, including one constructed directly.
+/// tests can analyze a single body, including one constructed directly. Call
+/// sites inside the body are checked, but the alias facts are only meaningful
+/// for the whole program and are therefore returned by [`check`] alone.
 pub fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Interner) {
-    check::check_body(hir, body, dcx, interner);
+    let mut calls = aliasing::CallSites::default();
+    check::check_body(hir, body, dcx, interner, &mut calls);
 }

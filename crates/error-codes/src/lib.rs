@@ -858,6 +858,35 @@ which the diagnostic labels, so moving the new borrow or access after that point
 usually resolves the conflict.",
 };
 
+/// An exclusive argument conflicts with a live borrow of its pointee.
+pub const E5009: ErrorCode = ErrorCode {
+    code: "E5009",
+    title: "cannot pass a borrowed place as an exclusive reference",
+    explanation: "\
+An exclusive argument (`*mut T`) gives the callee sole access to its pointee
+for the whole call (decision D6). A live borrow of that storage promises the
+caller the opposite, so the borrow checker rejects the call.
+
+A borrow ends at its last use, which the diagnostic labels. End the borrow
+before the call, or pass a shared reference (`*T`) when the callee only reads.",
+};
+
+/// Two reference arguments of one call may name the same storage.
+pub const E5010: ErrorCode = ErrorCode {
+    code: "E5010",
+    title: "reference arguments may alias",
+    explanation: "\
+A reference argument lets the callee access its pointee. When one of the
+arguments is exclusive (`*mut T`, or an aggregate that carries one), the callee
+may write through it, so it must not be able to reach the same storage through
+another argument.
+
+Reference arguments are compared by the storage they may name, not by syntax,
+so copies and reborrows of one pointer are caught as well; two shared arguments
+may still name the same place. Pass references to distinct places, or use a
+shared reference when the callee does not write.",
+};
+
 /// The program has no usable entry point.
 pub const E6001: ErrorCode = ErrorCode {
     code: "E6001",
@@ -932,7 +961,8 @@ pub static ALL: &[ErrorCode] = &[
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E2005,
     E2006, E2007, E2008, E2009, E2010, E2011, E2012, E3001, E3002, E3003, E3004, E3005, E3006,
     E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E5001,
-    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E6001, E6002, E6003, E9001, E9002,
+    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001,
+    E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1073,7 +1103,8 @@ mod tests {
         assert_eq!(
             codes,
             [
-                "E5001", "E5002", "E5003", "E5004", "E5005", "E5006", "E5007", "E5008"
+                "E5001", "E5002", "E5003", "E5004", "E5005", "E5006", "E5007", "E5008", "E5009",
+                "E5010"
             ]
         );
     }

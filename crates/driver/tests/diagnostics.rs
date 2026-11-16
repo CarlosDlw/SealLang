@@ -411,3 +411,63 @@ func main() -> i32 {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn passing_the_same_exclusive_pointer_twice_reports_e5010() {
+    reject(
+        "alias-exclusive-arguments",
+        r#"func take(a: *mut i32, b: *mut i32) {}
+
+func main() -> i32 {
+  let mut x = 1;
+  let r = &mut x;
+  take(r, r);
+  0
+}
+"#,
+        "E5010",
+        "may name the same storage",
+    );
+}
+
+#[test]
+fn passing_a_borrowed_place_as_exclusive_reports_e5009() {
+    reject(
+        "exclusive-argument-borrowed",
+        r#"func take(p: *mut i32) {}
+
+func main() -> i32 {
+  let mut x = 1;
+  let r = &mut x;
+  let s = &*r;
+  take(r);
+  *s
+}
+"#,
+        "E5009",
+        "because it is borrowed",
+    );
+}
+
+#[test]
+fn two_shared_arguments_may_alias() {
+    let file = SourceFile::new(
+        "alias-shared-arguments",
+        r#"func sum(a: *i32, b: *i32) -> i32 {
+  *a + *b
+}
+
+func main() -> i32 {
+  let x = 21;
+  let r = &x;
+  sum(r, r)
+}
+"#,
+    );
+    let output = file.check();
+    assert!(
+        output.status.success(),
+        "aliasing shared arguments must be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

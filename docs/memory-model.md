@@ -111,6 +111,17 @@ active use, so the reordering that fixes a conflict is visible. Two-phase
 borrows (reserve, then activate) are reserved for nested method-style calls once
 methods exist.
 
+A call is an access through every reference argument: an exclusive argument
+(`*mut T`, or an aggregate carrying one) gives the callee sole access to its
+pointee for the whole call. The checker rejects an exclusive argument that
+overlaps a live loan (`E5009`) and a call whose reference arguments may name the
+same storage when one of them is exclusive (`E5010`). Argument storage is
+compared with the may-name analysis, so copies and reborrows are ordered. This
+is also what lets the backend treat an exclusive parameter as `noalias`: the
+attribute is emitted only when the body never reaches storage through an unknown
+pointer and every call site proves the contract, so the optimization can never
+turn safe code into undefined behavior.
+
 For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
 with pointer provenance (RFC 3559): every pointer carries the allocation and the
 permission it was derived from, and accesses outside that permission are
@@ -246,9 +257,10 @@ declaration.
   liveness of those statements, and place conflicts compare path prefixes so
   field borrows are as precise as the moves they guard.
 - **Codegen** may assume that no safe reference is null or dangling and that a
-  `Copy` value has no destructor. It may not assume `noalias` for references:
-  call sites are not checked against the exclusive-reference contract, so two
-  `*mut T` parameters may alias.
+  `Copy` value has no destructor. It marks an exclusive-reference parameter
+  `noalias` only for a function whose body never reaches storage through an
+  unknown pointer and whose every call site proves its reference arguments are
+  disjoint when one is exclusive; otherwise two `*mut T` parameters may alias.
 
 ## Invariants
 

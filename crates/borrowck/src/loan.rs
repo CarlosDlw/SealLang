@@ -4,6 +4,7 @@ use seal_mir::Place;
 use seal_span::Span;
 use seal_ty::RefKind;
 
+use crate::holds::LoanSet;
 use crate::id::LoanId;
 use crate::origins::OriginSet;
 
@@ -32,4 +33,20 @@ pub(crate) struct Loan {
     /// The last program point where the loan is active, used to explain a
     /// conflict.
     pub(crate) last_use: Option<Span>,
+}
+
+/// Adds every loan that transitively authorized `ids`.
+///
+/// A reborrow records the loans that authorized it, and those in turn record
+/// theirs, so excluding a reborrow from a conflict has to exclude the whole
+/// chain behind it.
+pub(crate) fn expand_parents(loans: &[Loan], ids: &mut LoanSet) {
+    let mut stack: Vec<LoanId> = ids.iter().copied().collect();
+    while let Some(id) = stack.pop() {
+        for parent in &loans[id.index() as usize].parents {
+            if ids.insert(*parent) {
+                stack.push(*parent);
+            }
+        }
+    }
 }

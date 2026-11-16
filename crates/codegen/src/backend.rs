@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use inkwell::OptimizationLevel;
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::module::Module;
@@ -11,14 +12,14 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple};
 use inkwell::values::FunctionValue;
 use seal_def::DefId;
-use seal_hash::FxHashMap;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_mir::{Body, Mir};
 use seal_session::OptLevel;
 use seal_span::{FileId, SourceMap};
 use seal_symbol::Interner;
 use seal_target::TargetSpec;
-use seal_ty::TyId;
+use seal_ty::{RefKind, TyId, TyKind};
 
 use crate::artifact;
 use crate::constant::Constants;
@@ -44,6 +45,14 @@ pub struct CodegenInput<'a> {
     pub target: &'a TargetSpec,
     /// The primary source file of this compilation unit.
     pub file: FileId,
+    /// Functions whose exclusive-reference parameters may be marked `noalias`.
+    ///
+    /// The set comes from borrow checking's [`AliasingFacts`], which proves that
+    /// no call site lets another reference name the pointee. Marking a parameter
+    /// outside this set would let LLVM assume aliasing that safe code allows.
+    ///
+    /// [`AliasingFacts`]: seal_borrowck::AliasingFacts
+    pub noalias_functions: &'a FxHashSet<DefId>,
 }
 
 /// The artifact produced by a successful code generation request.
@@ -125,7 +134,15 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         None
     };
 
-    let functions = declare_functions(&module, input.hir, input.mir, input.interner, &mapper)?;
+    let functions = declare_functions(
+        &context,
+        &module,
+        input.hir,
+        input.mir,
+        input.interner,
+        &mapper,
+        input.noalias_functions,
+    )?;
     let builder = context.create_builder();
     let constants = Constants::new(&context, &module, &mapper, input.interner);
 
@@ -282,12 +299,14 @@ fn read_runtime_archive(path: &Path, output: &Path) -> Result<Vec<u8>, CodegenEr
     Ok(archive)
 }
 
-fn declare_functions<'ctx>(
+pub(crate) fn declare_functions<'ctx>(
+    context: &'ctx Context,
     module: &Module<'ctx>,
     hir: &Hir,
     mir: &Mir,
     interner: &Interner,
     mapper: &TypeMapper<'ctx>,
+    noalias_functions: &FxHashSet<DefId>,
 ) -> Result<FxHashMap<DefId, FunctionValue<'ctx>>, CodegenError> {
     let mut functions = FxHashMap::default();
     for body in mir.bodies().iter() {
@@ -297,9 +316,40 @@ fn declare_functions<'ctx>(
         let returns = body.local(Body::return_local()).ty;
         let function_type = mapper.function_type(&parameters, returns)?;
         let function = module.add_function(&name, function_type, Some(Linkage::External));
+        if noalias_functions.contains(&body.owner) {
+            add_noalias(context, function, hir, body);
+        }
         functions.insert(body.owner, function);
     }
     Ok(functions)
+}
+
+/// Marks every exclusive-reference parameter of `body` as `noalias`.
+///
+/// The facts already proved that the callee never reaches the pointee through
+/// an unknown pointer and that every call site keeps the argument disjoint from
+/// every other reference. A `*mut str` parameter is a fat pointer, which LLVM
+/// cannot annotate, so it keeps the ordinary ABI.
+fn add_noalias<'ctx>(
+    context: &'ctx Context,
+    function: FunctionValue<'ctx>,
+    hir: &Hir,
+    body: &Body,
+) {
+    let kind = Attribute::get_named_enum_kind_id("noalias");
+    for (index, parameter) in body.args().enumerate() {
+        let is_plain_exclusive = matches!(
+            hir.ty_ctxt().kind(parameter.ty),
+            TyKind::Ref {
+                kind: RefKind::Exclusive,
+                pointee,
+            } if !matches!(hir.ty_ctxt().kind(pointee), TyKind::Str)
+        );
+        if is_plain_exclusive {
+            let attribute = context.create_enum_attribute(kind, 0);
+            function.add_attribute(AttributeLoc::Param(index as u32), attribute);
+        }
+    }
 }
 
 fn llvm_optimization(level: OptLevel) -> OptimizationLevel {

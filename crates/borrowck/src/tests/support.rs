@@ -83,6 +83,14 @@ impl Fixture {
         crate::check(&hir, &mir, &self.dcx, &self.interner);
     }
 
+    /// Runs borrow checking and returns the `noalias` facts for the program.
+    pub(crate) fn check_facts(&self) -> (Hir, Mir, crate::AliasingFacts) {
+        let (hir, mir) = self.lower();
+        let facts = crate::check(&hir, &mir, &self.dcx, &self.interner);
+        self.assert_clean();
+        (hir, mir, facts)
+    }
+
     /// Runs borrow checking on a body built by a test.
     pub(crate) fn check_body(&self, hir: &Hir, body: &Body) {
         crate::check_body(hir, body, &self.dcx, &self.interner);

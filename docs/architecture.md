@@ -292,6 +292,20 @@ allowed to depend only on crates below it in the list.
     diagnostics, runtime), and converts them into session options in one place.
     Rules that span arguments, such as a required input or a single `-o`, are
     reported as ordinary usage errors with status 2.
+61. **A call accesses through its reference arguments.** An exclusive argument
+    (`*mut T`, or an aggregate carrying one) gives the callee sole access to its
+    pointee for the whole call, so the checker rejects it when a live loan of
+    that storage remains (`E5009`). Two reference arguments may share storage
+    only when neither is exclusive; otherwise the call is `E5010`. Both rules
+    compare the storage the may-name analysis records, so copies and reborrows
+    are ordered. An argument whose target is unknown cannot be proven, so the
+    checker stays silent there and the callee loses `noalias` instead.
+62. **`noalias` is a proven fact, not a language guarantee.** Borrow checking
+    returns the functions for which every exclusive-reference parameter can be
+    marked `noalias`: the body never reaches storage through a reference of
+    unknown target, and every call site proves its reference arguments are
+    known and disjoint. A function outside the set keeps the ordinary ABI and
+    remains correct; the attribute never decides whether a program is accepted.
 
 ## Extension points
 
