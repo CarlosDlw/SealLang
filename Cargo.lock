@@ -30,6 +30,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-borrowck"
+version = "0.1.0"
+dependencies = [
+ "seal-ast",
+ "seal-def",
+ "seal-diagnostics",
+ "seal-error-codes",
+ "seal-hash",
+ "seal-hir",
+ "seal-index",
+ "seal-lexer",
+ "seal-mir",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+ "seal-ty",
+ "seal-typeck",
+]
+
+[[package]]
 name = "seal-def"
 version = "0.1.0"
 dependencies = [
@@ -50,6 +70,7 @@ dependencies = [
 name = "seal-driver"
 version = "0.1.0"
 dependencies = [
+ "seal-borrowck",
  "seal-diagnostics",
  "seal-error-codes",
  "seal-hir",

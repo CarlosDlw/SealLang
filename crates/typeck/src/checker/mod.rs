@@ -1,5 +1,6 @@
 //! The checker context and per-body driver.
 
+mod borrow;
 mod call;
 mod expr;
 mod flow;
@@ -158,12 +159,6 @@ impl<'a> Checker<'a> {
         )
         .help("call the function instead, for example `name(...)`")
         .emit();
-    }
-
-    /// Returns the local definition a place expression starts from, if the
-    /// expression denotes a local.
-    pub(super) fn local_place(&self, expr: seal_hir::HirExprId) -> Option<DefId> {
-        self.hir.place(expr).map(seal_hir::Place::local_def)
     }
 
     /// Returns the declared type of a local definition.

@@ -30,6 +30,8 @@ impl Checker<'_> {
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
             ExprKind::Path(res) => self.path_ty(res, span, flow),
+            ExprKind::Borrow { operand } => self.check_borrow(operand, flow),
+            ExprKind::Deref { operand } => self.check_deref(operand, flow, span),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)

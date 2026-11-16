@@ -411,6 +411,8 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::Minus
             | TokenKind::Bang
             | TokenKind::Tilde
+            | TokenKind::Amp
+            | TokenKind::Star
             | TokenKind::PlusPlus
             | TokenKind::MinusMinus
             | TokenKind::LParen

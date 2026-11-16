@@ -307,7 +307,9 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
         match kind {
-            ExprKind::Unary { operand, .. } => self.check_expr(operand),
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Borrow { operand }
+            | ExprKind::Deref { operand } => self.check_expr(operand),
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.check_expr(lhs);
                 self.check_expr(rhs);

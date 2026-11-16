@@ -73,7 +73,9 @@ fn collect_stmt(
 fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &mut Vec<ExprKind>) {
     let kind = hir.expr(expr).kind.clone();
     match &kind {
-        ExprKind::Unary { operand, .. } => collect_expr(hir, *operand, stmts, exprs),
+        ExprKind::Unary { operand, .. }
+        | ExprKind::Borrow { operand }
+        | ExprKind::Deref { operand } => collect_expr(hir, *operand, stmts, exprs),
         ExprKind::Binary { lhs, rhs, .. } => {
             collect_expr(hir, *lhs, stmts, exprs);
             collect_expr(hir, *rhs, stmts, exprs);

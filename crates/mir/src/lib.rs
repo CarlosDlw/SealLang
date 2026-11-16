@@ -14,6 +14,8 @@
 //!
 //! [`Rvalue::Call`](crate::Rvalue::Call) is a statement rather than a terminator:
 //! Seal has no unwinding, so a call cannot leave the block on a failure path.
+//! Borrows are [`Rvalue::Ref`](crate::Rvalue::Ref) statements, and reads through
+//! a reference carry a dereference projection on the [`Place`](crate::Place).
 //!
 //! # Lowering
 //!
@@ -21,8 +23,8 @@
 //! [`TypeckResults`](seal_typeck::TypeckResults). It assumes type checking
 //! reported no errors; the driver only runs it on a clean tree. Evaluation order
 //! is preserved, `&&`/`||` become `SwitchInt` graphs so the right operand is
-//! evaluated only when needed, and `if`/`while`/`break`/`continue` become explicit
-//! edges.
+//! evaluated only when needed, `&place` becomes a `Ref`, and
+//! `if`/`while`/`break`/`continue` become explicit edges.
 //!
 //! # Example
 //!

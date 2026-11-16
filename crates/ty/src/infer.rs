@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn distinct_scalars_do_not_unify() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         let uint = ctxt.uint_ty(UintTy::U32);
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn integer_widths_do_not_unify() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
         let i8_ty = ctxt.int_ty(IntTy::I8);
         let i64_ty = ctxt.int_ty(IntTy::I64);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn reference_to_different_scalars_does_not_unify() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
         let i32_ty = ctxt.int_ty(IntTy::I32);
         let i64_ty = ctxt.int_ty(IntTy::I64);
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn the_error_type_absorbs_any_other() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
         let error_ty = ctxt.error_ty();
         let int = ctxt.int_ty(IntTy::I32);
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn unifying_a_type_with_itself_is_a_no_op() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         let unit = ctxt.unit_ty();

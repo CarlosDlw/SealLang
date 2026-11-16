@@ -54,10 +54,11 @@ Safe code cannot leak on purpose (`mem::forget` does not exist).
 ### D4 — `*T` is a reference, not a raw pointer
 
 A `*T` value is non-null, has no arithmetic, cannot be cast to or from an
-integer, and in v0.1 is read-only. It denotes a borrowed place that remains
-valid and initialized for the whole region in which it is used. Exclusive access
-uses `*mut T`. Raw pointers (nullable, arithmetic, provenance-erasing) are a
-separate type with a separate syntax and require `unsafe`.
+integer, and in v0.1 is read-only. It is created with `&place` and read with
+`*reference`; it denotes a borrowed place that remains valid and initialized for
+the whole region in which it is used. Exclusive access uses `*mut T`. Raw
+pointers (nullable, arithmetic, provenance-erasing) are a separate type with a
+separate syntax and require `unsafe`.
 
 This keeps the published `*T` syntax and makes the default safe: the common case
 does not need `unsafe`, and the unsafe layer can be added without changing

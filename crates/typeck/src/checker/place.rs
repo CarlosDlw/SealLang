@@ -1,6 +1,7 @@
 //! Assignment, compound assignment, and increment/decrement.
 
 use seal_ast::{AssignOp, UpdateOp};
+use seal_error_codes as codes;
 use seal_hir::HirExprId;
 use seal_span::Span;
 use seal_ty::TyId;
@@ -18,13 +19,22 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         let target_span = self.hir.expr(target).span;
-        let Some(local) = self.local_place(target) else {
+        let Some(place) = self.hir.place(target) else {
             self.report_bad_target(target, target_span);
             self.results.record_expr(target, self.error_ty());
             self.infer_expr(value, None, flow);
             return self.error_ty();
         };
 
+        // `*T` is read-only, so a dereference can be read but never assigned to.
+        if place.derefs() > 0 {
+            let ty = self.infer_expr(target, None, flow);
+            self.report_shared_write(target_span);
+            self.check_expr(value, ty, flow);
+            return self.unit();
+        }
+
+        let local = place.local_def();
         let ty = self.local_type(local);
         self.results.record_expr(target, ty);
         let plain = op == AssignOp::Assign;
@@ -34,7 +44,7 @@ impl Checker<'_> {
         if !mutable && (!plain || flow.is_initialized(local)) {
             let name = self.def_name(local);
             self.error(
-                seal_error_codes::E3004,
+                codes::E3004,
                 target_span,
                 format!("cannot assign to `{name}`, as it is not declared as mutable"),
             )
@@ -61,18 +71,25 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         let target_span = self.hir.expr(target).span;
-        let Some(local) = self.local_place(target) else {
+        let Some(place) = self.hir.place(target) else {
             self.report_bad_target(target, target_span);
             self.results.record_expr(target, self.error_ty());
             return self.error_ty();
         };
 
+        if place.derefs() > 0 {
+            self.infer_expr(target, None, flow);
+            self.report_shared_write(target_span);
+            return self.unit();
+        }
+
+        let local = place.local_def();
         let ty = self.local_type(local);
         self.results.record_expr(target, ty);
         if !self.hir.definitions().is_mutable(local) {
             let name = self.def_name(local);
             self.error(
-                seal_error_codes::E3004,
+                codes::E3004,
                 target_span,
                 format!("cannot assign to `{name}`, as it is not declared as mutable"),
             )
@@ -84,7 +101,7 @@ impl Checker<'_> {
         }
         if !self.is_numeric(ty) && !self.is_error(ty) {
             self.error(
-                seal_error_codes::E3002,
+                codes::E3002,
                 span,
                 format!(
                     "`{}` requires a numeric place, found `{}`",
@@ -100,13 +117,23 @@ impl Checker<'_> {
         self.unit()
     }
 
+    fn report_shared_write(&self, span: Span) {
+        self.error(
+            codes::E3014,
+            span,
+            "cannot write through a shared reference",
+        )
+        .help("`*T` is read-only; write to the borrowed place by name")
+        .emit();
+    }
+
     fn report_bad_target(&self, target: HirExprId, span: Span) {
         if self.is_function_target(target) {
-            self.error(seal_error_codes::E3005, span, "cannot assign to a function")
+            self.error(codes::E3005, span, "cannot assign to a function")
                 .help("only local bindings are assignable")
                 .emit();
         } else if !self.is_error_target(target) {
-            self.error(seal_error_codes::E3005, span, "invalid assignment target")
+            self.error(codes::E3005, span, "invalid assignment target")
                 .help("assign to a local binding")
                 .emit();
         }

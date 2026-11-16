@@ -558,6 +558,114 @@ reaches the code after the `if`. Assignments inside a `while` body do not count
 after the loop, because the body may run zero times.",
 };
 
+/// A dereference is applied to a value that is not a reference.
+pub const E3012: ErrorCode = ErrorCode {
+    code: "E3012",
+    title: "cannot dereference this type",
+    explanation: "\
+The `*` prefix reads the value a reference points to, so its operand must have a
+reference type `*T`. Seal has no raw pointers, no nullable references, and no
+implicit dereference of other types.
+
+Write `*reference` where `reference` is a parameter or binding of type `*T`, or
+remove the `*`.",
+};
+
+/// A borrow is applied to an expression that is not a place.
+pub const E3013: ErrorCode = ErrorCode {
+    code: "E3013",
+    title: "cannot borrow this expression",
+    explanation: "\
+`&` borrows a place: a binding, a parameter, or a dereference of a reference.
+Borrowing a computed value such as `a + b` or a literal would name storage that
+no binding owns, and Seal does not create hidden temporaries for borrows.
+
+Store the value in a `let` binding and borrow that binding instead.",
+};
+
+/// An assignment writes through a shared reference.
+pub const E3014: ErrorCode = ErrorCode {
+    code: "E3014",
+    title: "cannot write through a shared reference",
+    explanation: "\
+`*T` is a shared, read-only reference (decision D4 of the memory model), so
+assigning through it is rejected. Exclusive access will require `*mut T`, which
+the language does not have yet.
+
+Write to the borrowed place directly by name, or copy the value into another
+binding and modify that.",
+};
+
+/// A place is assigned while a shared reference to it is live.
+pub const E5001: ErrorCode = ErrorCode {
+    code: "E5001",
+    title: "cannot assign to a borrowed place",
+    explanation: "\
+A shared reference (`*T`) promises that the place it points to keeps its value
+and stays alive for as long as the reference is used. Assigning to that place
+while the reference is still live would break that promise, so the borrow
+checker rejects it.
+
+A borrow ends at its last use: once the reference and every copy of it are dead,
+the place becomes writable again. Move the assignment after the last use, or end
+the borrow by overwriting the reference first.",
+};
+
+/// A place is moved while a shared reference to it is live.
+pub const E5002: ErrorCode = ErrorCode {
+    code: "E5002",
+    title: "cannot move out of a borrowed place",
+    explanation: "\
+Moving a value transfers ownership and leaves the place uninitialized. A live
+shared reference (`*T`) to that place would then point at storage without a
+value, so the borrow checker rejects the move.
+
+Use the reference only after the place is initialized again, or finish using the
+reference before moving the value.",
+};
+
+/// A local is read before every path initializes it.
+pub const E5003: ErrorCode = ErrorCode {
+    code: "E5003",
+    title: "use of possibly-uninitialized place",
+    explanation: "\
+The borrow checker tracks initialization over the MIR control-flow graph. A
+place is readable only when every path that reaches the read has assigned it a
+value. This is the same guarantee the type checker gives at the source level,
+re-checked on explicit MIR places after lowering.
+
+Assign the place on every path before the read. A branch that diverges does not
+need to initialize it, because it never reaches the read.",
+};
+
+/// A reference to function-local storage escapes through the return value.
+pub const E5004: ErrorCode = ErrorCode {
+    code: "E5004",
+    title: "returned reference points to local storage",
+    explanation: "\
+A local lives only until its function returns, so a reference to it cannot be
+handed to the caller. The borrow checker rejects returning `&local`, including a
+reference loaded from a local that borrowed another local.
+
+Returning a reference to a parameter is fine: the caller owns the referenced
+data and keeps it alive. Borrowing through a reference, as in `&*parameter`,
+points outside this frame and is accepted too. To return derived data, the
+caller must own the storage or the value must be copied.",
+};
+
+/// A local is read after its value was moved out.
+pub const E5005: ErrorCode = ErrorCode {
+    code: "E5005",
+    title: "use of moved value",
+    explanation: "\
+Moving a value out of a place leaves the place uninitialized: the new owner is
+responsible for it, and the old place must not be read, borrowed, or moved
+again. Copy types are duplicated instead of moved and are never affected.
+
+Assign a new value to the place before using it again, or borrow the value
+instead of moving it.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -587,7 +695,8 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E3001,
-    E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E9001, E9002,
+    E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014,
+    E5001, E5002, E5003, E5004, E5005, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -707,9 +816,19 @@ mod tests {
             codes,
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
-                "E3010", "E3011",
+                "E3010", "E3011", "E3012", "E3013", "E3014",
             ]
         );
+    }
+
+    #[test]
+    fn ownership_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E50"))
+            .collect();
+        assert_eq!(codes, ["E5001", "E5002", "E5003", "E5004", "E5005"]);
     }
 
     #[test]

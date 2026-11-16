@@ -296,6 +296,21 @@ fn a_block_like_expression_is_a_statement_without_a_semicolon() {
 }
 
 #[test]
+fn a_block_like_statement_does_not_swallow_a_following_operator() {
+    let (_, ast) =
+        parse_clean("func main() -> i32 { let mut x = 1; let r = &x; if true { x = 2; } *r }");
+    let declaration = sole_function(&ast);
+    let block = body(&ast, declaration);
+    assert_eq!(block.statements.len(), 3);
+    assert!(matches!(
+        ast.stmt(block.statements[2]).kind,
+        StmtKind::Expr(_)
+    ));
+    let tail = block.tail.expect("the dereference is the tail");
+    assert!(matches!(ast.expr(tail).kind, ExprKind::Deref { .. }));
+}
+
+#[test]
 fn while_parses_its_condition_and_body() {
     let (fixture, ast) = parse_clean("func main() { while true { break; continue; } }");
     assert_invariants(&fixture, &ast);

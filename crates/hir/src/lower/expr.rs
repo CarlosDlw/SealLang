@@ -25,6 +25,12 @@ impl Lowering<'_> {
                 op,
                 operand: self.lower_expr(operand),
             },
+            AstExprKind::Borrow { operand } => ExprKind::Borrow {
+                operand: self.lower_expr(operand),
+            },
+            AstExprKind::Deref { operand } => ExprKind::Deref {
+                operand: self.lower_expr(operand),
+            },
             AstExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
                 op,
                 lhs: self.lower_expr(lhs),

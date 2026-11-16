@@ -183,13 +183,11 @@ impl<'a> BodyLowering<'a> {
             kind: LocalKind::Temp,
             span,
         });
-        Place { local }
+        Place::local(local)
     }
 
     fn return_place(&self) -> Place {
-        Place {
-            local: Body::return_local(),
-        }
+        Place::local(Body::return_local())
     }
 
     fn push_statement(&mut self, statement: Statement) {
@@ -244,7 +242,7 @@ impl<'a> BodyLowering<'a> {
                 });
                 self.local_of.insert(local, mir_local);
                 if let Some(init) = init {
-                    self.lower_expr_into(init, Some(Place { local: mir_local }));
+                    self.lower_expr_into(init, Some(Place::local(mir_local)));
                 }
             }
             StmtKind::Return(value) => {
@@ -337,6 +335,20 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Path(Res::Function(_)) | ExprKind::Error => {
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
+            ExprKind::Borrow { operand } => {
+                if let Some(dest) = dest {
+                    let place = self.place_of_expr(operand);
+                    self.assign_rvalue(dest, Rvalue::Ref(place), span);
+                }
+            }
+            ExprKind::Deref { .. } => {
+                if let Some(dest) = dest {
+                    let place = self.place_of_expr(expr);
+                    let ty = self.expr_ty(expr);
+                    let operand = self.place_operand(place, ty);
+                    self.assign_operand(dest, operand, span);
                 }
             }
             ExprKind::Unary { op, operand } => {
@@ -576,6 +588,10 @@ impl<'a> BodyLowering<'a> {
                 self.place_operand(place, ty)
             }
             ExprKind::Path(Res::Function(_)) | ExprKind::Error => Operand::Constant(Constant::Unit),
+            ExprKind::Deref { .. } => {
+                let place = self.place_of_expr(expr);
+                self.place_operand(place, ty)
+            }
             _ => {
                 let temp = self.new_temp(ty, span);
                 self.lower_expr_into(expr, Some(temp));
@@ -603,7 +619,9 @@ impl<'a> BodyLowering<'a> {
     }
 
     fn place_operand(&self, place: Place, ty: TyId) -> Operand {
-        if self.hir.ty_ctxt().is_copy(ty) {
+        // Reading through a shared reference never transfers ownership: the
+        // pointee outlives the read and is still owned by whoever lent it.
+        if place.is_deref() || self.hir.ty_ctxt().is_copy(ty) {
             Operand::Copy(place)
         } else {
             Operand::Move(place)
@@ -615,14 +633,18 @@ impl<'a> BodyLowering<'a> {
             .hir
             .place(expr)
             .expect("type checking rejects non-place assignment targets");
-        self.place_of_local(place.local_def())
+        let local = self.place_of_local(place.local_def());
+        Place {
+            local: local.local,
+            derefs: place.derefs(),
+        }
     }
 
     fn place_of_local(&self, local: DefId) -> Place {
         let local = self.local_of.get(&local).unwrap_or_else(|| {
             panic!("local definition {local:?} has no MIR local; this is a compiler bug")
         });
-        Place { local: *local }
+        Place::local(*local)
     }
 
     fn expr_ty(&self, expr: HirExprId) -> TyId {

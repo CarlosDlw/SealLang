@@ -13,6 +13,7 @@ name = "sealc"
 path = "src/main.rs"
 
 [dependencies]
+seal-borrowck.workspace = true
 seal-diagnostics.workspace = true
 seal-hir.workspace = true
 seal-lexer.workspace = true

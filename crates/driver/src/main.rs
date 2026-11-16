@@ -130,6 +130,9 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                                 .diag()
                                 .bug(format!("MIR lowering produced an invalid body: {error}"));
                         }
+                        session.profiler().time("borrowck", || {
+                            seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
+                        });
                     }
                 }
             }
@@ -152,7 +155,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (move analysis, borrow checking, codegen) plug in here,
-    // consuming the MIR produced above.
+    // Later phases (optimization, codegen) plug in here, consuming the checked
+    // MIR produced above.
     Ok(ExitCode::SUCCESS)
 }

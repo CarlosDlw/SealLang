@@ -45,6 +45,14 @@ impl Checker<'_> {
         self.interned(TyKind::Ref(str_ty))
     }
 
+    /// Returns the shared reference type `*pointee`, interning it if needed.
+    ///
+    /// Borrowing a place creates a type the source never wrote, so this cannot
+    /// go through [`Checker::interned`], which only looks up existing kinds.
+    pub(super) fn ref_ty(&self, pointee: TyId) -> TyId {
+        self.hir.ty_ctxt().intern(TyKind::Ref(pointee))
+    }
+
     pub(super) fn ty_text(&self, ty: TyId) -> String {
         self.hir.ty_ctxt().display(ty).to_string()
     }

@@ -132,14 +132,16 @@ impl Hir {
         &self.exprs[id]
     }
 
-    /// Returns the place denoted by `expr`, when it is a resolved local path.
+    /// Returns the place denoted by `expr`, when it denotes storage.
     ///
-    /// Assignment and update targets are expressions; this is how a consumer
-    /// asks whether the target is assignable without matching on the tree
-    /// itself.
+    /// A local path is a place rooted at its definition; `*reference` is the
+    /// place reached by one dereference. Borrows and values are not places.
+    /// Assignment and update targets are expressions, so this is how a consumer
+    /// asks whether the target is assignable without matching on the tree.
     pub fn place(&self, expr: HirExprId) -> Option<Place> {
         match self.exprs[expr].kind {
             ExprKind::Path(Res::Local(def)) => Some(Place::local(def)),
+            ExprKind::Deref { operand } => self.place(operand).map(Place::deref),
             _ => None,
         }
     }

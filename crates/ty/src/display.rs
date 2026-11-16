@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn scalars_render_as_written_in_the_source() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let cases = [
             (ctxt.int_ty(IntTy::I32), "i32"),
             (ctxt.int_ty(IntTy::Isize), "isize"),
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn references_nest_with_the_source_syntax() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         let pointer = ctxt.ref_ty(int);
         assert_eq!(ctxt.display(pointer).to_string(), "*i32");

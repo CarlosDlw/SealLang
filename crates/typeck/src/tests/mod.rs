@@ -1,5 +1,6 @@
 //! Type-checking tests.
 
+mod borrows;
 mod calls;
 mod examples;
 mod flow;

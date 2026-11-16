@@ -1,5 +1,7 @@
 //! Type interning, construction, and the memory-model queries.
 
+use std::cell::RefCell;
+
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
 
@@ -11,10 +13,15 @@ use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
 /// Interning makes type equality a single integer comparison: two types are the
 /// same if and only if their [`TyId`]s are equal. Every constructor goes through
 /// [`TyCtxt::intern`], so the arena never holds two equal kinds.
+///
+/// Interners take `&self` because a phase that only borrows the context (the
+/// checker, which creates `*T` while typing `&place`) must still be able to
+/// produce canonical IDs. The cells are single-threaded and no borrow is held
+/// across a call, so the interior mutability is unobservable to callers.
 #[derive(Clone, Debug, Default)]
 pub struct TyCtxt {
-    kinds: IndexVec<TyId, TyKind>,
-    interner: FxHashMap<TyKind, TyId>,
+    kinds: RefCell<IndexVec<TyId, TyKind>>,
+    interner: RefCell<FxHashMap<TyKind, TyId>>,
 }
 
 impl TyCtxt {
@@ -24,12 +31,12 @@ impl TyCtxt {
     }
 
     /// Interns `kind` and returns its canonical ID.
-    pub fn intern(&mut self, kind: TyKind) -> TyId {
-        if let Some(&id) = self.interner.get(&kind) {
+    pub fn intern(&self, kind: TyKind) -> TyId {
+        if let Some(&id) = self.interner.borrow().get(&kind) {
             return id;
         }
-        let id = self.kinds.push(kind);
-        self.interner.insert(kind, id);
+        let id = self.kinds.borrow_mut().push(kind);
+        self.interner.borrow_mut().insert(kind, id);
         id
     }
 
@@ -40,80 +47,78 @@ impl TyCtxt {
     /// Panics if `ty` did not come from this context. IDs from another context
     /// are a programming error, not user input.
     pub fn kind(&self, ty: TyId) -> TyKind {
-        self.kinds[ty]
+        self.kinds.borrow()[ty]
     }
 
     /// Looks up the canonical ID of an already interned kind.
     ///
-    /// Returns `None` if `kind` was never interned. This is the read-only
-    /// counterpart of [`TyCtxt::intern`], for phases that must not modify the
-    /// context.
+    /// Returns `None` if `kind` was never interned.
     pub fn lookup(&self, kind: TyKind) -> Option<TyId> {
-        self.interner.get(&kind).copied()
+        self.interner.borrow().get(&kind).copied()
     }
 
     /// Returns the number of interned types.
     pub fn len(&self) -> usize {
-        self.kinds.len()
+        self.kinds.borrow().len()
     }
 
     /// Returns `true` if no type has been interned.
     pub fn is_empty(&self) -> bool {
-        self.kinds.is_empty()
+        self.kinds.borrow().is_empty()
     }
 
     /// Returns the `bool` type.
-    pub fn bool_ty(&mut self) -> TyId {
+    pub fn bool_ty(&self) -> TyId {
         self.intern(TyKind::Bool)
     }
 
     /// Returns the `char` type.
-    pub fn char_ty(&mut self) -> TyId {
+    pub fn char_ty(&self) -> TyId {
         self.intern(TyKind::Char)
     }
 
     /// Returns the unsized `str` type.
-    pub fn str_ty(&mut self) -> TyId {
+    pub fn str_ty(&self) -> TyId {
         self.intern(TyKind::Str)
     }
 
     /// Returns the unit type `()`.
-    pub fn unit_ty(&mut self) -> TyId {
+    pub fn unit_ty(&self) -> TyId {
         self.intern(TyKind::Unit)
     }
 
     /// Returns the never type `!`.
-    pub fn never_ty(&mut self) -> TyId {
+    pub fn never_ty(&self) -> TyId {
         self.intern(TyKind::Never)
     }
 
     /// Returns the error type used during recovery.
-    pub fn error_ty(&mut self) -> TyId {
+    pub fn error_ty(&self) -> TyId {
         self.intern(TyKind::Error)
     }
 
     /// Returns a signed integer type.
-    pub fn int_ty(&mut self, int: IntTy) -> TyId {
+    pub fn int_ty(&self, int: IntTy) -> TyId {
         self.intern(TyKind::Int(int))
     }
 
     /// Returns an unsigned integer type.
-    pub fn uint_ty(&mut self, uint: UintTy) -> TyId {
+    pub fn uint_ty(&self, uint: UintTy) -> TyId {
         self.intern(TyKind::Uint(uint))
     }
 
     /// Returns a floating-point type.
-    pub fn float_ty(&mut self, float: FloatTy) -> TyId {
+    pub fn float_ty(&self, float: FloatTy) -> TyId {
         self.intern(TyKind::Float(float))
     }
 
     /// Returns the shared reference type `*T`.
-    pub fn ref_ty(&mut self, pointee: TyId) -> TyId {
+    pub fn ref_ty(&self, pointee: TyId) -> TyId {
         self.intern(TyKind::Ref(pointee))
     }
 
     /// Returns the type standing for the inference variable `var`.
-    pub fn infer_ty(&mut self, var: InferTyId) -> TyId {
+    pub fn infer_ty(&self, var: InferTyId) -> TyId {
         self.intern(TyKind::Infer(var))
     }
 
@@ -176,7 +181,7 @@ mod tests {
 
     #[test]
     fn interning_is_deduplicated() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let first = ctxt.int_ty(IntTy::I32);
         let second = ctxt.int_ty(IntTy::I32);
         assert_eq!(first, second);
@@ -186,7 +191,7 @@ mod tests {
 
     #[test]
     fn distinct_kinds_get_distinct_ids() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let ids = [
             ctxt.bool_ty(),
             ctxt.char_ty(),
@@ -208,7 +213,7 @@ mod tests {
 
     #[test]
     fn kind_round_trips() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I16);
         assert_eq!(ctxt.kind(int), TyKind::Int(IntTy::I16));
         let ptr = ctxt.ref_ty(int);
@@ -221,7 +226,7 @@ mod tests {
 
     #[test]
     fn references_are_interned_structurally() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let inner = ctxt.int_ty(IntTy::I32);
         let first = ctxt.ref_ty(inner);
         let second = ctxt.ref_ty(inner);
@@ -235,7 +240,7 @@ mod tests {
 
     #[test]
     fn scalars_and_references_are_copy() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         let pointer = ctxt.ref_ty(int);
         for ty in [
@@ -254,7 +259,7 @@ mod tests {
 
     #[test]
     fn str_is_neither_copy_nor_sized() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let str_ty = ctxt.str_ty();
         assert!(!ctxt.is_copy(str_ty));
         assert!(!ctxt.is_sized(str_ty));
@@ -276,7 +281,7 @@ mod tests {
 
     #[test]
     fn no_current_type_needs_drop() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         for ty in [
             int,
@@ -292,7 +297,7 @@ mod tests {
 
     #[test]
     fn lookup_returns_only_interned_kinds() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         assert_eq!(ctxt.lookup(TyKind::Bool), None);
         let bool_ty = ctxt.bool_ty();
         assert_eq!(ctxt.lookup(TyKind::Bool), Some(bool_ty));
@@ -301,7 +306,7 @@ mod tests {
 
     #[test]
     fn constructors_are_stable() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let first = ctxt.bool_ty();
         let second = ctxt.bool_ty();
         assert_eq!(first, second);

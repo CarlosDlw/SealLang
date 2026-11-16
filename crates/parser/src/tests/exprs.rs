@@ -189,6 +189,34 @@ fn prefix_operators_bind_above_binary_operators() {
 }
 
 #[test]
+fn borrows_and_derefs_bind_like_prefix_operators() {
+    let (_, ast, id) = tail_expr("func main() { *&a }");
+    match ast.expr(id).kind {
+        ExprKind::Deref { operand } => {
+            assert!(matches!(ast.expr(operand).kind, ExprKind::Borrow { .. }));
+        }
+        ref other => panic!("expected a dereference, got {other:?}"),
+    }
+
+    let (fixture, ast, id) = tail_expr("func main() { &a == b }");
+    let (op, lhs, rhs) = binary(&ast, ast.expr(id));
+    assert_eq!(op, BinaryOp::Eq);
+    assert!(matches!(lhs.kind, ExprKind::Borrow { .. }));
+    assert_eq!(fixture.symbol(path(rhs)), "b");
+
+    let (_, ast, id) = tail_expr("func main() { &*p + 1 }");
+    let (op, lhs, rhs) = binary(&ast, ast.expr(id));
+    assert_eq!(op, BinaryOp::Add);
+    assert_eq!(int(rhs).0, 1);
+    match lhs.kind {
+        ExprKind::Borrow { operand } => {
+            assert!(matches!(ast.expr(operand).kind, ExprKind::Deref { .. }));
+        }
+        ref other => panic!("expected a borrow, got {other:?}"),
+    }
+}
+
+#[test]
 fn updates_distinguish_prefix_and_postfix() {
     let (fixture, ast, id) = tail_expr("func main() { a++ + ++b }");
     let (op, lhs, rhs) = binary(&ast, ast.expr(id));

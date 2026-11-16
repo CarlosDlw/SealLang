@@ -37,7 +37,14 @@ impl Parser<'_> {
                 let statement = self.parse_continue();
                 statements.push(statement);
             } else {
-                let expr = self.parse_expr(0);
+                // A block-like expression in statement position stands alone: a
+                // token on the next line starts a new statement, so `if c { }`
+                // followed by `*r` is not a multiplication.
+                let expr = if self.at(TokenKind::If) {
+                    self.parse_prefix()
+                } else {
+                    self.parse_expr(0)
+                };
                 let expr_span = self.builder.ast().expr(expr).span;
                 if self.eat(TokenKind::Semicolon) {
                     let span = expr_span.cover(self.previous_span());

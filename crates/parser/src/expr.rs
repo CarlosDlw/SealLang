@@ -4,6 +4,9 @@
 //! `||`, `&&`, `|`, `^`, `&`, equality, comparison, shifts, additive,
 //! multiplicative, prefix, postfix/call. Assignment binds to a place and is
 //! validated syntactically; whether the place is mutable is checked later.
+//!
+//! Prefix `&` and `*` are borrow and dereference, not the binary operators with
+//! the same spelling: prefix position decides, so `&x & y` is `(&x) & y`.
 
 use seal_ast::{AssignOp, BinaryOp, ExprId, ExprKind, Literal, UnaryOp, UpdateOp};
 use seal_error_codes as codes;
@@ -102,7 +105,7 @@ impl Parser<'_> {
         lhs
     }
 
-    fn parse_prefix(&mut self) -> ExprId {
+    pub(crate) fn parse_prefix(&mut self) -> ExprId {
         let token = self.current();
         match token.kind {
             TokenKind::Int {
@@ -165,6 +168,18 @@ impl Parser<'_> {
                 self.bump();
                 let operand = self.parse_expr(PREFIX_BP);
                 self.unary(UnaryOp::BitNot, token.span, operand)
+            }
+            TokenKind::Amp => {
+                self.bump();
+                let operand = self.parse_expr(PREFIX_BP);
+                let span = token.span.cover(self.builder.ast().expr(operand).span);
+                self.builder.push_expr(ExprKind::Borrow { operand }, span)
+            }
+            TokenKind::Star => {
+                self.bump();
+                let operand = self.parse_expr(PREFIX_BP);
+                let span = token.span.cover(self.builder.ast().expr(operand).span);
+                self.builder.push_expr(ExprKind::Deref { operand }, span)
             }
             TokenKind::PlusPlus | TokenKind::MinusMinus => {
                 self.bump();
@@ -332,7 +347,7 @@ impl Parser<'_> {
 
     fn is_assignable(&self, expr: ExprId) -> bool {
         match &self.builder.ast().expr(expr).kind {
-            ExprKind::Path(_) => true,
+            ExprKind::Path(_) | ExprKind::Deref { .. } => true,
             ExprKind::Paren(inner) => self.is_assignable(*inner),
             _ => false,
         }

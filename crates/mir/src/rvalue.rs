@@ -3,6 +3,7 @@
 use seal_def::DefId;
 
 use crate::operand::Operand;
+use crate::place::Place;
 
 /// A binary operator in MIR.
 ///
@@ -97,6 +98,12 @@ impl UnOp {
 pub enum Rvalue {
     /// Copies or moves an operand.
     Use(Operand),
+    /// Borrows a place, written `&place`.
+    ///
+    /// The resulting `*T` is a shared reference: it keeps the borrowed place
+    /// alive for as long as the reference is used, and it permits other shared
+    /// reads of the same place.
+    Ref(Place),
     /// Applies a binary operator to two operands.
     Binary {
         /// The operator.

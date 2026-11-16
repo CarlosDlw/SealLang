@@ -1,9 +1,9 @@
-# Seal compiler architecture — foundation through MIR
+# Seal compiler architecture — foundation through borrow checking
 
-This document covers the compiler foundation and the first five phases: the
-lexer, the parser, HIR lowering with name resolution, type checking, and MIR
-lowering. The foundation is the set of crates that every later phase (borrow
-checking, codegen) depends on. It is kept in sync with the code; changes to a
+This document covers the compiler foundation and the first six phases: the
+lexer, the parser, HIR lowering with name resolution, type checking, MIR
+lowering, and ownership/borrow checking. The foundation is the set of crates
+that every later phase (optimization, codegen) depends on. It is kept in sync with the code; changes to a
 public invariant must change this file in the same commit. The memory model that
 the type representation encodes is decided in
 [`memory-model.md`](memory-model.md).
@@ -31,6 +31,7 @@ allowed to depend only on crates below it in the list.
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, terminators, and structural validation. |
+| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, escaping references, `E5xxx` diagnostics. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -165,6 +166,28 @@ allowed to depend only on crates below it in the list.
     but lowering keeps processing the rest of the source, so unreachable blocks
     may exist and must stay structurally valid. Validation does not require
     reachability; removing dead blocks belongs to a later pass.
+38. **References are checked, never annotated.** `&place` creates a `*T` loan
+    and `*reference` reads through it. Regions are inferred from liveness; there
+    is no lifetime syntax, and no region appears in a type.
+39. **A shared loan permits reads and forbids writes.** `*T` is read-only, so a
+    live loan conflicts only with assigning or moving the borrowed place. Two
+    shared loans may overlap, and reads never conflict.
+40. **Loans are tracked per point, not per region union.** A local's may-hold
+    set is a forward dataflow fact: overwriting a reference drops the loans it
+    carried, and a loan is active only while a live local may hold it. This
+    accepts programs where a place becomes writable again after the last alias
+    dies, including inside loops.
+41. **A reference never outlives its storage.** A returned loan of a whole local
+    is `E5004`; a loan through a reference (`&*parameter`) borrows data outside
+    the frame and is accepted.
+42. **Initialization is rechecked on places.** The checker tracks
+    uninitialized, initialized, and moved for every local on the MIR graph. A
+    read of a moved place is `E5005`, and a read that is not initialized on
+    every path is `E5003`.
+43. **Borrow checking assumes a clean type check.** The driver runs it only
+    after type checking reported no errors, so every place, operand, and edge is
+    well formed; `seal-mir` validation runs first, and a structural failure is
+    an internal compiler error rather than a user diagnostic.
 
 ## Extension points
 
@@ -194,7 +217,16 @@ allowed to depend only on crates below it in the list.
   shape. Every new edge must go through `validate`'s target check.
 - **New projection.** `Place` is already the unit of storage, so add the
   projection layer inside `seal-mir` and update validation; consumers that take
-  a `Place` need no signature change.
+  a `Place` need no signature change. A projection that can name partial
+  storage must also teach `seal-borrowck`'s conflict check to compare ranges.
+- **New loan kind.** `*mut T` adds an exclusive kind to `seal-borrowck`'s loan
+  table: extend the conflict check so exclusive loans reject overlapping reads
+  and borrows, and keep the may-hold analysis unchanged. Two-phase borrows then
+  become a reservation state on the same facts.
+- **New ownership rule.** Add the dataflow domain in `seal-borrowck` beside
+  liveness, may-hold, and initialization, and report through the `E5xxx` range;
+  `check` walks every body in block order, so a new pass slots in without
+  changing the driver.
 - **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
   unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
   and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both

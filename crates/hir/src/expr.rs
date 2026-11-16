@@ -9,25 +9,46 @@ use crate::res::Res;
 
 /// A storage location: a local definition plus its projections.
 ///
-/// The current language has no fields, indices, or dereference syntax, so a
-/// place is just its base local. Projections are added inside [`Place`] without
-/// changing how callers obtain one.
+/// References add dereference projections, so `*p` and `**p` are places rooted
+/// at the local that holds the reference. Aggregate fields are added inside
+/// [`Place`] when aggregates arrive, without changing how callers obtain one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Place {
     local: DefId,
+    derefs: u32,
 }
 
 impl Place {
-    /// Creates the place for a local definition.
+    /// Creates the place for a whole local.
     #[inline]
-    pub fn local(local: DefId) -> Self {
-        Self { local }
+    pub const fn local(local: DefId) -> Self {
+        Self { local, derefs: 0 }
     }
 
     /// Returns the local definition this place starts from.
     #[inline]
     pub const fn local_def(self) -> DefId {
         self.local
+    }
+
+    /// Returns the place reached by one dereference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the projection count would overflow `u32`. The parser bounds
+    /// nesting far below this, so the panic is an internal invariant check.
+    #[inline]
+    pub fn deref(self) -> Self {
+        Self {
+            local: self.local,
+            derefs: self.derefs + 1,
+        }
+    }
+
+    /// Returns the number of dereference projections applied to the local.
+    #[inline]
+    pub const fn derefs(self) -> u32 {
+        self.derefs
     }
 }
 
@@ -47,6 +68,16 @@ pub enum ExprKind {
     Lit(Literal),
     /// A resolved name used as a value.
     Path(Res),
+    /// A borrow of a place, written `&place`.
+    Borrow {
+        /// The place being borrowed.
+        operand: HirExprId,
+    },
+    /// A read through a reference, written `*reference`.
+    Deref {
+        /// The reference being read.
+        operand: HirExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.

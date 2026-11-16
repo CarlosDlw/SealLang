@@ -206,6 +206,16 @@ pub enum ExprKind {
     Lit(Literal),
     /// A variable reference.
     Path(Symbol),
+    /// A borrow of a place, written `&place`.
+    Borrow {
+        /// The place being borrowed.
+        operand: ExprId,
+    },
+    /// A read through a reference, written `*reference`.
+    Deref {
+        /// The reference being read.
+        operand: ExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.
