@@ -247,6 +247,17 @@ fn exclusive_references_write_through_the_pointer() {
 }
 
 #[test]
+fn exclusive_field_writes_run() {
+    let source = "struct Point {\n  x: i32,\n  y: i32,\n}\n\n\
+                  func fill(point: *mut Point) {\n  (*point).x = 40;\n  (*point).y = 2;\n}\n\n\
+                  func main() -> i32 {\n  let mut point = Point { x: 0, y: 0 };\n  fill(&mut point);\n  point.x + point.y\n}\n";
+    let output = TempOutput::new("exclusive-fields");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("code generation succeeds");
+    assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
 fn object_and_assembly_output_do_not_require_an_entry_point() {
     let source = "func add(a: i32, b: i32) -> i32 { a + b }";
 

@@ -325,6 +325,55 @@ func main() -> i32 {
 }
 
 #[test]
+fn writing_a_field_through_an_exclusive_reference_is_accepted() {
+    let file = SourceFile::new(
+        "exclusive-field-write",
+        r#"struct Point {
+  x: i32,
+  y: i32,
+}
+
+func fill(point: *mut Point) {
+  (*point).x = 40;
+  (*point).y = 2;
+}
+
+func main() -> i32 {
+  let mut point = Point { x: 0, y: 0 };
+  fill(&mut point);
+  point.x + point.y
+}
+"#,
+    );
+    let output = file.check();
+    assert!(
+        output.status.success(),
+        "exclusive field writes must be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn writing_a_field_through_a_shared_reference_reports_e3014() {
+    reject(
+        "shared-field-write",
+        r#"struct Point {
+  x: i32,
+}
+
+func main() -> i32 {
+  let point = Point { x: 1 };
+  let r = &point;
+  (*r).x = 2;
+  (*r).x
+}
+"#,
+        "E3014",
+        "shared reference",
+    );
+}
+
+#[test]
 fn borrowing_through_a_reference_value_is_accepted() {
     let file = SourceFile::new(
         "borrow-through-value",
