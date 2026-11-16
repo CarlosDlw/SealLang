@@ -1,11 +1,11 @@
-# Seal compiler architecture — foundation, lexer, and parser
+# Seal compiler architecture — foundation, lexer, parser, and HIR
 
-This document covers the compiler foundation and the first two phases, the lexer
-and the parser. The foundation is the set of crates that every later phase (name
-resolution, type checking, MIR, codegen) depends on. It is kept in sync with the
-code; changes to a public invariant must change this file in the same commit.
-The memory model that the type representation encodes is decided in
-[`memory-model.md`](memory-model.md).
+This document covers the compiler foundation and the first three phases: the
+lexer, the parser, and HIR lowering with name resolution. The foundation is the
+set of crates that every later phase (type checking, MIR, codegen) depends on.
+It is kept in sync with the code; changes to a public invariant must change this
+file in the same commit. The memory model that the type representation encodes is
+decided in [`memory-model.md`](memory-model.md).
 
 ## Workspace layout
 
@@ -26,6 +26,8 @@ allowed to depend only on crates below it in the list.
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
 | `seal-ty` | Interned semantic types, inference variables, unification, and the `Copy`/`Sized`/`Drop` queries from the memory model. |
+| `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
+| `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -103,6 +105,19 @@ allowed to depend only on crates below it in the list.
     `else if` is a block whose tail is another `if`, `while` is a statement with
     a block body, and `break`/`continue` target the innermost loop. A block-like
     expression used as a statement needs no semicolon.
+23. **Every HIR name is resolved.** A `Path` holds a `Res` (a `DefId`), never a
+    `Symbol`; a name that does not resolve becomes an `Error` node after `E2002`
+    was reported, so no consumer performs a textual lookup.
+24. **HIR is total and owner-partitioned.** Every function owns exactly one
+    body, every ID resolves, every node is reachable from its body, and every
+    parameter or binding definition records the function that owns it. A body
+    is never shared or orphaned.
+25. **Loop control is checked.** `break` and `continue` may appear only inside a
+    loop. Lowering tracks loop depth, reports `E2003`/`E2004` outside one, and
+    keeps the statement so later phases still see the shape that was written.
+26. **Scopes follow the source.** Resolution walks ribs from the innermost
+    outwards; a `let` inserts after its initializer, so a binding is not visible
+    in its own initializer, and `if`/`while` bodies never leak bindings.
 
 ## Extension points
 
@@ -126,6 +141,13 @@ allowed to depend only on crates below it in the list.
   munch test; keywords are reserved words, not identifiers with a flag.
 - **New target.** Extend `seal-target` with a `TargetSpec` built from the triple;
   never consult the host at compile time.
+- **New definition kind.** Add the `DefKind` variant, create the `DefData` in
+  `seal-hir` lowering, resolve it to a `Res` variant, and teach consumers
+  (`Hir::place`, the checker) about it. Definition IDs are append-only, so
+  adding a kind never renumbers an existing definition.
+- **New namespace.** Give the new namespace its own scope stack (types, labels)
+  instead of overloading the value ribs, because one spelling may name both a
+  value and a type.
 - **New emitter.** Implement `seal_diagnostics::Emitter`; configuration is passed
   in, not read from the environment.
 - **Incremental compilation.** The foundation already provides stable hashes,

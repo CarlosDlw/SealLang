@@ -101,9 +101,16 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         // A lexical error leaves `Error` tokens behind, and parsing them only
         // adds secondary syntax errors; the parser runs on a clean token stream.
         if session.diag().error_count() == errors_before_lexing {
-            let _ast = session.profiler().time("parse", || {
+            let ast = session.profiler().time("parse", || {
                 seal_parser::parse(&lexed, session.diag(), session.interner())
             });
+            // Lowering assumes a syntactically valid tree. A parse error already
+            // leaves `Error` nodes behind, so the pipeline stops after `parse`.
+            if session.diag().error_count() == errors_before_lexing {
+                let _hir = session.profiler().time("hir", || {
+                    seal_hir::lower(&ast, session.diag(), session.interner())
+                });
+            }
         }
     }
 
@@ -123,7 +130,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (name resolution, type checking, codegen) plug in here,
-    // consuming the tree produced above.
+    // Later phases (type checking, MIR, codegen) plug in here, consuming the
+    // lowered tree produced above.
     Ok(ExitCode::SUCCESS)
 }

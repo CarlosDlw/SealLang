@@ -347,6 +347,61 @@ Simplify the expression or split it into several `let` bindings. The limit exist
 so malformed or hostile input reports an error instead of crashing the compiler.",
 };
 
+/// A definition is declared twice in the same scope.
+pub const E2001: ErrorCode = ErrorCode {
+    code: "E2001",
+    title: "duplicate definition",
+    explanation: "\
+Names must be unique within their scope. Two functions with the same name, or two
+parameters with the same name, make every reference ambiguous.
+
+A `let` binding is different: `let x = 1; let x = 2;` is allowed and shadows the
+first binding from the second declaration onwards. Shadowing is intentional,
+while redeclaring a function or a parameter is not. Rename one of the
+definitions.",
+};
+
+/// A name does not resolve in the current scope.
+pub const E2002: ErrorCode = ErrorCode {
+    code: "E2002",
+    title: "cannot find name in this scope",
+    explanation: "\
+Every name used as a value must be declared before it is used, except functions,
+which may be declared later in the file. A `let` binding is only visible after
+its own declaration, and only inside the block that declares it; an `if` or
+`while` body cannot leak names to the code after it.
+
+Declare the name with `let`, define a function with `func`, or move the use into
+the scope where the name exists. A binding is not visible in its own initializer,
+so `let x = x;` reads an outer `x` and fails when there is none.",
+};
+
+/// A `break` appears outside any loop.
+pub const E2003: ErrorCode = ErrorCode {
+    code: "E2003",
+    title: "break outside of a loop",
+    explanation: "\
+`break` exits the innermost `while` loop whose body contains it. A `break` at the
+top level of a function body has no loop to exit, so the compiler rejects it.
+
+Move the statement inside a `while` body, or remove it if the loop was deleted.
+`break` inside an `if` that is itself inside a loop is fine: the enclosing loop
+is still the target.",
+};
+
+/// A `continue` appears outside any loop.
+pub const E2004: ErrorCode = ErrorCode {
+    code: "E2004",
+    title: "continue outside of a loop",
+    explanation: "\
+`continue` starts the next iteration of the innermost `while` loop whose body
+contains it. A `continue` at the top level of a function body has no loop to
+continue, so the compiler rejects it.
+
+Move the statement inside a `while` body, or remove it. `continue` inside an `if`
+that is itself inside a loop targets the enclosing loop and is accepted.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -375,7 +430,8 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E9001,
+    E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -472,6 +528,16 @@ mod tests {
         );
         assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
         assert_eq!(E1008.code()[1..2].parse::<u8>().expect("digit"), 1);
+    }
+
+    #[test]
+    fn name_resolution_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E20"))
+            .collect();
+        assert_eq!(codes, ["E2001", "E2002", "E2003", "E2004"]);
     }
 
     #[test]

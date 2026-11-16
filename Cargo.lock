@@ -30,6 +30,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-def"
+version = "0.1.0"
+dependencies = [
+ "seal-index",
+ "seal-span",
+ "seal-symbol",
+]
+
+[[package]]
 name = "seal-diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -43,6 +52,7 @@ version = "0.1.0"
 dependencies = [
  "seal-diagnostics",
  "seal-error-codes",
+ "seal-hir",
  "seal-lexer",
  "seal-parser",
  "seal-session",
@@ -66,6 +76,23 @@ name = "seal-hash"
 version = "0.1.0"
 dependencies = [
  "seal-macros",
+]
+
+[[package]]
+name = "seal-hir"
+version = "0.1.0"
+dependencies = [
+ "seal-ast",
+ "seal-def",
+ "seal-diagnostics",
+ "seal-error-codes",
+ "seal-hash",
+ "seal-index",
+ "seal-lexer",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+ "seal-ty",
 ]
 
 [[package]]

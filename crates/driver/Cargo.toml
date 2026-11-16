@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 seal-diagnostics.workspace = true
+seal-hir.workspace = true
 seal-lexer.workspace = true
 seal-parser.workspace = true
 seal-error-codes.workspace = true
