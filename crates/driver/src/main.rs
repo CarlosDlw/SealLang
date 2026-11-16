@@ -7,8 +7,10 @@
 mod args;
 
 use std::panic::AssertUnwindSafe;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use seal_codegen::Emit;
 use seal_diagnostics::IcePanic;
 use seal_session::{Options, Session};
 
@@ -77,6 +79,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         color: args.color,
         language_version,
         allow_unstable: args.allow_unstable,
+        debug_info: args.debug_info,
         remap_prefixes: args.remap.clone(),
         time_passes: args.time_passes,
         max_errors: args
@@ -86,6 +89,10 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
     };
 
     let session = Session::new(options).map_err(|error| error.to_string())?;
+    let requested_emit = match args.emit {
+        args::Output::Check => None,
+        args::Output::Artifact(emit) => Some(emit),
+    };
 
     for input in &args.inputs {
         let Ok(file_id) = session.load_file(input) else {
@@ -133,6 +140,37 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                         session.profiler().time("borrowck", || {
                             seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
                         });
+                        if let Some(emit) = requested_emit {
+                            if session.diag().error_count() == errors_before_lexing {
+                                let output = args
+                                    .output
+                                    .clone()
+                                    .unwrap_or_else(|| default_output(input, emit));
+                                let codegen_options = seal_codegen::CodegenOptions {
+                                    emit,
+                                    output,
+                                    opt_level: args.opt_level,
+                                    debug_info: args.debug_info,
+                                    crate_name: input
+                                        .file_stem()
+                                        .map(|stem| stem.to_string_lossy().into_owned()),
+                                };
+                                let codegen_input = seal_codegen::CodegenInput {
+                                    mir: &mir,
+                                    hir: &hir,
+                                    source_map: session.source_map(),
+                                    interner: session.interner(),
+                                    target: session.target(),
+                                    file: file_id,
+                                };
+                                let result = session.profiler().time("codegen", || {
+                                    seal_codegen::emit(codegen_input, &codegen_options)
+                                });
+                                if let Err(error) = result {
+                                    report_codegen_error(&session, &error);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -155,7 +193,29 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (optimization, codegen) plug in here, consuming the checked
-    // MIR produced above.
     Ok(ExitCode::SUCCESS)
+}
+
+/// Returns the output path used when `-o` is absent.
+fn default_output(input: &Path, emit: Emit) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "seal-output".to_owned());
+    let name = match emit {
+        Emit::Object => format!("{stem}.o"),
+        Emit::Assembly => format!("{stem}.s"),
+        Emit::Executable => stem,
+    };
+    input.with_file_name(name)
+}
+
+fn report_codegen_error(session: &Session, error: &seal_codegen::CodegenError) {
+    let message = error.to_string();
+    match error.diag_code() {
+        Some(code) => {
+            let _ = session.diag().error(message).code(code).emit();
+        }
+        None => session.diag().bug(message),
+    }
 }

@@ -24,7 +24,9 @@ seal-hir = { path = "crates/hir" }
 seal-typeck = { path = "crates/typeck" }
 seal-mir = { path = "crates/mir" }
 seal-borrowck = { path = "crates/borrowck" }
+seal-codegen = { path = "crates/codegen" }
 seal-layout = { path = "crates/layout" }
+seal-llvm-debug = { path = "crates/llvm-debug" }
 seal-diagnostics = { path = "crates/diagnostics" }
 seal-error-codes = { path = "crates/error-codes" }
 seal-version = { path = "crates/version" }

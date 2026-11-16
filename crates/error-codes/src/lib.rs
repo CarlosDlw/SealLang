@@ -799,6 +799,46 @@ Borrow only the fields that are still initialized, or reinitialize the moved
 field before borrowing the whole place.",
 };
 
+/// The program has no usable entry point.
+pub const E6001: ErrorCode = ErrorCode {
+    code: "E6001",
+    title: "invalid entry point",
+    explanation: "\
+A native executable needs a `main` function with no parameters that returns
+`i32` or `()`. The code generator refuses to invent an entry point or to discard
+a value the language says `main` returns.
+
+Add `func main() -> i32 { ... }` or `func main() { ... }`. Object and assembly
+output do not require an entry point.",
+};
+
+/// The requested target cannot be used for code generation.
+pub const E6002: ErrorCode = ErrorCode {
+    code: "E6002",
+    title: "unsupported code generation target",
+    explanation: "\
+The target triple parsed correctly, but LLVM was built without the backend for
+that architecture, or the triple does not name a target LLVM can lower.
+
+Use a target supported by the LLVM installation, or rebuild LLVM with the
+required target enabled. Cross-compiling an executable also needs a linker and
+sysroot for that target; `--emit=obj` avoids the linker requirement.",
+};
+
+/// Writing or linking an artifact failed.
+pub const E6003: ErrorCode = ErrorCode {
+    code: "E6003",
+    title: "failed to emit artifact",
+    explanation: "\
+The compiler produced valid machine code but could not write the requested file
+or could not run the system linker. The linker error is included with the
+diagnostic.
+
+Check that the output directory exists and is writable, that a C toolchain is
+installed, and that the target's linker and sysroot are available. Nothing is
+left behind: artifacts are written through a temporary file.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -830,7 +870,7 @@ pub static ALL: &[ErrorCode] = &[
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E2005,
     E2006, E2007, E2008, E2009, E2010, E2011, E2012, E3001, E3002, E3003, E3004, E3005, E3006,
     E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E5001, E5002, E5003,
-    E5004, E5005, E5006, E9001, E9002,
+    E5004, E5005, E5006, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -972,6 +1012,16 @@ mod tests {
             codes,
             ["E5001", "E5002", "E5003", "E5004", "E5005", "E5006"]
         );
+    }
+
+    #[test]
+    fn codegen_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E60"))
+            .collect();
+        assert_eq!(codes, ["E6001", "E6002", "E6003"]);
     }
 
     #[test]

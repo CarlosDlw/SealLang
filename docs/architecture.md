@@ -1,10 +1,10 @@
-# Seal compiler architecture — foundation through borrow checking
+# Seal compiler architecture — foundation through code generation
 
-This document covers the compiler foundation and the first six phases: the
+This document covers the compiler foundation and every production phase: the
 lexer, the parser, HIR lowering with name resolution, type checking, MIR
-lowering, and ownership/borrow checking. The foundation is the set of crates
-that every later phase (optimization, codegen) depends on. It is kept in sync with the code; changes to a
-public invariant must change this file in the same commit. The memory model that
+lowering, ownership/borrow checking, and LLVM code generation. The foundation is
+the set of crates that every later phase depends on. It is kept in sync with the
+code; changes to a public invariant must change this file in the same commit. The memory model that
 the type representation encodes is decided in
 [`memory-model.md`](memory-model.md).
 
@@ -33,6 +33,8 @@ allowed to depend only on crates below it in the list.
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, terminators, and structural validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, escaping references, `E5xxx` diagnostics. |
+| `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts (`E6xxx`). |
+| `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -225,6 +227,33 @@ allowed to depend only on crates below it in the list.
     whose sibling moved is allowed. Borrow conflicts compare path prefixes, so
     borrowing `p.x` leaves `p.y` writable and borrowing `p` blocks both. A
     whole-place borrow with a moved field is `E5006`.
+52. **Code generation consumes only checked MIR.** The driver calls the backend
+    only after type checking and borrow checking report no errors, and MIR
+    validation succeeds first. A layout failure, an unresolved inference type,
+    or invalid generated IR is an internal compiler error, never an artifact.
+53. **Every local has storage.** Locals, parameters, and the return place are
+    `alloca` slots; reads and writes are loads and stores, and calls use the
+    checked signature. Aggregates are built with `insertvalue` in declaration
+    order and projected with struct GEPs, so evaluation order and layout agree.
+54. **The ABI is compiler-owned.** Seal functions use the `seal.<name>` symbol;
+    the C `main` wrapper is the only `main`. A user `main` takes no parameters
+    and returns `i32` or `()`. `*str` is `{ data, length }`; `()`/`!` are
+    zero-sized structs; the object is position independent.
+55. **Debug information describes the generated IR.** `-g` emits a Rust compile
+    unit, subprograms, parameters, bindings, aggregate types with layout
+    offsets, and a source location per statement and terminator, all finalized
+    before verification and optimization.
+56. **Arithmetic cannot silently invoke LLVM undefined behavior.** Integer
+    division and remainder trap on a zero divisor and on the signed minimum
+    divided by `-1`; shift amounts are masked to the operand width. Integer
+    arithmetic wraps, floats follow IEEE, and no overflow check is inserted.
+57. **Artifacts are all-or-nothing.** Object and assembly output are written
+    atomically. Executables are linked from a temporary object that is removed
+    on success and on every failure path; the linker's stderr is part of the
+    diagnostic.
+58. **Targets are explicit.** The LLVM triple and target machine come from
+    `seal-target`, never from the host. An unavailable backend is `E6002`, and a
+    missing linker or unsupported cross-link is `E6003`.
 
 ## Extension points
 
@@ -232,6 +261,13 @@ allowed to depend only on crates below it in the list.
   `pub fn run(session: &Session) -> Result<..., ErrorGuaranteed>`, and is called
   from `seal-driver`. Phases must not own the source map or interner; they borrow
   them from the session.
+- **New code generation case.** Extend `TypeMapper` for a new type kind, or add
+  an arm to `FunctionLowerer::emit_rvalue`/`load_operand` for a new rvalue. Keep
+  `seal-layout` authoritative for size, alignment, and offsets, and finalize any
+  new debug metadata before verification.
+- **New artifact.** Extend `Emit` and `artifact::emit_artifact`; write through
+  `seal-fs::write_atomic` and remove temporary inputs on every path. Linker
+  selection belongs in the backend, never in a language phase.
 - **New diagnostic.** Allocate the next code in the phase's range in
   `seal-error-codes`, write the explanation, and emit through `DiagCtxt`. Add a
   fixture test using `seal-test-support`.
@@ -299,7 +335,10 @@ Every change must pass:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo build --workspace
 ```
 
-The workspace also denies `unsafe_code` and warns on missing documentation, so a
-new public item without docs fails the build.
+The workspace forbids `unsafe_code` in every compiler crate and warns on missing
+documentation. `seal-llvm-debug` is the single audited exception: it isolates the
+LLVM 19+ debug-record call that inkwell 0.11 wraps incorrectly. A new public item
+without docs fails the build.

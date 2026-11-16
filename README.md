@@ -1,5 +1,20 @@
 # Seal Lang
 
+## Building and running
+
+```text
+cargo build --release
+./target/release/sealc -g examples/006_structs.sl -o /tmp/example
+/tmp/example; echo $?
+```
+
+`sealc` type-checks, borrow-checks, generates LLVM IR, and produces an
+optimized executable by default. Use `-O2` for the standard optimization
+pipeline, `-g` for DWARF, `--emit=obj` or `--emit=asm` for intermediate
+artifacts, and `--emit=check` to stop after analysis. See
+[`docs/codegen.md`](docs/codegen.md) for the ABI, layout, debug information, and
+runtime semantics.
+
 ## Types
 
 ### Integer

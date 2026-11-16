@@ -8,8 +8,24 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use seal_codegen::Emit;
 use seal_diagnostics::ColorChoice;
 use seal_session::{ErrorFormat, OptLevel};
+
+/// What the driver should produce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Output {
+    /// Type-check only; no artifact is written.
+    Check,
+    /// Write an object, assembly, or executable artifact.
+    Artifact(Emit),
+}
+
+impl Default for Output {
+    fn default() -> Self {
+        Self::Artifact(Emit::Executable)
+    }
+}
 
 /// Parsed command-line arguments.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -18,6 +34,12 @@ pub(crate) struct Args {
     pub inputs: Vec<PathBuf>,
     /// Target triple override.
     pub target: Option<String>,
+    /// What to produce.
+    pub emit: Output,
+    /// Emit DWARF debug information.
+    pub debug_info: bool,
+    /// Explicit output path, valid for a single input.
+    pub output: Option<PathBuf>,
     /// Optimization level (`-O`, `-O0..3`, `--opt-level`).
     pub opt_level: OptLevel,
     /// Diagnostic output format.
@@ -58,6 +80,8 @@ pub(crate) enum ArgError {
     UnknownFlag(String),
     /// No input file was given.
     NoInputs,
+    /// `-o` was combined with more than one input.
+    OutputWithMultipleInputs,
 }
 
 impl fmt::Display for ArgError {
@@ -69,6 +93,9 @@ impl fmt::Display for ArgError {
             }
             Self::UnknownFlag(flag) => write!(f, "unknown flag `{flag}`"),
             Self::NoInputs => f.write_str("no input files; run `sealc --help` for usage"),
+            Self::OutputWithMultipleInputs => {
+                f.write_str("`-o` can only be used with a single input file")
+            }
         }
     }
 }
@@ -114,8 +141,27 @@ pub(crate) fn parse(argv: impl IntoIterator<Item = String>) -> Result<Args, ArgE
         match flag.as_str() {
             "-h" | "--help" => args.show_help = true,
             "-V" | "--version" => args.show_version = true,
+            "-g" | "--debug-info" => args.debug_info = true,
             "--allow-unstable-features" => args.allow_unstable = true,
             "--time-passes" => args.time_passes = true,
+            "-o" | "--output" => {
+                args.output = Some(PathBuf::from(take_value(&mut iterator, inline, "-o")?));
+            }
+            "--emit" => {
+                let value = take_value(&mut iterator, inline, "--emit")?;
+                args.emit = match value.as_str() {
+                    "check" => Output::Check,
+                    "obj" => Output::Artifact(Emit::Object),
+                    "asm" => Output::Artifact(Emit::Assembly),
+                    "exe" => Output::Artifact(Emit::Executable),
+                    other => {
+                        return Err(ArgError::InvalidValue {
+                            flag: "--emit",
+                            value: other.to_owned(),
+                        });
+                    }
+                };
+            }
             "--target" => args.target = Some(take_value(&mut iterator, inline, "--target")?),
             "--opt-level" => {
                 let value = take_value(&mut iterator, inline, "--opt-level")?;
@@ -182,6 +228,9 @@ pub(crate) fn parse(argv: impl IntoIterator<Item = String>) -> Result<Args, ArgE
     if !informational && args.inputs.is_empty() {
         return Err(ArgError::NoInputs);
     }
+    if args.output.is_some() && args.inputs.len() > 1 {
+        return Err(ArgError::OutputWithMultipleInputs);
+    }
     Ok(args)
 }
 
@@ -219,6 +268,9 @@ USAGE:
 
 OPTIONS:
     -O[0-3], --opt-level <0-3>   Optimization level (default: 0)
+    -g, --debug-info             Emit DWARF debug information
+    --emit <check|obj|asm|exe>   Artifact to produce (default: exe)
+    -o, --output <PATH>          Output path (single input only)
     --target <TRIPLE>            Target triple (default: host)
     --language-version <X.Y>     Language version (default: current)
     --allow-unstable-features    Accept unstable language features
@@ -239,9 +291,10 @@ OPTIONS:
 mod tests {
     use std::path::PathBuf;
 
+    use seal_codegen::Emit;
     use seal_session::OptLevel;
 
-    use super::{ArgError, Args, parse};
+    use super::{ArgError, Args, Output, parse};
 
     fn parse_ok(arguments: &[&str]) -> Args {
         parse(arguments.iter().map(|argument| (*argument).to_owned())).expect("arguments parse")
@@ -322,6 +375,48 @@ mod tests {
         assert!(parse(vec!["--help".to_owned()]).is_ok());
         assert!(parse(vec!["--version".to_owned()]).is_ok());
         assert!(parse(vec!["--explain=E0001".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn codegen_flags_parse() {
+        let args = parse_ok(&["-g", "--emit=obj", "-o", "out.o", "main.sl"]);
+        assert!(args.debug_info);
+        assert_eq!(args.emit, Output::Artifact(Emit::Object));
+        assert_eq!(args.output, Some(PathBuf::from("out.o")));
+        assert_eq!(
+            parse_ok(&["main.sl"]).emit,
+            Output::Artifact(Emit::Executable)
+        );
+        assert_eq!(
+            parse_ok(&["--emit", "asm", "main.sl"]).emit,
+            Output::Artifact(Emit::Assembly)
+        );
+        assert_eq!(
+            parse_ok(&["--emit=exe", "main.sl"]).emit,
+            Output::Artifact(Emit::Executable)
+        );
+        assert_eq!(parse_ok(&["--emit=check", "main.sl"]).emit, Output::Check);
+    }
+
+    #[test]
+    fn output_requires_a_single_input() {
+        assert_eq!(
+            parse(vec![
+                "a.sl".to_owned(),
+                "b.sl".to_owned(),
+                "-o".to_owned(),
+                "out".to_owned()
+            ]),
+            Err(ArgError::OutputWithMultipleInputs)
+        );
+    }
+
+    #[test]
+    fn invalid_emit_is_rejected() {
+        assert!(matches!(
+            parse(vec!["--emit=llvm".to_owned(), "main.sl".to_owned()]),
+            Err(ArgError::InvalidValue { .. })
+        ));
     }
 
     #[test]

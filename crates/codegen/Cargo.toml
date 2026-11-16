@@ -1,0 +1,34 @@
+[package]
+name = "seal-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+inkwell = { version = "0.11.0", default-features = false, features = ["llvm23-1", "target-all"] }
+seal-def.workspace = true
+seal-diagnostics.workspace = true
+seal-error-codes.workspace = true
+seal-fs.workspace = true
+seal-hash.workspace = true
+seal-hir.workspace = true
+seal-index.workspace = true
+seal-layout.workspace = true
+seal-llvm-debug.workspace = true
+seal-mir.workspace = true
+seal-session.workspace = true
+seal-span.workspace = true
+seal-symbol.workspace = true
+seal-target.workspace = true
+seal-ty.workspace = true
+
+[dev-dependencies]
+seal-ast.workspace = true
+seal-borrowck.workspace = true
+seal-lexer.workspace = true
+seal-parser.workspace = true
+seal-typeck.workspace = true
+
+[lints]
+workspace = true
