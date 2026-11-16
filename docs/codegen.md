@@ -32,15 +32,31 @@ assembly output do not require an entry point; executables do.
 ## Command line
 
 ```text
-sealc [-O0..3] [-g] [--emit=check|obj|asm|exe] [-o PATH] file.sl
+sealc [OPTIONS] <INPUT>...
+sealc --emit-runtime <PATH>
+sealc --explain <CODE>
 ```
 
+`--help` lists every option grouped by concern: output, optimization, target,
+diagnostics, and runtime. Options accept `--name value` and `--name=value`, and
+`--` ends option parsing so a file named like a flag stays an input.
+
+- `--emit=exe` (the default) links an executable, `--emit=obj` writes an object,
+  `--emit=asm` writes assembly, and `--emit=check` stops after borrow checking
+  and writes nothing.
 - Without `-o`, `file.sl` produces `file` for an executable, `file.o` for an
   object, or `file.s` for assembly, next to the input.
 - `-o` accepts one output path and is rejected with more than one input.
+- `-O` alone selects level 3; `-O0` through `-O3` and `--opt-level <LEVEL>`
+  select a level explicitly.
 - `-g` embeds DWARF in objects and executables; assembly contains the matching
   `.file`/`.loc` directives.
-- `--emit=check` is the fast path for editors and CI.
+- `--emit-runtime <PATH>` writes the embedded runtime archive without compiling,
+  and `--runtime-archive <PATH>` links against a different archive.
+- `--explain <CODE>` prints an error-code explanation without compiling.
+
+The exit status is 0 on success, 1 after a compile error, 2 after a usage error,
+and 101 after an internal compiler error or a runtime panic.
 
 The linker is selected from `SEAL_LINKER`, then `CC`, then `cc`. Arguments are
 passed directly, never through a shell. A linker failure is `E6003` and includes

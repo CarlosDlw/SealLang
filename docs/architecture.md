@@ -41,7 +41,7 @@ allowed to depend only on crates below it in the list.
 | `seal-profiling` | Phase timings for `--time-passes`. |
 | `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
-| `seal-driver` | The `sealc` binary: arguments, exit codes, panic policy, and phase wiring. |
+| `seal-driver` | The `sealc` binary: clap-based argument groups, exit codes, panic policy, and phase wiring. |
 
 ## Invariants
 
@@ -251,9 +251,10 @@ allowed to depend only on crates below it in the list.
     Integer arithmetic wraps, floats follow IEEE, and no overflow check is
     inserted.
 57. **Artifacts are all-or-nothing.** Object and assembly output are written
-    atomically. Executables are linked from a temporary object and the embedded
-    runtime archive, both removed on success and on every failure path; the
-    linker's stderr is part of the diagnostic.
+    atomically. Executables are linked into a temporary path from a temporary
+    object and the embedded runtime archive, and replace the destination only
+    after a successful link. Every temporary file is removed on every path, and
+    the linker's stderr is part of the diagnostic.
 58. **Targets are explicit.** The LLVM triple and target machine come from
     `seal-target`, never from the host. An unavailable backend is `E6002`, and a
     missing linker, unsupported cross-link, unreadable external runtime, or
@@ -267,6 +268,11 @@ allowed to depend only on crates below it in the list.
     archive is host-specific and linked only into executables, so object and
     assembly output stay target-independent. `--emit-runtime` exports the
     embedded archive, and `--runtime-archive` supplies a target archive.
+60. **The command line is declarative.** `seal-driver` parses arguments with
+    `clap`, one module per option group (output, optimization, target,
+    diagnostics, runtime), and converts them into session options in one place.
+    Rules that span arguments, such as a required input or a single `-o`, are
+    reported as ordinary usage errors with status 2.
 
 ## Extension points
 

@@ -1,23 +1,28 @@
 //! `sealc`, the Seal compiler driver.
 //!
-//! The driver owns process-level concerns only: argument parsing, exit codes,
-//! panic handling, and translating a [`seal_session::Session`] into a result. It
-//! performs no language analysis itself.
+//! The driver owns process-level concerns only: command-line parsing, exit
+//! codes, panic handling, and phase wiring. Language analysis lives in the phase
+//! crates.
 
-mod args;
+mod actions;
+mod cli;
+mod options;
+mod output;
+mod pipeline;
+mod report;
 
 use std::panic::AssertUnwindSafe;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use seal_codegen::Emit;
 use seal_diagnostics::IcePanic;
-use seal_session::{Options, Session};
 
 fn main() -> ExitCode {
     install_panic_hook();
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    match std::panic::catch_unwind(AssertUnwindSafe(|| run(&argv))) {
+    let cli = match cli::Cli::parse_from(std::env::args_os()) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
+    match std::panic::catch_unwind(AssertUnwindSafe(|| run(&cli))) {
         Ok(Ok(code)) => code,
         Ok(Err(message)) => {
             eprintln!("error: {message}");
@@ -25,6 +30,17 @@ fn main() -> ExitCode {
         }
         Err(_) => ExitCode::from(101),
     }
+}
+
+/// Runs the action the arguments select.
+fn run(cli: &cli::Cli) -> Result<ExitCode, String> {
+    if let Some(code) = &cli.explain {
+        return actions::explain(code);
+    }
+    if let Some(path) = &cli.runtime.emit_runtime {
+        return actions::emit_runtime(path);
+    }
+    pipeline::compile(cli)
 }
 
 /// Suppresses the default panic report for internal compiler errors; the
@@ -37,235 +53,4 @@ fn install_panic_hook() {
         }
         previous(info);
     }));
-}
-
-fn run(argv: &[String]) -> Result<ExitCode, String> {
-    let args = args::parse(argv.iter().cloned()).map_err(|error| error.to_string())?;
-
-    if args.show_help {
-        print!("{}", args::usage());
-        return Ok(ExitCode::SUCCESS);
-    }
-    if args.show_version {
-        println!("sealc {}", env!("CARGO_PKG_VERSION"));
-        return Ok(ExitCode::SUCCESS);
-    }
-    if let Some(code) = &args.explain {
-        return match seal_error_codes::explain(code) {
-            Some(explanation) => {
-                print!("{explanation}");
-                Ok(ExitCode::SUCCESS)
-            }
-            None => Err(format!("unknown error code `{code}`")),
-        };
-    }
-    if let Some(path) = &args.emit_runtime {
-        seal_fs::write_atomic(path, seal_codegen::runtime_archive()).map_err(|error| {
-            format!("cannot write runtime archive `{}`: {error}", path.display())
-        })?;
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    let target = match &args.target {
-        Some(triple) => {
-            seal_target::TargetTriple::parse(triple).map_err(|error| error.to_string())?
-        }
-        None => seal_target::host_triple(),
-    };
-    let language_version = match &args.language_version {
-        Some(version) => {
-            seal_version::LanguageVersion::parse(version).map_err(|error| error.to_string())?
-        }
-        None => seal_version::LanguageVersion::CURRENT,
-    };
-    let options = Options {
-        target,
-        opt_level: args.opt_level,
-        error_format: args.error_format,
-        color: args.color,
-        language_version,
-        allow_unstable: args.allow_unstable,
-        debug_info: args.debug_info,
-        remap_prefixes: args.remap.clone(),
-        time_passes: args.time_passes,
-        max_errors: args
-            .max_errors
-            .unwrap_or(seal_diagnostics::DEFAULT_ERROR_LIMIT),
-        ..Options::default()
-    };
-
-    let session = Session::new(options).map_err(|error| error.to_string())?;
-    let requested_emit = match args.emit {
-        args::Output::Check => None,
-        args::Output::Artifact(emit) => Some(emit),
-    };
-
-    for input in &args.inputs {
-        let Ok(file_id) = session.load_file(input) else {
-            continue;
-        };
-        let Some(file) = session.source_map().file(file_id) else {
-            continue;
-        };
-        let errors_before_lexing = session.diag().error_count();
-        let lexed = session.profiler().time("lex", || {
-            seal_lexer::lex(&file, session.diag(), session.interner())
-        });
-        // A lexical error leaves `Error` tokens behind, and parsing them only
-        // adds secondary syntax errors; the parser runs on a clean token stream.
-        if session.diag().error_count() == errors_before_lexing {
-            let ast = session.profiler().time("parse", || {
-                seal_parser::parse(&lexed, session.diag(), session.interner())
-            });
-            // Lowering assumes a syntactically valid tree. A parse error already
-            // leaves `Error` nodes behind, so the pipeline stops after `parse`.
-            if session.diag().error_count() == errors_before_lexing {
-                let hir = session.profiler().time("hir", || {
-                    seal_hir::lower(&ast, session.diag(), session.interner())
-                });
-                if session.diag().error_count() == errors_before_lexing {
-                    let typeck = session.profiler().time("typeck", || {
-                        seal_typeck::check(
-                            &hir,
-                            session.diag(),
-                            session.interner(),
-                            session.target().pointer_width(),
-                        )
-                    });
-                    // Lowering relies on the invariants the checker establishes,
-                    // so it runs only when no error was reported.
-                    if session.diag().error_count() == errors_before_lexing {
-                        let mir = session
-                            .profiler()
-                            .time("mir", || seal_mir::lower(&hir, &typeck));
-                        if let Err(error) = mir.validate() {
-                            session
-                                .diag()
-                                .bug(format!("MIR lowering produced an invalid body: {error}"));
-                        }
-                        session.profiler().time("borrowck", || {
-                            seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
-                        });
-                        if let Some(emit) = requested_emit {
-                            if session.diag().error_count() == errors_before_lexing {
-                                let output = args
-                                    .output
-                                    .clone()
-                                    .unwrap_or_else(|| default_output(input, emit));
-                                let output = with_executable_extension(output, emit, cfg!(windows));
-                                let codegen_options = seal_codegen::CodegenOptions {
-                                    emit,
-                                    output,
-                                    opt_level: args.opt_level,
-                                    debug_info: args.debug_info,
-                                    crate_name: input
-                                        .file_stem()
-                                        .map(|stem| stem.to_string_lossy().into_owned()),
-                                    runtime_archive: args.runtime_archive.clone(),
-                                };
-                                let codegen_input = seal_codegen::CodegenInput {
-                                    mir: &mir,
-                                    hir: &hir,
-                                    source_map: session.source_map(),
-                                    interner: session.interner(),
-                                    target: session.target(),
-                                    file: file_id,
-                                };
-                                let result = session.profiler().time("codegen", || {
-                                    seal_codegen::emit(codegen_input, &codegen_options)
-                                });
-                                if let Err(error) = result {
-                                    report_codegen_error(&session, &error);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(error) = session.diag().emitter_error() {
-        return Err(format!("failed to write diagnostics: {error}"));
-    }
-    if args.time_passes {
-        eprint!("{}", session.profiler().report());
-    }
-
-    if session.abort_if_errors().is_err() {
-        let errors = session.diag().error_count();
-        eprintln!(
-            "error: could not compile {} input file(s) due to {errors} previous error(s)",
-            args.inputs.len()
-        );
-        return Ok(ExitCode::from(1));
-    }
-
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Adds the Windows executable extension when the caller omitted one.
-fn with_executable_extension(path: PathBuf, emit: Emit, windows: bool) -> PathBuf {
-    if windows && emit == Emit::Executable && path.extension().is_none() {
-        path.with_extension("exe")
-    } else {
-        path
-    }
-}
-
-/// Returns the output path used when `-o` is absent.
-fn default_output(input: &Path, emit: Emit) -> PathBuf {
-    let stem = input
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "seal-output".to_owned());
-    let name = match emit {
-        Emit::Object => format!("{stem}.o"),
-        Emit::Assembly => format!("{stem}.s"),
-        Emit::Executable => stem,
-    };
-    input.with_file_name(name)
-}
-
-fn report_codegen_error(session: &Session, error: &seal_codegen::CodegenError) {
-    let message = error.to_string();
-    match error.diag_code() {
-        Some(code) => {
-            let _ = session.diag().error(message).code(code).emit();
-        }
-        None => session.diag().bug(message),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use seal_codegen::Emit;
-
-    use super::with_executable_extension;
-
-    #[test]
-    fn a_windows_executable_without_an_extension_gets_exe() {
-        assert_eq!(
-            with_executable_extension(PathBuf::from("program"), Emit::Executable, true),
-            PathBuf::from("program.exe")
-        );
-    }
-
-    #[test]
-    fn explicit_extensions_and_non_executables_are_preserved() {
-        assert_eq!(
-            with_executable_extension(PathBuf::from("program.bin"), Emit::Executable, true),
-            PathBuf::from("program.bin")
-        );
-        assert_eq!(
-            with_executable_extension(PathBuf::from("program.o"), Emit::Object, true),
-            PathBuf::from("program.o")
-        );
-        assert_eq!(
-            with_executable_extension(PathBuf::from("program"), Emit::Executable, false),
-            PathBuf::from("program")
-        );
-    }
 }
