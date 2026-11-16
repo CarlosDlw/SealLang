@@ -76,7 +76,7 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
     let kind = hir.expr(expr).kind.clone();
     match &kind {
         ExprKind::Unary { operand, .. }
-        | ExprKind::Borrow { operand }
+        | ExprKind::Borrow { operand, .. }
         | ExprKind::Deref { operand } => collect_expr(hir, *operand, stmts, exprs),
         ExprKind::Field { base, .. } => collect_expr(hir, *base, stmts, exprs),
         ExprKind::Struct { fields, .. } => {

@@ -24,10 +24,13 @@ fn struct_declarations_keep_fields_in_source_order() {
     let y = ast.field(declaration.fields[1]);
     assert_eq!(fixture.symbol(y.name), "y");
     match &ast.ty(y.ty).kind {
-        TypeKind::Pointer(inner) => assert!(matches!(
-            ast.ty(*inner).kind,
-            TypeKind::Primitive(PrimitiveType::I32)
-        )),
+        TypeKind::Pointer { pointee, mutable } => {
+            assert!(!mutable);
+            assert!(matches!(
+                ast.ty(*pointee).kind,
+                TypeKind::Primitive(PrimitiveType::I32)
+            ));
+        }
         other => panic!("expected a pointer field, got {other:?}"),
     }
 }
@@ -40,7 +43,7 @@ fn named_types_are_recorded_for_resolution() {
     };
     let next = ast.field(declaration.fields[0]);
     match &ast.ty(next.ty).kind {
-        TypeKind::Pointer(inner) => match ast.ty(*inner).kind {
+        TypeKind::Pointer { pointee, .. } => match ast.ty(*pointee).kind {
             TypeKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "Node"),
             ref other => panic!("expected a named pointee, got {other:?}"),
         },

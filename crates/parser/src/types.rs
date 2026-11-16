@@ -7,7 +7,7 @@ use seal_lexer::TokenKind;
 use crate::parser::{MAX_DEPTH, Parser};
 
 impl Parser<'_> {
-    /// Parses a type: a primitive name or a pointer to another type.
+    /// Parses a type: a primitive name or a reference to another type.
     pub(crate) fn parse_type(&mut self) -> TypeId {
         let start = self.current_span();
         if self.depth >= MAX_DEPTH {
@@ -16,9 +16,11 @@ impl Parser<'_> {
         self.depth += 1;
 
         let result = if self.eat(TokenKind::Star) {
-            let inner = self.parse_type();
-            let span = start.cover(self.builder.ast().ty(inner).span);
-            self.builder.push_type(TypeKind::Pointer(inner), span)
+            let mutable = self.eat(TokenKind::Mut);
+            let pointee = self.parse_type();
+            let span = start.cover(self.builder.ast().ty(pointee).span);
+            self.builder
+                .push_type(TypeKind::Pointer { pointee, mutable }, span)
         } else if let TokenKind::Ident(symbol) = self.current_kind() {
             let text = self.interner.resolve(symbol);
             match PrimitiveType::from_name(text) {
@@ -42,7 +44,7 @@ impl Parser<'_> {
                 span,
                 format!("expected a type, found {found}"),
             )
-            .help("write a built-in type name, or a pointer such as `*i32`")
+            .help("write a built-in type name, or a reference such as `*i32` or `*mut i32`")
             .emit();
             if !is_type_stop(self.current_kind()) {
                 self.bump();

@@ -111,7 +111,7 @@ impl<'a> LayoutCtxt<'a> {
                 scalar(u64::from(uint.bits().unwrap_or(self.pointer_width_u16())) / 8)
             }
             TyKind::Float(float) => scalar(u64::from(float.bits()) / 8),
-            TyKind::Ref(pointee) => match self.tcx.kind(pointee) {
+            TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
                 // `*str` is a fat pointer: data plus a pointer-sized length.
                 TyKind::Str => Layout::new(pointer * 2, pointer),
                 _ => Layout::new(pointer, pointer),

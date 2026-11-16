@@ -169,11 +169,12 @@ allowed to depend only on crates below it in the list.
     but lowering keeps processing the rest of the source, so unreachable blocks
     may exist and must stay structurally valid. Validation does not require
     reachability; removing dead blocks belongs to a later pass.
-38. **References are checked, never annotated.** `&place` creates a `*T` loan
-    and `*reference` reads through it. A dereference of a reference value is a
-    place as well, so `&*identity(p)` borrows the pointee and lowering keeps the
-    reference itself in a temporary. Regions are inferred from liveness; there
-    is no lifetime syntax, and no region appears in a type.
+38. **References are checked, never annotated.** `&place` creates a `*T` loan and
+    `&mut place` creates a `*mut T` loan; `*reference` reads through either, and
+    `RefKind` is part of the type, so the two never unify. A dereference of a
+    reference value is a place as well, so `&*identity(p)` borrows the pointee
+    and lowering keeps the reference itself in a temporary. Regions are inferred
+    from liveness; there is no lifetime syntax, and no region appears in a type.
 39. **A shared loan permits reads and forbids writes.** `*T` is read-only, so a
     live loan conflicts only with assigning or moving the borrowed place. Two
     shared loans may overlap, and reads never conflict.

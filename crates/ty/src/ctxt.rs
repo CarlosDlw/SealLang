@@ -9,7 +9,7 @@ use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, FieldDef};
 use crate::id::{AdtId, InferTyId, TyId};
-use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
+use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
 /// Interns types and answers structural queries about them.
 ///
@@ -171,7 +171,25 @@ impl TyCtxt {
 
     /// Returns the shared reference type `*T`.
     pub fn ref_ty(&self, pointee: TyId) -> TyId {
-        self.intern(TyKind::Ref(pointee))
+        self.ref_ty_with(RefKind::Shared, pointee)
+    }
+
+    /// Returns the exclusive reference type `*mut T`.
+    pub fn mut_ref_ty(&self, pointee: TyId) -> TyId {
+        self.ref_ty_with(RefKind::Exclusive, pointee)
+    }
+
+    /// Returns the reference type with `kind`.
+    pub fn ref_ty_with(&self, kind: RefKind, pointee: TyId) -> TyId {
+        self.intern(TyKind::Ref { kind, pointee })
+    }
+
+    /// Returns the kind and pointee of `ty` when it is a reference.
+    pub fn ref_parts(&self, ty: TyId) -> Option<(RefKind, TyId)> {
+        match self.kind(ty) {
+            TyKind::Ref { kind, pointee } => Some((kind, pointee)),
+            _ => None,
+        }
     }
 
     /// Returns the type standing for the inference variable `var`.
@@ -191,7 +209,7 @@ impl TyCtxt {
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
-            | TyKind::Ref(_)
+            | TyKind::Ref { .. }
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
@@ -269,7 +287,7 @@ impl TyCtxt {
 
     fn contains_reference_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
-            TyKind::Ref(_) => true,
+            TyKind::Ref { .. } => true,
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -289,7 +307,7 @@ impl TyCtxt {
 
 #[cfg(test)]
 mod tests {
-    use crate::kind::{FloatTy, IntTy, TyKind, UintTy};
+    use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
     use super::TyCtxt;
 
@@ -331,7 +349,13 @@ mod tests {
         let int = ctxt.int_ty(IntTy::I16);
         assert_eq!(ctxt.kind(int), TyKind::Int(IntTy::I16));
         let ptr = ctxt.ref_ty(int);
-        assert_eq!(ctxt.kind(ptr), TyKind::Ref(int));
+        assert_eq!(
+            ctxt.kind(ptr),
+            TyKind::Ref {
+                kind: RefKind::Shared,
+                pointee: int
+            }
+        );
         let unit = ctxt.unit_ty();
         let error = ctxt.error_ty();
         assert_eq!(ctxt.kind(unit), TyKind::Unit);
@@ -347,9 +371,29 @@ mod tests {
         assert_eq!(first, second);
 
         let nested = ctxt.ref_ty(first);
-        assert_eq!(ctxt.kind(nested), TyKind::Ref(first));
+        assert_eq!(
+            ctxt.kind(nested),
+            TyKind::Ref {
+                kind: RefKind::Shared,
+                pointee: first
+            }
+        );
         assert_ne!(nested, first);
         assert_eq!(ctxt.len(), 3);
+    }
+
+    #[test]
+    fn reference_kinds_are_distinct_types() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let shared = ctxt.ref_ty(int);
+        let exclusive = ctxt.mut_ref_ty(int);
+
+        assert_ne!(shared, exclusive);
+        assert_eq!(ctxt.ref_parts(shared), Some((RefKind::Shared, int)));
+        assert_eq!(ctxt.ref_parts(exclusive), Some((RefKind::Exclusive, int)));
+        assert_eq!(ctxt.ref_parts(int), None);
+        assert_eq!(ctxt.ref_ty_with(RefKind::Exclusive, int), exclusive);
     }
 
     #[test]
@@ -357,6 +401,7 @@ mod tests {
         let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         let pointer = ctxt.ref_ty(int);
+        let exclusive = ctxt.mut_ref_ty(int);
         for ty in [
             int,
             ctxt.uint_ty(UintTy::U128),
@@ -366,6 +411,7 @@ mod tests {
             ctxt.unit_ty(),
             ctxt.never_ty(),
             pointer,
+            exclusive,
         ] {
             assert!(ctxt.is_copy(ty), "{ty:?} must be Copy");
         }

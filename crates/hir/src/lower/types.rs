@@ -17,9 +17,13 @@ impl Lowering<'_> {
             TypeKind::Primitive(primitive) => {
                 self.hir.ty_ctxt_mut().intern(primitive_kind(primitive))
             }
-            TypeKind::Pointer(inner) => {
-                let inner = self.lower_type(inner);
-                self.hir.ty_ctxt_mut().ref_ty(inner)
+            TypeKind::Pointer { pointee, mutable } => {
+                let pointee = self.lower_type(pointee);
+                if mutable {
+                    self.hir.ty_ctxt_mut().mut_ref_ty(pointee)
+                } else {
+                    self.hir.ty_ctxt_mut().ref_ty(pointee)
+                }
             }
             TypeKind::Path(symbol) => {
                 if let Some(definition) = self.types.get(&symbol).copied() {

@@ -85,7 +85,16 @@ impl InferCtxt {
             (TyKind::Error, _) | (_, TyKind::Error) => Ok(()),
             (TyKind::Infer(var), _) => self.bind(ctxt, var, found),
             (_, TyKind::Infer(var)) => self.bind(ctxt, var, expected),
-            (TyKind::Ref(expected), TyKind::Ref(found)) => self.unify(ctxt, expected, found),
+            (
+                TyKind::Ref {
+                    kind: expected_kind,
+                    pointee: expected,
+                },
+                TyKind::Ref {
+                    kind: found_kind,
+                    pointee: found,
+                },
+            ) if expected_kind == found_kind => self.unify(ctxt, expected, found),
             _ => Err(UnifyError::Mismatch { expected, found }),
         }
     }
@@ -97,10 +106,10 @@ impl InferCtxt {
     /// ambiguous.
     pub fn resolve_deep(&mut self, ctxt: &mut TyCtxt, ty: TyId) -> TyId {
         let shallow = self.resolve_shallow(ctxt, ty);
-        if let TyKind::Ref(pointee) = ctxt.kind(shallow) {
+        if let TyKind::Ref { kind, pointee } = ctxt.kind(shallow) {
             let resolved = self.resolve_deep(ctxt, pointee);
             if resolved != pointee {
-                return ctxt.ref_ty(resolved);
+                return ctxt.ref_ty_with(kind, resolved);
             }
         }
         shallow
@@ -135,7 +144,7 @@ impl InferCtxt {
         let ty = self.resolve_shallow(ctxt, ty);
         match ctxt.kind(ty) {
             TyKind::Infer(other) => other == var,
-            TyKind::Ref(inner) => self.occurs(ctxt, var, inner),
+            TyKind::Ref { pointee, .. } => self.occurs(ctxt, var, pointee),
             _ => false,
         }
     }
@@ -272,6 +281,19 @@ mod tests {
             .unify(&ctxt, left, right)
             .expect_err("pointees differ");
         assert!(matches!(error, UnifyError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn reference_kinds_do_not_unify() {
+        let ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let shared = ctxt.ref_ty(int);
+        let exclusive = ctxt.mut_ref_ty(int);
+        assert!(matches!(
+            infer.unify(&ctxt, shared, exclusive),
+            Err(UnifyError::Mismatch { .. })
+        ));
     }
 
     #[test]

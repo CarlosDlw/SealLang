@@ -1,5 +1,7 @@
 //! Borrow and dereference lowering in MIR.
 
+use seal_ty::RefKind;
+
 use crate::body::{Body, LocalKind};
 use crate::operand::Operand;
 use crate::place::{Place, Projection};
@@ -15,7 +17,13 @@ fn borrowing_a_local_creates_a_shared_reference() {
     let (place, rvalue) = assignment(&body.block(body.entry).statements[1]);
 
     assert_eq!(place.local, Body::return_local());
-    assert_eq!(rvalue, &Rvalue::Ref(Place::local(x)));
+    assert_eq!(
+        rvalue,
+        &Rvalue::Ref {
+            place: Place::local(x),
+            kind: RefKind::Shared
+        }
+    );
 }
 
 #[test]
@@ -36,7 +44,13 @@ fn borrowing_through_a_reference_borrows_the_projection() {
     let p = local_named(&fixture, body, "p");
     let (_, rvalue) = assignment(&body.block(body.entry).statements[0]);
 
-    assert_eq!(rvalue, &Rvalue::Ref(Place::local(p).deref()));
+    assert_eq!(
+        rvalue,
+        &Rvalue::Ref {
+            place: Place::local(p).deref(),
+            kind: RefKind::Shared
+        }
+    );
 }
 
 #[test]
@@ -67,7 +81,7 @@ fn dereferencing_a_borrow_reads_through_a_temporary() {
     let block = body.block(body.entry);
     let (reference, borrow) = assignment(&block.statements[1]);
     assert_eq!(body.local(reference.local).kind, LocalKind::Temp);
-    assert!(matches!(borrow, Rvalue::Ref(_)));
+    assert!(matches!(borrow, Rvalue::Ref { .. }));
 
     let (place, rvalue) = assignment(&block.statements[2]);
     assert_eq!(place.local, Body::return_local());
@@ -91,7 +105,9 @@ fn borrowing_through_a_reference_value_borrows_its_temporary() {
         .find_map(|statement| {
             let (destination, rvalue) = assignment(statement);
             match rvalue {
-                Rvalue::Ref(borrowed) if borrowed.is_deref() => Some((destination, borrowed)),
+                Rvalue::Ref {
+                    place: borrowed, ..
+                } if borrowed.is_deref() => Some((destination, borrowed)),
                 _ => None,
             }
         })
@@ -110,7 +126,7 @@ fn a_borrowed_argument_is_passed_through_a_temporary() {
     let block = body.block(body.entry);
     let (temp, borrow) = assignment(&block.statements[1]);
     assert_eq!(body.local(temp.local).kind, crate::body::LocalKind::Temp);
-    assert!(matches!(borrow, Rvalue::Ref(_)));
+    assert!(matches!(borrow, Rvalue::Ref { .. }));
 
     let (_, call) = assignment(&block.statements[2]);
     let Rvalue::Call { args, .. } = call else {

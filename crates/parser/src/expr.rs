@@ -195,9 +195,11 @@ impl Parser<'_> {
             }
             TokenKind::Amp => {
                 self.bump();
+                let mutable = self.eat(TokenKind::Mut);
                 let operand = self.parse_expr(PREFIX_BP);
                 let span = token.span.cover(self.builder.ast().expr(operand).span);
-                self.builder.push_expr(ExprKind::Borrow { operand }, span)
+                self.builder
+                    .push_expr(ExprKind::Borrow { operand, mutable }, span)
             }
             TokenKind::Star => {
                 self.bump();

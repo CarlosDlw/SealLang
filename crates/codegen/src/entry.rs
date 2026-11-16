@@ -56,7 +56,7 @@ fn describe(kind: TyKind) -> String {
         TyKind::Int(int) => int.as_str().to_owned(),
         TyKind::Uint(uint) => uint.as_str().to_owned(),
         TyKind::Float(float) => float.as_str().to_owned(),
-        TyKind::Ref(_) => "*T".to_owned(),
+        TyKind::Ref { kind, .. } => format!("{}T", kind.prefix()),
         TyKind::Adt(_) => "a struct".to_owned(),
         TyKind::Unit => "()".to_owned(),
         TyKind::Never => "!".to_owned(),

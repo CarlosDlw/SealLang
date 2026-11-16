@@ -51,6 +51,39 @@ fn path(expr: &Expr) -> seal_symbol::Symbol {
 }
 
 #[test]
+fn exclusive_borrows_parse() {
+    let (_, ast, id) = tail_expr("func main(a: i32) { &mut a }");
+    match &ast.expr(id).kind {
+        ExprKind::Borrow { operand, mutable } => {
+            assert!(mutable);
+            assert!(matches!(ast.expr(*operand).kind, ExprKind::Path(_)));
+        }
+        other => panic!("expected an exclusive borrow, got {other:?}"),
+    }
+}
+
+#[test]
+fn sharing_is_the_default_borrow() {
+    let (_, ast, id) = tail_expr("func main(a: i32) { &a }");
+    match &ast.expr(id).kind {
+        ExprKind::Borrow { mutable, .. } => assert!(!mutable),
+        other => panic!("expected a borrow, got {other:?}"),
+    }
+}
+
+#[test]
+fn exclusive_borrows_can_target_a_dereference() {
+    let (_, ast, id) = tail_expr("func main(p: *mut i32) { &mut *p }");
+    match &ast.expr(id).kind {
+        ExprKind::Borrow { operand, mutable } => {
+            assert!(mutable);
+            assert!(matches!(ast.expr(*operand).kind, ExprKind::Deref { .. }));
+        }
+        other => panic!("expected an exclusive borrow, got {other:?}"),
+    }
+}
+
+#[test]
 fn literals_keep_their_payloads() {
     let (fixture, ast, id) = tail_expr("func main() { 0xFFu8 }");
     let (value, base, suffix) = int(ast.expr(id));
@@ -209,7 +242,7 @@ fn borrows_and_derefs_bind_like_prefix_operators() {
     assert_eq!(op, BinaryOp::Add);
     assert_eq!(int(rhs).0, 1);
     match lhs.kind {
-        ExprKind::Borrow { operand } => {
+        ExprKind::Borrow { operand, .. } => {
             assert!(matches!(ast.expr(operand).kind, ExprKind::Deref { .. }));
         }
         ref other => panic!("expected a borrow, got {other:?}"),

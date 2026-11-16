@@ -112,8 +112,13 @@ pub struct Type {
 pub enum TypeKind {
     /// A built-in type.
     Primitive(PrimitiveType),
-    /// A pointer to another type.
-    Pointer(TypeId),
+    /// A reference to another type, written `*T` or `*mut T`.
+    Pointer {
+        /// The referenced type.
+        pointee: TypeId,
+        /// `true` for `*mut T`, which permits writing through the reference.
+        mutable: bool,
+    },
     /// A named type, resolved against the type namespace during lowering.
     Path(Symbol),
     /// Syntax the parser could not turn into a type.

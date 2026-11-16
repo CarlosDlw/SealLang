@@ -337,10 +337,10 @@ impl<'a> BodyLowering<'a> {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
             }
-            ExprKind::Borrow { operand } => {
+            ExprKind::Borrow { operand, kind } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(operand);
-                    self.assign_rvalue(dest, Rvalue::Ref(place), span);
+                    self.assign_rvalue(dest, Rvalue::Ref { place, kind }, span);
                 }
             }
             ExprKind::Deref { .. } | ExprKind::Field { .. } => {

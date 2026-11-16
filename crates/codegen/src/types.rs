@@ -99,7 +99,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 FloatTy::F32 => self.context.f32_type(),
                 FloatTy::F64 => self.context.f64_type(),
             }),
-            TyKind::Ref(pointee) => match self.tcx.kind(pointee) {
+            TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
                 // `*str` is a fat pointer: data plus length.
                 TyKind::Str => BasicTypeEnum::StructType(self.string_ref),
                 _ => BasicTypeEnum::PointerType(self.pointer()),

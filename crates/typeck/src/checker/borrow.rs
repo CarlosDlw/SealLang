@@ -3,7 +3,7 @@
 use seal_error_codes as codes;
 use seal_hir::{ExprKind, HirExprId};
 use seal_span::Span;
-use seal_ty::{TyId, TyKind};
+use seal_ty::{RefKind, TyId, TyKind};
 
 use super::Checker;
 use super::flow::Flow;
@@ -17,7 +17,12 @@ impl Checker<'_> {
     /// computed value has no storage, and Seal does not create hidden
     /// temporaries for borrows. Reading the borrowed place also requires it to
     /// be initialized, which `infer_expr` checks.
-    pub(super) fn check_borrow(&mut self, operand: HirExprId, flow: &mut Flow) -> TyId {
+    pub(super) fn check_borrow(
+        &mut self,
+        operand: HirExprId,
+        kind: RefKind,
+        flow: &mut Flow,
+    ) -> TyId {
         let is_place = self.hir.place(operand).is_some()
             || matches!(self.hir.expr(operand).kind, ExprKind::Deref { .. });
         let ty = self.infer_expr(operand, None, flow);
@@ -35,7 +40,7 @@ impl Checker<'_> {
         if self.is_error(ty) {
             return ty;
         }
-        self.ref_ty(ty)
+        self.ref_ty(kind, ty)
     }
 
     /// Types `*reference` as the pointee of its reference type.
@@ -45,7 +50,7 @@ impl Checker<'_> {
     pub(super) fn check_deref(&mut self, operand: HirExprId, flow: &mut Flow, span: Span) -> TyId {
         let pointer = self.infer_expr(operand, None, flow);
         match self.hir.ty_ctxt().kind(pointer) {
-            TyKind::Ref(pointee) => pointee,
+            TyKind::Ref { pointee, .. } => pointee,
             TyKind::Error => pointer,
             _ => {
                 self.error(

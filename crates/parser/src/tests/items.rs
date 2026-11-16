@@ -19,10 +19,13 @@ fn functions_can_take_parameters_and_return_a_type() {
     let second = ast.param(declaration.params[1]);
     assert_eq!(fixture.symbol(second.name), "b");
     match &ast.ty(second.ty).kind {
-        TypeKind::Pointer(inner) => assert!(matches!(
-            ast.ty(*inner).kind,
-            TypeKind::Primitive(PrimitiveType::F64)
-        )),
+        TypeKind::Pointer { pointee, mutable } => {
+            assert!(!mutable);
+            assert!(matches!(
+                ast.ty(*pointee).kind,
+                TypeKind::Primitive(PrimitiveType::F64)
+            ));
+        }
         other => panic!("expected pointer, got {other:?}"),
     }
     let ret = ast.ty(declaration.ret.expect("return type"));
@@ -57,14 +60,54 @@ fn pointers_can_nest() {
     let declaration = sole_function(&ast);
     let param = ast.param(declaration.params[0]);
     match &ast.ty(param.ty).kind {
-        TypeKind::Pointer(outer) => match &ast.ty(*outer).kind {
-            TypeKind::Pointer(inner) => assert!(matches!(
+        TypeKind::Pointer { pointee: outer, .. } => match &ast.ty(*outer).kind {
+            TypeKind::Pointer { pointee: inner, .. } => assert!(matches!(
                 ast.ty(*inner).kind,
                 TypeKind::Primitive(PrimitiveType::I8)
             )),
             other => panic!("expected inner pointer, got {other:?}"),
         },
         other => panic!("expected pointer, got {other:?}"),
+    }
+}
+
+#[test]
+fn exclusive_references_parse() {
+    let (_, ast) = parse_clean("func f(p: *mut i32) {}");
+    let declaration = sole_function(&ast);
+    let param = ast.param(declaration.params[0]);
+    match &ast.ty(param.ty).kind {
+        TypeKind::Pointer { pointee, mutable } => {
+            assert!(mutable);
+            assert!(matches!(
+                ast.ty(*pointee).kind,
+                TypeKind::Primitive(PrimitiveType::I32)
+            ));
+        }
+        other => panic!("expected an exclusive reference, got {other:?}"),
+    }
+}
+
+#[test]
+fn exclusive_references_nest_inside_shared_ones() {
+    let (_, ast) = parse_clean("func f(p: **mut i8) {}");
+    let declaration = sole_function(&ast);
+    let param = ast.param(declaration.params[0]);
+    match &ast.ty(param.ty).kind {
+        TypeKind::Pointer {
+            pointee: outer,
+            mutable: false,
+        } => match &ast.ty(*outer).kind {
+            TypeKind::Pointer {
+                pointee: inner,
+                mutable: true,
+            } => assert!(matches!(
+                ast.ty(*inner).kind,
+                TypeKind::Primitive(PrimitiveType::I8)
+            )),
+            other => panic!("expected an exclusive inner reference, got {other:?}"),
+        },
+        other => panic!("expected a shared outer reference, got {other:?}"),
     }
 }
 

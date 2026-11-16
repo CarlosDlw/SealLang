@@ -22,7 +22,7 @@ pub struct Place {
 /// One step from a place to a sub-place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Projection {
-    /// Reads through a shared reference, written `*place`.
+    /// Reads through a reference, written `*place`.
     Deref,
     /// Selects a named field of a struct place.
     Field(Symbol),
@@ -93,10 +93,12 @@ pub enum ExprKind {
     Lit(Literal),
     /// A resolved name used as a value.
     Path(Res),
-    /// A borrow of a place, written `&place`.
+    /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {
         /// The place being borrowed.
         operand: HirExprId,
+        /// Whether the borrow is exclusive (`*mut T`).
+        kind: seal_ty::RefKind,
     },
     /// A read through a reference, written `*reference`.
     Deref {

@@ -46,6 +46,19 @@ fn borrowing_a_dereference_of_a_non_reference_is_rejected() {
 }
 
 #[test]
+fn exclusive_borrows_produce_exclusive_references() {
+    let (fixture, hir, results) = check_clean("func f(p: *mut i32) -> *mut i32 { &mut *p }");
+    let (_, body) = function(&fixture, &hir, "f");
+    expect_ty(&hir, expr_ty(&results, tail(&hir, body)), "*mut i32");
+}
+
+#[test]
+fn reference_kinds_are_not_interchangeable() {
+    let (fixture, _, _) = check_errors("func f(p: *mut i32) -> *i32 { p }");
+    fixture.expect("E3001", "mismatched types");
+}
+
+#[test]
 fn borrow_of_a_value_is_rejected() {
     let (fixture, _, _) = check_errors("func f() -> *i32 { &(1 + 2) }");
     fixture.expect("E3013", "cannot borrow");

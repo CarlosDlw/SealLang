@@ -332,7 +332,7 @@ impl Reachability<'_> {
         self.assert_span(span);
         match kind {
             ExprKind::Unary { operand, .. }
-            | ExprKind::Borrow { operand }
+            | ExprKind::Borrow { operand, .. }
             | ExprKind::Deref { operand } => self.check_expr(operand),
             ExprKind::Field {
                 base, name_span, ..
@@ -390,8 +390,8 @@ impl Reachability<'_> {
             (ty.span, ty.kind.clone())
         };
         self.assert_span(span);
-        if let TypeKind::Pointer(inner) = kind {
-            self.check_type(inner);
+        if let TypeKind::Pointer { pointee, .. } = kind {
+            self.check_type(pointee);
         }
     }
 }

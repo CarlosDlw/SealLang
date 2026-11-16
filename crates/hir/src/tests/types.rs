@@ -10,7 +10,7 @@ fn annotations_lower_to_interned_types() {
     let (fixture, hir) = lower_clean("func f(x: *i32) -> f64 { let y: u8 = 1; 0.0 }");
     let (_, body) = function(&fixture, &hir, "f");
 
-    let TyKind::Ref(inner) = hir.ty_ctxt().kind(body.params[0].ty) else {
+    let TyKind::Ref { pointee: inner, .. } = hir.ty_ctxt().kind(body.params[0].ty) else {
         panic!("parameter type must be a reference");
     };
     assert_eq!(hir.ty_ctxt().kind(inner), TyKind::Int(IntTy::I32));
@@ -26,6 +26,18 @@ fn annotations_lower_to_interned_types() {
         hir.ty_ctxt().kind(ty.expect("declared binding type")),
         TyKind::Uint(UintTy::U8)
     );
+}
+
+#[test]
+fn exclusive_annotations_lower_to_exclusive_references() {
+    let (fixture, hir) = lower_clean("func f(p: *mut i32) -> *mut i32 { p }");
+    let (_, body) = function(&fixture, &hir, "f");
+    let TyKind::Ref { kind, pointee } = hir.ty_ctxt().kind(body.params[0].ty) else {
+        panic!("parameter type must be a reference");
+    };
+    assert!(kind.is_exclusive());
+    assert_eq!(hir.ty_ctxt().kind(pointee), TyKind::Int(IntTy::I32));
+    assert_eq!(body.ret.expect("return type"), body.params[0].ty);
 }
 
 #[test]

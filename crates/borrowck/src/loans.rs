@@ -18,7 +18,7 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
         let mut row = vec![None; block.statements.len()];
         for (position, statement) in block.statements.iter().enumerate() {
             let StatementKind::Assign { rvalue, .. } = &statement.kind;
-            let Rvalue::Ref(place) = rvalue else {
+            let Rvalue::Ref { place, .. } = rvalue else {
                 continue;
             };
             let id = LoanId::from_usize(loans.len());

@@ -27,7 +27,7 @@ fn struct_fields_are_registered_in_the_type_context() {
     assert_eq!(fixture.symbol(def.fields[1].name), "y");
     assert!(matches!(
         hir.ty_ctxt().kind(def.fields[1].ty),
-        TyKind::Ref(_)
+        TyKind::Ref { .. }
     ));
 }
 

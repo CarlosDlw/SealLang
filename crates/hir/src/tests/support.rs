@@ -320,7 +320,7 @@ impl Reachability<'_> {
 
         match kind {
             ExprKind::Unary { operand, .. }
-            | ExprKind::Borrow { operand }
+            | ExprKind::Borrow { operand, .. }
             | ExprKind::Deref { operand } => self.check_expr(operand),
             ExprKind::Field { base, .. } => self.check_expr(base),
             ExprKind::Struct { adt, fields } => {

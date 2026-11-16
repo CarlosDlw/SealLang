@@ -17,6 +17,18 @@ fn dereference_lowers_to_a_place_with_one_projection() {
 }
 
 #[test]
+fn exclusive_borrows_lower_their_kind() {
+    let (fixture, hir) = lower_clean("func f(p: *mut i32) -> *mut i32 { &mut *p }");
+    let (_, body) = function(&fixture, &hir, "f");
+    let expr = tail(&hir, body);
+
+    let ExprKind::Borrow { kind, .. } = hir.expr(expr).kind else {
+        panic!("expected a borrow, got {:?}", hir.expr(expr).kind);
+    };
+    assert!(kind.is_exclusive());
+}
+
+#[test]
 fn nested_dereferences_count_their_projections() {
     let (fixture, hir) = lower_clean("func read(p: **i32) -> i32 { **p }");
     let (_, body) = function(&fixture, &hir, "read");
@@ -38,7 +50,7 @@ fn borrow_lowers_to_its_operand_and_is_not_a_place() {
     let (_, body) = function(&fixture, &hir, "make");
     let expr = tail(&hir, body);
 
-    let ExprKind::Borrow { operand } = hir.expr(expr).kind.clone() else {
+    let ExprKind::Borrow { operand, .. } = hir.expr(expr).kind.clone() else {
         panic!("expected a borrow, got {:?}", hir.expr(expr).kind);
     };
     assert!(hir.place(expr).is_none());

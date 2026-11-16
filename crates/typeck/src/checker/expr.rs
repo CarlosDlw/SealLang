@@ -55,7 +55,7 @@ impl Checker<'_> {
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
             ExprKind::Path(res) => self.check_path(expr, res, span, flow, mode),
-            ExprKind::Borrow { operand } => self.check_borrow(operand, flow),
+            ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, flow),
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
                 if let Some(mut place) = self.results.place(operand).cloned() {
@@ -172,7 +172,7 @@ impl Checker<'_> {
                     (self.error_ty(), None)
                 }
             },
-            TyKind::Ref(_) => {
+            TyKind::Ref { .. } => {
                 self.error(
                     seal_error_codes::E3015,
                     span,

@@ -24,7 +24,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
-            Rvalue::Ref(place) => Ok(self.place_ptr(place)?.into()),
+            Rvalue::Ref { place, .. } => Ok(self.place_ptr(place)?.into()),
             Rvalue::Binary { op, lhs, rhs, span } => {
                 let ty = self.operand_type(lhs)?;
                 let lhs = self.load_operand(lhs)?;

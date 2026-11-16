@@ -59,14 +59,14 @@ Safe code cannot leak on purpose (`mem::forget` does not exist).
 
 ### D4 — `*T` is a reference, not a raw pointer
 
-A `*T` value is non-null, has no arithmetic, cannot be cast to or from an
-integer, and in v0.1 is read-only. It is created with `&place` and read with
-`*reference`; it denotes a borrowed place that remains valid and initialized for
-the whole region in which it is used. A dereference of a reference value denotes
-a place too, so `&*reference` borrows the pointee and the reference is held in a
-temporary. Exclusive access uses `*mut T`. Raw
-pointers (nullable, arithmetic, provenance-erasing) are a separate type with a
-separate syntax and require `unsafe`.
+A reference is non-null, has no arithmetic, cannot be cast to or from an integer,
+and is created with `&place` or `&mut place` and read with `*reference`; it
+denotes a borrowed place that remains valid and initialized for the whole region
+in which it is used. `*T` is shared and read-only; `*mut T` is exclusive and
+read-write, and the two never unify. A dereference of a reference value denotes a
+place too, so `&*reference` borrows the pointee and the reference is held in a
+temporary. Raw pointers (nullable, arithmetic, provenance-erasing) are a
+separate type with a separate syntax and require `unsafe`.
 
 This keeps the published `*T` syntax and makes the default safe: the common case
 does not need `unsafe`, and the unsafe layer can be added without changing
@@ -182,10 +182,11 @@ may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
-- `TyKind` has `Bool`, `Char`, `Str`, `Int`, `Uint`, `Float`, `Ref(TyId)`,
-  `Adt(AdtId)`, `Unit`, `Never`, `Error`, and `Infer`. `Ref` is D4's shared
-  reference; there is no nullable reference kind, because nullability is not a
-  type.
+- `TyKind` has `Bool`, `Char`, `Str`, `Int`, `Uint`, `Float`,
+  `Ref { kind: RefKind, pointee }`, `Adt(AdtId)`, `Unit`, `Never`, `Error`, and
+  `Infer`. `RefKind` is `Shared` (`*T`) or `Exclusive` (`*mut T`); the kind is
+  part of the type, so the two never unify. There is no nullable reference kind,
+  because nullability is not a type.
 - Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
   so `AdtId` identifies a nominal declaration while the definition holds the
   ordered fields, their `DefId`s, names, and types.
@@ -250,7 +251,6 @@ declaration.
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- `*mut T` — exclusive reference, with D6 aliasing.
 - Generics, methods, visibility, arrays, and `Drop` for aggregates — layers on
   the nominal struct foundation, not redesigns of it.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only

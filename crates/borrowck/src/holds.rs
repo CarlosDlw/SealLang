@@ -216,7 +216,7 @@ fn transfer(
     let destination_has_reference = hir.ty_ctxt().contains_reference(body.local(place.local).ty);
 
     match rvalue {
-        Rvalue::Ref(_) => {
+        Rvalue::Ref { .. } => {
             let mut loans = LoanSet::default();
             if let Some(loan) = loan {
                 loans.insert(loan);

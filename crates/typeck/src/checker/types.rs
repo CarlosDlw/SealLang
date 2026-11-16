@@ -2,7 +2,7 @@
 
 use seal_ast::PrimitiveType;
 use seal_hir::primitive_kind;
-use seal_ty::{TyId, TyKind};
+use seal_ty::{RefKind, TyId, TyKind};
 
 use super::Checker;
 
@@ -42,15 +42,18 @@ impl Checker<'_> {
 
     pub(super) fn str_ref_ty(&self) -> TyId {
         let str_ty = self.interned(TyKind::Str);
-        self.interned(TyKind::Ref(str_ty))
+        self.interned(TyKind::Ref {
+            kind: RefKind::Shared,
+            pointee: str_ty,
+        })
     }
 
-    /// Returns the shared reference type `*pointee`, interning it if needed.
+    /// Returns the reference type `kind` to `pointee`, interning it if needed.
     ///
     /// Borrowing a place creates a type the source never wrote, so this cannot
     /// go through [`Checker::interned`], which only looks up existing kinds.
-    pub(super) fn ref_ty(&self, pointee: TyId) -> TyId {
-        self.hir.ty_ctxt().intern(TyKind::Ref(pointee))
+    pub(super) fn ref_ty(&self, kind: RefKind, pointee: TyId) -> TyId {
+        self.hir.ty_ctxt().ref_ty_with(kind, pointee)
     }
 
     pub(super) fn ty_text(&self, ty: TyId) -> String {

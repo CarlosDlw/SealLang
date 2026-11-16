@@ -81,7 +81,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>) {
 
     match rvalue {
         Rvalue::Use(operand) => check_operand(statement, operand, context),
-        Rvalue::Ref(borrowed) => check_borrow(borrowed, statement.span, context),
+        Rvalue::Ref { place, .. } => check_borrow(place, statement.span, context),
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand(statement, lhs, context);
             check_operand(statement, rhs, context);

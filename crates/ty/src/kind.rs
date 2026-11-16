@@ -158,9 +158,43 @@ impl fmt::Display for FloatTy {
     }
 }
 
+/// Whether a reference permits writing through it.
+///
+/// The kind is part of the type, so `*i32` and `*mut i32` are distinct types and
+/// never unify. Decision D4 of the memory model gives `*T` shared, read-only
+/// access; decision D6 makes `*mut T` exclusive and read-write.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RefKind {
+    /// `*T`: shared and read-only; any number of live shared loans may overlap.
+    Shared,
+    /// `*mut T`: exclusive and read-write; no other loan may overlap.
+    Exclusive,
+}
+
+impl RefKind {
+    /// Returns the prefix that names the reference kind in the source.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Shared => "*",
+            Self::Exclusive => "*mut ",
+        }
+    }
+
+    /// Returns `true` for `*mut T`.
+    pub const fn is_exclusive(self) -> bool {
+        matches!(self, Self::Exclusive)
+    }
+}
+
+impl fmt::Display for RefKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.prefix())
+    }
+}
+
 /// The meaning of a type.
 ///
-/// The variants mirror the language surface: scalars, the unsized `str`, shared
+/// The variants mirror the language surface: scalars, the unsized `str`,
 /// references, nominal aggregates, the unit and never types, and the two
 /// non-user types (`Error` and `Infer`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -179,8 +213,13 @@ pub enum TyKind {
     Uint(UintTy),
     /// A floating-point type.
     Float(FloatTy),
-    /// A shared, non-owning reference, written `*T`.
-    Ref(TyId),
+    /// A non-owning reference, written `*T` or `*mut T`.
+    Ref {
+        /// Whether the reference permits writing through it.
+        kind: RefKind,
+        /// The referenced type.
+        pointee: TyId,
+    },
     /// A nominal aggregate type, such as a struct.
     Adt(AdtId),
     /// The unit type `()`.
@@ -198,7 +237,7 @@ pub enum TyKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{FloatTy, IntTy, UintTy};
+    use super::{FloatTy, IntTy, RefKind, UintTy};
 
     #[test]
     fn every_int_type_has_a_distinct_spelling() {
@@ -244,5 +283,15 @@ mod tests {
         assert_eq!(FloatTy::F64.bits(), 64);
         assert_eq!(FloatTy::F32.to_string(), "f32");
         assert!(FloatTy::F32 != FloatTy::F64);
+    }
+
+    #[test]
+    fn reference_kinds_have_distinct_spellings() {
+        assert_eq!(RefKind::Shared.prefix(), "*");
+        assert_eq!(RefKind::Exclusive.prefix(), "*mut ");
+        assert_eq!(RefKind::Exclusive.to_string(), "*mut ");
+        assert!(RefKind::Exclusive.is_exclusive());
+        assert!(!RefKind::Shared.is_exclusive());
+        assert_ne!(RefKind::Shared, RefKind::Exclusive);
     }
 }

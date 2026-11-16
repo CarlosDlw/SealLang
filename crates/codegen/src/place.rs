@@ -17,7 +17,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             match projection {
                 Projection::Deref => {
                     let pointee = match self.tcx.kind(ty) {
-                        TyKind::Ref(pointee) => pointee,
+                        TyKind::Ref { pointee, .. } => pointee,
                         other => {
                             return Err(CodegenError::internal(format!(
                                 "cannot dereference `{other:?}` during code generation"
@@ -74,7 +74,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             match projection {
                 Projection::Deref => {
                     let pointee = match self.tcx.kind(ty) {
-                        TyKind::Ref(pointee) => pointee,
+                        TyKind::Ref { pointee, .. } => pointee,
                         other => {
                             return Err(CodegenError::internal(format!(
                                 "cannot dereference `{other:?}` during code generation"

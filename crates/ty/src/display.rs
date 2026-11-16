@@ -52,7 +52,9 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Int(int) => fmt::Display::fmt(&int, f),
             TyKind::Uint(uint) => fmt::Display::fmt(&uint, f),
             TyKind::Float(float) => fmt::Display::fmt(&float, f),
-            TyKind::Ref(pointee) => write!(f, "*{}", self.display(pointee)),
+            TyKind::Ref { kind, pointee } => {
+                write!(f, "{}{}", kind.prefix(), self.display(pointee))
+            }
             TyKind::Adt(adt) => match self.interner {
                 Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name)),
                 None => write!(f, "<struct#{}>", adt.index()),
@@ -109,6 +111,16 @@ mod tests {
         assert_eq!(ctxt.display(pointer).to_string(), "*i32");
         let pointer = ctxt.ref_ty(pointer);
         assert_eq!(ctxt.display(pointer).to_string(), "**i32");
+    }
+
+    #[test]
+    fn exclusive_references_render_with_mut() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let exclusive = ctxt.mut_ref_ty(int);
+        assert_eq!(ctxt.display(exclusive).to_string(), "*mut i32");
+        let shared = ctxt.ref_ty(exclusive);
+        assert_eq!(ctxt.display(shared).to_string(), "**mut i32");
     }
 
     #[test]

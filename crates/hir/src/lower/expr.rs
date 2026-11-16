@@ -27,8 +27,13 @@ impl Lowering<'_> {
                 op,
                 operand: self.lower_expr(operand),
             },
-            AstExprKind::Borrow { operand } => ExprKind::Borrow {
+            AstExprKind::Borrow { operand, mutable } => ExprKind::Borrow {
                 operand: self.lower_expr(operand),
+                kind: if mutable {
+                    seal_ty::RefKind::Exclusive
+                } else {
+                    seal_ty::RefKind::Shared
+                },
             },
             AstExprKind::Deref { operand } => ExprKind::Deref {
                 operand: self.lower_expr(operand),

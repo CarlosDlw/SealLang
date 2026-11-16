@@ -10,9 +10,9 @@
 //! equal kinds are the only types that unify.
 //!
 //! The crate also encodes the memory model documented in
-//! `docs/memory-model.md`: `*T` is a shared, non-null reference, `str` is
-//! unsized, and `Copy`, `Sized`, and `Drop` are queries derived from the type
-//! rather than flags stored next to it.
+//! `docs/memory-model.md`: `*T` is a shared, non-null reference, `*mut T` is its
+//! exclusive counterpart, `str` is unsized, and `Copy`, `Sized`, and `Drop` are
+//! queries derived from the type rather than flags stored next to it.
 
 #![warn(missing_docs)]
 
@@ -30,4 +30,4 @@ pub use display::TyDisplay;
 pub use id::{AdtId, InferTyId, TyId};
 pub use infer::{InferCtxt, UnifyError};
 pub use init::{InitPaths, InitState, place_type};
-pub use kind::{FloatTy, IntTy, TyKind, UintTy};
+pub use kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};

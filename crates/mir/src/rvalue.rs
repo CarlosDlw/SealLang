@@ -106,12 +106,18 @@ pub enum AggregateKind {
 pub enum Rvalue {
     /// Copies or moves an operand.
     Use(Operand),
-    /// Borrows a place, written `&place`.
+    /// Borrows a place, written `&place` or `&mut place`.
     ///
-    /// The resulting `*T` is a shared reference: it keeps the borrowed place
-    /// alive for as long as the reference is used, and it permits other shared
-    /// reads of the same place.
-    Ref(Place),
+    /// A shared reference (`*T`) keeps the borrowed place alive and permits
+    /// other shared reads of it; an exclusive one (`*mut T`) permits reads and
+    /// writes but conflicts with every other loan. Borrow checking compares
+    /// loans by kind.
+    Ref {
+        /// The borrowed place.
+        place: Place,
+        /// Whether the borrow is exclusive.
+        kind: seal_ty::RefKind,
+    },
     /// Applies a binary operator to two operands.
     Binary {
         /// The operator.

@@ -219,10 +219,12 @@ pub enum ExprKind {
     Lit(Literal),
     /// A variable reference.
     Path(Symbol),
-    /// A borrow of a place, written `&place`.
+    /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {
         /// The place being borrowed.
         operand: ExprId,
+        /// `true` for `&mut`, which borrows the place exclusively.
+        mutable: bool,
     },
     /// A read through a reference, written `*reference`.
     Deref {

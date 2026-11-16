@@ -99,7 +99,13 @@ fn moving_a_borrowed_local_is_rejected() {
         local(int, LocalKind::Temp),
     ];
     let statements = vec![
-        assign(local_id(2), Rvalue::Ref(Place::local(local_id(1)))),
+        assign(
+            local_id(2),
+            Rvalue::Ref {
+                place: Place::local(local_id(1)),
+                kind: seal_ty::RefKind::Shared,
+            },
+        ),
         assign(
             local_id(3),
             Rvalue::Use(Operand::Move(Place::local(local_id(1)))),
