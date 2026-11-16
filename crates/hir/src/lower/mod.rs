@@ -19,6 +19,8 @@ mod scope;
 mod stmt;
 mod types;
 
+pub(crate) use types::intern_primitives;
+
 pub(crate) fn lower_ast(ast: &Ast, dcx: &DiagCtxt, interner: &Interner) -> Hir {
     Lowering::new(ast, dcx, interner).run()
 }

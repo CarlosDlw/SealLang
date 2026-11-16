@@ -402,6 +402,162 @@ Move the statement inside a `while` body, or remove it. `continue` inside an `if
 that is itself inside a loop targets the enclosing loop and is accepted.",
 };
 
+/// Expression types do not match.
+pub const E3001: ErrorCode = ErrorCode {
+    code: "E3001",
+    title: "mismatched types",
+    explanation: "\
+Seal has no implicit conversions: the type an expression has must be exactly the
+type its context requires. This applies to initializers, assignments, arguments,
+returns, conditions, and the two branches of an `if`.
+
+A literal takes the type its context requires when that type is compatible, so
+`let x: i64 = 1;` is accepted, while `let x: i64 = 1i32;` is not: the suffix
+pins the literal to `i32`. Choose the same type on both sides, add a suffix, or
+change the declaration. The diagnostic names the expected and the found type.",
+};
+
+/// An operator cannot be applied to the operand's type.
+pub const E3002: ErrorCode = ErrorCode {
+    code: "E3002",
+    title: "invalid operands for operator",
+    explanation: "\
+Each operator accepts a fixed family of types. Arithmetic operators accept
+integers and floats of one type; `&`, `|`, `^`, `~`, `<<`, and `>>` accept
+integers; `&&`, `||`, and `!` accept `bool`; comparisons accept two equal
+numeric or `char` values, and equality also accepts other values.
+
+Operands are never converted, so mixed-width arithmetic such as `1i32 + 1i64` is
+an error even though both sides are integers. Make both operands the same type.
+Negating an unsigned integer is also rejected, because the result would not fit
+the operand's type.",
+};
+
+/// An `if` or `while` condition is not `bool`.
+pub const E3003: ErrorCode = ErrorCode {
+    code: "E3003",
+    title: "condition must be `bool`",
+    explanation: "\
+The condition of an `if` or `while` decides control flow, so it must have type
+`bool`. Seal does not use truthiness: integers, floats, characters, and
+references are not conditions on their own.
+
+Write a comparison such as `value != 0`, or bind the condition to a `bool` and
+use that binding.",
+};
+
+/// A binding that is not mutable is assigned to.
+pub const E3004: ErrorCode = ErrorCode {
+    code: "E3004",
+    title: "assignment to immutable binding",
+    explanation: "\
+Bindings are immutable unless declared with `let mut` (decision D8 of the memory
+model). Assignment, compound assignment, `++`, and `--` all change the place, so
+they require a mutable binding. Parameters are immutable too; a function that
+needs to change an argument must bind it again with `let mut`.
+
+A binding declared without an initializer is the one exception: assigning to it
+for the first time initializes it (decision D9), and only later writes require
+`let mut`. Declare the binding with `let mut`, or remove the write.",
+};
+
+/// An assignment target is not a local place.
+pub const E3005: ErrorCode = ErrorCode {
+    code: "E3005",
+    title: "invalid assignment target",
+    explanation: "\
+An assignment target must be a local place: a `let` binding or a parameter,
+possibly written in parentheses. Functions are items, not storage, so assigning
+to a function name is rejected even though the name resolves.
+
+Assign to a local binding instead, or remove the assignment.",
+};
+
+/// The callee of a call is not a function.
+pub const E3006: ErrorCode = ErrorCode {
+    code: "E3006",
+    title: "expression is not callable",
+    explanation: "\
+Only function items can be called. Seal has no first-class function type yet, so
+a local binding never holds a function and cannot be used as a callee. Calling a
+literal, an arithmetic result, or a local binding is therefore an error.
+
+Name the function directly, for example `compute(1)`, or remove the call.",
+};
+
+/// A function item is used where a value is required.
+pub const E3007: ErrorCode = ErrorCode {
+    code: "E3007",
+    title: "function item used as a value",
+    explanation: "\
+A function name is only meaningful in call position. Seal does not have
+first-class function types, so a function item cannot be stored in a binding,
+passed as an argument, returned, or used as an operand.
+
+Call the function instead, or move the work into a function that returns the
+value you need.",
+};
+
+/// A call supplies the wrong number of arguments.
+pub const E3008: ErrorCode = ErrorCode {
+    code: "E3008",
+    title: "wrong number of arguments",
+    explanation: "\
+A call must supply exactly one argument for each parameter the function
+declares. Seal has no default parameters, variadic parameters, or overloading,
+so the count is fixed by the declaration.
+
+Remove extra arguments or supply the missing ones. The diagnostic names both
+counts, which makes an off-by-one easy to spot.",
+};
+
+/// A literal does not fit the type selected for it.
+pub const E3009: ErrorCode = ErrorCode {
+    code: "E3009",
+    title: "literal out of range",
+    explanation: "\
+Integer literals take their type from a suffix or from the surrounding context,
+and the value must fit that type. For example, `300u8` and `let x: i8 = 200;`
+are rejected because the value is outside the type's range.
+
+The range of `isize` and `usize` follows the target's pointer width, so the same
+literal can be accepted for a 64-bit target and rejected for a 32-bit one. A
+negative signed literal is allowed to name the type's minimum, as in `-128i8`.
+
+Choose a wider type or a smaller value. Floating literals assigned to `f32` must
+also remain finite when rounded to `f32`.",
+};
+
+/// A value with an unknown size is stored directly.
+pub const E3010: ErrorCode = ErrorCode {
+    code: "E3010",
+    title: "value has an unsized type",
+    explanation: "\
+Locals, parameters, and return values are stored directly, so their type must
+have a size known at compile time (decision D10 of the memory model). `str` is
+the only unsized type in the current language: it is a sequence of bytes with a
+runtime length, so it can only appear behind a reference.
+
+Use `*str` for string data. String literals already have type `*str` and can be
+stored in a binding without annotation.",
+};
+
+/// A local is read before it is definitely initialized.
+pub const E3011: ErrorCode = ErrorCode {
+    code: "E3011",
+    title: "use of possibly-uninitialized binding",
+    explanation: "\
+A `let` declaration without an initializer creates storage but does not put a
+value in it (decision D9 of the memory model). Reading the binding before every
+path assigns a value would observe undefined contents, so the compiler rejects
+it.
+
+Assign a value on every path before the read. An `if` initializes a binding only
+when both branches assign it, or when the branch that does not assign it never
+reaches the code after the `if`. Assignments inside a `while` body do not count
+after the loop, because the body may run zero times.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -430,8 +586,8 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E9001,
-    E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E3001,
+    E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -538,6 +694,22 @@ mod tests {
             .filter(|code| code.starts_with("E20"))
             .collect();
         assert_eq!(codes, ["E2001", "E2002", "E2003", "E2004"]);
+    }
+
+    #[test]
+    fn type_checking_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E30"))
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
+                "E3010", "E3011",
+            ]
+        );
     }
 
     #[test]

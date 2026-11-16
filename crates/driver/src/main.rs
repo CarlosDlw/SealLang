@@ -107,9 +107,19 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
             // Lowering assumes a syntactically valid tree. A parse error already
             // leaves `Error` nodes behind, so the pipeline stops after `parse`.
             if session.diag().error_count() == errors_before_lexing {
-                let _hir = session.profiler().time("hir", || {
+                let hir = session.profiler().time("hir", || {
                     seal_hir::lower(&ast, session.diag(), session.interner())
                 });
+                if session.diag().error_count() == errors_before_lexing {
+                    let _typeck = session.profiler().time("typeck", || {
+                        seal_typeck::check(
+                            &hir,
+                            session.diag(),
+                            session.interner(),
+                            session.target().pointer_width(),
+                        )
+                    });
+                }
             }
         }
     }
@@ -130,7 +140,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Later phases (type checking, MIR, codegen) plug in here, consuming the
-    // lowered tree produced above.
+    // Later phases (MIR, borrow checking, codegen) plug in here, consuming the
+    // checked tree produced above.
     Ok(ExitCode::SUCCESS)
 }

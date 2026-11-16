@@ -43,6 +43,15 @@ impl TyCtxt {
         self.kinds[ty]
     }
 
+    /// Looks up the canonical ID of an already interned kind.
+    ///
+    /// Returns `None` if `kind` was never interned. This is the read-only
+    /// counterpart of [`TyCtxt::intern`], for phases that must not modify the
+    /// context.
+    pub fn lookup(&self, kind: TyKind) -> Option<TyId> {
+        self.interner.get(&kind).copied()
+    }
+
     /// Returns the number of interned types.
     pub fn len(&self) -> usize {
         self.kinds.len()
@@ -279,6 +288,15 @@ mod tests {
         ] {
             assert!(!ctxt.needs_drop(ty));
         }
+    }
+
+    #[test]
+    fn lookup_returns_only_interned_kinds() {
+        let mut ctxt = TyCtxt::new();
+        assert_eq!(ctxt.lookup(TyKind::Bool), None);
+        let bool_ty = ctxt.bool_ty();
+        assert_eq!(ctxt.lookup(TyKind::Bool), Some(bool_ty));
+        assert_eq!(ctxt.lookup(TyKind::Error), None);
     }
 
     #[test]

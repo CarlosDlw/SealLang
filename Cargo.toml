@@ -21,6 +21,7 @@ seal-parser = { path = "crates/parser" }
 seal-ty = { path = "crates/ty" }
 seal-def = { path = "crates/def" }
 seal-hir = { path = "crates/hir" }
+seal-typeck = { path = "crates/typeck" }
 seal-diagnostics = { path = "crates/diagnostics" }
 seal-error-codes = { path = "crates/error-codes" }
 seal-version = { path = "crates/version" }

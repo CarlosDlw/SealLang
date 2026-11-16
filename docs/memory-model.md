@@ -101,7 +101,9 @@ operations of that type, never implicit on assignment.
 `let x = 1;` binds `x` immutably: assignment, compound assignment, `++`/`--`, and
 any other write through the name are errors. `let mut x = 1;` opts in to
 mutation. Parameters are immutable; a function that needs to mutate an argument
-binds it again with `let mut`.
+binds it again with `let mut`. A binding declared without an initializer (D9) is
+the exception: assigning to it for the first time initializes it, and only
+subsequent writes require `let mut`.
 
 Binding mutability is independent of ownership: an immutable binding can still
 own a value and move it elsewhere, and making a binding mutable does not change

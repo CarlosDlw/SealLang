@@ -1,11 +1,11 @@
-# Seal compiler architecture — foundation, lexer, parser, and HIR
+# Seal compiler architecture — foundation through type checking
 
-This document covers the compiler foundation and the first three phases: the
-lexer, the parser, and HIR lowering with name resolution. The foundation is the
-set of crates that every later phase (type checking, MIR, codegen) depends on.
-It is kept in sync with the code; changes to a public invariant must change this
-file in the same commit. The memory model that the type representation encodes is
-decided in [`memory-model.md`](memory-model.md).
+This document covers the compiler foundation and the first four phases: the
+lexer, the parser, HIR lowering with name resolution, and type checking. The
+foundation is the set of crates that every later phase (MIR, borrow checking,
+codegen) depends on. It is kept in sync with the code; changes to a public
+invariant must change this file in the same commit. The memory model that the
+type representation encodes is decided in [`memory-model.md`](memory-model.md).
 
 ## Workspace layout
 
@@ -28,6 +28,7 @@ allowed to depend only on crates below it in the list.
 | `seal-ty` | Interned semantic types, inference variables, unification, and the `Copy`/`Sized`/`Drop` queries from the memory model. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -118,6 +119,24 @@ allowed to depend only on crates below it in the list.
 26. **Scopes follow the source.** Resolution walks ribs from the innermost
     outwards; a `let` inserts after its initializer, so a binding is not visible
     in its own initializer, and `if`/`while` bodies never leak bindings.
+27. **Types are assigned without coercion.** Checked types are exactly equal, or
+    one side is `!`/`Error`; there is no implicit numeric conversion (D12). A
+    literal adopts the expected type only when that type belongs to the same
+    numeric family, and a suffix always wins.
+28. **Every value expression has a type.** The results map covers every HIR
+    expression except the callee of a valid call, which is not a value because
+    the language has no first-class function type. Every local has a type and
+    every function has a signature.
+29. **Conditions are boolean.** `if` and `while` conditions are checked against
+    `bool`; there is no truthiness.
+30. **Initialization is definite.** A local read requires initialization on
+    every path that reaches it. Assignments in both `if` branches count only at
+    the join; a branch that diverges does not participate; a `while` restores
+    the state from before the loop. An uninitialized immutable binding may be
+    initialized once by assignment; reassigning it needs `let mut`.
+31. **Stored values are sized.** Locals, parameters, and return values cannot
+    have `str`; literals must fit the integer or float type selected for them,
+    using the target pointer width for `isize` and `usize`.
 
 ## Extension points
 
@@ -132,6 +151,10 @@ allowed to depend only on crates below it in the list.
   `AstBuilder`, parse it in `seal-parser`, and give it a recovery path plus a
   span that covers its children. Precedence lives in `expr.rs`'s operator
   tables, so a new binary operator is one entry and one enum variant.
+- **New operator.** Add the AST variant and its parser precedence, then add an
+  arm to `seal-typeck`'s operator table with the operand family it accepts and
+  tests for each accepted and rejected family. Operators never convert their
+  operands; a mixed-type use is `E3002` or `E3001`.
 - **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
   unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
   and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both

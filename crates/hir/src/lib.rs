@@ -30,6 +30,7 @@ mod body;
 mod expr;
 mod id;
 mod lower;
+mod primitives;
 mod res;
 
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod tests;
 pub use body::{Block, Body, ParamData, Stmt, StmtKind};
 pub use expr::{Expr, ExprKind, Place};
 pub use id::{BodyId, HirBlockId, HirExprId, HirStmtId};
+pub use primitives::primitive_kind;
 pub use res::Res;
 
 use seal_ast::Ast;
@@ -157,7 +159,8 @@ impl Hir {
         &self.exprs
     }
 
-    pub(crate) fn empty(ty_ctxt: TyCtxt) -> Self {
+    pub(crate) fn empty(mut ty_ctxt: TyCtxt) -> Self {
+        lower::intern_primitives(&mut ty_ctxt);
         Self {
             definitions: Definitions::new(),
             bodies: IndexVec::new(),

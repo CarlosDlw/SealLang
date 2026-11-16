@@ -20,4 +20,5 @@ seal-parser.workspace = true
 seal-error-codes.workspace = true
 seal-session.workspace = true
 seal-target.workspace = true
+seal-typeck.workspace = true
 seal-version.workspace = true

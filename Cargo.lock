@@ -57,6 +57,7 @@ dependencies = [
  "seal-parser",
  "seal-session",
  "seal-target",
+ "seal-typeck",
  "seal-version",
 ]
 
@@ -185,6 +186,23 @@ version = "0.1.0"
 dependencies = [
  "seal-hash",
  "seal-index",
+]
+
+[[package]]
+name = "seal-typeck"
+version = "0.1.0"
+dependencies = [
+ "seal-ast",
+ "seal-def",
+ "seal-diagnostics",
+ "seal-error-codes",
+ "seal-hash",
+ "seal-hir",
+ "seal-lexer",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+ "seal-ty",
 ]
 
 [[package]]
