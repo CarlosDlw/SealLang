@@ -769,8 +769,10 @@ reference loaded from a local that borrowed another local.
 
 Returning a reference to a parameter is fine: the caller owns the referenced
 data and keeps it alive. Borrowing through a reference, as in `&*parameter`,
-points outside this frame and is accepted too. To return derived data, the
-caller must own the storage or the value must be copied.",
+points outside this frame and is accepted too. The loans the reference itself
+carries are checked as well, so `&*identity(&local)` is rejected: the pointee
+still belongs to this frame. To return derived data, the caller must own the
+storage or the value must be copied.",
 };
 
 /// A local is read after its value was moved out.

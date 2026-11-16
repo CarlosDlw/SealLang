@@ -1,7 +1,7 @@
 //! Reference types: borrowing places and reading through references.
 
 use seal_error_codes as codes;
-use seal_hir::HirExprId;
+use seal_hir::{ExprKind, HirExprId};
 use seal_span::Span;
 use seal_ty::{TyId, TyKind};
 
@@ -11,11 +11,15 @@ use super::flow::Flow;
 impl Checker<'_> {
     /// Types `&place` as `*T`, where `T` is the type of the borrowed place.
     ///
-    /// Only places can be borrowed: a computed value has no storage, and Seal
-    /// does not create hidden temporaries. Reading the borrowed place also
-    /// requires it to be initialized, which `infer_expr` checks.
+    /// A place is a binding, a parameter, a field, or a dereference of a
+    /// reference — including a reference value such as a call result, because
+    /// `*reference` names the pointee wherever the reference came from. A
+    /// computed value has no storage, and Seal does not create hidden
+    /// temporaries for borrows. Reading the borrowed place also requires it to
+    /// be initialized, which `infer_expr` checks.
     pub(super) fn check_borrow(&mut self, operand: HirExprId, flow: &mut Flow) -> TyId {
-        let is_place = self.hir.place(operand).is_some();
+        let is_place = self.hir.place(operand).is_some()
+            || matches!(self.hir.expr(operand).kind, ExprKind::Deref { .. });
         let ty = self.infer_expr(operand, None, flow);
 
         if !is_place {

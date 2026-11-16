@@ -170,7 +170,9 @@ allowed to depend only on crates below it in the list.
     may exist and must stay structurally valid. Validation does not require
     reachability; removing dead blocks belongs to a later pass.
 38. **References are checked, never annotated.** `&place` creates a `*T` loan
-    and `*reference` reads through it. Regions are inferred from liveness; there
+    and `*reference` reads through it. A dereference of a reference value is a
+    place as well, so `&*identity(p)` borrows the pointee and lowering keeps the
+    reference itself in a temporary. Regions are inferred from liveness; there
     is no lifetime syntax, and no region appears in a type.
 39. **A shared loan permits reads and forbids writes.** `*T` is read-only, so a
     live loan conflicts only with assigning or moving the borrowed place. Two
@@ -182,7 +184,9 @@ allowed to depend only on crates below it in the list.
     dies, including inside loops.
 41. **A reference never outlives its storage.** A returned loan of a whole local
     is `E5004`; a loan through a reference (`&*parameter`) borrows data outside
-    the frame and is accepted.
+    the frame and is accepted. The loans that the reference itself carries are
+    checked too, so `&*identity(&local)` stays `E5004`: the pointee belongs to
+    this frame even though the returned place is reached through a reference.
 42. **Initialization is rechecked on places.** The checker tracks
     uninitialized, initialized, and moved for every local on the MIR graph. A
     read of a moved place is `E5005`, and a read that is not initialized on

@@ -62,7 +62,9 @@ Safe code cannot leak on purpose (`mem::forget` does not exist).
 A `*T` value is non-null, has no arithmetic, cannot be cast to or from an
 integer, and in v0.1 is read-only. It is created with `&place` and read with
 `*reference`; it denotes a borrowed place that remains valid and initialized for
-the whole region in which it is used. Exclusive access uses `*mut T`. Raw
+the whole region in which it is used. A dereference of a reference value denotes
+a place too, so `&*reference` borrows the pointee and the reference is held in a
+temporary. Exclusive access uses `*mut T`. Raw
 pointers (nullable, arithmetic, provenance-erasing) are a separate type with a
 separate syntax and require `unsafe`.
 

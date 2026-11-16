@@ -84,10 +84,19 @@ impl<'a> Reporter<'a> {
     }
 
     /// A read reaches a place whose value was moved out.
-    pub(crate) fn use_of_moved_value(&self, place: &Place, span: Span) {
-        let name = self.place_text(place);
+    ///
+    /// `moved` may be a prefix of `used`: reading `a.x` after `a` moved reports
+    /// that `a` was moved, because that is the place the user has to reassign.
+    pub(crate) fn use_of_moved_value(&self, used: &Place, moved: &Place, span: Span) {
+        let used_name = self.place_text(used);
+        let moved_name = self.place_text(moved);
+        let message = if used_name == moved_name {
+            format!("`{moved_name}` was moved and cannot be used here")
+        } else {
+            format!("cannot use `{used_name}` because `{moved_name}` was moved")
+        };
         self.dcx
-            .error(format!("`{name}` was moved and cannot be used here"))
+            .error(message)
             .code(codes::E5005.diag_code())
             .primary(span, "")
             .help("reassign the place before using it, or borrow instead of moving")

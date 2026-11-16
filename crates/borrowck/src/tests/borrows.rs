@@ -30,6 +30,32 @@ fn reading_through_a_returned_reference_is_allowed() {
 }
 
 #[test]
+fn borrowing_through_a_reference_value_keeps_the_pointee_alive() {
+    check_clean(
+        "func identity(p: *i32) -> *i32 {\n  p\n}\n\n\
+         func f() -> i32 {\n  let x = 2;\n  let r = &*identity(&x);\n  *r + 1\n}\n",
+    );
+}
+
+#[test]
+fn a_read_of_a_field_names_the_moved_place() {
+    let fixture = check_errors(
+        "struct Point { x: i32, y: i32 }\n\
+         func f() -> i32 {\n  let a = Point { x: 1, y: 2 };\n  let b = a;\n  a.x + b.y\n}\n",
+    );
+    fixture.expect("E5005", "because `a` was moved");
+}
+
+#[test]
+fn a_read_of_a_whole_place_names_it_once() {
+    let fixture = check_errors(
+        "struct Point { x: i32, y: i32 }\n\
+         func f() -> Point {\n  let a = Point { x: 1, y: 2 };\n  let b = a;\n  let c = a;\n  c\n}\n",
+    );
+    fixture.expect("E5005", "`a` was moved and cannot be used here");
+}
+
+#[test]
 fn two_shared_borrows_may_overlap() {
     check_clean("func f() -> i32 {\n  let x = 1;\n  let a = &x;\n  let b = &x;\n  *a + *b\n}\n");
 }

@@ -9,6 +9,7 @@ use seal_symbol::Interner;
 use seal_ty::InitPaths;
 
 use crate::holds::{self, HoldState, LoanSet};
+use crate::id::LoanId;
 use crate::init::{self, Init, InitInfo};
 use crate::liveness::{self, LocalSet};
 use crate::loan::Loan;
@@ -128,7 +129,10 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
 fn check_read(place: &Place, span: seal_span::Span, context: &Context<'_>) {
     match state(context, place) {
         Init::Initialized => {}
-        Init::Moved | Init::PartiallyMoved => context.reporter.use_of_moved_value(place, span),
+        Init::Moved | Init::PartiallyMoved => {
+            let moved = moved_place(context, place);
+            context.reporter.use_of_moved_value(place, &moved, span);
+        }
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
 }
@@ -137,10 +141,29 @@ fn check_read(place: &Place, span: seal_span::Span, context: &Context<'_>) {
 fn check_borrow(place: &Place, span: seal_span::Span, context: &Context<'_>) {
     match state(context, place) {
         Init::Initialized => {}
-        Init::Moved => context.reporter.use_of_moved_value(place, span),
+        Init::Moved => {
+            let moved = moved_place(context, place);
+            context.reporter.use_of_moved_value(place, &moved, span);
+        }
         Init::PartiallyMoved => context.reporter.borrow_partially_moved(place, span),
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
+}
+
+/// Returns the place whose value was moved out, which may be a prefix of
+/// `place`.
+///
+/// A read of `a.x` after `a` moved is fixed by reassigning `a`, so the message
+/// names the shortest prefix that is itself moved instead of reporting the
+/// read as if `a.x` had been moved on its own.
+fn moved_place(context: &Context<'_>, place: &Place) -> Place {
+    (0..=place.projections.len())
+        .map(|length| place.projections[..length].to_vec())
+        .find_map(|projections| {
+            let prefix = Place::with_projections(place.local, projections);
+            matches!(state(context, &prefix), Init::Moved).then_some(prefix)
+        })
+        .unwrap_or_else(|| place.clone())
 }
 
 fn state(context: &Context<'_>, place: &Place) -> Init {
@@ -150,6 +173,33 @@ fn state(context: &Context<'_>, place: &Place) -> Init {
         context.hir.ty_ctxt(),
         context.body.local(place.local).ty,
     )
+}
+
+/// Collects the frame loans that escape with a returned loan.
+///
+/// A loan created by `&*reference` borrows whatever that reference points at. A
+/// reference created in this frame therefore carries its own loans out with the
+/// returned reference, and those are the loans that would dangle. A reference
+/// loaded through another reference may alias any loan in the body, which is
+/// the conservative reading the may-hold analysis already documents.
+fn escaping_loans(
+    holds: &HoldState,
+    loans: &[Loan],
+    id: LoanId,
+    visited: &mut LoanSet,
+    escaped: &mut Vec<LoanId>,
+) {
+    if !visited.insert(id) {
+        return;
+    }
+    let loan = &loans[id.index() as usize];
+    if !loan.place.is_deref() {
+        escaped.push(id);
+        return;
+    }
+    for held in holds.local_loans(loan.place.local) {
+        escaping_loans(holds, loans, held, visited, escaped);
+    }
 }
 
 /// Returns the live loans that overlap `place`.
@@ -205,13 +255,23 @@ fn check_terminator(
                 block.terminator.span,
                 &read_context,
             );
+            let mut escaped = Vec::new();
+            let mut visited = LoanSet::default();
             for id in holds::return_loans(&context.holds.exit[block_index], return_local) {
+                escaping_loans(
+                    &context.holds.exit[block_index],
+                    context.loans,
+                    id,
+                    &mut visited,
+                    &mut escaped,
+                );
+            }
+            // A loan through a reference borrows data outside this frame unless
+            // the reference itself borrowed this frame's storage, so report the
+            // loans that actually would dangle, in a deterministic order.
+            escaped.sort_by_key(|id| id.index());
+            for id in escaped {
                 let loan = &context.loans[id.index() as usize];
-                // A loan through a reference borrows data outside this frame;
-                // a loan of this frame's storage would dangle on return.
-                if loan.place.is_deref() {
-                    continue;
-                }
                 context
                     .reporter
                     .return_local_reference(loan, block.terminator.span);

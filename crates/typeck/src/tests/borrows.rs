@@ -31,6 +31,21 @@ fn borrowing_string_data_keeps_the_reference() {
 }
 
 #[test]
+fn borrowing_through_a_reference_value_keeps_the_pointee_type() {
+    let (fixture, hir, results) = check_clean(
+        "func identity(p: *i32) -> *i32 { p }\nfunc f(p: *i32) -> *i32 { &*identity(p) }",
+    );
+    let (_, body) = function(&fixture, &hir, "f");
+    expect_ty(&hir, expr_ty(&results, tail(&hir, body)), "*i32");
+}
+
+#[test]
+fn borrowing_a_dereference_of_a_non_reference_is_rejected() {
+    let (fixture, _, _) = check_errors("func f() -> i32 { let x = 1; &*x }");
+    fixture.expect("E3012", "cannot dereference");
+}
+
+#[test]
 fn borrow_of_a_value_is_rejected() {
     let (fixture, _, _) = check_errors("func f() -> *i32 { &(1 + 2) }");
     fixture.expect("E3013", "cannot borrow");

@@ -78,6 +78,30 @@ fn dereferencing_a_borrow_reads_through_a_temporary() {
 }
 
 #[test]
+fn borrowing_through_a_reference_value_borrows_its_temporary() {
+    let source = "func identity(p: *i32) -> *i32 {\n  p\n}\n\n\
+                  func main() -> i32 {\n  let x = 1;\n  let r = &*identity(&x);\n  *r\n}\n";
+    let (fixture, hir, mir) = lower_clean(source);
+    let body = function(&fixture, &hir, &mir, "main");
+    let block = body.block(body.entry);
+
+    let (destination, borrowed) = block
+        .statements
+        .iter()
+        .find_map(|statement| {
+            let (destination, rvalue) = assignment(statement);
+            match rvalue {
+                Rvalue::Ref(borrowed) if borrowed.is_deref() => Some((destination, borrowed)),
+                _ => None,
+            }
+        })
+        .expect("a borrow through a reference value is lowered");
+    assert_eq!(body.local(destination.local).kind, LocalKind::Binding);
+    assert_eq!(body.local(borrowed.local).kind, LocalKind::Temp);
+    assert_eq!(borrowed.projections(), [Projection::Deref]);
+}
+
+#[test]
 fn a_borrowed_argument_is_passed_through_a_temporary() {
     let source = "func identity(p: *i32) -> *i32 {\n  p\n}\n\n\
                   func main() -> *i32 {\n  let x = 1;\n  identity(&x)\n}\n";
