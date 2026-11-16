@@ -164,6 +164,23 @@ pub fn load(path: &Path, max_bytes: u64) -> Result<SourceText, LoadError> {
     })
 }
 
+/// Moves `source` over `destination`, replacing it.
+///
+/// `rename` replaces the destination atomically on Unix. Windows refuses to
+/// rename onto an existing file, so the destination is removed first: a reader
+/// still observes either the previous file or the new one, never a partial
+/// write.
+pub fn replace(source: &Path, destination: &Path) -> io::Result<()> {
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(destination)?;
+            fs::rename(source, destination)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Writes `bytes` to `path` atomically.
 ///
 /// The data is written to a uniquely named temporary file in the same directory
@@ -193,17 +210,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         file.flush()?;
         file.sync_all()?;
         drop(file);
-        match fs::rename(&temp_path, path) {
-            Ok(()) => Ok(()),
-            // On Windows, renaming over an existing file fails. Removing the
-            // destination first keeps the operation effectively atomic for the
-            // reader: either the old or the new file is present.
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                fs::remove_file(path)?;
-                fs::rename(&temp_path, path)
-            }
-            Err(error) => Err(error),
-        }
+        replace(&temp_path, path)
     })();
 
     if result.is_err() {
@@ -219,7 +226,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{DEFAULT_MAX_FILE_SIZE, LoadError, load, write_atomic};
+    use super::{DEFAULT_MAX_FILE_SIZE, LoadError, load, replace, write_atomic};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -325,6 +332,29 @@ mod tests {
         let path = dir.path.join("missing").join("out.txt");
         assert!(write_atomic(&path, b"data").is_err());
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn replace_moves_the_source_over_the_destination() {
+        let dir = TempDir::new();
+        let source = dir.file("new", b"new bytes");
+        let destination = dir.file("out", b"old bytes");
+        replace(&source, &destination).expect("the replacement succeeds");
+        assert!(!source.exists(), "the source is gone after the replace");
+        assert_eq!(
+            fs::read(&destination).expect("destination readable"),
+            b"new bytes"
+        );
+    }
+
+    #[test]
+    fn replace_into_a_missing_directory_keeps_the_source() {
+        let dir = TempDir::new();
+        let source = dir.file("artifact", b"bytes");
+        let destination = dir.path.join("missing").join("artifact");
+        assert!(replace(&source, &destination).is_err());
+        assert_eq!(fs::read(&source).expect("source readable"), b"bytes");
+        assert!(!destination.exists());
     }
 
     #[test]

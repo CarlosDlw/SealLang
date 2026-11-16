@@ -2,11 +2,14 @@
 //!
 //! Object and assembly output are written atomically through `seal-fs`. An
 //! executable is linked from a temporary object and the embedded runtime
-//! archive in the output directory; both temporary files are removed on every
-//! path, including linker failure.
+//! archive in the output directory into a temporary executable, which replaces
+//! the destination only after a successful link. Every temporary file is
+//! removed on every path, including linker failure.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use inkwell::module::Module;
 use inkwell::targets::{FileType, TargetMachine};
@@ -97,17 +100,28 @@ fn link_executable(
         )
     })?;
 
+    let temporary_path = temporary_executable(output)?;
+    let _temporary_guard = TempFile(temporary_path.clone());
     let invocation = linker::invocation(
         linker::default_program(),
         &object_path,
         &runtime_path,
-        output,
+        &temporary_path,
     );
     let result = Command::new(invocation.program())
         .args(invocation.arguments())
         .output();
     match result {
-        Ok(result) if result.status.success() => Ok(()),
+        Ok(result) if result.status.success() => {
+            // The destination is replaced only after a successful link, so a
+            // failed link never truncates the output of an earlier build.
+            seal_fs::replace(&temporary_path, output).map_err(|error| {
+                CodegenError::artifact(
+                    output,
+                    format!("cannot replace the output with the linked executable: {error}"),
+                )
+            })
+        }
         Ok(result) => Err(CodegenError::artifact(
             output,
             format!(
@@ -125,6 +139,41 @@ fn link_executable(
             ),
         )),
     }
+}
+
+/// Builds the path the linker writes before it replaces `output`.
+///
+/// The name lives in the destination directory and keeps its extension, so the
+/// final rename stays on one filesystem and `cl`/`link` never append `.exe` on
+/// their own. Toolchains that do append it when the name has no extension are
+/// handled by giving Windows temporary paths an explicit one.
+fn temporary_executable(output: &Path) -> Result<PathBuf, CodegenError> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let directory = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = output
+        .file_name()
+        .ok_or_else(|| CodegenError::artifact(output, "the output path has no file name"))?;
+    let stem = output.file_stem().unwrap_or(file_name);
+    let mut name = OsString::from(".");
+    name.push(stem);
+    name.push(format!(
+        ".{}.{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    if let Some(extension) = output.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    let mut path = directory.join(name);
+    if cfg!(windows) && path.extension().is_none() {
+        path.set_extension("exe");
+    }
+    Ok(path)
 }
 
 struct TempFile(PathBuf);

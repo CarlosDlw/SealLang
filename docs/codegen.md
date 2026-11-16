@@ -144,6 +144,10 @@ the program name: `cl` and `clang-cl` use `/Fe:`, the standalone `link` uses
 `/OUT:`, and every other toolchain uses `-o`. On Windows the driver appends
 `.exe` to executable output paths that have no extension.
 
+The linker writes to a temporary path in the output directory, which replaces
+the destination only after a successful link. A failed link leaves an existing
+executable from an earlier build untouched and never leaves a truncated one.
+
 ## Failures
 
 | Code | Meaning |
