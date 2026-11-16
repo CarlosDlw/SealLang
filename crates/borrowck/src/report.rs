@@ -1,6 +1,6 @@
 //! Building borrow-check diagnostics.
 
-use seal_diagnostics::DiagCtxt;
+use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_hir::Hir;
 use seal_mir::{Body, Place, Projection};
@@ -16,6 +16,15 @@ pub(crate) struct Reporter<'a> {
     dcx: &'a DiagCtxt,
     body: &'a Body,
     interner: &'a Interner,
+}
+
+/// Adds a label at the borrow's last active use, unless it is the conflict point
+/// itself.
+fn add_last_use<'a>(builder: ErrorBuilder<'a>, loan: &Loan, at: Span) -> ErrorBuilder<'a> {
+    match loan.last_use.filter(|last_use| *last_use != at) {
+        Some(last_use) => builder.secondary(last_use, "borrow is used here"),
+        None => builder,
+    }
 }
 
 impl<'a> Reporter<'a> {
@@ -36,71 +45,78 @@ impl<'a> Reporter<'a> {
     /// A write conflicts with a live shared loan of the same place.
     pub(crate) fn assign_while_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
         let name = self.place_text(place);
-        self.dcx
+        let builder = self
+            .dcx
             .error(format!("cannot assign to `{name}` because it is borrowed"))
             .code(codes::E5001.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "borrow occurs here")
-            .help("the borrow is still used after this point; end its use before assigning")
+            .secondary(loan.span, "borrow occurs here");
+        add_last_use(builder, loan, span)
+            .help("move this assignment after the borrow's last use, or end the borrow first")
             .emit();
     }
 
     /// A move conflicts with a live shared loan of the same place.
     pub(crate) fn move_while_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
         let name = self.place_text(place);
-        self.dcx
+        let builder = self
+            .dcx
             .error(format!(
                 "cannot move out of `{name}` because it is borrowed"
             ))
             .code(codes::E5002.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "borrow occurs here")
-            .help("the borrow is still used after this point; end its use before moving")
+            .secondary(loan.span, "borrow occurs here");
+        add_last_use(builder, loan, span)
+            .help("move this move after the borrow's last use, or end the borrow first")
             .emit();
     }
 
     /// A read conflicts with a live exclusive loan of the same place.
     pub(crate) fn read_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
         let name = self.place_text(place);
-        self.dcx
+        let builder = self
+            .dcx
             .error(format!(
                 "cannot read `{name}` because it is exclusively borrowed"
             ))
             .code(codes::E5007.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "exclusive borrow occurs here")
-            .help("the exclusive borrow is still used after this point; end its use before reading")
+            .secondary(loan.span, "exclusive borrow occurs here");
+        add_last_use(builder, loan, span)
+            .help("read the place after the borrow's last use, or read through the reference")
             .emit();
     }
 
     /// A write conflicts with a live exclusive loan of the same place.
     pub(crate) fn write_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
         let name = self.place_text(place);
-        self.dcx
+        let builder = self
+            .dcx
             .error(format!(
                 "cannot assign to `{name}` because it is exclusively borrowed"
             ))
             .code(codes::E5008.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "exclusive borrow occurs here")
-            .help(
-                "the exclusive borrow is still used after this point; end its use before \
-                 assigning",
-            )
+            .secondary(loan.span, "exclusive borrow occurs here");
+        add_last_use(builder, loan, span)
+            .help("write after the borrow's last use, or end the borrow first")
             .emit();
     }
 
     /// A move conflicts with a live exclusive loan of the same place.
     pub(crate) fn move_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
         let name = self.place_text(place);
-        self.dcx
+        let builder = self
+            .dcx
             .error(format!(
                 "cannot move out of `{name}` because it is exclusively borrowed"
             ))
             .code(codes::E5008.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "exclusive borrow occurs here")
-            .help("the exclusive borrow is still used after this point; end its use before moving")
+            .secondary(loan.span, "exclusive borrow occurs here");
+        add_last_use(builder, loan, span)
+            .help("move the value after the borrow's last use, or end the borrow first")
             .emit();
     }
 
@@ -116,11 +132,13 @@ impl<'a> Reporter<'a> {
         } else {
             format!("cannot borrow `{name}` as shared because it is already borrowed as mutable")
         };
-        self.dcx
+        let builder = self
+            .dcx
             .error(message)
             .code(codes::E5008.diag_code())
             .primary(span, "")
-            .secondary(loan.span, "conflicting borrow occurs here")
+            .secondary(loan.span, "conflicting borrow occurs here");
+        add_last_use(builder, loan, span)
             .help("end the conflicting borrow before creating this one")
             .emit();
     }

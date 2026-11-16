@@ -44,6 +44,7 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
     let holds = holds::analyze(hir, body, &loans, &loan_at);
     let origins = origins::analyze(hir, body);
     loans::resolve(body, &mut loans, &loan_at, &origins, &holds);
+    record_last_uses(body, &liveness, &holds, &mut loans);
     let init = init::analyze(body);
     let reporter = Reporter::new(hir, dcx, body, interner);
 
@@ -92,6 +93,34 @@ fn active_loans(live: &LocalSet, holds: &HoldState) -> LoanSet {
         active.extend(holds.local_loans(*local));
     }
     active
+}
+
+/// Records where each loan is last active.
+///
+/// A borrow ends at its last use, so that point is where the user has to stop
+/// relying on the reference before a conflicting access becomes valid. A loan
+/// no live local ever carries (an unused borrow) has no last use.
+fn record_last_uses(
+    body: &Body,
+    liveness: &liveness::Liveness,
+    holds: &holds::Holds,
+    loans: &mut [Loan],
+) {
+    for (index, block) in body.blocks.iter().enumerate() {
+        for (position, statement) in block.statements.iter().enumerate() {
+            let active = active_loans(
+                &liveness.before[index][position],
+                &holds.before[index][position],
+            );
+            for id in active {
+                loans[id.index() as usize].last_use = Some(statement.span);
+            }
+        }
+        let active = active_loans(&liveness.after[index], &holds.exit[index]);
+        for id in active {
+            loans[id.index() as usize].last_use = Some(block.terminator.span);
+        }
+    }
 }
 
 /// Checks one statement: reads first, then the write to its destination.

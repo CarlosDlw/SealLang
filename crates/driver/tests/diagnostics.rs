@@ -301,6 +301,22 @@ fn borrowing_exclusively_twice_reports_e5008() {
 }
 
 #[test]
+fn a_borrow_conflict_labels_the_last_use() {
+    reject(
+        "conflict-last-use",
+        r#"func main() -> i32 {
+  let mut x = 1;
+  let r = &mut x;
+  x = 2;
+  *r
+}
+"#,
+        "E5008",
+        "borrow is used here",
+    );
+}
+
+#[test]
 fn exclusive_references_are_accepted() {
     let file = SourceFile::new(
         "exclusive-accepted",

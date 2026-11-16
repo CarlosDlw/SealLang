@@ -29,4 +29,7 @@ pub(crate) struct Loan {
     /// A reborrow is derived from those loans, so using it does not conflict
     /// with them; using the parent loan conflicts with the reborrow.
     pub(crate) parents: Vec<LoanId>,
+    /// The last program point where the loan is active, used to explain a
+    /// conflict.
+    pub(crate) last_use: Option<Span>,
 }

@@ -839,7 +839,7 @@ directly while that loan is live would observe the value concurrently with the
 borrower's writes, so the borrow checker rejects it.
 
 A borrow ends at its last use: read the place after the reference is dead, or
-read through the reference itself.",
+read through the reference itself. The diagnostic labels that last use.",
 };
 
 /// Two loans of the same place conflict.
@@ -853,7 +853,9 @@ may overlap, and any number of them may be live at once, but an exclusive loan
 a second exclusive loan, an exclusive loan beside a shared one, or writing or
 moving the place while an exclusive loan is live all conflict.
 
-End the live borrow before creating the new one. A borrow ends at its last use.",
+End the live borrow before creating the new one. A borrow ends at its last use,
+which the diagnostic labels, so moving the new borrow or access after that point
+usually resolves the conflict.",
 };
 
 /// The program has no usable entry point.

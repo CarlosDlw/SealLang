@@ -211,6 +211,25 @@ fn a_shared_pointee_read_is_allowed() {
 }
 
 #[test]
+fn a_conflict_labels_the_last_use_of_the_live_borrow() {
+    let fixture =
+        check_errors("func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  x = 2;\n  *r\n}\n");
+    let diagnostic = fixture
+        .diagnostics()
+        .into_iter()
+        .find(|diagnostic| diagnostic.code().map(|code| code.as_str()) == Some("E5008"))
+        .expect("the assignment conflicts with the borrow");
+    assert!(
+        diagnostic
+            .labels()
+            .iter()
+            .any(|label| label.message == "borrow is used here"),
+        "expected a last-use label, got {:?}",
+        diagnostic.labels()
+    );
+}
+
+#[test]
 fn a_branch_that_reborrows_keeps_both_loans_alive() {
     let fixture = check_errors(
         "func f(c: bool) -> i32 {\n  let mut x = 1;\n  let y = 2;\n  let mut r = &y;\n  if c {\n    r = &x;\n  }\n  x = 3;\n  *r\n}\n",

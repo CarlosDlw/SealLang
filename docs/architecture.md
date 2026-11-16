@@ -182,9 +182,10 @@ allowed to depend only on crates below it in the list.
     reads, writes, and moves of it (`E5007`/`E5008`). A loan or access reached
     through a reference is compared with the storage the reference may name, so
     copies and reborrows are ordered; a reborrow records the loans that
-    authorized it and does not conflict with them. `&mut place` requires a
-    writable place (`E3017`), and reading a non-`Copy` pointee by value is
-    `E3018`.
+    authorized it and does not conflict with them. A conflict labels the live
+    borrow's last active use, naming where the access would have to move.
+    `&mut place` requires a writable place (`E3017`), and reading a non-`Copy`
+    pointee by value is `E3018`.
 40. **Loans are tracked per point, not per region union.** A local's may-hold
     set is a forward dataflow fact: overwriting a reference drops the loans it
     carried, and a loan is active only while a live local may hold it. This

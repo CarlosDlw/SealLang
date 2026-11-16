@@ -106,8 +106,10 @@ conflict with them, while using the parent conflicts with the reborrow. Two
 cases stay beyond the analysis: a reference read out of memory has an unknown
 target and conservatively conflicts with any live loan of storage it might name,
 and distinct parameters are assumed not to alias, which is part of the
-exclusive-reference contract. Two-phase borrows (reserve, then activate) are
-reserved for nested method-style calls once methods exist.
+exclusive-reference contract. Diagnostics label the live borrow and its last
+active use, so the reordering that fixes a conflict is visible. Two-phase
+borrows (reserve, then activate) are reserved for nested method-style calls once
+methods exist.
 
 For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
 with pointer provenance (RFC 3559): every pointer carries the allocation and the

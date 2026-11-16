@@ -30,6 +30,7 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
                 kind: *kind,
                 keys: OriginSet::default(),
                 parents: Vec::new(),
+                last_use: None,
             });
             row[position] = Some(id);
         }
