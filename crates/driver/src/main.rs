@@ -152,6 +152,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                                     .output
                                     .clone()
                                     .unwrap_or_else(|| default_output(input, emit));
+                                let output = with_executable_extension(output, emit, cfg!(windows));
                                 let codegen_options = seal_codegen::CodegenOptions {
                                     emit,
                                     output,
@@ -203,6 +204,15 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Adds the Windows executable extension when the caller omitted one.
+fn with_executable_extension(path: PathBuf, emit: Emit, windows: bool) -> PathBuf {
+    if windows && emit == Emit::Executable && path.extension().is_none() {
+        path.with_extension("exe")
+    } else {
+        path
+    }
+}
+
 /// Returns the output path used when `-o` is absent.
 fn default_output(input: &Path, emit: Emit) -> PathBuf {
     let stem = input
@@ -224,5 +234,38 @@ fn report_codegen_error(session: &Session, error: &seal_codegen::CodegenError) {
             let _ = session.diag().error(message).code(code).emit();
         }
         None => session.diag().bug(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use seal_codegen::Emit;
+
+    use super::with_executable_extension;
+
+    #[test]
+    fn a_windows_executable_without_an_extension_gets_exe() {
+        assert_eq!(
+            with_executable_extension(PathBuf::from("program"), Emit::Executable, true),
+            PathBuf::from("program.exe")
+        );
+    }
+
+    #[test]
+    fn explicit_extensions_and_non_executables_are_preserved() {
+        assert_eq!(
+            with_executable_extension(PathBuf::from("program.bin"), Emit::Executable, true),
+            PathBuf::from("program.bin")
+        );
+        assert_eq!(
+            with_executable_extension(PathBuf::from("program.o"), Emit::Object, true),
+            PathBuf::from("program.o")
+        );
+        assert_eq!(
+            with_executable_extension(PathBuf::from("program"), Emit::Executable, false),
+            PathBuf::from("program")
+        );
     }
 }

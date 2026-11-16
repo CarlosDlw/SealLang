@@ -136,6 +136,14 @@ allocation, locks, stdio, locale, or `atexit` handlers:
   supplies an archive built for that target. `--emit=obj` remains available for
   cross-compilation.
 
+## Linking
+
+Executables use the linker selected by `SEAL_LINKER`, then `CC`, then the
+platform default (`cl` on Windows, `cc` elsewhere). The argument style follows
+the program name: `cl` and `clang-cl` use `/Fe:`, the standalone `link` uses
+`/OUT:`, and every other toolchain uses `-o`. On Windows the driver appends
+`.exe` to executable output paths that have no extension.
+
 ## Failures
 
 | Code | Meaning |

@@ -257,7 +257,8 @@ allowed to depend only on crates below it in the list.
 58. **Targets are explicit.** The LLVM triple and target machine come from
     `seal-target`, never from the host. An unavailable backend is `E6002`, and a
     missing linker, unsupported cross-link, unreadable external runtime, or
-    runtime/target mismatch without `--runtime-archive` is `E6003`.
+    runtime/target mismatch without `--runtime-archive` is `E6003`. Linker
+    arguments adapt to `cl`/`clang-cl`, `link`, and GNU-style toolchains.
 59. **The runtime is minimal and self-contained.** The embedded C11 runtime
     allocates no memory, takes no locks, and uses no stdio, locale, or `atexit`
     handlers.

@@ -5,7 +5,6 @@
 //! archive in the output directory; both temporary files are removed on every
 //! path, including linker failure.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -13,6 +12,7 @@ use inkwell::module::Module;
 use inkwell::targets::{FileType, TargetMachine};
 
 use crate::error::CodegenError;
+use crate::linker;
 use crate::options::Emit;
 
 /// Produces the requested artifact for `module`.
@@ -97,12 +97,14 @@ fn link_executable(
         )
     })?;
 
-    let linker = linker_command();
-    let result = Command::new(&linker)
-        .arg(&object_path)
-        .arg(&runtime_path)
-        .arg("-o")
-        .arg(output)
+    let invocation = linker::invocation(
+        linker::default_program(),
+        &object_path,
+        &runtime_path,
+        output,
+    );
+    let result = Command::new(invocation.program())
+        .args(invocation.arguments())
         .output();
     match result {
         Ok(result) if result.status.success() => Ok(()),
@@ -110,22 +112,19 @@ fn link_executable(
             output,
             format!(
                 "linker `{}` failed ({}): {}",
-                linker.to_string_lossy(),
+                invocation.program().to_string_lossy(),
                 result.status,
                 String::from_utf8_lossy(&result.stderr).trim()
             ),
         )),
         Err(error) => Err(CodegenError::artifact(
             output,
-            format!("cannot run linker `{}`: {error}", linker.to_string_lossy()),
+            format!(
+                "cannot run linker `{}`: {error}",
+                invocation.program().to_string_lossy()
+            ),
         )),
     }
-}
-
-fn linker_command() -> OsString {
-    std::env::var_os("SEAL_LINKER")
-        .or_else(|| std::env::var_os("CC"))
-        .unwrap_or_else(|| OsString::from("cc"))
 }
 
 struct TempFile(PathBuf);
