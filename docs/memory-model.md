@@ -65,8 +65,11 @@ denotes a borrowed place that remains valid and initialized for the whole region
 in which it is used. `*T` is shared and read-only; `*mut T` is exclusive and
 read-write, and the two never unify. A dereference of a reference value denotes a
 place too, so `&*reference` borrows the pointee and the reference is held in a
-temporary. Raw pointers (nullable, arithmetic, provenance-erasing) are a
-separate type with a separate syntax and require `unsafe`.
+temporary. Reading a reference value copies the reference, and reading
+`*reference` by value copies a `Copy` pointee; reading any other pointee is
+`E3018`, because moving it would leave the owner's storage without a value. Raw
+pointers (nullable, arithmetic, provenance-erasing) are a separate type with a
+separate syntax and require `unsafe`.
 
 This keeps the published `*T` syntax and makes the default safe: the common case
 does not need `unsafe`, and the unsafe layer can be added without changing
@@ -87,8 +90,20 @@ checking (makes the default unsafe), a GC (violates goal 1).
 
 At any point a place is either shared-borrowed any number of times or
 exclusively borrowed once. Creating an exclusive borrow invalidates live shared
-ones for its region, and vice versa. Two-phase borrows (reserve, then activate)
-are reserved for nested method-style calls once methods exist.
+ones for its region, and vice versa: an exclusive loan conflicts with every
+other loan of the same place and with reads, writes, and moves of it
+(`E5007`/`E5008`), while a shared loan conflicts only with writes and moves
+(`E5001`/`E5002`). Loans are sliced by place prefix, so `&mut p.x` leaves `p.y`
+usable. The kind is part of the type (`*T` versus `*mut T`), so the two never
+unify, and `&mut place` requires a writable place: a `mut` binding or a `*mut T`
+dereference (`E3017`).
+
+The checker does not compare places reached through a dereference with loans,
+because the pointer may have been copied. `*mut T` is therefore an exclusive
+reference to its pointee, not a unique pointer: two copies of one `*mut T` may
+alias, and accesses through them are not ordered. Tracking that aliasing is the
+work of the future `unsafe` layer. Two-phase borrows (reserve, then activate) are
+reserved for nested method-style calls once methods exist.
 
 For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
 with pointer provenance (RFC 3559): every pointer carries the allocation and the
@@ -224,8 +239,10 @@ declaration.
   explicit statement in a control-flow graph; regions are inferred from the
   liveness of those statements, and place conflicts compare path prefixes so
   field borrows are as precise as the moves they guard.
-- **Codegen** may assume that no safe reference is null or dangling, that a
-  `Copy` value has no destructor, and that exclusive accesses do not overlap.
+- **Codegen** may assume that no safe reference is null or dangling and that a
+  `Copy` value has no destructor. It may not assume `noalias` for references:
+  accesses through a dereference are not compared with loans, so a `*mut T` copy
+  may alias another access.
 
 ## Invariants
 

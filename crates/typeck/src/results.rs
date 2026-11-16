@@ -3,7 +3,7 @@
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::HirExprId;
-use seal_ty::TyId;
+use seal_ty::{RefKind, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -29,6 +29,13 @@ pub struct ResolvedPlace {
     pub projections: Vec<PlaceProjection>,
     /// The type of the selected place.
     pub ty: TyId,
+    /// The kind of the last dereference among the projections, or `None` when
+    /// no projection reads through a reference.
+    ///
+    /// Writing a place through a dereference is allowed only for
+    /// [`RefKind::Exclusive`]; the last dereference decides, because it is the
+    /// reference that reaches the selected storage.
+    pub deref: Option<RefKind>,
 }
 
 impl ResolvedPlace {

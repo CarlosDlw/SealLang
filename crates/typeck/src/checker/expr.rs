@@ -40,7 +40,7 @@ impl Checker<'_> {
         self.infer_expr_mode(expr, None, flow, PlaceMode::Write)
     }
 
-    fn infer_expr_mode(
+    pub(super) fn infer_expr_mode(
         &mut self,
         expr: HirExprId,
         expected: Option<TyId>,
@@ -58,10 +58,27 @@ impl Checker<'_> {
             ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, flow),
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
+                let deref = self.reference_kind(operand);
                 if let Some(mut place) = self.results.place(operand).cloned() {
                     place.projections.push(PlaceProjection::Deref);
                     place.ty = ty;
+                    place.deref = deref;
                     self.results.record_place(expr, place);
+                }
+                if mode == PlaceMode::Read && !self.is_error(ty) && !self.is_copy(ty) {
+                    self.error(
+                        seal_error_codes::E3018,
+                        span,
+                        format!(
+                            "cannot move out of a reference to `{}`",
+                            self.ty_text(ty)
+                        ),
+                    )
+                    .help(
+                        "borrow the pointee instead, as in `&*reference`, or read its fields one by \
+                         one",
+                    )
+                    .emit();
                 }
                 ty
             }
@@ -124,9 +141,10 @@ impl Checker<'_> {
                         root_ty: ty,
                         projections: Vec::new(),
                         ty,
+                        deref: None,
                     },
                 );
-                if mode == PlaceMode::Read && !self.is_error(ty) {
+                if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
                     self.require_initialized(expr, flow, span);
                 }
                 ty
@@ -176,7 +194,7 @@ impl Checker<'_> {
                 self.error(
                     seal_error_codes::E3015,
                     span,
-                    "cannot access a field through a shared reference",
+                    "cannot access a field through a reference",
                 )
                 .help("dereference it first, as in `(*value).field`")
                 .emit();
@@ -200,7 +218,7 @@ impl Checker<'_> {
             place.ty = ty;
             self.results.record_place(expr, place);
         }
-        if mode == PlaceMode::Read && !self.is_error(ty) {
+        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
             self.require_initialized(expr, flow, span);
         }
         ty

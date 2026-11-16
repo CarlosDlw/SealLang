@@ -10,6 +10,9 @@ pub(crate) use crate::access::LocalSet;
 pub(crate) struct Liveness {
     /// `before[block][statement]` holds the locals live before that statement.
     pub(crate) before: Vec<Vec<LocalSet>>,
+    /// `after[block]` holds the locals live at the block's terminator, after
+    /// its last statement.
+    pub(crate) after: Vec<LocalSet>,
 }
 
 /// Computes liveness by iterating the union of successor states until stable.
@@ -48,12 +51,14 @@ pub(crate) fn analyze(body: &Body) -> Liveness {
     }
 
     let mut before = Vec::with_capacity(block_count);
+    let mut after = Vec::with_capacity(block_count);
     for block in body.blocks.iter() {
         let mut live = LocalSet::default();
         for successor in block.terminator.kind.successors() {
             live.extend(live_in[successor.index() as usize].iter().copied());
         }
         access::terminator_uses(&block.terminator.kind, &mut live);
+        after.push(live.clone());
 
         let mut row = vec![LocalSet::default(); block.statements.len()];
         for (position, statement) in block.statements.iter().enumerate().rev() {
@@ -66,5 +71,5 @@ pub(crate) fn analyze(body: &Body) -> Liveness {
         before.push(row);
     }
 
-    Liveness { before }
+    Liveness { before, after }
 }

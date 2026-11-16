@@ -30,16 +30,24 @@ impl Checker<'_> {
 
         let ty = self.infer_place(target, flow);
         let resolved = self.results.place(target).cloned();
+        let plain = op == AssignOp::Assign;
 
-        // `*T` is read-only, so a dereference can be read but never assigned to.
-        if place.contains_deref() {
-            self.report_shared_write(target_span);
+        // A write through a reference needs `*mut T`: the last dereference is
+        // the one that reaches the destination. `*T` is read-only (D4).
+        if let Some(kind) = self.deref_kind(target) {
+            if !kind.is_exclusive() {
+                self.report_shared_write(target_span);
+                self.check_expr(value, ty, flow);
+                return self.unit();
+            }
+            if !plain {
+                self.check_assign_op(op, ty, span);
+            }
             self.check_expr(value, ty, flow);
             return self.unit();
         }
 
         let local = place.local_def();
-        let plain = op == AssignOp::Assign;
         let mutable = self.hir.definitions().is_mutable(local);
         let whole = resolved.as_ref().is_none_or(ResolvedPlace::is_whole);
         let initialized = resolved
@@ -90,8 +98,12 @@ impl Checker<'_> {
         let ty = self.infer_place(target, flow);
         let resolved = self.results.place(target).cloned();
 
-        if place.contains_deref() {
-            self.report_shared_write(target_span);
+        if let Some(kind) = self.deref_kind(target) {
+            if !kind.is_exclusive() {
+                self.report_shared_write(target_span);
+                return self.unit();
+            }
+            self.check_update_numeric(op, ty, span);
             return self.unit();
         }
 
@@ -112,19 +124,7 @@ impl Checker<'_> {
         {
             self.report_place_uninitialized(resolved.as_ref(), target_span);
         }
-        if !self.is_numeric(ty) && !self.is_error(ty) {
-            self.error(
-                codes::E3002,
-                span,
-                format!(
-                    "`{}` requires a numeric place, found `{}`",
-                    op.as_str(),
-                    self.ty_text(ty)
-                ),
-            )
-            .help("increment and decrement work on integer and floating-point places")
-            .emit();
-        }
+        self.check_update_numeric(op, ty, span);
 
         if let Some(place) = resolved {
             flow.assign(place.local, &place.field_defs());
@@ -187,13 +187,29 @@ impl Checker<'_> {
         .emit();
     }
 
+    fn check_update_numeric(&self, op: UpdateOp, ty: TyId, span: Span) {
+        if !self.is_numeric(ty) && !self.is_error(ty) {
+            self.error(
+                codes::E3002,
+                span,
+                format!(
+                    "`{}` requires a numeric place, found `{}`",
+                    op.as_str(),
+                    self.ty_text(ty)
+                ),
+            )
+            .help("increment and decrement work on integer and floating-point places")
+            .emit();
+        }
+    }
+
     fn report_shared_write(&self, span: Span) {
         self.error(
             codes::E3014,
             span,
             "cannot write through a shared reference",
         )
-        .help("`*T` is read-only; write to the borrowed place by name")
+        .help("`*T` is read-only; use a `*mut T` reference to write through it")
         .emit();
     }
 

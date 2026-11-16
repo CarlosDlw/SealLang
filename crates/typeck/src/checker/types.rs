@@ -105,6 +105,10 @@ impl Checker<'_> {
         self.hir.ty_ctxt().is_sized(ty)
     }
 
+    pub(super) fn is_copy(&self, ty: TyId) -> bool {
+        self.hir.ty_ctxt().is_copy(ty)
+    }
+
     /// Returns the bit width of an integer type, resolving `isize`/`usize` from
     /// the target's pointer width.
     pub(super) fn integer_bits(&self, ty: TyId) -> Option<u16> {

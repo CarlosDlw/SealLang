@@ -6,7 +6,7 @@ use seal_mir::{
     BasicBlock, Body, LocalId, Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
 };
 use seal_symbol::Interner;
-use seal_ty::InitPaths;
+use seal_ty::{InitPaths, RefKind};
 
 use crate::holds::{self, HoldState, LoanSet};
 use crate::id::LoanId;
@@ -25,6 +25,13 @@ struct Context<'a> {
     hir: &'a Hir,
     body: &'a Body,
     reporter: &'a Reporter<'a>,
+}
+
+impl Context<'_> {
+    /// Returns the loan with `id`; every active ID comes from the loan table.
+    fn loan(&self, id: LoanId) -> &Loan {
+        &self.loans[id.index() as usize]
+    }
 }
 
 /// Checks one body.
@@ -53,10 +60,13 @@ pub(crate) fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Inte
             };
             check_statement(statement, &context);
         }
+        // A terminator still reads locals, so the loans those locals hold are
+        // live there too: `if *r == 0` must see the borrow that `r` carries.
+        let active = active_loans(&liveness.after[index], &holds.exit[index]);
         let context = Context {
             loans: &loans,
             init: &init.exit[index],
-            active: &LoanSet::default(),
+            active: &active,
             holds: &holds,
             hir,
             body,
@@ -81,7 +91,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>) {
 
     match rvalue {
         Rvalue::Use(operand) => check_operand(statement, operand, context),
-        Rvalue::Ref { place, .. } => check_borrow(place, statement.span, context),
+        Rvalue::Ref { place, kind } => check_borrow(place, *kind, statement.span, context),
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand(statement, lhs, context);
             check_operand(statement, rhs, context);
@@ -102,10 +112,17 @@ fn check_statement(statement: &Statement, context: &Context<'_>) {
     if place.is_deref() {
         return;
     }
-    for loan in conflicting(context.active, context.loans, place) {
-        context
-            .reporter
-            .assign_while_borrowed(place, statement.span, loan);
+    for id in overlapping(context.active, context.loans, place) {
+        let loan = context.loan(id);
+        if loan.kind.is_exclusive() {
+            context
+                .reporter
+                .write_while_exclusively_borrowed(place, statement.span, loan);
+        } else {
+            context
+                .reporter
+                .assign_while_borrowed(place, statement.span, loan);
+        }
     }
 }
 
@@ -117,10 +134,17 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
     check_read(&read, statement.span, context);
 
     if matches!(operand, Operand::Move(_)) && !read.is_deref() {
-        for loan in conflicting(context.active, context.loans, &read) {
-            context
-                .reporter
-                .move_while_borrowed(&read, statement.span, loan);
+        for id in overlapping(context.active, context.loans, &read) {
+            let loan = context.loan(id);
+            if loan.kind.is_exclusive() {
+                context
+                    .reporter
+                    .move_while_exclusively_borrowed(&read, statement.span, loan);
+            } else {
+                context
+                    .reporter
+                    .move_while_borrowed(&read, statement.span, loan);
+            }
         }
     }
 }
@@ -135,10 +159,19 @@ fn check_read(place: &Place, span: seal_span::Span, context: &Context<'_>) {
         }
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
+    for id in overlapping(context.active, context.loans, place) {
+        let loan = context.loan(id);
+        if loan.kind.is_exclusive() {
+            context
+                .reporter
+                .read_while_exclusively_borrowed(place, span, loan);
+        }
+    }
 }
 
-/// Checks a borrow: the place must be initialized and not partially moved.
-fn check_borrow(place: &Place, span: seal_span::Span, context: &Context<'_>) {
+/// Checks a borrow: the place must be initialized and not partially moved, and
+/// the new loan must not overlap a live one with an incompatible kind.
+fn check_borrow(place: &Place, kind: RefKind, span: seal_span::Span, context: &Context<'_>) {
     match state(context, place) {
         Init::Initialized => {}
         Init::Moved => {
@@ -147,6 +180,12 @@ fn check_borrow(place: &Place, span: seal_span::Span, context: &Context<'_>) {
         }
         Init::PartiallyMoved => context.reporter.borrow_partially_moved(place, span),
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
+    }
+    for id in overlapping(context.active, context.loans, place) {
+        let loan = context.loan(id);
+        if kind.is_exclusive() || loan.kind.is_exclusive() {
+            context.reporter.borrow_conflict(place, kind, span, loan);
+        }
     }
 }
 
@@ -202,23 +241,27 @@ fn escaping_loans(
     }
 }
 
-/// Returns the live loans that overlap `place`.
+/// Returns the live loans that overlap `place`, in loan order.
 ///
 /// Two places overlap when one is a prefix of the other: borrowing `p.x`
-/// prevents writing `p`, and borrowing `p` prevents writing `p.x`. Loans
-/// through a reference are not compared, because the checker does not track
-/// aliasing into borrowed data.
-fn conflicting<'a>(active: &'a LoanSet, loans: &'a [Loan], place: &Place) -> Vec<&'a Loan> {
+/// prevents writing `p`, and borrowing `p` prevents writing `p.x`. Loans and
+/// places through a reference are not compared, because the checker does not
+/// track aliasing into borrowed data. The IDs are sorted so diagnostics do not
+/// depend on hash iteration order.
+fn overlapping(active: &LoanSet, loans: &[Loan], place: &Place) -> Vec<LoanId> {
     if place.is_deref() {
         return Vec::new();
     }
-    active
+    let mut ids: Vec<LoanId> = active
         .iter()
-        .filter_map(|id| {
+        .copied()
+        .filter(|id| {
             let loan = &loans[id.index() as usize];
-            (!loan.place.is_deref() && places_overlap(&loan.place, place)).then_some(loan)
+            !loan.place.is_deref() && places_overlap(&loan.place, place)
         })
-        .collect()
+        .collect();
+    ids.sort_by_key(|id| id.index());
+    ids
 }
 
 fn places_overlap(left: &Place, right: &Place) -> bool {

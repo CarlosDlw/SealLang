@@ -175,9 +175,13 @@ allowed to depend only on crates below it in the list.
     reference value is a place as well, so `&*identity(p)` borrows the pointee
     and lowering keeps the reference itself in a temporary. Regions are inferred
     from liveness; there is no lifetime syntax, and no region appears in a type.
-39. **A shared loan permits reads and forbids writes.** `*T` is read-only, so a
-    live loan conflicts only with assigning or moving the borrowed place. Two
-    shared loans may overlap, and reads never conflict.
+39. **Loans conflict by kind.** `*T` is read-only, so a shared loan conflicts
+    only with assigning or moving the borrowed place; two shared loans may
+    overlap, and reads never conflict (`E5001`/`E5002`). A `*mut T` loan is
+    exclusive: it conflicts with every other loan of the same place and with
+    reads, writes, and moves of it (`E5007`/`E5008`). `&mut place` requires a
+    writable place (`E3017`), and reading a non-`Copy` pointee by value is
+    `E3018`.
 40. **Loans are tracked per point, not per region union.** A local's may-hold
     set is a forward dataflow fact: overwriting a reference drops the loans it
     carried, and a loan is active only while a live local may hold it. This
@@ -321,10 +325,9 @@ allowed to depend only on crates below it in the list.
   resolved counterpart in `seal-typeck`. Update `seal-borrowck`'s prefix
   comparison and `seal-layout` when the projection selects storage with an
   address; the walk that reads and writes places otherwise stays unchanged.
-- **New loan kind.** `*mut T` adds an exclusive kind to `seal-borrowck`'s loan
-  table: extend the conflict check so exclusive loans reject overlapping reads
-  and borrows, and keep the may-hold analysis unchanged. Two-phase borrows then
-  become a reservation state on the same facts.
+- **New loan kind.** A loan kind is a field on `seal-borrowck`'s `Loan` plus a
+  rule in the centralized conflict check; the may-hold analysis is
+  kind-agnostic. Two-phase borrows become a reservation state on the same facts.
 - **New ownership rule.** Add the dataflow domain in `seal-borrowck` beside
   liveness, may-hold, and initialization, and report through the `E5xxx` range;
   `check` walks every body in block order, so a new pass slots in without

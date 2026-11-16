@@ -58,7 +58,7 @@ fn a_field_of_a_non_struct_is_reported() {
 fn field_access_through_a_reference_requires_an_explicit_deref() {
     let fixture = Fixture::new("struct Point { x: i32 } func f(p: *Point) -> i32 { p.x }");
     let _ = fixture.check(64);
-    fixture.expect("E3015", "shared reference");
+    fixture.expect("E3015", "through a reference");
 }
 
 #[test]

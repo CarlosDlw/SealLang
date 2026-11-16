@@ -22,15 +22,17 @@
 //! This is flow sensitive in a way region-union inference is not: overwriting a
 //! reference drops the loans it carried, so a place becomes writable again as
 //! soon as the last alias is dead, even inside a loop. The analysis is the
-//! location-sensitive shape of Polonius, applied to shared loans.
+//! location-sensitive shape of Polonius, applied to reference loans.
 //!
-//! # Shared references
+//! # Loan kinds
 //!
-//! `*T` is read-only (decision D4). A shared loan therefore conflicts only with
-//! a write or a move of the borrowed place; two shared loans may overlap, and
-//! reads never conflict. Exclusive references (`*mut T`) will add the aliasing
-//! rules of decision D6 when the type arrives; the conflict check is centralized
-//! so only the loan kinds grow.
+//! `*T` is read-only (decision D4) and `*mut T` is exclusive and read-write
+//! (decision D6). A shared loan conflicts only with a write or a move of the
+//! borrowed place; two shared loans may overlap, and reads never conflict. An
+//! exclusive loan conflicts with every other loan of the same place, including
+//! another shared loan, and with reads, writes, and moves of it. Accesses
+//! through a dereference are not compared with loans: the checker does not
+//! track aliasing into borrowed data, because the pointer may have been copied.
 //!
 //! # Errors
 //!

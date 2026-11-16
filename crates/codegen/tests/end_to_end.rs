@@ -14,6 +14,7 @@ use seal_span::FileName;
 
 const STRUCTS: &str = include_str!("../../../examples/006_structs.sl");
 const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl");
+const EXCLUSIVE: &str = include_str!("../../../examples/008_exclusive_references.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -229,6 +230,20 @@ fn a_borrow_through_a_reference_value_runs() {
     compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
         .expect("code generation succeeds");
     assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
+fn exclusive_references_write_through_the_pointer() {
+    let output = TempOutput::new("exclusive-references");
+    compile(
+        EXCLUSIVE,
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("code generation succeeds");
+    assert_eq!(run(output.path()).code(), Some(43));
 }
 
 #[test]

@@ -236,6 +236,95 @@ fn borrowing_a_computed_value_reports_e3013() {
 }
 
 #[test]
+fn mutably_borrowing_an_immutable_binding_reports_e3017() {
+    reject(
+        "mutable-borrow-immutable",
+        r#"func main() {
+  let x = 1;
+  let r = &mut x;
+}
+"#,
+        "E3017",
+        "not declared as mutable",
+    );
+}
+
+#[test]
+fn moving_out_of_a_reference_reports_e3018() {
+    reject(
+        "move-out-of-reference",
+        r#"struct Point {
+  x: i32,
+}
+
+func main() -> Point {
+  let mut p = Point { x: 1 };
+  let r = &mut p;
+  *r
+}
+"#,
+        "E3018",
+        "cannot move out of a reference",
+    );
+}
+
+#[test]
+fn reading_while_exclusively_borrowed_reports_e5007() {
+    reject(
+        "read-exclusive-borrow",
+        r#"func main() -> i32 {
+  let mut x = 1;
+  let r = &mut x;
+  let y = x;
+  *r + y
+}
+"#,
+        "E5007",
+        "exclusively borrowed",
+    );
+}
+
+#[test]
+fn borrowing_exclusively_twice_reports_e5008() {
+    reject(
+        "double-exclusive-borrow",
+        r#"func main() -> i32 {
+  let mut x = 1;
+  let a = &mut x;
+  let b = &mut x;
+  *a + *b
+}
+"#,
+        "E5008",
+        "already borrowed",
+    );
+}
+
+#[test]
+fn exclusive_references_are_accepted() {
+    let file = SourceFile::new(
+        "exclusive-accepted",
+        r#"func bump(p: *mut i32) {
+  *p = *p + 1;
+}
+
+func main() -> i32 {
+  let mut value = 41;
+  let r = &mut value;
+  bump(r);
+  *r
+}
+"#,
+    );
+    let output = file.check();
+    assert!(
+        output.status.success(),
+        "exclusive references must be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn borrowing_through_a_reference_value_is_accepted() {
     let file = SourceFile::new(
         "borrow-through-value",

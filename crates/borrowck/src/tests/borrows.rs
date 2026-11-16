@@ -1,4 +1,4 @@
-//! Shared-loan conflicts and borrow precision.
+//! Loan conflicts and borrow precision.
 
 use super::support::{check_clean, check_errors};
 
@@ -82,6 +82,58 @@ fn a_write_inside_a_loop_conflicts_with_a_live_borrow() {
         "func f() -> i32 {\n  let mut x = 1;\n  let r = &x;\n  while x < 2 {\n    x = 2;\n  }\n  *r\n}\n",
     );
     fixture.expect("E5001", "borrowed");
+}
+
+#[test]
+fn reading_while_an_exclusive_borrow_is_live_is_rejected() {
+    let fixture = check_errors(
+        "func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  let y = x;\n  *r + y\n}\n",
+    );
+    fixture.expect("E5007", "exclusively borrowed");
+}
+
+#[test]
+fn writing_while_an_exclusive_borrow_is_live_is_rejected() {
+    let fixture =
+        check_errors("func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  x = 2;\n  *r\n}\n");
+    fixture.expect("E5008", "exclusively borrowed");
+}
+
+#[test]
+fn moving_while_an_exclusive_borrow_is_live_is_rejected() {
+    let fixture = check_errors(
+        "struct Point { x: i32 }\n\
+         func f() -> i32 {\n  let mut p = Point { x: 1 };\n  let r = &mut p;\n  let q = p;\n  (*r).x + q.x\n}\n",
+    );
+    fixture.expect("E5008", "exclusively borrowed");
+}
+
+#[test]
+fn two_exclusive_borrows_of_the_same_place_conflict() {
+    let fixture = check_errors(
+        "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &mut x;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
+fn an_exclusive_borrow_conflicts_with_a_shared_one() {
+    let fixture = check_errors(
+        "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &x;\n  *a + *b\n}\n",
+    );
+    fixture.expect("E5008", "borrowed as mutable");
+}
+
+#[test]
+fn writes_through_an_exclusive_borrow_are_allowed() {
+    check_clean("func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  *r = 2;\n  *r\n}\n");
+}
+
+#[test]
+fn writing_after_the_exclusive_borrow_ends_is_allowed() {
+    check_clean(
+        "func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  *r = 2;\n  x = 3;\n  x\n}\n",
+    );
 }
 
 #[test]

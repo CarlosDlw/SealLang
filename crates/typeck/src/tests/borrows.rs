@@ -93,3 +93,46 @@ fn function_items_cannot_be_borrowed() {
     let (fixture, _, _) = check_errors("func g() {}\nfunc f() { let r = &g; }");
     fixture.expect("E3007", "function item");
 }
+
+#[test]
+fn mutably_borrowing_an_immutable_binding_is_rejected() {
+    let (fixture, _, _) = check_errors("func f() { let x = 1; let r = &mut x; }");
+    fixture.expect("E3017", "not declared as mutable");
+}
+
+#[test]
+fn mutably_borrowing_through_a_shared_reference_is_rejected() {
+    let (fixture, _, _) = check_errors("func f(p: *i32) { let r = &mut *p; }");
+    fixture.expect("E3017", "shared reference");
+}
+
+#[test]
+fn mutably_borrowing_a_mutable_binding_produces_an_exclusive_reference() {
+    let (fixture, hir, results) = check_clean("func f() -> *mut i32 { let mut x = 1; &mut x }");
+    let (_, body) = function(&fixture, &hir, "f");
+    expect_ty(&hir, expr_ty(&results, tail(&hir, body)), "*mut i32");
+}
+
+#[test]
+fn writing_through_an_exclusive_reference_is_accepted() {
+    check_clean("func f(p: *mut i32) { *p = 1; *p += 2; }");
+}
+
+#[test]
+fn moving_out_of_a_reference_is_rejected() {
+    let (fixture, _, _) = check_errors("struct P { x: i32 }\nfunc f(p: *P) -> P { *p }");
+    fixture.expect("E3018", "cannot move out of a reference");
+}
+
+#[test]
+fn borrowing_a_non_copy_pointee_is_accepted() {
+    check_clean("struct P { x: i32 }\nfunc f(p: *P) -> *P { &*p }");
+}
+
+#[test]
+fn mutably_borrowing_a_field_of_a_mutable_binding_is_accepted() {
+    check_clean(
+        "struct P { x: i32, y: i32 }\n\
+         func f(p: *mut P) { let r = &mut (*p).x; *r = 1; }",
+    );
+}

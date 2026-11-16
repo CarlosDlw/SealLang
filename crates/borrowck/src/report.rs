@@ -6,6 +6,7 @@ use seal_hir::Hir;
 use seal_mir::{Body, Place, Projection};
 use seal_span::Span;
 use seal_symbol::Interner;
+use seal_ty::RefKind;
 
 use crate::loan::Loan;
 
@@ -55,6 +56,72 @@ impl<'a> Reporter<'a> {
             .primary(span, "")
             .secondary(loan.span, "borrow occurs here")
             .help("the borrow is still used after this point; end its use before moving")
+            .emit();
+    }
+
+    /// A read conflicts with a live exclusive loan of the same place.
+    pub(crate) fn read_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
+        let name = self.place_text(place);
+        self.dcx
+            .error(format!(
+                "cannot read `{name}` because it is exclusively borrowed"
+            ))
+            .code(codes::E5007.diag_code())
+            .primary(span, "")
+            .secondary(loan.span, "exclusive borrow occurs here")
+            .help("the exclusive borrow is still used after this point; end its use before reading")
+            .emit();
+    }
+
+    /// A write conflicts with a live exclusive loan of the same place.
+    pub(crate) fn write_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
+        let name = self.place_text(place);
+        self.dcx
+            .error(format!(
+                "cannot assign to `{name}` because it is exclusively borrowed"
+            ))
+            .code(codes::E5008.diag_code())
+            .primary(span, "")
+            .secondary(loan.span, "exclusive borrow occurs here")
+            .help(
+                "the exclusive borrow is still used after this point; end its use before \
+                 assigning",
+            )
+            .emit();
+    }
+
+    /// A move conflicts with a live exclusive loan of the same place.
+    pub(crate) fn move_while_exclusively_borrowed(&self, place: &Place, span: Span, loan: &Loan) {
+        let name = self.place_text(place);
+        self.dcx
+            .error(format!(
+                "cannot move out of `{name}` because it is exclusively borrowed"
+            ))
+            .code(codes::E5008.diag_code())
+            .primary(span, "")
+            .secondary(loan.span, "exclusive borrow occurs here")
+            .help("the exclusive borrow is still used after this point; end its use before moving")
+            .emit();
+    }
+
+    /// A new borrow conflicts with a live loan of the same place.
+    ///
+    /// Shared loans coexist; every other combination is `E5008`. Two shared
+    /// loans never reach this method, because the caller only calls it when one
+    /// side is exclusive.
+    pub(crate) fn borrow_conflict(&self, place: &Place, kind: RefKind, span: Span, loan: &Loan) {
+        let name = self.place_text(place);
+        let message = if kind.is_exclusive() {
+            format!("cannot borrow `{name}` as mutable because it is already borrowed")
+        } else {
+            format!("cannot borrow `{name}` as shared because it is already borrowed as mutable")
+        };
+        self.dcx
+            .error(message)
+            .code(codes::E5008.diag_code())
+            .primary(span, "")
+            .secondary(loan.span, "conflicting borrow occurs here")
+            .help("end the conflicting borrow before creating this one")
             .emit();
     }
 

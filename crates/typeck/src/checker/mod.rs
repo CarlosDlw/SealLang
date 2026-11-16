@@ -22,14 +22,17 @@ use seal_ty::{TyId, TyKind};
 use crate::results::{Signature, TypeckResults};
 use flow::Flow;
 
-/// Whether a place is being read or written.
-///
-/// Assignment targets must not require the place to be initialized, because
-/// assigning to it is what initializes it.
+/// How a place expression is being used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PlaceMode {
+    /// The place's value is read, so it must be initialized. Reading a
+    /// non-`Copy` pointee through a reference moves it and is rejected.
     Read,
+    /// The place is an assignment target, so it need not be initialized yet.
     Write,
+    /// The place is borrowed, so it must be initialized, but its value is not
+    /// read: borrowing a non-`Copy` pointee does not move it.
+    Borrow,
 }
 
 /// One type-checking pass over a lowered file.

@@ -682,11 +682,10 @@ pub const E3014: ErrorCode = ErrorCode {
     title: "cannot write through a shared reference",
     explanation: "\
 `*T` is a shared, read-only reference (decision D4 of the memory model), so
-assigning through it is rejected. Exclusive access will require `*mut T`, which
-the language does not have yet.
+assigning through it is rejected. Only a `*mut T` reference permits writes.
 
-Write to the borrowed place directly by name, or copy the value into another
-binding and modify that.",
+Write through a `*mut T` reference, or write to the borrowed place directly by
+name.",
 };
 
 /// A field is accessed on a type that has no fields.
@@ -714,6 +713,34 @@ reference, because the reference has a fixed size and the value lives elsewhere.
 
 Store the recursive field behind a reference such as `*Node`, or break the cycle
 by removing one of the fields.",
+};
+
+/// A borrow asks for exclusive access to a read-only place.
+pub const E3017: ErrorCode = ErrorCode {
+    code: "E3017",
+    title: "cannot borrow as mutable",
+    explanation: "\
+`&mut place` promises exclusive access: the borrower may write the place, and no
+other loan of it may overlap. A binding that is not declared `mut` does not
+permit writes, and a place behind a shared reference (`*T`) is read-only
+(decision D4), so neither can be borrowed exclusively.
+
+Declare the binding with `let mut`, or borrow through a `*mut T` reference so the
+place itself permits writes.",
+};
+
+/// A value is moved out of a referenced place.
+pub const E3018: ErrorCode = ErrorCode {
+    code: "E3018",
+    title: "cannot move out of a reference",
+    explanation: "\
+Reading `*reference` by value moves the pointee when its type is not `Copy`, but
+the pointee belongs to whoever created the reference: moving it would leave that
+storage uninitialized behind the owner's back. Only `Copy` values may be read
+through a reference by value.
+
+Borrow the pointee instead, as in `&*reference`, or copy the fields you need into
+a new value.",
 };
 
 /// A place is assigned while a shared reference to it is live.
@@ -801,6 +828,34 @@ Borrow only the fields that are still initialized, or reinitialize the moved
 field before borrowing the whole place.",
 };
 
+/// A place is read while an exclusive reference to it is live.
+pub const E5007: ErrorCode = ErrorCode {
+    code: "E5007",
+    title: "cannot read an exclusively borrowed place",
+    explanation: "\
+An exclusive reference (`*mut T`) promises that the borrower has sole access to
+the pointee for as long as the reference is used (decision D6). Reading the place
+directly while that loan is live would observe the value concurrently with the
+borrower's writes, so the borrow checker rejects it.
+
+A borrow ends at its last use: read the place after the reference is dead, or
+read through the reference itself.",
+};
+
+/// Two loans of the same place conflict.
+pub const E5008: ErrorCode = ErrorCode {
+    code: "E5008",
+    title: "conflicting borrow of a borrowed place",
+    explanation: "\
+Two loans overlap when one borrowed place is a prefix of the other. Shared loans
+may overlap, and any number of them may be live at once, but an exclusive loan
+(`*mut T`) forbids every other loan of the same place while it is live. Creating
+a second exclusive loan, an exclusive loan beside a shared one, or writing or
+moving the place while an exclusive loan is live all conflict.
+
+End the live borrow before creating the new one. A borrow ends at its last use.",
+};
+
 /// The program has no usable entry point.
 pub const E6001: ErrorCode = ErrorCode {
     code: "E6001",
@@ -874,8 +929,8 @@ pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E2001, E2002, E2003, E2004, E2005,
     E2006, E2007, E2008, E2009, E2010, E2011, E2012, E3001, E3002, E3003, E3004, E3005, E3006,
-    E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E5001, E5002, E5003,
-    E5004, E5005, E5006, E6001, E6002, E6003, E9001, E9002,
+    E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E5001,
+    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1001,7 +1056,7 @@ mod tests {
             codes,
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
-                "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016",
+                "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
             ]
         );
     }
@@ -1015,7 +1070,9 @@ mod tests {
             .collect();
         assert_eq!(
             codes,
-            ["E5001", "E5002", "E5003", "E5004", "E5005", "E5006"]
+            [
+                "E5001", "E5002", "E5003", "E5004", "E5005", "E5006", "E5007", "E5008"
+            ]
         );
     }
 
