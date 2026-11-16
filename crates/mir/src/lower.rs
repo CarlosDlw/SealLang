@@ -43,6 +43,13 @@ struct LoopTargets {
     continue_to: BasicBlockId,
 }
 
+/// The optional bounds of a slice range.
+#[derive(Clone, Copy)]
+struct SliceBounds {
+    start: Option<HirExprId>,
+    end: Option<HirExprId>,
+}
+
 struct BodyLowering<'a> {
     hir: &'a Hir,
     typeck: &'a TypeckResults,
@@ -347,10 +354,47 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Borrow { operand, kind } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(operand);
-                    self.assign_rvalue(dest, Rvalue::Ref { place, kind }, span);
+                    let ty = self.expr_ty(expr);
+                    let is_slice = matches!(
+                        self.hir.ty_ctxt().kind(ty),
+                        TyKind::Ref { pointee, .. }
+                            if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. })
+                    );
+                    if is_slice {
+                        self.assign_rvalue(
+                            dest,
+                            Rvalue::SliceRef {
+                                base: place,
+                                start: None,
+                                end: None,
+                                kind,
+                                ty,
+                            },
+                            span,
+                        );
+                    } else {
+                        self.assign_rvalue(dest, Rvalue::Ref { place, kind }, span);
+                    }
                 }
             }
-            ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
+            ExprKind::SliceRef {
+                base,
+                start,
+                end,
+                kind,
+            } => {
+                self.lower_slice_ref(base, SliceBounds { start, end }, kind, dest, span);
+            }
+            ExprKind::Len { operand } => {
+                let slice = self.lower_operand(operand);
+                if let Some(dest) = dest {
+                    self.assign_rvalue(dest, Rvalue::Len { slice }, span);
+                }
+            }
+            ExprKind::Slice { .. }
+            | ExprKind::Deref { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Index { .. } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(expr);
                     let ty = self.expr_ty(expr);
@@ -648,6 +692,7 @@ impl<'a> BodyLowering<'a> {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)
             }
+            ExprKind::Slice { .. } => Operand::Constant(Constant::Unit),
             _ => {
                 let temp = self.new_temp(ty, span);
                 self.lower_expr_into(expr, Some(temp.clone()));
@@ -716,22 +761,82 @@ impl<'a> BodyLowering<'a> {
     fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
         let local = self.place_of_local(place.local).local;
         let mut projections = Vec::with_capacity(place.projections.len());
+        let mut ty = place.root_ty;
+        let mut slice_reference: Option<Place> = None;
         for projection in &place.projections {
             match projection {
-                PlaceProjection::Deref => projections.push(Projection::Deref),
-                PlaceProjection::Field(field) => projections.push(Projection::Field(*field)),
+                PlaceProjection::Deref => {
+                    let pointee = match self.hir.ty_ctxt().kind(ty) {
+                        TyKind::Ref { pointee, .. } => pointee,
+                        _ => ty,
+                    };
+                    if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. }) {
+                        slice_reference = Some(Place::with_projections(local, projections.clone()));
+                    } else {
+                        slice_reference = None;
+                    }
+                    projections.push(Projection::Deref);
+                    ty = pointee;
+                }
+                PlaceProjection::Field(field) => {
+                    if let TyKind::Adt(adt) = self.hir.ty_ctxt().kind(ty)
+                        && let Some(field) = self.hir.ty_ctxt().field(adt, *field)
+                    {
+                        ty = field.ty;
+                    }
+                    slice_reference = None;
+                    projections.push(Projection::Field(*field));
+                }
                 PlaceProjection::Index {
                     index,
                     constant,
                     length,
+                    dynamic_length,
                 } => {
                     let span = self.hir.expr(*index).span;
-                    let ty = self.expr_ty(*index);
-                    let temp = self.new_temp(ty, span);
+                    let index_ty = self.expr_ty(*index);
+                    let temp = self.new_temp(index_ty, span);
                     self.lower_expr_into(*index, Some(temp.clone()));
                     if constant.is_none() {
-                        self.emit_bounds_check(temp.local, *length, span);
+                        let length_operand = if *dynamic_length {
+                            let reference = slice_reference.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "a slice index has no slice reference; this is a compiler bug"
+                                )
+                            });
+                            let len_ty = self.usize_ty();
+                            let len = self.new_temp(len_ty, span);
+                            self.assign_rvalue(
+                                len.clone(),
+                                Rvalue::Len {
+                                    slice: Operand::Copy(reference),
+                                },
+                                span,
+                            );
+                            Operand::Copy(len)
+                        } else {
+                            Operand::Constant(Constant::Int {
+                                value: u128::from(*length),
+                                ty: self.usize_ty(),
+                            })
+                        };
+                        let message = if *dynamic_length {
+                            "index out of bounds".to_owned()
+                        } else {
+                            format!("index out of bounds: the length is {length}")
+                        };
+                        self.emit_bounds_check_operand(
+                            Operand::Copy(Place::local(temp.local)),
+                            length_operand,
+                            span,
+                            &message,
+                        );
                     }
+                    ty = match self.hir.ty_ctxt().kind(ty) {
+                        TyKind::Array { element, .. } | TyKind::Slice { element } => element,
+                        _ => ty,
+                    };
+                    slice_reference = None;
                     projections.push(Projection::Index {
                         local: temp.local,
                         constant: *constant,
@@ -742,29 +847,127 @@ impl<'a> BodyLowering<'a> {
         Place::with_projections(local, projections)
     }
 
-    /// Branches to a panic block when `index` is not less than `length`.
-    fn emit_bounds_check(&mut self, index: LocalId, length: u64, span: Span) {
-        let some = |kind| {
-            self.hir
-                .ty_ctxt()
-                .lookup(kind)
-                .expect("HIR lowering interns every primitive type")
+    /// Lowers `&base[start..end]` into a fat-pointer construction.
+    fn lower_slice_ref(
+        &mut self,
+        base: HirExprId,
+        bounds: SliceBounds,
+        kind: seal_ty::RefKind,
+        dest: Option<Place>,
+        span: Span,
+    ) {
+        let SliceBounds { start, end } = bounds;
+        let ty = self.expr_ty(base);
+        let ty = match self.hir.ty_ctxt().kind(ty) {
+            TyKind::Array { element, .. } => {
+                let slice = self.hir.ty_ctxt().slice_ty(element);
+                self.hir.ty_ctxt().ref_ty_with(kind, slice)
+            }
+            TyKind::Ref { pointee, .. } => self.hir.ty_ctxt().ref_ty_with(kind, pointee),
+            _ => ty,
         };
-        let bool_ty = some(TyKind::Bool);
-        let usize_ty = some(TyKind::Uint(seal_ty::UintTy::Usize));
+        let base_place = self.place_of_expr(base);
+        let base_ty = self.expr_ty(base);
+        let length = match self.hir.ty_ctxt().kind(base_ty) {
+            TyKind::Array { length, .. } => self.constant_length(length),
+            TyKind::Ref { pointee, .. } => match self.hir.ty_ctxt().kind(pointee) {
+                TyKind::Array { length, .. } => self.constant_length(length),
+                TyKind::Slice { .. } => {
+                    let length_ty = self.usize_ty();
+                    let length = self.new_temp(length_ty, span);
+                    self.assign_rvalue(
+                        length.clone(),
+                        Rvalue::Len {
+                            slice: Operand::Copy(base_place.clone()),
+                        },
+                        span,
+                    );
+                    Operand::Copy(length)
+                }
+                _ => self.constant_length(0),
+            },
+            _ => self.constant_length(0),
+        };
+        let start_operand = start.map(|start| self.lower_operand(start));
+        let end_operand = end.map(|end| self.lower_operand(end));
 
+        if let Some(start) = &start_operand {
+            self.emit_le_check(
+                start.clone(),
+                end_operand.clone().unwrap_or_else(|| length.clone()),
+                span,
+                "slice range starts after it ends",
+            );
+        }
+        if let Some(end) = &end_operand {
+            self.emit_le_check(
+                end.clone(),
+                length,
+                span,
+                "slice range end is out of bounds",
+            );
+        }
+
+        if let Some(dest) = dest {
+            self.assign_rvalue(
+                dest,
+                Rvalue::SliceRef {
+                    base: base_place,
+                    start: start_operand,
+                    end: end_operand,
+                    kind,
+                    ty,
+                },
+                span,
+            );
+        }
+    }
+
+    fn constant_length(&self, length: u64) -> Operand {
+        Operand::Constant(Constant::Int {
+            value: u128::from(length),
+            ty: self.usize_ty(),
+        })
+    }
+
+    fn usize_ty(&self) -> TyId {
+        self.hir
+            .ty_ctxt()
+            .lookup(TyKind::Uint(seal_ty::UintTy::Usize))
+            .expect("HIR lowering interns every primitive type")
+    }
+
+    fn emit_bounds_check_operand(
+        &mut self,
+        index: Operand,
+        length: Operand,
+        span: Span,
+        message: &str,
+    ) {
+        self.emit_compare_check(BinOp::Lt, index, length, span, message);
+    }
+
+    fn emit_le_check(&mut self, lhs: Operand, rhs: Operand, span: Span, message: &str) {
+        self.emit_compare_check(BinOp::Le, lhs, rhs, span, message);
+    }
+
+    fn emit_compare_check(
+        &mut self,
+        op: BinOp,
+        lhs: Operand,
+        rhs: Operand,
+        span: Span,
+        message: &str,
+    ) {
+        let bool_ty = self
+            .hir
+            .ty_ctxt()
+            .lookup(TyKind::Bool)
+            .expect("HIR lowering interns every primitive type");
         let condition = self.new_temp(bool_ty, span);
         self.assign_rvalue(
             condition.clone(),
-            Rvalue::Binary {
-                op: BinOp::Lt,
-                lhs: Operand::Copy(Place::local(index)),
-                rhs: Operand::Constant(Constant::Int {
-                    value: u128::from(length),
-                    ty: usize_ty,
-                }),
-                span,
-            },
+            Rvalue::Binary { op, lhs, rhs, span },
             span,
         );
 
@@ -784,7 +987,7 @@ impl<'a> BodyLowering<'a> {
         self.current = Some(panic);
         self.terminate(
             TerminatorKind::Panic {
-                message: format!("index out of bounds: the length is {length}"),
+                message: message.to_owned(),
             },
             span,
         );

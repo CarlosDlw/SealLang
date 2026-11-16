@@ -31,6 +31,10 @@ impl Lowering<'_> {
                 let element = self.lower_type(element);
                 self.hir.ty_ctxt_mut().array_ty(element, length)
             }
+            TypeKind::Slice { element } => {
+                let element = self.lower_type(element);
+                self.hir.ty_ctxt_mut().slice_ty(element)
+            }
             TypeKind::Path(symbol) => {
                 if let Some(definition) = self.types.get(&symbol).copied() {
                     let adt = self

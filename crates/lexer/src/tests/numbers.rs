@@ -124,7 +124,7 @@ fn floats_use_every_decimal_form() {
 }
 
 #[test]
-fn dots_that_cannot_continue_a_float_stay_separate_tokens() {
+fn a_range_after_an_integer_is_one_token() {
     let fixture = Fixture::new("1..2");
     let lexed = fixture.lex();
     fixture.assert_clean();
@@ -136,8 +136,7 @@ fn dots_that_cannot_continue_a_float_stay_separate_tokens() {
                 base: NumericBase::Decimal,
                 suffix: None
             },
-            TokenKind::Dot,
-            TokenKind::Dot,
+            TokenKind::DotDot,
             TokenKind::Int {
                 value: 2,
                 base: NumericBase::Decimal,

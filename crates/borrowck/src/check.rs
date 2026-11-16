@@ -6,7 +6,7 @@ use seal_mir::{
     BasicBlock, Body, LocalId, Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
 };
 use seal_symbol::Interner;
-use seal_ty::{InitPaths, RefKind};
+use seal_ty::{InitPaths, RefKind, TyKind};
 
 use crate::aliasing::{BodyFacts, CallSites};
 use crate::calls;
@@ -49,7 +49,7 @@ pub(crate) fn check_body(
     interner: &Interner,
     calls: &mut CallSites,
 ) -> BodyFacts {
-    let (mut loans, loan_at) = loans::collect(body);
+    let (mut loans, loan_at) = loans::collect(hir, body);
     let liveness = liveness::analyze(body);
     let holds = holds::analyze(hir, body, &loans, &loan_at);
     let origins = origins::analyze(hir, body);
@@ -153,6 +153,36 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         Rvalue::Ref { place, kind } => {
             unknown |= origins::keys_of(context.origins, place).is_unknown();
             check_borrow(place, *kind, statement.span, context);
+        }
+        Rvalue::SliceRef {
+            base,
+            start,
+            end,
+            kind,
+            ..
+        } => {
+            let borrow_place = if matches!(
+                context
+                    .hir
+                    .ty_ctxt()
+                    .kind(origins::place_ty(context.hir, context.body, base)),
+                TyKind::Ref { .. }
+            ) {
+                check_read(base, statement.span, context);
+                base.clone().deref()
+            } else {
+                base.clone()
+            };
+            unknown |= origins::keys_of(context.origins, &borrow_place).is_unknown();
+            check_borrow(&borrow_place, *kind, statement.span, context);
+            for operand in start.iter().chain(end.iter()) {
+                unknown |= operand_unknown(operand, context);
+                check_operand(statement, operand, context);
+            }
+        }
+        Rvalue::Len { slice } => {
+            unknown |= operand_unknown(slice, context);
+            check_operand(statement, slice, context);
         }
         Rvalue::Binary { lhs, rhs, .. } => {
             unknown |= operand_unknown(lhs, context) || operand_unknown(rhs, context);

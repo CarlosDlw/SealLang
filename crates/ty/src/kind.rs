@@ -194,9 +194,9 @@ impl fmt::Display for RefKind {
 
 /// The meaning of a type.
 ///
-/// The variants mirror the language surface: scalars, the unsized `str`,
-/// references, nominal aggregates, the unit and never types, and the two
-/// non-user types (`Error` and `Infer`).
+/// The variants mirror the language surface: scalars, the unsized `str` and
+/// slices, references, nominal aggregates, the unit and never types, and the
+/// two non-user types (`Error` and `Infer`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     /// The boolean type `bool`.
@@ -207,6 +207,15 @@ pub enum TyKind {
     ///
     /// Values of this kind only appear behind a reference; see the memory model.
     Str,
+    /// The unsized slice pointee, `[T]`.
+    ///
+    /// A slice is a view over a contiguous sequence of `element` values. It is
+    /// never stored by value: `*[T]` and `*mut [T]` are its fat-pointer
+    /// references, carrying the element address and the length.
+    Slice {
+        /// The type of every element.
+        element: TyId,
+    },
     /// A signed integer type.
     Int(IntTy),
     /// An unsigned integer type.

@@ -2,8 +2,10 @@
 
 use std::cell::Cell;
 
+use seal_hir::Hir;
 use seal_index::Idx;
 use seal_mir::{Body, Rvalue, StatementKind};
+use seal_ty::TyKind;
 
 use crate::holds::Holds;
 use crate::id::LoanId;
@@ -14,7 +16,7 @@ use crate::origins::{self, OriginSet, Origins};
 ///
 /// The returned table is indexed by block and statement, matching how the
 /// dataflow passes replay the body.
-pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
+pub(crate) fn collect(hir: &Hir, body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
     let mut loans = Vec::new();
     let mut positions = Vec::with_capacity(body.blocks.len());
 
@@ -22,14 +24,26 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
         let mut row = vec![None; block.statements.len()];
         for (position, statement) in block.statements.iter().enumerate() {
             let StatementKind::Assign { rvalue, .. } = &statement.kind;
-            let Rvalue::Ref { place, kind } = rvalue else {
-                continue;
+            let (place, kind) = match rvalue {
+                Rvalue::Ref { place, kind } => (place.clone(), *kind),
+                Rvalue::SliceRef { base, kind, .. } => {
+                    let place = if matches!(
+                        hir.ty_ctxt().kind(origins::place_ty(hir, body, base)),
+                        TyKind::Ref { .. }
+                    ) {
+                        base.clone().deref()
+                    } else {
+                        base.clone()
+                    };
+                    (place, *kind)
+                }
+                _ => continue,
             };
             let id = LoanId::from_usize(loans.len());
             loans.push(Loan {
-                place: place.clone(),
+                place,
                 span: statement.span,
-                kind: *kind,
+                kind,
                 keys: OriginSet::default(),
                 parents: Vec::new(),
                 last_use: None,
@@ -60,16 +74,15 @@ pub(crate) fn resolve(
             let Some(id) = loan_at[block_index][position] else {
                 continue;
             };
-            let StatementKind::Assign {
-                rvalue: Rvalue::Ref { place, .. },
-                ..
-            } = &statement.kind
-            else {
+            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            if !matches!(rvalue, Rvalue::Ref { .. } | Rvalue::SliceRef { .. }) {
                 continue;
-            };
+            }
+            let loan = &loans[id.index() as usize];
+            let place = loan.place.clone();
             let loan = &mut loans[id.index() as usize];
-            loan.keys = origins::keys_of(&origins.before[block_index][position], place);
-            let mut parents: Vec<LoanId> = origins::first_deref_base(place)
+            loan.keys = origins::keys_of(&origins.before[block_index][position], &place);
+            let mut parents: Vec<LoanId> = origins::first_deref_base(&place)
                 .map(|base| {
                     holds.before[block_index][position]
                         .at(&base)

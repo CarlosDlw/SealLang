@@ -23,6 +23,7 @@ fn all_examples_lex_cleanly() {
         "005_while_loop.sl",
         "007_runtime_panic.sl",
         "008_exclusive_references.sl",
+        "010_slices.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

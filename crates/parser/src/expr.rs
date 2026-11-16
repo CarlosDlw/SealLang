@@ -424,14 +424,43 @@ impl Parser<'_> {
         self.builder.push_expr(ExprKind::Array { elements }, span)
     }
 
-    /// Parses `base[index]`, an array place projection.
+    /// Parses `base[index]` or a range `base[start..end]`.
     fn parse_index(&mut self, base: ExprId) -> ExprId {
         self.bump();
         let allowed = self.struct_literal_allowed;
         self.struct_literal_allowed = true;
-        let index = self.parse_expr(0);
+        let (start, end) = if self.eat(TokenKind::DotDot) {
+            let end = if self.at(TokenKind::RBracket) {
+                None
+            } else {
+                Some(self.parse_expr(0))
+            };
+            (None, end)
+        } else {
+            let first = self.parse_expr(0);
+            if self.eat(TokenKind::DotDot) {
+                let end = if self.at(TokenKind::RBracket) {
+                    None
+                } else {
+                    Some(self.parse_expr(0))
+                };
+                (Some(first), end)
+            } else {
+                self.struct_literal_allowed = allowed;
+                let _ = self.expect(TokenKind::RBracket, "`]` after the index");
+                let span = self
+                    .builder
+                    .ast()
+                    .expr(base)
+                    .span
+                    .cover(self.previous_span());
+                return self
+                    .builder
+                    .push_expr(ExprKind::Index { base, index: first }, span);
+            }
+        };
         self.struct_literal_allowed = allowed;
-        let _ = self.expect(TokenKind::RBracket, "`]` after the index");
+        let _ = self.expect(TokenKind::RBracket, "`]` after the slice range");
         let span = self
             .builder
             .ast()
@@ -439,7 +468,7 @@ impl Parser<'_> {
             .span
             .cover(self.previous_span());
         self.builder
-            .push_expr(ExprKind::Index { base, index }, span)
+            .push_expr(ExprKind::Slice { base, start, end }, span)
     }
 
     fn parse_call(&mut self, callee: ExprId) -> ExprId {

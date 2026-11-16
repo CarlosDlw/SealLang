@@ -208,6 +208,8 @@ pub enum TokenKind {
     Colon,
     /// `.`
     Dot,
+    /// `..`
+    DotDot,
     /// `->`
     Arrow,
 

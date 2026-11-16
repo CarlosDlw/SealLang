@@ -28,7 +28,7 @@ pub(crate) struct TypeMapper<'ctx> {
     layouts: LayoutCtxt<'ctx>,
     pointer_width: u8,
     empty: StructType<'ctx>,
-    string_ref: StructType<'ctx>,
+    fat_pointer: StructType<'ctx>,
     adts: Vec<StructType<'ctx>>,
 }
 
@@ -51,7 +51,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 )));
             }
         };
-        let string_ref = context.struct_type(&[byte_ptr.into(), usize_ty.into()], false);
+        let fat_pointer = context.struct_type(&[byte_ptr.into(), usize_ty.into()], false);
         let layouts = LayoutCtxt::new(tcx, pointer_width);
 
         let mut adts = Vec::with_capacity(tcx.adt_len());
@@ -68,7 +68,7 @@ impl<'ctx> TypeMapper<'ctx> {
             layouts,
             pointer_width,
             empty,
-            string_ref,
+            fat_pointer,
             adts,
         };
         mapper.fill_aggregates()?;
@@ -100,8 +100,8 @@ impl<'ctx> TypeMapper<'ctx> {
                 FloatTy::F64 => self.context.f64_type(),
             }),
             TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
-                // `*str` is a fat pointer: data plus length.
-                TyKind::Str => BasicTypeEnum::StructType(self.string_ref),
+                // `*str` and `*[T]` are fat pointers: data plus length.
+                TyKind::Str | TyKind::Slice { .. } => BasicTypeEnum::StructType(self.fat_pointer),
                 _ => BasicTypeEnum::PointerType(self.pointer()),
             },
             TyKind::Array { element, length } => {
@@ -114,9 +114,9 @@ impl<'ctx> TypeMapper<'ctx> {
             }
             TyKind::Adt(adt) => BasicTypeEnum::StructType(self.adt(adt)),
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
-            TyKind::Str => {
+            TyKind::Str | TyKind::Slice { .. } => {
                 return Err(CodegenError::internal(
-                    "`str` has no sized LLVM type; only `*str` is representable",
+                    "an unsized type has no LLVM value type; only its reference is representable",
                 ));
             }
             TyKind::Infer(_) => {
@@ -225,6 +225,23 @@ mod tests {
     use seal_ty::TyCtxt;
 
     use super::TypeMapper;
+
+    #[test]
+    fn a_slice_reference_is_a_fat_pointer() {
+        let context = Context::create();
+        let tcx = TyCtxt::new();
+        let interner = Interner::new();
+        let int = tcx.int_ty(seal_ty::IntTy::I32);
+        let slice = tcx.ref_ty(tcx.slice_ty(int));
+
+        let mapper =
+            TypeMapper::new(&context, &tcx, &interner, 64).expect("pointer width is supported");
+        let fat = mapper
+            .basic(slice)
+            .expect("a slice reference is sized")
+            .into_struct_type();
+        assert_eq!(fat.get_field_types().len(), 2);
+    }
 
     #[test]
     fn a_string_reference_length_matches_the_pointer_width() {

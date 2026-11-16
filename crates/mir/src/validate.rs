@@ -213,6 +213,19 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
     match rvalue {
         Rvalue::Use(operand) => check_operand(body, block, operand),
         Rvalue::Ref { place, .. } => check_place(body, block, place.clone()),
+        Rvalue::SliceRef {
+            base, start, end, ..
+        } => {
+            check_place(body, block, base.clone())?;
+            if let Some(start) = start {
+                check_operand(body, block, start)?;
+            }
+            if let Some(end) = end {
+                check_operand(body, block, end)?;
+            }
+            Ok(())
+        }
+        Rvalue::Len { slice } => check_operand(body, block, slice),
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand(body, block, lhs)?;
             check_operand(body, block, rhs)

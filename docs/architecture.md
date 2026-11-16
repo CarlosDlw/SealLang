@@ -26,11 +26,11 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, aggregates, and arrays; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-ty` | Interned semantic types, aggregates, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
 | `seal-layout` | Deterministic struct and array layout: field offsets, alignment, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, array lengths and bounds, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index projections and bounds checks, terminators, and structural validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, array element paths, escaping references, `E5xxx` diagnostics. |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
@@ -141,10 +141,11 @@ allowed to depend only on crates below it in the list.
     the state from before the loop. An uninitialized immutable binding may be
     initialized once by assignment; reassigning it needs `let mut`.
 31. **Stored values are sized.** Locals, parameters, and return values cannot
-    have `str`; an array is sized when its element is, and its total size must fit
-    the target address space (`E3023`). Literals must fit the integer or float
-    type selected for them, using the target pointer width for `isize` and
-    `usize`.
+    have `str` or `[T]`; a slice is only usable through `*[T]`/`*mut [T]`, an
+    array is sized when its element is, and its total size must fit the target
+    address space (`E3023`). An array reference coerces to a slice reference when
+    the expected type requires one. Literals must fit the integer or float type
+    selected for them, using the target pointer width for `isize` and `usize`.
 32. **MIR is a control-flow graph.** Every body has one entry block and a return
     place at local zero; parameters are locals `1..=arg_count`, bindings and
     temporaries follow, and every local declares its type. Every block ends in
@@ -255,12 +256,15 @@ allowed to depend only on crates below it in the list.
 53. **Every local has storage.** Locals, parameters, and the return place are
     `alloca` slots; reads and writes are loads and stores, and calls use the
     checked signature. Aggregates are built with `insertvalue` in declaration
-    order, struct fields are projected with struct GEPs, and arrays with a
-    bounds-checked element offset, so evaluation order and layout agree.
+    order, struct fields are projected with struct GEPs, and arrays and slices
+    with a bounds-checked element offset, so evaluation order and layout agree.
+    A slice range is lowered to explicit checks followed by a fat-pointer
+    construction; `len` reads the length member.
 54. **The ABI is compiler-owned.** Seal functions use the `seal.<name>` symbol;
     the C `main` wrapper is the only `main`. A user `main` takes no parameters
-    and returns `i32` or `()`. `*str` is `{ data, length }`; `()`/`!` are
-    zero-sized structs; the object is position independent.
+    and returns `i32` or `()`. `*str`, `*[T]`, and `*mut [T]` are
+    `{ data, length }`; `()`/`!` are zero-sized structs; the object is position
+    independent.
 55. **Debug information describes the generated IR.** `-g` emits a Rust compile
     unit, subprograms, parameters, bindings, aggregate types with layout
     offsets, and a source location per statement and terminator, all finalized

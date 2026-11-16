@@ -112,6 +112,19 @@ impl TyCtxt {
         }
     }
 
+    /// Returns the slice type `[element]`.
+    pub fn slice_ty(&self, element: TyId) -> TyId {
+        self.intern(TyKind::Slice { element })
+    }
+
+    /// Returns the element type of `ty` when it is a slice.
+    pub fn slice_parts(&self, ty: TyId) -> Option<TyId> {
+        match self.kind(ty) {
+            TyKind::Slice { element } => Some(element),
+            _ => None,
+        }
+    }
+
     /// Returns the type naming `adt`.
     pub fn adt_ty(&self, adt: AdtId) -> TyId {
         self.intern(TyKind::Adt(adt))
@@ -233,21 +246,21 @@ impl TyCtxt {
             // A user-defined aggregate owns its fields; it becomes `Copy` only
             // through an explicit opt-in, which the language does not have yet.
             // Its fields remain individually copyable.
-            TyKind::Adt(_) | TyKind::Str | TyKind::Infer(_) => false,
+            TyKind::Adt(_) | TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
         }
     }
 
     /// Returns `true` if `ty` has a size known at compile time.
     ///
-    /// `str` is the only unsized kind in the current language; an unresolved
-    /// inference variable reports `false` because its size is not known yet.
+    /// `str` and slices are unsized; an unresolved inference variable reports
+    /// `false` because its size is not known yet.
     pub fn is_sized(&self, ty: TyId) -> bool {
         self.is_sized_inner(ty, &mut FxHashSet::default())
     }
 
     fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
-            TyKind::Str | TyKind::Infer(_) => false,
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
@@ -307,7 +320,9 @@ impl TyCtxt {
     fn contains_reference_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
             TyKind::Ref { .. } => true,
-            TyKind::Array { element, .. } => self.contains_reference_inner(element, visiting),
+            TyKind::Slice { element } | TyKind::Array { element, .. } => {
+                self.contains_reference_inner(element, visiting)
+            }
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -341,7 +356,7 @@ impl TyCtxt {
     ) -> bool {
         match self.kind(ty) {
             TyKind::Ref { kind, .. } => kind.is_exclusive(),
-            TyKind::Array { element, .. } => {
+            TyKind::Slice { element } | TyKind::Array { element, .. } => {
                 self.contains_exclusive_reference_inner(element, visiting)
             }
             TyKind::Adt(adt) => {

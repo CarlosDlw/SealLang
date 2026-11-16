@@ -119,7 +119,8 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
             }
         }
         Rvalue::Repeat { value, .. } => move_operand(value, state),
-        Rvalue::Ref { .. } => {}
+        Rvalue::Len { slice } => move_operand(slice, state),
+        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
     }
     if let Some((local, fields)) = path_of(place) {
         state.assign(local, &fields);

@@ -130,6 +130,11 @@ pub enum TypeKind {
         /// The span of the length literal, for diagnostics.
         length_span: Span,
     },
+    /// An unsized slice, written `[T]`.
+    Slice {
+        /// The type of each element.
+        element: TypeId,
+    },
     /// Syntax the parser could not turn into a type.
     Error,
 }

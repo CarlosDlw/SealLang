@@ -297,6 +297,14 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Str) => {
                 self.string_type()?
             }
+            TyKind::Ref { pointee, .. }
+                if matches!(self.tcx.kind(pointee), TyKind::Slice { .. }) =>
+            {
+                let TyKind::Slice { element } = self.tcx.kind(pointee) else {
+                    unreachable!("the guard checked the kind")
+                };
+                self.slice_type(element)?
+            }
             TyKind::Ref { pointee, .. } => {
                 let pointer_bits = u64::from(self.mapper.pointer_width());
                 let pointee = self.di_type(pointee)?;
@@ -341,6 +349,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             }
             TyKind::Adt(adt) => self.adt_type(adt)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
+            TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {
                 self.basic_type(ty, "()", 0, encoding::UNSIGNED)?
             }
@@ -370,9 +379,6 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
     }
 
     fn string_type(&self) -> Result<DIType<'ctx>, CodegenError> {
-        let pointer_bits = u64::from(self.mapper.pointer_width());
-        let align = bits_u32(pointer_bits)?;
-        let scope = self.unit.as_debug_info_scope();
         let byte = self
             .builder
             .create_basic_type("u8", 8, encoding::UNSIGNED, DIFlags::ZERO)
@@ -380,9 +386,21 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 CodegenError::internal(format!("cannot describe `u8` in debug info: {error:?}"))
             })?
             .as_type();
+        self.fat_type("&str", byte)
+    }
+
+    fn slice_type(&self, element: TyId) -> Result<DIType<'ctx>, CodegenError> {
+        let element = self.di_type(element)?;
+        self.fat_type("&[T]", element)
+    }
+
+    fn fat_type(&self, name: &str, data: DIType<'ctx>) -> Result<DIType<'ctx>, CodegenError> {
+        let pointer_bits = u64::from(self.mapper.pointer_width());
+        let align = bits_u32(pointer_bits)?;
+        let scope = self.unit.as_debug_info_scope();
         let data = self
             .builder
-            .create_pointer_type("data", byte, pointer_bits, align, AddressSpace::default())
+            .create_pointer_type("data", data, pointer_bits, align, AddressSpace::default())
             .as_type();
         let length = self
             .builder
@@ -423,7 +441,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             .builder
             .create_struct_type(
                 scope,
-                "&str",
+                name,
                 self.unit_file,
                 0,
                 pointer_bits * 2,

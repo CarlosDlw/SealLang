@@ -523,6 +523,19 @@ hidden temporaries for indexing.
 Store the array in a `let` binding and index that binding.",
 };
 
+/// The built-in `len` received the wrong number of arguments.
+pub const E2014: ErrorCode = ErrorCode {
+    code: "E2014",
+    title: "wrong number of arguments to `len`",
+    explanation: "\
+`len` is a built-in operator that reads the length stored in a slice reference.
+It takes exactly one argument, the `*[T]` or `*mut [T]` value whose length is
+needed; it has no second form and no optional arguments.
+
+Pass one slice reference, as in `len(values)`, or remove the extra arguments.
+A user function named `len` shadows the built-in and is called normally.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -655,12 +668,14 @@ pub const E3010: ErrorCode = ErrorCode {
     title: "value has an unsized type",
     explanation: "\
 Locals, parameters, and return values are stored directly, so their type must
-have a size known at compile time (decision D10 of the memory model). `str` is
-the only unsized type in the current language: it is a sequence of bytes with a
-runtime length, so it can only appear behind a reference.
+have a size known at compile time (decision D10 of the memory model). `str` and
+slices are unsized: they carry a runtime length, so they can only appear behind
+a reference.
 
-Use `*str` for string data. String literals already have type `*str` and can be
-stored in a binding without annotation.",
+Use `*str` for string data and `*[T]`/`*mut [T]` for a borrowed sequence.
+String literals already have type `*str`, and a range such as `&values[..]`
+produces a slice reference, so both can be stored in a binding without an
+annotation.",
 };
 
 /// A local is read before it is definitely initialized.
@@ -834,6 +849,43 @@ memory or addressed by one pointer.
 
 Use a smaller length or a smaller element type. The check runs against the
 selected target, not the host.",
+};
+
+/// A slice operation is invalid for the value's type or mutability.
+pub const E3024: ErrorCode = ErrorCode {
+    code: "E3024",
+    title: "invalid slice operation",
+    explanation: "\
+A slice is an unsized view over contiguous elements. It is created by borrowing
+a range, such as `&values[start..end]`, and only a `*[T]` or `*mut [T]` can be
+stored or passed. A bare range is unsized, only arrays and slice references can
+be sliced, and a mutable slice requires a writable source.
+
+Borrow the range, make sure the base is an array or slice, and use a `*mut`
+source or a `mut` binding when the slice is mutable.",
+};
+
+/// The `len` built-in received a value that is not a slice reference.
+pub const E3025: ErrorCode = ErrorCode {
+    code: "E3025",
+    title: "`len` requires a slice reference",
+    explanation: "\
+`len` reads the length word of a slice reference. Values of other types do not
+carry a runtime length, so the compiler cannot answer without a slice.
+
+Create a slice first, as in `len(&values[..])`, and pass that reference.",
+};
+
+/// A constant slice range has its start after its end.
+pub const E3026: ErrorCode = ErrorCode {
+    code: "E3026",
+    title: "slice range is empty because start exceeds end",
+    explanation: "\
+A range selects elements from `start` up to, but not including, `end`. When both
+bounds are literals and `start > end`, the range can never select anything, so
+the compiler reports it instead of leaving a guaranteed runtime panic.
+
+Write a range whose start is at most its end, or swap the bounds.",
 };
 
 /// A place is assigned while a shared reference to it is live.
@@ -1053,10 +1105,10 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
-    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E3001, E3002, E3003, E3004,
-    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
-    E3018, E3019, E3020, E3021, E3022, E3023, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
-    E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E3001, E3002, E3003,
+    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E5001, E5002, E5003,
+    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1166,7 +1218,7 @@ mod tests {
             codes,
             [
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
-                "E2010", "E2011", "E2012", "E2013",
+                "E2010", "E2011", "E2012", "E2013", "E2014",
             ]
         );
     }
@@ -1183,7 +1235,7 @@ mod tests {
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
-                "E3019", "E3020", "E3021", "E3022", "E3023",
+                "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026",
             ]
         );
     }

@@ -56,7 +56,7 @@ impl Checker<'_> {
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
             ExprKind::Path(res) => self.check_path(expr, res, span, flow, mode),
-            ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, flow),
+            ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, expected, flow),
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
                 let deref = self.reference_kind(operand);
@@ -106,6 +106,14 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => {
                 self.check_index(expr, base, index, span, flow, mode)
             }
+            ExprKind::Slice { base, start, end } => self.check_slice(base, start, end, span, flow),
+            ExprKind::SliceRef {
+                base,
+                start,
+                end,
+                kind,
+            } => self.check_slice_ref(base, start, end, kind, span, flow),
+            ExprKind::Len { operand } => self.check_len(operand, span, flow),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)
@@ -331,19 +339,34 @@ impl Checker<'_> {
         flow: &mut Flow,
         mode: PlaceMode,
     ) -> TyId {
-        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
-        let Some((element, length)) = self.array_parts(base_ty) else {
-            self.check_expr(index, self.usize_ty(), flow);
-            if !self.is_error(base_ty) {
-                self.error(
-                    seal_error_codes::E3021,
-                    span,
-                    format!("cannot index a value of type `{}`", self.ty_text(base_ty)),
-                )
-                .help("only fixed-size arrays can be indexed")
-                .emit();
+        let mut base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        let mut auto_deref = None;
+        if let TyKind::Ref { kind, pointee } = self.hir.ty_ctxt().kind(base_ty)
+            && matches!(
+                self.hir.ty_ctxt().kind(pointee),
+                TyKind::Array { .. } | TyKind::Slice { .. }
+            )
+        {
+            auto_deref = Some(kind);
+            base_ty = pointee;
+        }
+
+        let (element, length, dynamic_length) = match self.hir.ty_ctxt().kind(base_ty) {
+            TyKind::Array { element, length } => (element, length, false),
+            TyKind::Slice { element } => (element, 0, true),
+            _ => {
+                self.check_expr(index, self.usize_ty(), flow);
+                if !self.is_error(base_ty) {
+                    self.error(
+                        seal_error_codes::E3021,
+                        span,
+                        format!("cannot index a value of type `{}`", self.ty_text(base_ty)),
+                    )
+                    .help("only arrays and slices can be indexed")
+                    .emit();
+                }
+                return self.error_ty();
             }
-            return self.error_ty();
         };
 
         let index_ty = self.infer_expr(index, Some(self.usize_ty()), flow);
@@ -351,38 +374,22 @@ impl Checker<'_> {
             self.mismatch(self.hir.expr(index).span, self.usize_ty(), index_ty);
         }
 
-        let index_span = self.hir.expr(index).span;
-        let constant = match self.hir.expr(index).kind {
-            ExprKind::Lit(Literal::Int {
-                value, ref suffix, ..
-            }) if suffix.is_none_or(|suffix| self.interner.resolve(suffix) == "usize") => {
-                if value >= u128::from(length) {
-                    self.error(
-                        seal_error_codes::E3022,
-                        index_span,
-                        format!(
-                            "array index `{value}` is out of bounds for an array of length {length}"
-                        ),
-                    )
-                    .help(if length == 0 {
-                        "an array of length 0 has no valid indices"
-                    } else {
-                        "the last valid index is `length - 1`"
-                    })
-                    .emit();
-                    None
-                } else {
-                    Some(value as u64)
-                }
-            }
-            _ => None,
+        let constant = if dynamic_length {
+            None
+        } else {
+            self.constant_index(index, length)
         };
 
         if let Some(mut place) = self.results.place(base).cloned() {
+            if let Some(kind) = auto_deref {
+                place.projections.push(PlaceProjection::Deref);
+                place.deref = Some(kind);
+            }
             place.projections.push(PlaceProjection::Index {
                 index,
                 constant,
                 length,
+                dynamic_length,
             });
             place.ty = element;
             self.results.record_place(expr, place);
@@ -394,6 +401,36 @@ impl Checker<'_> {
             self.require_initialized(expr, flow, span);
         }
         element
+    }
+
+    /// Returns the constant value of an index, reporting an out-of-range literal.
+    fn constant_index(&self, index: HirExprId, length: u64) -> Option<u64> {
+        let index_span = self.hir.expr(index).span;
+        let ExprKind::Lit(Literal::Int {
+            value, ref suffix, ..
+        }) = self.hir.expr(index).kind
+        else {
+            return None;
+        };
+        if !suffix.is_none_or(|suffix| self.interner.resolve(suffix) == "usize") {
+            return None;
+        }
+        if value >= u128::from(length) {
+            self.error(
+                seal_error_codes::E3022,
+                index_span,
+                format!("array index `{value}` is out of bounds for an array of length {length}"),
+            )
+            .help(if length == 0 {
+                "an array of length 0 has no valid indices"
+            } else {
+                "the last valid index is `length - 1`"
+            })
+            .emit();
+            None
+        } else {
+            Some(value as u64)
+        }
     }
 
     fn check_struct_literal(

@@ -88,6 +88,14 @@ The ABI is defined by the language, not by a C header:
   `unsafe`, so the address is formed with `ptrtoint`, integer addition, and
   `inttoptr` after the bounds check. The result addresses the same element and
   keeps the workspace's safety policy intact.
+- A slice reference is the fat pointer `{ data, length }`. A range borrow checks
+  `start <= end` and `end <= source length` in MIR, then forms the data address
+  from the source and stores `end - start` as the length. A full `[..]` range
+  performs no check. Slicing a slice reloads its fat pointer and applies the
+  same arithmetic, so reborrows do not allocate.
+- Slice indexing reloads the data member of the fat pointer and checks the
+  runtime index against the length member before the element offset. `len`
+  extracts the length member directly; both operations are O(1).
 - `[value; N]` evaluates `value` once and fills a temporary array in a loop. The
   temporary is allocated in the entry block, so a repeat inside a loop does not
   grow the stack on every iteration.
@@ -102,10 +110,10 @@ The ABI is defined by the language, not by a C header:
   of unknown target, and every call site proves its reference arguments name
   disjoint storage. The proof covers every call site in the compiled program;
   calling an exported function from foreign code with aliasing pointers is
-  outside it. A shared `*T` parameter is `readonly`: the type system forbids
-  writing through it, so that promise needs no whole-program proof. A `*str` or
-  `*mut str` parameter is a fat pointer, which LLVM cannot annotate, so it keeps
-  the ordinary ABI.
+  outside it.  A shared `*T` parameter is `readonly`: the type system forbids
+  writing through it, so that promise needs no whole-program proof. A `*str`,
+  `*[T]`, or `*mut [T]` parameter is a fat pointer, which LLVM cannot annotate,
+  so it keeps the ordinary ABI.
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 
@@ -119,7 +127,8 @@ The ABI is defined by the language, not by a C header:
   declared at their stack slots with source line and column;
 - `DW_TAG_structure_type` for every struct, with member names, bit offsets, and
   sizes from `seal-layout`;
-- pointer and fat-pointer types, including `&str` as a two-member struct;
+- pointer and fat-pointer types, including `&str` and `&[T]` as two-member
+  structs;
 - array types with their element type, length, size, and alignment;
 - a line-table entry for every statement and terminator, so debuggers stop on
   source lines rather than function boundaries.
@@ -151,7 +160,9 @@ Code generation must not leave undefined behavior on ordinary arithmetic:
   `NaN != NaN` is true.
 - A runtime array index is checked against the array length before the element
   address is formed. An out-of-range index calls `seal_panic` with
-  `index out of bounds: the length is N` and exits with status 101.
+  `index out of bounds: the length is N` and exits with status 101. A slice
+  index checks against the runtime length, and a slice range checks its bounds
+  before constructing the fat pointer.
 - Bitwise operators require integer operands (or `bool` for `!`), which the type
   checker enforces before code generation.
 
@@ -226,14 +237,18 @@ cargo test --workspace
 cargo build --workspace
 ```
 
-The end-to-end tests compile and run `examples/006_structs.sl` and
-`examples/009_arrays.sl` in debug and release, check DWARF sections and names,
-exercise object and assembly output without `main`, verify entry-point
+The end-to-end tests compile and run `examples/006_structs.sl`,
+`examples/009_arrays.sl`, and `examples/010_slices.sl` in debug and release,
+check DWARF sections and names, exercise object and assembly output without
+`main`, verify entry-point
 diagnostics, and confirm panic messages and status 101 for zero divisors, signed
 overflow in both `/` and `%`, and out-of-range array indices, and reject
 executable linking when the embedded runtime does not match the target.
 `examples/007_runtime_panic.sl` pins the user-visible panic message and location.
 Array tests also cover literals, repeats, zero-length arrays, copy semantics,
 arrays in structs, structs in arrays, function parameters, dynamic writes, and
-repeats inside loops. The driver tests export the embedded archive with
+repeats inside loops. Slice tests cover array-to-slice coercion, every range
+form, mutable views, sub-slicing, struct elements, runtime length reads, bounds
+panics, reborrow conflicts, and `len` shadowing. The driver tests export the
+embedded archive with
 `--emit-runtime` and reuse it with `--runtime-archive` to link that example.

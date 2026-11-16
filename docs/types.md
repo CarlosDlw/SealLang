@@ -34,6 +34,8 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | Exclusive reference | `*mut T` | pointer | pointer | yes | yes | no |
 | String reference | `*str` | 2 × pointer | pointer | yes | yes | no |
 | String pointee | `str` | unsized | unsized | no | no | no |
+| Slice reference | `*[T]`, `*mut [T]` | 2 × pointer | pointer | yes | yes | no |
+| Slice pointee | `[T]` | unsized | unsized | no | no | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | Array | `[T; N]` | N × size(T) | align(T) | yes, if `T` is | yes, if `T` is | no |
 | Unit | not writable | 0 | 1 | yes | yes | no |
@@ -141,7 +143,8 @@ A raw line break is not allowed inside a string literal; it must be escaped.
 Both kinds are non-null, non-owning, and `Copy`; copying the pointer copies the
 loan, so the pointee stays borrowed until the last use of every copy. Neither
 kind supports arithmetic, casts, or null values. A reference is a machine
-pointer, except `*str`, which is a two-word fat pointer.
+pointer, except `*str`, `*[T]`, and `*mut [T]`, which are two-word fat pointers
+holding a data address and a length.
 
 Borrowing writes the place, not the type: `&place` creates `*T` and
 `&mut place` creates `*mut T`. `&mut place` requires a writable place — a `mut`
@@ -231,6 +234,59 @@ error, and a whole assignment initializes every element at once. A write through
 a runtime index requires the whole array to be initialized, because the compiler
 cannot prove which element remains untouched.
 
+## Slices
+
+A slice is an unsized view over a contiguous sequence: it is written `[T]` and
+only appears behind a reference. `*[T]` and `*mut [T]` are fat pointers holding
+the element address and the element count, so the length is available in O(1)
+without a terminator or a second parameter.
+
+```seal
+func sum(values: *[i32]) -> i32 {
+  let mut index: usize = 0;
+  let mut total = 0;
+  while index < len(values) {
+    total = total + values[index];
+    index = index + 1;
+  }
+  total
+}
+
+func main() -> i32 {
+  let values = [1, 2, 3, 4];
+  let all: *[i32] = &values;       // array-to-slice coercion
+  let middle = &values[1..3];      // bounded range
+  let tail = &values[2..];         // open end
+  let head = &values[..2];         // open start
+  sum(all) + sum(middle) + sum(tail) + sum(head)
+}
+```
+
+A range is written `base[start..end]`, with either bound optional. It denotes an
+unsized place; it must be borrowed, and the borrow creates the fat reference.
+Both bounds are `usize`. For an array, literal bounds are checked against the
+length at compile time (`E3022`); a start greater than the end is `E3026`. At
+run time, `start <= end <= length` is checked once, before the reference is
+built, and a violation panics with status 101. A full `[..]` range needs no
+check. Ranges work on arrays and on existing slice references, so `&tail[1..]`
+reborrows a smaller view.
+
+An array reference coerces to a slice reference when the expected type requires
+one: `let s: *[i32] = &values;` accepts `&[i32; N]`, while `let r = &values;`
+keeps the full array type. Slicing `&mut values[..]` requires a writable source:
+a `mut` binding, an array field of one, or a `*mut [T]` reference (`E3017`).
+Indexing a slice reference auto-dereferences it, so `values[index]` works for
+`*[T]` and `*mut [T]`; the index is evaluated once and checked against the
+runtime length before the access. Reading `*slice` as a value is rejected
+because `[T]` is unsized (`E3024`), and a bare range is rejected for the same
+reason.
+
+`len(slice)` is the built-in length operator. It takes exactly one `*[T]` or
+`*mut [T]` and returns `usize`; other types are `E3025`, and the wrong argument
+count is `E2014`. A user function named `len` shadows the built-in. A slice is
+neither `Copy` nor `Sized` nor owning: the reference is `Copy`, and creating or
+copying it extends the loan of the underlying storage like any other reference.
+
 ## Unit, never, and internal types
 
 `()` is the unit type: it is the result of a function with no `->` clause and of
@@ -255,8 +311,8 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str` and every struct are not, even when all their fields are `Copy`. |
-| `Sized` | Every type has a compile-time size except `str` and an unresolved `Infer`. A struct is sized when every field is; an array is sized when its element is. |
+| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str`, slices, and every struct are not, even when a slice's elements are `Copy`. |
+| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an array is sized when its element is. |
 | `needs_drop` | No current type runs a destructor. An array and a struct derive the answer from their elements or fields once a type with a destructor exists. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
@@ -301,7 +357,7 @@ zero-sized structs in the ABI.
 ## Growth
 
 Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
-and its interning key before it can appear in a signature. Slices will reuse the
+and its interning key before it can appear in a signature. Slices reuse the
 element stride and add a runtime length; generics will instantiate the same
 rules per concrete argument; owning heap types will add field-derived
 destructors. None of these requires changing the identity, layout, or ownership

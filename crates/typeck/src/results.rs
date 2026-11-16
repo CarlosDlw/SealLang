@@ -12,14 +12,16 @@ pub enum PlaceProjection {
     Deref,
     /// Selects a struct field by its definition.
     Field(DefId),
-    /// Selects an array element.
+    /// Selects an array or slice element.
     Index {
         /// The index expression, evaluated by MIR lowering.
         index: HirExprId,
         /// The constant value when the index is a literal in range.
         constant: Option<u64>,
-        /// The array length, used for the runtime bounds check.
+        /// The array length, or zero when the length is only known at run time.
         length: u64,
+        /// Whether the length comes from a slice reference at run time.
+        dynamic_length: bool,
     },
 }
 

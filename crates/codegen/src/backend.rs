@@ -348,7 +348,10 @@ fn add_reference_attributes<'ctx>(
         let TyKind::Ref { kind, pointee } = hir.ty_ctxt().kind(parameter.ty) else {
             continue;
         };
-        if matches!(hir.ty_ctxt().kind(pointee), TyKind::Str) {
+        if matches!(
+            hir.ty_ctxt().kind(pointee),
+            TyKind::Str | TyKind::Slice { .. }
+        ) {
             continue;
         }
         let attribute = match kind {

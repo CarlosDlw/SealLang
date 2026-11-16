@@ -16,6 +16,7 @@ const STRUCTS: &str = include_str!("../../../examples/006_structs.sl");
 const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl");
 const EXCLUSIVE: &str = include_str!("../../../examples/008_exclusive_references.sl");
 const ARRAYS: &str = include_str!("../../../examples/009_arrays.sl");
+const SLICES: &str = include_str!("../../../examples/010_slices.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -595,6 +596,74 @@ fn arrays_work_in_debug_and_release_builds() {
             "wrong result for {suffix}"
         );
     }
+}
+
+#[test]
+fn slices_coerce_range_index_and_measure_length() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "debug"),
+        (OptLevel::O2, false, "release"),
+    ] {
+        let output = TempOutput::new(&format!("slices-{suffix}"));
+        compile(
+            SLICES,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("slice example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(120),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn slices_of_structs_keep_their_element_layout() {
+    let output = TempOutput::new("slice-structs");
+    compile(
+        "struct Point { x: i32 }\n\
+         func main() -> i32 {\n\
+           let points = [Point { x: 3 }, Point { x: 4 }];\n\
+           let slice = &points[..];\n\
+           slice[1].x\n\
+         }\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("a slice of structs compiles");
+    assert_eq!(run(output.path()).code(), Some(4));
+}
+
+#[test]
+fn a_slice_end_out_of_bounds_panics_before_the_access() {
+    let output = TempOutput::new("slice-bounds");
+    compile(
+        "func main() -> i32 {\n\
+           let values = [1, 2, 3];\n\
+           let index: usize = 4;\n\
+           let slice = &values[1..index];\n\
+           slice[0]\n\
+         }\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the range check compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("slice range end is out of bounds"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("at <test.sl>:4:13"), "{stderr}");
 }
 
 #[test]

@@ -35,6 +35,15 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
         Rvalue::Ref { place, .. } => {
             uses.insert(place.local);
         }
+        Rvalue::SliceRef {
+            base, start, end, ..
+        } => {
+            place_uses(base, uses);
+            for operand in start.iter().chain(end.iter()) {
+                operand_uses(operand, uses);
+            }
+        }
+        Rvalue::Len { slice } => operand_uses(slice, uses),
         Rvalue::Binary { lhs, rhs, .. } => {
             operand_uses(lhs, uses);
             operand_uses(rhs, uses);

@@ -333,6 +333,27 @@ impl Reachability<'_> {
                 self.check_expr(base);
                 self.check_expr(index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.check_expr(base);
+                if let Some(start) = start {
+                    self.check_expr(start);
+                }
+                if let Some(end) = end {
+                    self.check_expr(end);
+                }
+            }
+            ExprKind::SliceRef {
+                base, start, end, ..
+            } => {
+                self.check_expr(base);
+                if let Some(start) = start {
+                    self.check_expr(start);
+                }
+                if let Some(end) = end {
+                    self.check_expr(end);
+                }
+            }
+            ExprKind::Len { operand } => self.check_expr(operand),
             ExprKind::Struct { adt, fields } => {
                 let data = self.hir.definitions().get(adt);
                 assert_eq!(data.kind, DefKind::Struct);

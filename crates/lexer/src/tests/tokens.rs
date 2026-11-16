@@ -57,6 +57,7 @@ fn every_operator_has_a_token() {
         (";", TokenKind::Semicolon),
         (":", TokenKind::Colon),
         (".", TokenKind::Dot),
+        ("..", TokenKind::DotDot),
     ];
     for (source, expected) in cases {
         let kinds = kinds(source);

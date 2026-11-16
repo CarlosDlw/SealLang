@@ -53,6 +53,14 @@ impl Checker<'_> {
         self.hir.ty_ctxt().array_parts(ty)
     }
 
+    pub(super) fn slice_ty(&self, element: TyId) -> TyId {
+        self.hir.ty_ctxt().slice_ty(element)
+    }
+
+    pub(super) fn slice_parts(&self, ty: TyId) -> Option<TyId> {
+        self.hir.ty_ctxt().slice_parts(ty)
+    }
+
     pub(super) fn str_ref_ty(&self) -> TyId {
         let str_ty = self.interned(TyKind::Str);
         self.interned(TyKind::Ref {

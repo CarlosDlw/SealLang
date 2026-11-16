@@ -216,13 +216,14 @@ fn transfer(
     let destination_has_reference = hir.ty_ctxt().contains_reference(body.local(place.local).ty);
 
     match rvalue {
-        Rvalue::Ref { .. } => {
+        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {
             let mut loans = LoanSet::default();
             if let Some(loan) = loan {
                 loans.insert(loan);
             }
             state.assign(place, loans);
         }
+        Rvalue::Len { .. } => state.clear(place),
         Rvalue::Use(operand) => {
             let loans = match operand.place() {
                 Some(source) if source.is_deref() => all_loans.clone(),

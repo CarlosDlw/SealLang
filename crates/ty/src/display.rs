@@ -49,6 +49,7 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Bool => f.write_str("bool"),
             TyKind::Char => f.write_str("char"),
             TyKind::Str => f.write_str("str"),
+            TyKind::Slice { element } => write!(f, "[{}]", self.display(element)),
             TyKind::Int(int) => fmt::Display::fmt(&int, f),
             TyKind::Uint(uint) => fmt::Display::fmt(&uint, f),
             TyKind::Float(float) => fmt::Display::fmt(&float, f),
@@ -134,6 +135,17 @@ mod tests {
         let second = infer.fresh_ty_var(&mut ctxt);
         assert_eq!(ctxt.display(first).to_string(), "?T0");
         assert_eq!(ctxt.display(second).to_string(), "?T1");
+    }
+
+    #[test]
+    fn slices_render_with_their_element() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        assert_eq!(ctxt.display(ctxt.slice_ty(int)).to_string(), "[i32]");
+        assert_eq!(
+            ctxt.display(ctxt.ref_ty(ctxt.slice_ty(int))).to_string(),
+            "*[i32]"
+        );
     }
 
     #[test]

@@ -268,6 +268,19 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             let origins = keys_of(state, borrowed);
             state.assign(place, origins);
         }
+        Rvalue::SliceRef { base, .. } => {
+            let effective = if matches!(
+                hir.ty_ctxt().kind(place_ty(hir, body, base)),
+                TyKind::Ref { .. }
+            ) {
+                base.clone().deref()
+            } else {
+                base.clone()
+            };
+            let origins = keys_of(state, &effective);
+            state.assign(place, origins);
+        }
+        Rvalue::Len { .. } => state.clear(place),
         Rvalue::Use(operand) => {
             let origins = operand_origins(hir, body, state, operand);
             if let Some(source) = operand.place()

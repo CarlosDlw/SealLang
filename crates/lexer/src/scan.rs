@@ -235,7 +235,13 @@ impl<'a> Scanner<'a> {
             b',' => TokenKind::Comma,
             b';' => TokenKind::Semicolon,
             b':' => TokenKind::Colon,
-            b'.' => TokenKind::Dot,
+            b'.' => {
+                if self.cursor.eat_byte(b'.') {
+                    TokenKind::DotDot
+                } else {
+                    TokenKind::Dot
+                }
+            }
             b'~' => TokenKind::Tilde,
             b'+' => {
                 if self.cursor.eat_byte(b'+') {

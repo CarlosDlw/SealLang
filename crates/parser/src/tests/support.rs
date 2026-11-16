@@ -355,6 +355,15 @@ impl Reachability<'_> {
                 self.check_expr(base);
                 self.check_expr(index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.check_expr(base);
+                if let Some(start) = start {
+                    self.check_expr(start);
+                }
+                if let Some(end) = end {
+                    self.check_expr(end);
+                }
+            }
             ExprKind::Struct {
                 name_span, fields, ..
             } => {
@@ -415,6 +424,7 @@ impl Reachability<'_> {
                 self.assert_span(length_span);
                 self.check_type(element);
             }
+            TypeKind::Slice { element } => self.check_type(element),
             _ => {}
         }
     }

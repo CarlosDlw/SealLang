@@ -118,6 +118,28 @@ pub enum Rvalue {
         /// Whether the borrow is exclusive.
         kind: seal_ty::RefKind,
     },
+    /// Builds a slice reference from an array or slice place.
+    ///
+    /// `start` and `end` are `usize` values; an absent bound means the start of
+    /// the source or its full length. Lowering checks `start <= end <= length`
+    /// before this value is constructed.
+    SliceRef {
+        /// The array or slice the range selects from.
+        base: Place,
+        /// The inclusive start bound.
+        start: Option<Operand>,
+        /// The exclusive end bound.
+        end: Option<Operand>,
+        /// Whether the reference permits writes.
+        kind: seal_ty::RefKind,
+        /// The resulting `*[T]` or `*mut [T]` type.
+        ty: seal_ty::TyId,
+    },
+    /// Reads the length of a slice reference.
+    Len {
+        /// The fat pointer whose length is read.
+        slice: Operand,
+    },
     /// Applies a binary operator to two operands.
     Binary {
         /// The operator.

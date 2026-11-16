@@ -11,8 +11,8 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
    synchronization; every cost is visible in the source.
 3. **No lifetime annotations.** Users never write region parameters; regions are
    inferred from liveness.
-4. **Room to grow.** Adding slices, generics, methods, visibility, and an
-   `unsafe` layer must not require redesigning the type system.
+4. **Room to grow.** Adding generics, methods, visibility, and an `unsafe`
+   layer must not require redesigning the type system.
 
 ## Model
 
@@ -42,8 +42,8 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 ### D2 — `Copy` is a property of the type
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
-`*T`/`*mut T`, and an array whose element type is `Copy`. Not copied: `str`
-(unsized) and every struct value, even one whose fields are all `Copy`. Arrays
+`*T`/`*mut T`, and an array whose element type is `Copy`. Not copied: `str` and
+slices (unsized) and every struct value, even one whose fields are all `Copy`. Arrays
 gain nothing from an explicit opt-in because their elements already decide
 whether a bitwise copy is safe. Keeping structs non-`Copy` means ownership is
 explicit at every aggregate boundary; field reads still copy `Copy` fields
@@ -180,11 +180,11 @@ field or element out marks that path moved and leaves its siblings usable.
 ### D10 — Values are sized
 
 Locals, parameters, return values, by-value operands, and struct fields must have
-a size known at compile time. `str` is the only unsized type in v0.1 and can only
-appear behind a reference. An array is sized when its element is, and its size
-must fit the target address space (`E3023`). Recursive types are only possible
-through a reference, which indirection makes finite; a struct that contains
-itself by value is `E3016`.
+a size known at compile time. `str` and slices are unsized and can only appear
+behind a reference. An array is sized when its element is, and its size must fit
+the target address space (`E3023`). Recursive types are only possible through a
+reference, which indirection makes finite; a struct that contains itself by
+value is `E3016`.
 
 ### D11 — No address-dependent semantics in safe code
 
@@ -216,22 +216,46 @@ fields: moving the struct moves all of them, and moving one field out leaves the
 rest initialized, which is what the move-path initializer tracks (D9). A borrow
 may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
 
+### D14 — Slices are borrowed views with a length
+
+A slice `[T]` is an unsized pointee denoting a contiguous sequence of `T`
+values. It is never owned or stored by value: `*[T]` and `*mut [T]` are fat
+references carrying the element address and the element count. The count is
+metadata, not a terminator scan, so `len` is O(1) and a slice can contain zero
+values or any value including a zero byte.
+
+A range `base[start..end]` denotes a sub-slice of an array or another slice. It
+is a place of unsized type and must be borrowed; `&base[..]` creates a shared
+view and `&mut base[..]` creates an exclusive one. Both bounds are `usize` and
+are checked against the source length before the fat reference is built. The
+loan is recorded on the underlying storage, not on the reference object: while a
+slice view is live, the source is borrowed by the same shared/exclusive rules as
+any other reference. Reborrowing a slice creates a child loan precisely because
+the source reference's pointee is resolved through the may-name analysis.
+
+Array-to-slice coercion (`&array` where `*[T]` is expected) is a reference
+conversion, not a copy: it keeps the same data address, derives the length from
+the array type, and records the same loan. A slice is neither `Copy`, `Sized`,
+nor owning; its reference is `Copy` and carries the loan.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
-- `TyKind` has `Bool`, `Char`, `Str`, `Int`, `Uint`, `Float`,
-  `Ref { kind: RefKind, pointee }`, `Array { element, length }`, `Adt(AdtId)`,
-  `Unit`, `Never`, `Error`, and `Infer`. `RefKind` is `Shared` (`*T`) or
-  `Exclusive` (`*mut T`); the kind is part of the type, so the two never unify.
-  There is no nullable reference kind, because nullability is not a type.
+- `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
+  `Float`, `Ref { kind: RefKind, pointee }`, `Array { element, length }`,
+  `Adt(AdtId)`, `Unit`, `Never`, `Error`, and `Infer`. `RefKind` is `Shared`
+  (`*T`) or `Exclusive` (`*mut T`); the kind is part of the type, so the two
+  never unify. There is no nullable reference kind, because nullability is not a
+  type.
 - Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
   so `AdtId` identifies a nominal declaration while the definition holds the
-  ordered fields, their `DefId`s, names, and types.- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
+  ordered fields, their `DefId`s, names, and types.
+- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
   aggregate fields and array elements with a cycle guard; no query can loop on a
   malformed declaration.
-- `Str` is a distinct kind, not an alias for `*u8`, because it is unsized and
-  carries a length (D7).
+- `Str` and `Slice` are distinct kinds, not aliases for `*u8`, because they are
+  unsized and their references carry a length (D7, D14).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
   `is_sized`, `needs_drop`), not flags stored in the type. They are derived from
   the type's structure, so they cannot disagree with it. Struct values are not
@@ -292,8 +316,8 @@ may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- Generics, methods, visibility, slices, and `Drop` for aggregates — layers on
-  the nominal struct and array foundation, not redesigns of it.
+- Generics, methods, visibility, and `Drop` for aggregates — layers on the
+  nominal struct and array foundation, not redesigns of it.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

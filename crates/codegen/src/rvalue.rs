@@ -25,6 +25,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
             Rvalue::Ref { place, .. } => Ok(self.place_ptr(place)?.into()),
+            Rvalue::SliceRef {
+                base,
+                start,
+                end,
+                ty,
+                ..
+            } => self.slice_ref(base, start.as_ref(), end.as_ref(), *ty),
+            Rvalue::Len { slice } => self.slice_len(slice),
             Rvalue::Binary { op, lhs, rhs, span } => {
                 let ty = self.operand_type(lhs)?;
                 let lhs = self.load_operand(lhs)?;
@@ -40,6 +48,116 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
             Rvalue::Repeat { value, count, ty } => self.array_repeat(value, *count, *ty),
         }
+    }
+
+    fn slice_ref(
+        &self,
+        base: &seal_mir::Place,
+        start: Option<&seal_mir::Operand>,
+        end: Option<&seal_mir::Operand>,
+        ty: seal_ty::TyId,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let base_ty = self.place_type(base)?;
+        let (element, data, length) = match self.tcx.kind(base_ty) {
+            TyKind::Array { element, length } => (
+                element,
+                self.place_ptr(base)?,
+                self.mapper.usize_type()?.const_int(length, false),
+            ),
+            TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
+                TyKind::Array { element, length } => {
+                    let pointer = self
+                        .load_operand(&seal_mir::Operand::Copy(base.clone()))?
+                        .into_pointer_value();
+                    (
+                        element,
+                        pointer,
+                        self.mapper.usize_type()?.const_int(length, false),
+                    )
+                }
+                TyKind::Slice { element } => {
+                    let fat = self
+                        .load_operand(&seal_mir::Operand::Copy(base.clone()))?
+                        .into_struct_value();
+                    let data = self
+                        .build(
+                            self.builder.build_extract_value(fat, 0, "slice data"),
+                            "slice data",
+                        )?
+                        .into_pointer_value();
+                    let length = self
+                        .build(
+                            self.builder.build_extract_value(fat, 1, "slice length"),
+                            "slice length",
+                        )?
+                        .into_int_value();
+                    (element, data, length)
+                }
+                _ => {
+                    return Err(CodegenError::internal(format!(
+                        "cannot slice `{base_ty:?}` during code generation"
+                    )));
+                }
+            },
+            _ => {
+                return Err(CodegenError::internal(format!(
+                    "cannot slice `{base_ty:?}` during code generation"
+                )));
+            }
+        };
+
+        let zero = self.mapper.usize_type()?.const_zero();
+        let start = match start {
+            Some(start) => self.load_operand(start)?.into_int_value(),
+            None => zero,
+        };
+        let end = match end {
+            Some(end) => self.load_operand(end)?.into_int_value(),
+            None => length,
+        };
+        let data = self.index_ptr(data, start, element)?;
+        let length = self.build(
+            self.builder.build_int_sub(end, start, "slice length"),
+            "slice length",
+        )?;
+
+        let fat_type = self.mapper.basic(ty)?.into_struct_type();
+        let mut fat = fat_type.get_undef();
+        let data: BasicValueEnum<'ctx> = data.into();
+        let next = self.build(
+            self.builder.build_insert_value(fat, data, 0, "slice data"),
+            "slice data",
+        )?;
+        fat = match next {
+            inkwell::values::AggregateValueEnum::StructValue(value) => value,
+            other => {
+                return Err(CodegenError::internal(format!(
+                    "slice construction produced {other:?}"
+                )));
+            }
+        };
+        let length: BasicValueEnum<'ctx> = length.into();
+        let next = self.build(
+            self.builder
+                .build_insert_value(fat, length, 1, "slice length"),
+            "slice length",
+        )?;
+        match next {
+            inkwell::values::AggregateValueEnum::StructValue(value) => Ok(value.into()),
+            other => Err(CodegenError::internal(format!(
+                "slice construction produced {other:?}"
+            ))),
+        }
+    }
+
+    fn slice_len(&self, slice: &seal_mir::Operand) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let ty = self.operand_type(slice)?;
+        let fat = self.load_operand(slice)?.into_struct_value();
+        let _ = self.mapper.basic(ty)?;
+        self.build(
+            self.builder.build_extract_value(fat, 1, "slice length"),
+            "slice length",
+        )
     }
 
     fn array_aggregate(

@@ -107,6 +107,14 @@ impl InferCtxt {
             ) if expected_length == found_length => {
                 self.unify(ctxt, expected_element, found_element)
             }
+            (
+                TyKind::Slice {
+                    element: expected_element,
+                },
+                TyKind::Slice {
+                    element: found_element,
+                },
+            ) => self.unify(ctxt, expected_element, found_element),
             _ => Err(UnifyError::Mismatch { expected, found }),
         }
     }
@@ -129,6 +137,12 @@ impl InferCtxt {
                 let resolved = self.resolve_deep(ctxt, element);
                 if resolved != element {
                     return ctxt.array_ty(resolved, length);
+                }
+            }
+            TyKind::Slice { element } => {
+                let resolved = self.resolve_deep(ctxt, element);
+                if resolved != element {
+                    return ctxt.slice_ty(resolved);
                 }
             }
             _ => {}
@@ -166,7 +180,9 @@ impl InferCtxt {
         match ctxt.kind(ty) {
             TyKind::Infer(other) => other == var,
             TyKind::Ref { pointee, .. } => self.occurs(ctxt, var, pointee),
-            TyKind::Array { element, .. } => self.occurs(ctxt, var, element),
+            TyKind::Array { element, .. } | TyKind::Slice { element } => {
+                self.occurs(ctxt, var, element)
+            }
             _ => false,
         }
     }

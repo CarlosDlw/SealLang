@@ -24,18 +24,28 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             )));
                         }
                     };
-                    if matches!(self.tcx.kind(pointee), TyKind::Str) {
-                        return Err(CodegenError::internal(
-                            "a string reference cannot be dereferenced into a sized place",
-                        ));
-                    }
                     let reference_type = self.mapper.basic(ty)?;
                     let reference = self.build(
                         self.builder
                             .build_load(reference_type, pointer, "dereference"),
                         "reference load",
                     )?;
-                    pointer = reference.into_pointer_value();
+                    pointer = match self.tcx.kind(pointee) {
+                        TyKind::Slice { .. } => {
+                            let fat = reference.into_struct_value();
+                            self.build(
+                                self.builder.build_extract_value(fat, 0, "slice data"),
+                                "slice data",
+                            )?
+                            .into_pointer_value()
+                        }
+                        TyKind::Str => {
+                            return Err(CodegenError::internal(
+                                "a string reference cannot be dereferenced into a sized place",
+                            ));
+                        }
+                        _ => reference.into_pointer_value(),
+                    };
                     ty = pointee;
                 }
                 Projection::Field(field) => {
@@ -63,10 +73,13 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = definition.fields[index].ty;
                 }
                 Projection::Index { local, constant } => {
-                    let TyKind::Array { element, .. } = self.tcx.kind(ty) else {
-                        return Err(CodegenError::internal(format!(
-                            "cannot index `{ty:?}` during code generation"
-                        )));
+                    let element = match self.tcx.kind(ty) {
+                        TyKind::Array { element, .. } | TyKind::Slice { element } => element,
+                        _ => {
+                            return Err(CodegenError::internal(format!(
+                                "cannot index `{ty:?}` during code generation"
+                            )));
+                        }
                     };
                     let index = match constant {
                         Some(index) => self.mapper.usize_type()?.const_int(*index, false),
@@ -162,12 +175,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = definition.fields[index].ty;
                 }
                 Projection::Index { .. } => {
-                    let TyKind::Array { element, .. } = self.tcx.kind(ty) else {
-                        return Err(CodegenError::internal(format!(
-                            "cannot index `{ty:?}` during code generation"
-                        )));
+                    ty = match self.tcx.kind(ty) {
+                        TyKind::Array { element, .. } | TyKind::Slice { element } => element,
+                        _ => {
+                            return Err(CodegenError::internal(format!(
+                                "cannot index `{ty:?}` during code generation"
+                            )));
+                        }
                     };
-                    ty = element;
                 }
             }
         }

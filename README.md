@@ -90,6 +90,8 @@ usage error, and `101` after an internal compiler error or a runtime panic.
 | Floating point | `f32`, `f64` | IEEE 754 binary32 and binary64 |
 | Text | `bool`, `char`, `str`, `*str` | `char` is a Unicode scalar value; `str` is unsized and only usable behind a reference |
 | References | `*T`, `*mut T` | Non-null, non-owning, and `Copy`; shared or exclusive |
+| Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
+| Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
 
 There are no implicit numeric conversions: every arithmetic and comparison
@@ -111,8 +113,8 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 ## Status
 
 The current language surface is functions, nominal structs, fixed-size arrays,
-shared and exclusive references, `let` bindings with definite initialization,
-`if`, `while`, `break`, `continue`, `return`, and the usual arithmetic,
-comparison, logical, and bitwise operators. Slices, generics, methods, enums,
-and an `unsafe` layer are not part of the surface yet; the memory model records
-how they fit without redesigning the type system.
+slices, shared and exclusive references, `let` bindings with definite
+initialization, `if`, `while`, `break`, `continue`, `return`, and the usual
+arithmetic, comparison, logical, and bitwise operators. Generics, methods,
+enums, and an `unsafe` layer are not part of the surface yet; the memory model
+records how they fit without redesigning the type system.

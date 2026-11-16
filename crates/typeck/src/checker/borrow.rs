@@ -25,6 +25,7 @@ impl Checker<'_> {
         &mut self,
         operand: HirExprId,
         kind: RefKind,
+        expected: Option<TyId>,
         flow: &mut Flow,
     ) -> TyId {
         let is_place = self.hir.place(operand).is_some()
@@ -44,16 +45,44 @@ impl Checker<'_> {
         if self.is_error(ty) {
             return ty;
         }
+        if !self.is_sized(ty) && !matches!(self.hir.ty_ctxt().kind(ty), TyKind::Str) {
+            self.error(
+                codes::E3024,
+                self.hir.expr(operand).span,
+                format!("cannot borrow the unsized type `{}`", self.ty_text(ty)),
+            )
+            .help("borrow a slice range instead, as in `&values[..]`")
+            .emit();
+            return self.error_ty();
+        }
         if kind.is_exclusive() && !self.borrow_is_writable(operand) {
             self.report_mutable_borrow(operand);
             return self.error_ty();
         }
-        self.ref_ty(kind, ty)
+
+        // An array reference coerces to a slice reference when the context
+        // requires one. The coercion is driven by the expected type, so
+        // `let s: *[i32] = &values;` sees `*[i32]`, while `let r = &values;`
+        // keeps the full array type.
+        let reference = self.ref_ty(kind, ty);
+        if let Some(expected) = expected
+            && let TyKind::Ref {
+                kind: expected_kind,
+                pointee,
+            } = self.hir.ty_ctxt().kind(expected)
+            && expected_kind == kind
+            && let Some(expected_element) = self.slice_parts(pointee)
+            && let Some((element, _)) = self.array_parts(ty)
+            && expected_element == element
+        {
+            return expected;
+        }
+        reference
     }
 
     /// Returns `true` when `operand` names a place an exclusive borrow may
     /// write.
-    fn borrow_is_writable(&self, operand: HirExprId) -> bool {
+    pub(super) fn borrow_is_writable(&self, operand: HirExprId) -> bool {
         match self.deref_kind(operand) {
             Some(kind) => kind.is_exclusive(),
             None => self
@@ -85,7 +114,7 @@ impl Checker<'_> {
         self.hir.ty_ctxt().ref_parts(ty).map(|(kind, _)| kind)
     }
 
-    fn report_mutable_borrow(&self, operand: HirExprId) {
+    pub(super) fn report_mutable_borrow(&self, operand: HirExprId) {
         if self.deref_kind(operand).is_some()
             || self
                 .results
@@ -121,6 +150,18 @@ impl Checker<'_> {
     pub(super) fn check_deref(&mut self, operand: HirExprId, flow: &mut Flow, span: Span) -> TyId {
         let pointer = self.infer_expr(operand, None, flow);
         match self.hir.ty_ctxt().kind(pointer) {
+            TyKind::Ref { pointee, .. }
+                if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. }) =>
+            {
+                self.error(
+                    codes::E3024,
+                    span,
+                    "cannot read through a slice reference as a value",
+                )
+                .help("index the slice, as in `values[0]`, or borrow a range such as `&values[..]`")
+                .emit();
+                self.error_ty()
+            }
             TyKind::Ref { pointee, .. } => pointee,
             TyKind::Error => pointer,
             _ => {

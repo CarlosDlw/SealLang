@@ -53,6 +53,7 @@ fn describe(kind: TyKind) -> String {
         TyKind::Bool => "bool".to_owned(),
         TyKind::Char => "char".to_owned(),
         TyKind::Str => "str".to_owned(),
+        TyKind::Slice { .. } => "a slice".to_owned(),
         TyKind::Int(int) => int.as_str().to_owned(),
         TyKind::Uint(uint) => uint.as_str().to_owned(),
         TyKind::Float(float) => float.as_str().to_owned(),

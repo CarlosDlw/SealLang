@@ -149,6 +149,34 @@ pub enum ExprKind {
         /// The index expression.
         index: HirExprId,
     },
+    /// A slice range place, written `base[start..end]`.
+    ///
+    /// The range has unsized type `[T]` and is only useful as the operand of a
+    /// borrow, which lowers to [`ExprKind::SliceRef`].
+    Slice {
+        /// The array or slice place being sliced.
+        base: HirExprId,
+        /// The inclusive start bound, or the beginning when absent.
+        start: Option<HirExprId>,
+        /// The exclusive end bound, or the source length when absent.
+        end: Option<HirExprId>,
+    },
+    /// A borrow of a slice range, lowered directly to a fat reference.
+    SliceRef {
+        /// The array or slice place being sliced.
+        base: HirExprId,
+        /// The inclusive start bound, or the beginning when absent.
+        start: Option<HirExprId>,
+        /// The exclusive end bound, or the source length when absent.
+        end: Option<HirExprId>,
+        /// Whether the reference permits writes.
+        kind: seal_ty::RefKind,
+    },
+    /// The length of a slice reference, written `len(slice)`.
+    Len {
+        /// The `*[T]` or `*mut [T]` value whose length is read.
+        operand: HirExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.

@@ -9,5 +9,6 @@ mod init;
 mod literals;
 mod operators;
 mod sized;
+mod slices;
 mod structs;
 mod support;

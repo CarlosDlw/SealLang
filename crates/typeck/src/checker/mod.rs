@@ -7,6 +7,7 @@ mod flow;
 mod literal;
 mod operators;
 mod place;
+mod slice;
 mod stmt;
 mod types;
 

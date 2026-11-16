@@ -27,14 +27,25 @@ impl Lowering<'_> {
                 op,
                 operand: self.lower_expr(operand),
             },
-            AstExprKind::Borrow { operand, mutable } => ExprKind::Borrow {
-                operand: self.lower_expr(operand),
-                kind: if mutable {
+            AstExprKind::Borrow { operand, mutable } => {
+                let kind = if mutable {
                     seal_ty::RefKind::Exclusive
                 } else {
                     seal_ty::RefKind::Shared
-                },
-            },
+                };
+                match self.ast.expr(operand).kind.clone() {
+                    AstExprKind::Slice { base, start, end } => ExprKind::SliceRef {
+                        base: self.lower_expr(base),
+                        start: start.map(|start| self.lower_expr(start)),
+                        end: end.map(|end| self.lower_expr(end)),
+                        kind,
+                    },
+                    _ => ExprKind::Borrow {
+                        operand: self.lower_expr(operand),
+                        kind,
+                    },
+                }
+            }
             AstExprKind::Deref { operand } => ExprKind::Deref {
                 operand: self.lower_expr(operand),
             },
@@ -86,6 +97,18 @@ impl Lowering<'_> {
                 // expression stays reachable from its parent.
                 ExprKind::Index { base, index }
             }
+            AstExprKind::Slice { base, start, end } => {
+                let base = self.lower_expr(base);
+                let start = start.map(|start| self.lower_expr(start));
+                let end = end.map(|end| self.lower_expr(end));
+                if self.hir.place(base).is_none() {
+                    let span = self.ast.expr(expr).span;
+                    self.error(codes::E2013, span, "slicing requires a place")
+                        .help("store the array in a `let` binding and slice that binding")
+                        .emit();
+                }
+                ExprKind::Slice { base, start, end }
+            }
             AstExprKind::Binary { op, lhs, rhs } => ExprKind::Binary {
                 op,
                 lhs: self.lower_expr(lhs),
@@ -105,10 +128,36 @@ impl Lowering<'_> {
                 target: self.lower_expr(operand),
                 postfix,
             },
-            AstExprKind::Call { callee, args } => ExprKind::Call {
-                callee: self.lower_expr(callee),
-                args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
-            },
+            AstExprKind::Call { callee, args } => {
+                if self.is_len_builtin(callee) {
+                    match args.as_slice() {
+                        [operand] => ExprKind::Len {
+                            operand: self.lower_expr(*operand),
+                        },
+                        _ => {
+                            self.error(
+                                codes::E2014,
+                                span,
+                                format!(
+                                    "`len` takes exactly one argument, but {} were supplied",
+                                    args.len()
+                                ),
+                            )
+                            .help("pass one slice reference, as in `len(values)`")
+                            .emit();
+                            for arg in &args {
+                                self.lower_expr(*arg);
+                            }
+                            ExprKind::Error
+                        }
+                    }
+                } else {
+                    ExprKind::Call {
+                        callee: self.lower_expr(callee),
+                        args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
+                    }
+                }
+            }
             AstExprKind::If {
                 condition,
                 then_branch,
@@ -123,6 +172,19 @@ impl Lowering<'_> {
         };
 
         self.hir.push_expr(Expr { kind, span })
+    }
+
+    /// Returns `true` when `callee` is the built-in `len` rather than a user item.
+    ///
+    /// A user function or binding named `len` shadows the intrinsic, so existing
+    /// and future programs keep control over the name.
+    fn is_len_builtin(&self, callee: AstExprId) -> bool {
+        let AstExprKind::Path(name) = self.ast.expr(callee).kind else {
+            return false;
+        };
+        self.interner.resolve(name) == "len"
+            && !self.globals.contains_key(&name)
+            && self.scopes.lookup(name).is_none()
     }
 
     fn lower_struct_literal(

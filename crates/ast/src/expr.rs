@@ -270,6 +270,18 @@ pub enum ExprKind {
         /// The index expression.
         index: ExprId,
     },
+    /// A slice range, written `base[start..end]`. Either bound may be absent.
+    ///
+    /// A range is a place of unsized slice type; it is useful only as the
+    /// operand of a borrow, which becomes a slice reference.
+    Slice {
+        /// The array or slice place being sliced.
+        base: ExprId,
+        /// The inclusive start bound, or the beginning when absent.
+        start: Option<ExprId>,
+        /// The exclusive end bound, or the source length when absent.
+        end: Option<ExprId>,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.

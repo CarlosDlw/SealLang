@@ -115,8 +115,9 @@ impl<'a> LayoutCtxt<'a> {
             }
             TyKind::Float(float) => scalar(u64::from(float.bits()) / 8),
             TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
-                // `*str` is a fat pointer: data plus a pointer-sized length.
-                TyKind::Str => Layout::new(pointer * 2, pointer),
+                // `*str` and `*[T]` are fat pointers: data plus a
+                // pointer-sized length.
+                TyKind::Str | TyKind::Slice { .. } => Layout::new(pointer * 2, pointer),
                 _ => Layout::new(pointer, pointer),
             },
             TyKind::Unit | TyKind::Never | TyKind::Error => Layout::new(0, 1),
@@ -128,7 +129,7 @@ impl<'a> LayoutCtxt<'a> {
                     .ok_or(LayoutError::TooLarge(ty))?;
                 Layout::new(size, element_layout.align)
             }
-            TyKind::Str => return Err(LayoutError::Unsized(ty)),
+            TyKind::Str | TyKind::Slice { .. } => return Err(LayoutError::Unsized(ty)),
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
             TyKind::Adt(adt) => {
                 if stack.contains(&adt) {
@@ -296,6 +297,25 @@ mod tests {
         assert_eq!(
             LayoutCtxt::new(&ctxt, 32).layout_of(reference),
             Ok(Layout::new(8, 4))
+        );
+    }
+
+    #[test]
+    fn a_slice_reference_is_a_fat_pointer() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let reference = ctxt.ref_ty(ctxt.slice_ty(int));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(reference),
+            Ok(Layout::new(16, 8))
+        );
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 32).layout_of(reference),
+            Ok(Layout::new(8, 4))
+        );
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(ctxt.slice_ty(int)),
+            Err(LayoutError::Unsized(ctxt.slice_ty(int)))
         );
     }
 
