@@ -58,6 +58,8 @@ pub(crate) struct Outcome {
 /// One argument's reference facts.
 struct Argument {
     place: Place,
+    /// Position in the source argument list, counted from one for people.
+    position: usize,
     origins: Option<OriginSet>,
     kind: ParamKind,
 }
@@ -68,7 +70,7 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
     let mut unknown = false;
     let mut arguments = Vec::with_capacity(site.args.len());
 
-    for argument in site.args {
+    for (position, argument) in site.args.iter().enumerate() {
         let Some(place) = argument.place() else {
             continue;
         };
@@ -99,6 +101,7 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
         };
         arguments.push(Argument {
             place,
+            position,
             origins,
             kind,
         });
@@ -132,8 +135,11 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
                 continue;
             };
             if origins::keys_overlap(left_origins, right_origins) {
-                site.reporter
-                    .arguments_alias(site.span, &right_arg.place, &left_arg.place);
+                site.reporter.arguments_alias(
+                    site.span,
+                    (&left_arg.place, left_arg.position),
+                    (&right_arg.place, right_arg.position),
+                );
             }
         }
     }

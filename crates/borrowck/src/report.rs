@@ -161,13 +161,34 @@ impl<'a> Reporter<'a> {
     }
 
     /// An exclusive argument may name the same storage as another argument.
-    pub(crate) fn arguments_alias(&self, span: Span, first: &Place, second: &Place) {
-        let first_name = self.place_text(first);
-        let second_name = self.place_text(second);
+    ///
+    /// Positions are counted from one and include every argument, so they match
+    /// what the user sees at the call. Two copies of one pointer render the
+    /// same place twice, which reads better as "both name `p`" than as
+    /// "`p` and `p` may name the same storage".
+    pub(crate) fn arguments_alias(
+        &self,
+        span: Span,
+        first: (&Place, usize),
+        second: (&Place, usize),
+    ) {
+        let first_name = self.place_text(first.0);
+        let second_name = self.place_text(second.0);
+        let message = if first_name == second_name {
+            format!(
+                "arguments {} and {} both name `{first_name}`",
+                first.1 + 1,
+                second.1 + 1
+            )
+        } else {
+            format!(
+                "arguments {} (`{first_name}`) and {} (`{second_name}`) may name the same storage",
+                first.1 + 1,
+                second.1 + 1
+            )
+        };
         self.dcx
-            .error(format!(
-                "reference arguments `{second_name}` and `{first_name}` may name the same storage"
-            ))
+            .error(message)
             .code(codes::E5010.diag_code())
             .primary(span, "")
             .note("the callee may access the pointee through both arguments, and one is exclusive")

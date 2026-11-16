@@ -426,7 +426,7 @@ func main() -> i32 {
 }
 "#,
         "E5010",
-        "may name the same storage",
+        "arguments 1 and 2 both name `r`",
     );
 }
 

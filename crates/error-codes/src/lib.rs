@@ -861,11 +861,12 @@ usually resolves the conflict.",
 /// An exclusive argument conflicts with a live borrow of its pointee.
 pub const E5009: ErrorCode = ErrorCode {
     code: "E5009",
-    title: "cannot pass a borrowed place as an exclusive reference",
+    title: "cannot pass a borrowed place as an exclusive argument",
     explanation: "\
-An exclusive argument (`*mut T`) gives the callee sole access to its pointee
-for the whole call (decision D6). A live borrow of that storage promises the
-caller the opposite, so the borrow checker rejects the call.
+An exclusive argument — a `*mut T`, or an aggregate that carries one — gives the
+callee sole access to its pointee for the whole call (decision D6). A live
+borrow of that storage promises the caller the opposite, so the borrow checker
+rejects the call.
 
 A borrow ends at its last use, which the diagnostic labels. End the borrow
 before the call, or pass a shared reference (`*T`) when the callee only reads.",

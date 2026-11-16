@@ -40,7 +40,27 @@ fn exclusive_arguments_must_name_distinct_storage() {
         "func take(a: *mut i32, b: *mut i32) {}\n\n\
          func main() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  take(r, r);\n  0\n}\n",
     );
-    fixture.expect("E5010", "may name the same storage");
+    fixture.expect("E5010", "arguments 1 and 2 both name `r`");
+}
+
+#[test]
+fn an_exclusive_aggregate_argument_conflicts_with_a_live_borrow() {
+    let fixture = check_errors(
+        "struct Holder {\n  p: *mut i32,\n}\n\n\
+         func take(holder: Holder) {}\n\n\
+         func main() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  let t = &mut *r;\n  let holder = Holder { p: r };\n  take(holder);\n  *t\n}\n",
+    );
+    fixture.expect("E5009", "cannot pass `holder` as an exclusive argument");
+}
+
+#[test]
+fn named_arguments_report_their_positions() {
+    let fixture = check_errors(
+        "struct Holder {\n  p: *mut i32,\n}\n\n\
+         func take(holder: Holder, other: *mut i32) {}\n\n\
+         func main() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  let holder = Holder { p: r };\n  take(holder, r);\n  0\n}\n",
+    );
+    fixture.expect("E5010", "arguments 1 (`holder`) and 2 (`r`)");
 }
 
 #[test]
