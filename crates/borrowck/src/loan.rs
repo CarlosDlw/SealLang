@@ -1,5 +1,7 @@
 //! Loans: a borrow of a place for a region.
 
+use std::cell::Cell;
+
 use seal_mir::Place;
 use seal_span::Span;
 use seal_ty::RefKind;
@@ -33,6 +35,12 @@ pub(crate) struct Loan {
     /// The last program point where the loan is active, used to explain a
     /// conflict.
     pub(crate) last_use: Option<Span>,
+    /// Whether a conflict at this loan's creation was already reported.
+    ///
+    /// Accessing storage through a rejected reference, or conflicting with it
+    /// again, would only repeat the cause the user already saw. The checker
+    /// records the rejection here and suppresses those derived diagnostics.
+    pub(crate) reported: Cell<bool>,
 }
 
 /// Adds every loan that transitively authorized `ids`.

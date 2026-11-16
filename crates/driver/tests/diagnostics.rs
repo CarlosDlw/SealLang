@@ -115,6 +115,27 @@ func main() -> i32 { 0 }
 }
 
 #[test]
+fn a_use_of_a_rejected_borrow_does_not_cascade() {
+    let file = SourceFile::new(
+        "no-cascade",
+        r#"func main() -> i32 {
+  let mut x = 1;
+  let a = &mut x;
+  let b = &x;
+  *a + *b
+}
+"#,
+    );
+    let output = file.check();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[E5008]"), "expected E5008: {stderr}");
+    assert!(
+        !stderr.contains("error[E5007]"),
+        "a rejected borrow must not cascade: {stderr}"
+    );
+}
+
+#[test]
 fn a_returned_local_reference_points_at_the_returned_expression() {
     let file = SourceFile::new(
         "return-label",

@@ -74,6 +74,17 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
         let Some(place) = argument.place() else {
             continue;
         };
+        // A rejected borrow has already been explained; checking arguments
+        // derived from it would only repeat that diagnostic.
+        if site
+            .holds
+            .at(&place)
+            .iter()
+            .any(|id| site.loans[id.index() as usize].reported.get())
+        {
+            proven = false;
+            continue;
+        }
         // A scalar argument reached through a dereference is still an access.
         if origins::keys_of(site.origins, &place).is_unknown() {
             unknown = true;
@@ -165,6 +176,7 @@ fn conflicting_loans(site: &CallSite<'_>, origins: &OriginSet, argument: &Place)
         .copied()
         .filter(|id| {
             !excluded.contains(id)
+                && !site.loans[id.index() as usize].reported.get()
                 && origins::keys_overlap(origins, &site.loans[id.index() as usize].keys)
         })
         .collect();

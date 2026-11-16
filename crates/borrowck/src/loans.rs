@@ -1,5 +1,7 @@
 //! Collecting the loans of a body.
 
+use std::cell::Cell;
+
 use seal_index::Idx;
 use seal_mir::{Body, Rvalue, StatementKind};
 
@@ -31,6 +33,7 @@ pub(crate) fn collect(body: &Body) -> (Vec<Loan>, Vec<Vec<Option<LoanId>>>) {
                 keys: OriginSet::default(),
                 parents: Vec::new(),
                 last_use: None,
+                reported: Cell::new(false),
             });
             row[position] = Some(id);
         }

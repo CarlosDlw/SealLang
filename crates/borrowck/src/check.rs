@@ -27,6 +27,8 @@ struct Context<'a> {
     holds: &'a holds::Holds,
     holds_at: &'a HoldState,
     origins: &'a OriginState,
+    /// The loan this statement creates, when it is a borrow.
+    current_loan: Option<LoanId>,
     hir: &'a Hir,
     body: &'a Body,
     reporter: &'a Reporter<'a>,
@@ -71,6 +73,7 @@ pub(crate) fn check_body(
                 holds: &holds,
                 holds_at: &holds.before[index][position],
                 origins: &origins.before[index][position],
+                current_loan: loan_at[index][position],
                 hir,
                 body,
                 reporter: &reporter,
@@ -87,6 +90,7 @@ pub(crate) fn check_body(
             holds: &holds,
             holds_at: &holds.exit[index],
             origins: &origins.exit[index],
+            current_loan: None,
             hir,
             body,
             reporter: &reporter,
@@ -185,16 +189,18 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         }
     }
 
-    for id in overlapping(context, place) {
-        let loan = context.loan(id);
-        if loan.kind.is_exclusive() {
-            context
-                .reporter
-                .write_while_exclusively_borrowed(place, statement.span, loan);
-        } else {
-            context
-                .reporter
-                .assign_while_borrowed(place, statement.span, loan);
+    if !place_is_reported(context, place) {
+        for id in overlapping(context, place) {
+            let loan = context.loan(id);
+            if loan.kind.is_exclusive() {
+                context
+                    .reporter
+                    .write_while_exclusively_borrowed(place, statement.span, loan);
+            } else {
+                context
+                    .reporter
+                    .assign_while_borrowed(place, statement.span, loan);
+            }
         }
     }
     unknown
@@ -214,7 +220,8 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
     };
     check_read(&read, statement.span, context);
 
-    if matches!(operand, Operand::Move(_)) && !read.is_deref() {
+    if matches!(operand, Operand::Move(_)) && !read.is_deref() && !place_is_reported(context, &read)
+    {
         for id in overlapping(context, &read) {
             let loan = context.loan(id);
             if loan.kind.is_exclusive() {
@@ -240,12 +247,14 @@ fn check_read(place: &Place, span: seal_span::Span, context: &Context<'_>) {
         }
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
-    for id in overlapping(context, place) {
-        let loan = context.loan(id);
-        if loan.kind.is_exclusive() {
-            context
-                .reporter
-                .read_while_exclusively_borrowed(place, span, loan);
+    if !place_is_reported(context, place) {
+        for id in overlapping(context, place) {
+            let loan = context.loan(id);
+            if loan.kind.is_exclusive() {
+                context
+                    .reporter
+                    .read_while_exclusively_borrowed(place, span, loan);
+            }
         }
     }
 }
@@ -262,12 +271,39 @@ fn check_borrow(place: &Place, kind: RefKind, span: seal_span::Span, context: &C
         Init::PartiallyMoved => context.reporter.borrow_partially_moved(place, span),
         Init::Uninitialized => context.reporter.use_of_uninitialized(place, span),
     }
-    for id in overlapping(context, place) {
-        let loan = context.loan(id);
-        if kind.is_exclusive() || loan.kind.is_exclusive() {
-            context.reporter.borrow_conflict(place, kind, span, loan);
+    // A borrow through a reference that was already rejected carries the same
+    // mistake forward; mark it rejected too and stay silent.
+    let cascade = place_is_reported(context, place);
+    let mut conflicted = false;
+    if !cascade {
+        for id in overlapping(context, place) {
+            let loan = context.loan(id);
+            if kind.is_exclusive() || loan.kind.is_exclusive() {
+                context.reporter.borrow_conflict(place, kind, span, loan);
+                conflicted = true;
+            }
         }
     }
+    if let Some(id) = context.current_loan
+        && (cascade || conflicted)
+    {
+        context.loans[id.index() as usize].reported.set(true);
+    }
+}
+
+/// Returns whether an access reaches storage through a rejected borrow.
+///
+/// A rejected borrow (`E5008`) leaves the reference usable in the MIR, but a
+/// later access through it would only repeat the cause the user already saw, so
+/// conflict diagnostics on that access are suppressed.
+fn place_is_reported(context: &Context<'_>, place: &Place) -> bool {
+    origins::first_deref_base(place).is_some_and(|base| {
+        context
+            .holds_at
+            .at(&base)
+            .iter()
+            .any(|id| context.loan(*id).reported.get())
+    })
 }
 
 /// Returns the place whose value was moved out, which may be a prefix of
@@ -350,7 +386,9 @@ fn overlapping(context: &Context<'_>, place: &Place) -> Vec<LoanId> {
         .iter()
         .copied()
         .filter(|id| {
-            !excluded.contains(id) && origins::keys_overlap(&keys, &context.loan(*id).keys)
+            !excluded.contains(id)
+                && !context.loan(*id).reported.get()
+                && origins::keys_overlap(&keys, &context.loan(*id).keys)
         })
         .collect();
     ids.sort_by_key(|id| id.index());
@@ -409,6 +447,9 @@ fn check_terminator(
             escaped.sort_by_key(|id| id.index());
             for id in escaped {
                 let loan = &context.loans[id.index() as usize];
+                if loan.reported.get() {
+                    continue;
+                }
                 context
                     .reporter
                     .return_local_reference(loan, block.terminator.span);

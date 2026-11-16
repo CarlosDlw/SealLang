@@ -206,11 +206,40 @@ fn field_borrows_of_a_pointee_stay_precise() {
 }
 
 #[test]
-fn a_read_through_a_shared_alias_names_the_exclusive_storage() {
+fn a_rejected_borrow_does_not_cascade_into_reads() {
     let fixture = check_errors(
         "func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &x;\n  *a + *b\n}\n",
     );
-    fixture.expect("E5007", "because `x` is exclusively borrowed");
+    let diagnostics = fixture.diagnostics();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "only the rejected borrow is reported: {:?}",
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.message()))
+            .collect::<Vec<_>>()
+    );
+    fixture.expect("E5008", "already borrowed as mutable");
+}
+
+#[test]
+fn a_rejected_borrow_does_not_cascade_into_arguments() {
+    let fixture = check_errors(
+        "func take(p: *mut i32) {}\n\n\
+         func f() -> i32 {\n  let mut x = 1;\n  let a = &mut x;\n  let b = &mut x;\n  take(b);\n  *a\n}\n",
+    );
+    let diagnostics = fixture.diagnostics();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "only the rejected borrow is reported: {:?}",
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.message()))
+            .collect::<Vec<_>>()
+    );
+    fixture.expect("E5008", "already borrowed");
 }
 
 #[test]
