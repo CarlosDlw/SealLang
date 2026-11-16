@@ -10,7 +10,7 @@ use std::panic::AssertUnwindSafe;
 use std::process::ExitCode;
 
 use seal_diagnostics::IcePanic;
-use seal_session::{OptLevel, Options, Session};
+use seal_session::{Options, Session};
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -88,7 +88,17 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
     let session = Session::new(options).map_err(|error| error.to_string())?;
 
     for input in &args.inputs {
-        let _ = session.load_file(input);
+        let Ok(file_id) = session.load_file(input) else {
+            continue;
+        };
+        let Some(file) = session.source_map().file(file_id) else {
+            continue;
+        };
+        // The token stream will feed the parser; until it lands, lexing is the
+        // phase that validates the source.
+        let _lexed = session.profiler().time("lex", || {
+            seal_lexer::lex(&file, session.diag(), session.interner())
+        });
     }
 
     if let Some(error) = session.diag().emitter_error() {
@@ -107,8 +117,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    // Phases (lexer, parser, type checking, codegen) plug in here. Until the
-    // first phase exists, a successful load is a successful run.
-    let _: OptLevel = args.opt_level;
+    // Later phases (parser, type checking, codegen) plug in here, consuming the
+    // token stream produced above.
     Ok(ExitCode::SUCCESS)
 }

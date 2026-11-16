@@ -37,6 +37,17 @@ pub fn is_ident(text: &str) -> bool {
     }
 }
 
+/// Returns `true` for the Unicode bidirectional formatting characters.
+///
+/// The set is U+202A..=U+202E (embeddings and overrides) and U+2066..=U+2069
+/// (isolates). They change how text is displayed without changing its bytes,
+/// which is the basis of the Trojan Source attack (CVE-2021-42574); the lexer
+/// rejects them everywhere in source text.
+#[inline]
+pub fn is_bidi_control(character: char) -> bool {
+    matches!(character, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
 /// Width of a tab stop used when rendering source snippets.
 pub const TAB_WIDTH: usize = 4;
 
@@ -103,8 +114,8 @@ pub fn expand_tabs(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        TAB_WIDTH, char_width, display_width, display_width_with_tabs, expand_tabs, is_ident,
-        is_ident_continue, is_ident_start,
+        TAB_WIDTH, char_width, display_width, display_width_with_tabs, expand_tabs,
+        is_bidi_control, is_ident, is_ident_continue, is_ident_start,
     };
 
     #[test]
@@ -135,6 +146,19 @@ mod tests {
         assert!(!is_ident_start(combining_acute));
         assert!(is_ident_continue(combining_acute));
         assert!(is_ident("e\u{0301}"));
+    }
+
+    #[test]
+    fn bidi_controls_are_recognized() {
+        for character in ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}'] {
+            assert!(is_bidi_control(character));
+        }
+        for character in ['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'] {
+            assert!(is_bidi_control(character));
+        }
+        for character in ['\u{202F}', '\u{2065}', '\u{206A}', 'a', '\u{05D0}'] {
+            assert!(!is_bidi_control(character));
+        }
     }
 
     #[test]

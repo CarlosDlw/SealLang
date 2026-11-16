@@ -1,0 +1,20 @@
+//! Keyword recognition.
+//!
+//! Keywords are exactly the reserved words of the current language surface.
+//! Type names such as `i32` stay identifiers; name resolution gives them meaning.
+//! Everything else that is not listed here is an identifier, so adding a keyword
+//! later is a deliberate change in one place.
+
+use crate::token::TokenKind;
+
+/// Returns the keyword token for `text`, if it is reserved.
+pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
+    Some(match text {
+        "func" => TokenKind::Func,
+        "let" => TokenKind::Let,
+        "return" => TokenKind::Return,
+        "true" => TokenKind::True,
+        "false" => TokenKind::False,
+        _ => return None,
+    })
+}

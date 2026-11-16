@@ -1,9 +1,9 @@
-# Seal compiler architecture — foundation layer
+# Seal compiler architecture — foundation and lexer
 
-This document covers the compiler foundation: the crates that every later phase
-(lexer, parser, name resolution, type checking, MIR, codegen) depends on. It is
-kept in sync with the code; changes to a public invariant must change this file
-in the same commit.
+This document covers the compiler foundation and the first phase, the lexer. The
+foundation is the set of crates that every later phase (parser, name resolution,
+type checking, MIR, codegen) depends on. It is kept in sync with the code;
+changes to a public invariant must change this file in the same commit.
 
 ## Workspace layout
 
@@ -20,13 +20,14 @@ allowed to depend only on crates below it in the list.
 | `seal-span` | `SourceMap`, `SourceFile`, `LineIndex`, `Span` (8 bytes), snippets, path remapping. |
 | `seal-diagnostics` | Structured diagnostics, `ErrorGuaranteed`, dedup, rich/JSON/silent emitters, ICE. |
 | `seal-error-codes` | Stable code registry (`E0xxx`–`E9xxx`) with long-form explanations. |
+| `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
 | `seal-profiling` | Phase timings for `--time-passes`. |
 | `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
-| `seal-driver` | The `sealc` binary: arguments, exit codes, panic policy. |
+| `seal-driver` | The `sealc` binary: arguments, exit codes, panic policy, and phase wiring. |
 
 ## Invariants
 
@@ -52,6 +53,19 @@ allowed to depend only on crates below it in the list.
    range; warnings are identified by lint name, not code.
 10. **Writes are atomic.** Artifacts are written to a temporary file and renamed;
     a failed build never leaves a truncated output.
+11. **Tokens are ordered and total.** The lexer always ends with an `Eof` token
+    whose span is the empty range at the end of the file; token spans never
+    overlap, never leave the file, and every malformed lexeme becomes one
+    `Error` token covering it, so parsing can resume at a known boundary.
+12. **Lexing is context-free and total.** The same text always produces the same
+    tokens, independent of target or phase; the scanner always advances, and
+    non-user states are reported as ICEs rather than loops. Comments are trivia
+    (including nested block comments and the four doc-comment styles), and a
+    newline inside any comment still sets `preceded_by_newline`.
+13. **Source text is not a Trojan Source vector.** Bidirectional formatting
+    characters are rejected everywhere, raw control characters are rejected in
+    literals, non-ASCII whitespace and bare carriage returns are rejected, and a
+    BOM is only accepted at the start of a file.
 
 ## Extension points
 
@@ -62,6 +76,9 @@ allowed to depend only on crates below it in the list.
 - **New diagnostic.** Allocate the next code in the phase's range in
   `seal-error-codes`, write the explanation, and emit through `DiagCtxt`. Add a
   fixture test using `seal-test-support`.
+- **New token or keyword.** Add the variant to `TokenKind`, classify it in the
+  scanner (keywords live in `seal-lexer`'s keyword table), and add a maximal
+  munch test; keywords are reserved words, not identifiers with a flag.
 - **New target.** Extend `seal-target` with a `TargetSpec` built from the triple;
   never consult the host at compile time.
 - **New emitter.** Implement `seal_diagnostics::Emitter`; configuration is passed

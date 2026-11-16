@@ -15,6 +15,7 @@ seal-macros = { path = "crates/macros" }
 seal-symbol = { path = "crates/symbol" }
 seal-unicode = { path = "crates/unicode" }
 seal-span = { path = "crates/span" }
+seal-lexer = { path = "crates/lexer" }
 seal-diagnostics = { path = "crates/diagnostics" }
 seal-error-codes = { path = "crates/error-codes" }
 seal-version = { path = "crates/version" }

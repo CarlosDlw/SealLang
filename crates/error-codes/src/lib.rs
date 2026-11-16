@@ -104,6 +104,148 @@ or may lack read permission.
 Check the path and the file permissions, then rebuild.",
 };
 
+/// A character that cannot start any token.
+pub const E0004: ErrorCode = ErrorCode {
+    code: "E0004",
+    title: "invalid character",
+    explanation: "\
+The lexer found a code point that cannot start a token. Common causes are a
+stray punctuation character from another language, non-ASCII whitespace (such as
+a no-break space pasted from a document), or an invisible format character.
+
+Seal accepts only ASCII space, tab, line feed, and carriage-return/line-feed as
+whitespace. Replace the character with its ASCII equivalent, or remove it. A
+bidirectional control character is reported separately as E0012.",
+};
+
+/// An escape sequence is malformed.
+pub const E0005: ErrorCode = ErrorCode {
+    code: "E0005",
+    title: "invalid escape sequence",
+    explanation: "\
+Escape sequences inside string and character literals must be well formed. Seal
+supports `\\0`, `\\t`, `\\n`, `\\r`, `\\\"`, `\\'`, `\\\\`, `\\xNN` with exactly two
+hexadecimal digits and a value up to 0x7F, and `\\u{...}` with one to six hex
+digits naming a Unicode scalar value.
+
+A backslash followed by a newline continues a string literal and skips the
+following whitespace; it is not allowed in character literals. Unknown escapes,
+missing braces, surrogates, and out-of-range code points are all reported here.",
+};
+
+/// A string literal is not terminated.
+pub const E0006: ErrorCode = ErrorCode {
+    code: "E0006",
+    title: "unterminated string literal",
+    explanation: "\
+A string literal starts with a double quote and must end on the same line, unless
+the newline is escaped with a trailing backslash. The parser reached a line break
+or the end of the file before the closing quote.
+
+Add the closing `\"`. A line break inside a string must be written as `\\n`, or
+escaped with a backslash at the end of the line to continue the literal.",
+};
+
+/// A numeric literal is malformed.
+pub const E0007: ErrorCode = ErrorCode {
+    code: "E0007",
+    title: "malformed numeric literal",
+    explanation: "\
+Numeric literals must follow one of the supported shapes: decimal digits, `0b`
+binary, `0o` octal, or `0x` hexadecimal, optionally followed by a decimal part
+and an exponent for decimal floats. Base prefixes are lowercase.
+
+Separators (`_`) may appear only between two digits, never at the start, at the
+end, next to a decimal point, next to an exponent marker, or next to a suffix.
+A prefixed literal cannot have a decimal point, and an exponent needs at least
+one digit after an optional sign.",
+};
+
+/// A numeric suffix is not a known type suffix.
+pub const E0008: ErrorCode = ErrorCode {
+    code: "E0008",
+    title: "invalid numeric suffix",
+    explanation: "\
+A numeric literal may end with the name of a fixed-width numeric type: `i8`,
+`i16`, `i32`, `i64`, `i128`, `isize`, `u8`, `u16`, `u32`, `u64`, `u128`, `usize`,
+`f32`, or `f64`. Integer literals accept integer suffixes, and float literals
+accept `f32` or `f64`. Anything else attached to the digits is a syntax error,
+not a separate identifier.
+
+Remove the suffix or spell one of the supported type names.",
+};
+
+/// A numeric literal does not fit its type.
+pub const E0009: ErrorCode = ErrorCode {
+    code: "E0009",
+    title: "numeric literal out of range",
+    explanation: "\
+Every integer literal must fit in 128 bits, the widest integer Seal supports,
+and every float literal must be finite in `f64` (or in `f32` when the literal has
+an `f32` suffix).
+
+Use a smaller value, split the computation into several literals, or choose a
+wider type. Values that overflow a narrower suffix such as `u8` are diagnosed
+later, when the literal's type is known.",
+};
+
+/// A character literal is malformed.
+pub const E0010: ErrorCode = ErrorCode {
+    code: "E0010",
+    title: "malformed character literal",
+    explanation: "\
+A character literal contains exactly one Unicode scalar value between single
+quotes, for example `'a'`, `'é'`, or `'\\u{1F980}'`. It cannot be empty, cannot
+contain more than one scalar value, and must be closed before the end of the
+line.
+
+For text with more than one character use a string literal (`\"ab\"`). A
+grapheme that looks like one character may still be several scalar values, such
+as a letter followed by a combining accent.",
+};
+
+/// A block comment is not terminated.
+pub const E0011: ErrorCode = ErrorCode {
+    code: "E0011",
+    title: "unterminated block comment",
+    explanation: "\
+Block comments start with `/*` and end with `*/`, and they nest. The opening
+comment of the report is the one still looking for its closing delimiter when
+the end of the file was reached.
+
+Add the missing `*/`. Nested comments are useful for commenting out code that
+already contains block comments; every opener needs its own closer.",
+};
+
+/// A bidirectional control character appears in the source.
+pub const E0012: ErrorCode = ErrorCode {
+    code: "E0012",
+    title: "bidirectional control character",
+    explanation: "\
+The source contains one of the Unicode bidirectional formatting characters
+(U+202A to U+202E and U+2066 to U+2069). They reorder how text is displayed
+without changing the bytes the compiler reads, which lets code display one way
+and behave another (CVE-2021-42574, Trojan Source).
+
+Seal rejects these characters everywhere, including comments and string
+literals. If a string must contain one at runtime, write it with a Unicode escape
+such as `\\u{202E}` instead of embedding the character.",
+};
+
+/// A literal contains a raw control character.
+pub const E0013: ErrorCode = ErrorCode {
+    code: "E0013",
+    title: "invalid character in literal",
+    explanation: "\
+String and character literals cannot contain raw control characters such as NUL,
+vertical tab, or DEL. They are invisible in most editors, hide what the literal
+actually contains, and are easy to introduce by pasting data.
+
+Write the character with an escape sequence instead: `\\0` for NUL, `\\t` for
+tab, `\\n` for a newline, or `\\u{...}` for an arbitrary code point. A tab is
+allowed literally inside a string, but `\\t` is clearer.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -130,7 +272,10 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 };
 
 /// Every registered code, in allocation order.
-pub static ALL: &[ErrorCode] = &[E0001, E0002, E0003, E9001, E9002];
+pub static ALL: &[ErrorCode] = &[
+    E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
+    E9001, E9002,
+];
 
 /// Looks up a code by its text, for example `E0001`.
 pub fn lookup(code: &str) -> Option<&'static ErrorCode> {
@@ -151,7 +296,7 @@ pub fn explain(code: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{ALL, E0001, E0002, E0003, E9001, E9002, explain, lookup};
+    use super::{ALL, E0001, E0002, E0003, E0012, E9001, E9002, explain, lookup};
 
     #[test]
     fn codes_are_unique_and_well_formed() {
@@ -204,10 +349,26 @@ mod tests {
 
     #[test]
     fn codes_are_grouped_by_phase() {
-        assert_eq!(E0001.code()[1..2].parse::<u8>().expect("digit"), 0);
-        assert_eq!(E0002.code()[1..2].parse::<u8>().expect("digit"), 0);
-        assert_eq!(E0003.code()[1..2].parse::<u8>().expect("digit"), 0);
+        for code in [E0001, E0002, E0003, E0012] {
+            assert_eq!(code.code()[1..2].parse::<u8>().expect("digit"), 0);
+        }
         assert_eq!(E9001.code()[1..2].parse::<u8>().expect("digit"), 9);
         assert_eq!(E9002.code()[1..2].parse::<u8>().expect("digit"), 9);
+    }
+
+    #[test]
+    fn lexer_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E00"))
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                "E0001", "E0002", "E0003", "E0004", "E0005", "E0006", "E0007", "E0008", "E0009",
+                "E0010", "E0011", "E0012", "E0013",
+            ]
+        );
     }
 }
