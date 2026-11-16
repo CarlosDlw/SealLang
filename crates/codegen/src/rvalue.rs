@@ -21,16 +21,15 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     pub(crate) fn emit_rvalue(
         &self,
         rvalue: &Rvalue,
-        span: Span,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
             Rvalue::Ref(place) => Ok(self.place_ptr(place)?.into()),
-            Rvalue::Binary { op, lhs, rhs } => {
+            Rvalue::Binary { op, lhs, rhs, span } => {
                 let ty = self.operand_type(lhs)?;
                 let lhs = self.load_operand(lhs)?;
                 let rhs = self.load_operand(rhs)?;
-                self.binary(*op, lhs, rhs, ty, span)
+                self.binary(*op, lhs, rhs, ty, *span)
             }
             Rvalue::Unary { op, operand } => {
                 let value = self.load_operand(operand)?;

@@ -398,6 +398,7 @@ impl<'a> BodyLowering<'a> {
                             op: bin_op(op),
                             lhs,
                             rhs,
+                            span,
                         },
                         span,
                     );
@@ -536,6 +537,7 @@ impl<'a> BodyLowering<'a> {
                         op: compound_bin_op(op),
                         lhs,
                         rhs,
+                        span,
                     },
                     span,
                 );
@@ -556,7 +558,7 @@ impl<'a> BodyLowering<'a> {
             UpdateOp::Increment => BinOp::Add,
             UpdateOp::Decrement => BinOp::Sub,
         };
-        self.assign_rvalue(target_place, Rvalue::Binary { op, lhs, rhs }, span);
+        self.assign_rvalue(target_place, Rvalue::Binary { op, lhs, rhs, span }, span);
 
         if let Some(dest) = dest {
             self.assign_constant(dest, Constant::Unit, span);

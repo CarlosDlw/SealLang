@@ -245,8 +245,9 @@ allowed to depend only on crates below it in the list.
     before verification and optimization.
 56. **Arithmetic cannot silently invoke LLVM undefined behavior.** Integer
     division and remainder panic through the runtime on a zero divisor and on
-    the signed minimum divided by `-1`, reporting the source location and
-    exiting with status 101; shift amounts are masked to the operand width.
+    the signed minimum divided by `-1`, reporting the failing expression's
+    source location and exiting with status 101; shift amounts are masked to the
+    operand width.
     Integer arithmetic wraps, floats follow IEEE, and no overflow check is
     inserted.
 57. **Artifacts are all-or-nothing.** Object and assembly output are written

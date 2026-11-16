@@ -123,8 +123,9 @@ allocation, locks, stdio, locale, or `atexit` handlers:
   `STD_ERROR_HANDLE` and use `WriteFile`.
 - `seal_panic` is `noreturn`, `nounwind`, and `cold`. It writes
   `panic: <message> at <file>:<line>:<column>\n` to standard error and
-  terminates with status 101, without flushing or unwinding. Generated calls
-  are followed by `unreachable`.
+  terminates with status 101, without flushing or unwinding. The location is
+  the span of the failing expression, not the enclosing statement. Generated
+  calls are followed by `unreachable`.
 - The archive is linked after the generated object and only into executables;
   unused members do not enter the output. Object and assembly emission never
   need the runtime.

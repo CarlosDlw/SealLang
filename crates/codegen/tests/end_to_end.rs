@@ -432,6 +432,25 @@ fn division_by_zero_panics_with_the_source_location() {
 }
 
 #[test]
+fn nested_division_panics_at_the_expression_span() {
+    let output = TempOutput::new("nested-division-panic");
+    compile(
+        "func main() -> i32 {\n    let zero = 0;\n    1 + 10 / zero\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect("the nested division compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr),
+        "panic: attempt to divide by zero at <test.sl>:3:9\n"
+    );
+}
+
+#[test]
 fn runtime_panic_example_matches_the_documented_contract() {
     let output = TempOutput::new("runtime-panic-example");
     compile(

@@ -27,6 +27,7 @@ fn arithmetic_tail_writes_the_return_place() {
         op: BinOp::Add,
         lhs,
         rhs,
+        ..
     } = rvalue
     else {
         panic!("expected an addition, got {rvalue:?}");
@@ -104,6 +105,7 @@ fn compound_assignment_reads_and_writes_the_same_place() {
         op: BinOp::Add,
         lhs,
         rhs,
+        ..
     } = rvalue
     else {
         panic!("expected an addition, got {rvalue:?}");
@@ -129,7 +131,7 @@ fn updates_become_binary_operations_with_one() {
         .map(|statement| {
             let (place, rvalue) = assignment(statement);
             assert_eq!(place.local, a);
-            let Rvalue::Binary { op, lhs, rhs } = rvalue else {
+            let Rvalue::Binary { op, lhs, rhs, .. } = rvalue else {
                 panic!("expected a binary operation, got {rvalue:?}");
             };
             assert_eq!(lhs, &Operand::Copy(Place::local(a)));

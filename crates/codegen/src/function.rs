@@ -115,7 +115,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             for statement in &block.statements {
                 self.set_span(statement.span);
                 let StatementKind::Assign { place, rvalue } = &statement.kind;
-                let value = self.emit_rvalue(rvalue, statement.span)?;
+                let value = self.emit_rvalue(rvalue)?;
                 let destination = self.place_ptr(place)?;
                 self.build(self.builder.build_store(destination, value), "assignment")?;
             }

@@ -1,6 +1,7 @@
 //! Values computed by statements.
 
 use seal_def::DefId;
+use seal_span::Span;
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -119,6 +120,8 @@ pub enum Rvalue {
         lhs: Operand,
         /// The right operand.
         rhs: Operand,
+        /// The source range of the whole binary expression.
+        span: Span,
     },
     /// Applies a unary operator to an operand.
     Unary {
