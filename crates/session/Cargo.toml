@@ -1,0 +1,20 @@
+[package]
+name = "seal-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seal-diagnostics.workspace = true
+seal-error-codes.workspace = true
+seal-fs.workspace = true
+seal-hash.workspace = true
+seal-profiling.workspace = true
+seal-span.workspace = true
+seal-symbol.workspace = true
+seal-target.workspace = true
+seal-version.workspace = true

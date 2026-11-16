@@ -1,0 +1,14 @@
+[package]
+name = "seal-span"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seal-hash.workspace = true
+seal-index.workspace = true
+seal-unicode.workspace = true

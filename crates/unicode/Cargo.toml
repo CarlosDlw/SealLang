@@ -1,0 +1,13 @@
+[package]
+name = "seal-unicode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+unicode-ident.workspace = true
+unicode-width.workspace = true

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+seal-index = { path = "crates/index" }
+seal-hash = { path = "crates/hash" }
+seal-macros = { path = "crates/macros" }
+seal-symbol = { path = "crates/symbol" }
+seal-unicode = { path = "crates/unicode" }
+seal-span = { path = "crates/span" }
+seal-diagnostics = { path = "crates/diagnostics" }
+seal-error-codes = { path = "crates/error-codes" }
+seal-version = { path = "crates/version" }
+seal-target = { path = "crates/target" }
+seal-fs = { path = "crates/fs" }
+seal-profiling = { path = "crates/profiling" }
+seal-session = { path = "crates/session" }
+seal-test-support = { path = "crates/test-support" }
+
+unicode-ident = "1.0"
+unicode-width = "0.2"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_must_use = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+debug = 1
