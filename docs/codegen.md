@@ -128,9 +128,12 @@ allocation, locks, stdio, locale, or `atexit` handlers:
 - The archive is linked after the generated object and only into executables;
   unused members do not enter the output. Object and assembly emission never
   need the runtime.
+- `sealc --emit-runtime <PATH>` writes the embedded archive for manual links of
+  object files produced with `--emit=obj`.
 - The archive is built for the compiler host. `--emit=exe` for another
-  architecture or OS is rejected with `E6003`; `--emit=obj` remains available
-  for cross-compilation.
+  architecture or OS is rejected with `E6003` unless `--runtime-archive <PATH>`
+  supplies an archive built for that target. `--emit=obj` remains available for
+  cross-compilation.
 
 ## Failures
 
@@ -138,7 +141,7 @@ allocation, locks, stdio, locale, or `atexit` handlers:
 |------|---------|
 | `E6001` | The executable has no usable `main`, or `main` has parameters or a return type other than `i32`/`()`. |
 | `E6002` | LLVM has no backend for the requested triple or cannot create a target machine. |
-| `E6003` | The artifact could not be written, the linker could not run, linking failed, or an executable was requested for a target that does not match the embedded runtime. |
+| `E6003` | The artifact could not be written, the linker could not run, linking failed, an external runtime archive could not be read, or an executable was requested for a target that does not match the embedded runtime and no replacement was supplied. |
 
 Broken compiler invariants (invalid MIR reaching codegen, an unresolved inference
 type, invalid generated IR, or a failed optimization pipeline) are internal
@@ -172,3 +175,5 @@ without `main`, verify entry-point diagnostics, and confirm panic messages and
 status 101 for zero divisors and signed overflow in both `/` and `%`, and reject
 executable linking when the embedded runtime does not match the target.
 `examples/007_runtime_panic.sl` pins the user-visible panic message and location.
+The driver tests export the embedded archive with `--emit-runtime` and reuse it
+with `--runtime-archive` to link that example.

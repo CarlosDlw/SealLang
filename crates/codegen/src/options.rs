@@ -45,6 +45,12 @@ pub struct CodegenOptions {
     pub debug_info: bool,
     /// Module name, used for the LLVM module and the debug producer.
     pub crate_name: Option<String>,
+    /// Optional runtime archive used instead of the embedded host archive.
+    ///
+    /// This is required to link an executable for a target whose architecture
+    /// or operating system differs from the compiler host. The caller is
+    /// responsible for supplying an archive built for that target.
+    pub runtime_archive: Option<PathBuf>,
 }
 
 impl CodegenOptions {
@@ -56,6 +62,7 @@ impl CodegenOptions {
             opt_level: OptLevel::O0,
             debug_info: false,
             crate_name: None,
+            runtime_archive: None,
         }
     }
 }

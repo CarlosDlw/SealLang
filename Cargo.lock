@@ -186,6 +186,7 @@ dependencies = [
  "seal-codegen",
  "seal-diagnostics",
  "seal-error-codes",
+ "seal-fs",
  "seal-hir",
  "seal-lexer",
  "seal-mir",

@@ -37,6 +37,10 @@
 
 #define SEAL_PANIC_STATUS 101
 
+/* Linux transfers at most this many bytes in one write; chunking keeps the
+ * request portable to every POSIX platform and avoids EINVAL for huge buffers. */
+#define SEAL_MAX_WRITE ((size_t)0x7ffff000)
+
 /*
  * Writes exactly `length` bytes to `fd`, retrying interrupted calls and
  * continuing after partial writes. Returns 0 on success and -1 when the output
@@ -82,7 +86,8 @@ SEAL_EXPORT int seal_write(int fd, const uint8_t *data, size_t length) {
     return 0;
 #else
     while (length > 0) {
-        ssize_t written = write(fd, data, length);
+        size_t chunk = length > SEAL_MAX_WRITE ? SEAL_MAX_WRITE : length;
+        ssize_t written = write(fd, data, chunk);
         if (written < 0) {
             if (errno == EINTR) {
                 continue;

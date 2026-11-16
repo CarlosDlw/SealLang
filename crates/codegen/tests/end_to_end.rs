@@ -65,6 +65,18 @@ fn compile_for_target(
     debug_info: bool,
     target: seal_target::TargetTriple,
 ) -> Result<(), CodegenError> {
+    compile_for_target_with_runtime(source, output, emit, opt_level, debug_info, target, None)
+}
+
+fn compile_for_target_with_runtime(
+    source: &str,
+    output: &Path,
+    emit: Emit,
+    opt_level: OptLevel,
+    debug_info: bool,
+    target: seal_target::TargetTriple,
+    runtime_archive: Option<PathBuf>,
+) -> Result<(), CodegenError> {
     let session = Session::new(Options {
         target,
         ..Options::default()
@@ -115,6 +127,7 @@ fn compile_for_target(
             opt_level,
             debug_info,
             crate_name: Some("test".to_owned()),
+            runtime_archive,
         },
     )
     .map(|_| ())
@@ -331,6 +344,7 @@ fn cross_target_executables_require_a_matching_runtime() {
     match error {
         CodegenError::Artifact { detail, .. } => {
             assert!(detail.contains("embedded runtime"));
+            assert!(detail.contains("--runtime-archive"));
             assert!(detail.contains("--emit=obj"));
         }
         other => panic!("unexpected error: {other:?}"),
@@ -352,6 +366,50 @@ fn cross_target_executables_require_a_matching_runtime() {
             .len()
             > 0
     );
+}
+
+#[test]
+fn external_runtime_archives_are_read_and_validated() {
+    let source = "func main() -> i32 { 0 }";
+    let host = seal_target::host_triple();
+
+    let missing = TempOutput::new("missing-runtime.a");
+    let _ = std::fs::remove_file(missing.path());
+    let error = compile_for_target_with_runtime(
+        source,
+        missing.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+        host.clone(),
+        Some(missing.path().to_path_buf()),
+    )
+    .expect_err("a missing runtime archive cannot be read");
+    match error {
+        CodegenError::Artifact { detail, .. } => {
+            assert!(detail.contains("cannot read runtime archive"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let empty = TempOutput::new("empty-runtime.a");
+    std::fs::write(empty.path(), []).expect("empty archive is written");
+    let error = compile_for_target_with_runtime(
+        source,
+        empty.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+        host,
+        Some(empty.path().to_path_buf()),
+    )
+    .expect_err("an empty runtime archive is rejected");
+    match error {
+        CodegenError::Artifact { detail, .. } => {
+            assert!(detail.contains("is empty"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

@@ -21,6 +21,7 @@ seal-lexer.workspace = true
 seal-mir.workspace = true
 seal-parser.workspace = true
 seal-error-codes.workspace = true
+seal-fs.workspace = true
 seal-session.workspace = true
 seal-target.workspace = true
 seal-typeck.workspace = true

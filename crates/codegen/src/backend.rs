@@ -1,6 +1,7 @@
 //! LLVM module construction and code generation orchestration.
 
-use std::path::PathBuf;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -56,17 +57,11 @@ pub struct Artifact {
 
 /// Lowers checked MIR to LLVM IR and produces the requested artifact.
 pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifact, CodegenError> {
-    if options.emit == Emit::Executable && !crate::runtime::supports(input.target) {
-        return Err(CodegenError::artifact(
-            &options.output,
-            format!(
-                "the embedded runtime was built for the host (`{}`), not for `{}`; \
-                 use --emit=obj and link the object with a runtime for the target",
-                seal_target::host_triple(),
-                input.target
-            ),
-        ));
-    }
+    let runtime = if options.emit == Emit::Executable {
+        Some(runtime_archive(options, input.target)?)
+    } else {
+        None
+    };
     Target::initialize_all(&InitializationConfig::default());
     let triple = TargetTriple::create(input.target.triple().as_str());
     let target = Target::from_triple(&triple).map_err(|error| {
@@ -200,12 +195,91 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         &machine,
         options.emit,
         &options.output,
-        crate::runtime::ARCHIVE,
+        runtime.as_deref().unwrap_or(&[]),
     )?;
     Ok(Artifact {
         path: options.output.clone(),
         emit: options.emit,
     })
+}
+
+/// Maximum size accepted for a user-supplied runtime archive.
+const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+
+fn runtime_archive(
+    options: &CodegenOptions,
+    target: &seal_target::TargetSpec,
+) -> Result<Cow<'static, [u8]>, CodegenError> {
+    if let Some(path) = &options.runtime_archive {
+        let archive = read_runtime_archive(path, &options.output)?;
+        return Ok(Cow::Owned(archive));
+    }
+    if !crate::runtime::supports(target) {
+        return Err(CodegenError::artifact(
+            &options.output,
+            format!(
+                "the embedded runtime was built for the host (`{}`), not for `{}`; \
+                 pass --runtime-archive <PATH> with a runtime for the target, or use --emit=obj",
+                seal_target::host_triple(),
+                target
+            ),
+        ));
+    }
+    Ok(Cow::Borrowed(crate::runtime::ARCHIVE))
+}
+
+fn read_runtime_archive(path: &Path, output: &Path) -> Result<Vec<u8>, CodegenError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        CodegenError::artifact(
+            output,
+            format!("cannot read runtime archive `{}`: {error}", path.display()),
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(CodegenError::artifact(
+            output,
+            format!("runtime archive `{}` is not a regular file", path.display()),
+        ));
+    }
+    if metadata.len() == 0 {
+        return Err(CodegenError::artifact(
+            output,
+            format!("runtime archive `{}` is empty", path.display()),
+        ));
+    }
+    if metadata.len() > MAX_RUNTIME_ARCHIVE_BYTES {
+        return Err(CodegenError::artifact(
+            output,
+            format!(
+                "runtime archive `{}` is too large ({} bytes; maximum is {MAX_RUNTIME_ARCHIVE_BYTES})",
+                path.display(),
+                metadata.len()
+            ),
+        ));
+    }
+    let archive = std::fs::read(path).map_err(|error| {
+        CodegenError::artifact(
+            output,
+            format!("cannot read runtime archive `{}`: {error}", path.display()),
+        )
+    })?;
+    if archive.is_empty() {
+        return Err(CodegenError::artifact(
+            output,
+            format!("runtime archive `{}` is empty", path.display()),
+        ));
+    }
+    if archive.len() as u64 > MAX_RUNTIME_ARCHIVE_BYTES {
+        return Err(CodegenError::artifact(
+            output,
+            format!(
+                "runtime archive `{}` is too large ({} bytes; maximum is {MAX_RUNTIME_ARCHIVE_BYTES})",
+                path.display(),
+                archive.len()
+            ),
+        ));
+    }
+    Ok(archive)
 }
 
 fn declare_functions<'ctx>(

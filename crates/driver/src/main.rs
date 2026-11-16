@@ -59,6 +59,12 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
             None => Err(format!("unknown error code `{code}`")),
         };
     }
+    if let Some(path) = &args.emit_runtime {
+        seal_fs::write_atomic(path, seal_codegen::runtime_archive()).map_err(|error| {
+            format!("cannot write runtime archive `{}`: {error}", path.display())
+        })?;
+        return Ok(ExitCode::SUCCESS);
+    }
 
     let target = match &args.target {
         Some(triple) => {
@@ -154,6 +160,7 @@ fn run(argv: &[String]) -> Result<ExitCode, String> {
                                     crate_name: input
                                         .file_stem()
                                         .map(|stem| stem.to_string_lossy().into_owned()),
+                                    runtime_archive: args.runtime_archive.clone(),
                                 };
                                 let codegen_input = seal_codegen::CodegenInput {
                                     mir: &mir,

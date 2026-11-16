@@ -255,15 +255,16 @@ allowed to depend only on crates below it in the list.
     linker's stderr is part of the diagnostic.
 58. **Targets are explicit.** The LLVM triple and target machine come from
     `seal-target`, never from the host. An unavailable backend is `E6002`, and a
-    missing linker, unsupported cross-link, or runtime/target mismatch is
-    `E6003`.
+    missing linker, unsupported cross-link, unreadable external runtime, or
+    runtime/target mismatch without `--runtime-archive` is `E6003`.
 59. **The runtime is minimal and self-contained.** The embedded C11 runtime
     allocates no memory, takes no locks, and uses no stdio, locale, or `atexit`
     handlers.
     Writes transfer exactly the requested bytes, retrying `EINTR` and partial
     writes; panics never unwind and always terminate with status 101. The
     archive is host-specific and linked only into executables, so object and
-    assembly output stay target-independent.
+    assembly output stay target-independent. `--emit-runtime` exports the
+    embedded archive, and `--runtime-archive` supplies a target archive.
 
 ## Extension points
 

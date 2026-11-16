@@ -11,7 +11,9 @@ cargo build --release
 `sealc` type-checks, borrow-checks, generates LLVM IR, and produces an
 optimized executable by default. Use `-O2` for the standard optimization
 pipeline, `-g` for DWARF, `--emit=obj` or `--emit=asm` for intermediate
-artifacts, and `--emit=check` to stop after analysis. See
+artifacts, and `--emit=check` to stop after analysis. `--emit-runtime <PATH>`
+exports the embedded runtime archive for manual links, and
+`--runtime-archive <PATH>` selects a runtime archive for the target. See
 [`docs/codegen.md`](docs/codegen.md) for the ABI, layout, debug information, and
 runtime semantics.
 

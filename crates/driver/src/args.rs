@@ -40,6 +40,10 @@ pub(crate) struct Args {
     pub debug_info: bool,
     /// Explicit output path, valid for a single input.
     pub output: Option<PathBuf>,
+    /// Write the embedded runtime archive to this path and exit.
+    pub emit_runtime: Option<PathBuf>,
+    /// Use this runtime archive instead of the embedded one when linking.
+    pub runtime_archive: Option<PathBuf>,
     /// Optimization level (`-O`, `-O0..3`, `--opt-level`).
     pub opt_level: OptLevel,
     /// Diagnostic output format.
@@ -147,6 +151,20 @@ pub(crate) fn parse(argv: impl IntoIterator<Item = String>) -> Result<Args, ArgE
             "-o" | "--output" => {
                 args.output = Some(PathBuf::from(take_value(&mut iterator, inline, "-o")?));
             }
+            "--emit-runtime" => {
+                args.emit_runtime = Some(PathBuf::from(take_value(
+                    &mut iterator,
+                    inline,
+                    "--emit-runtime",
+                )?));
+            }
+            "--runtime-archive" => {
+                args.runtime_archive = Some(PathBuf::from(take_value(
+                    &mut iterator,
+                    inline,
+                    "--runtime-archive",
+                )?));
+            }
             "--emit" => {
                 let value = take_value(&mut iterator, inline, "--emit")?;
                 args.emit = match value.as_str() {
@@ -224,7 +242,10 @@ pub(crate) fn parse(argv: impl IntoIterator<Item = String>) -> Result<Args, ArgE
         }
     }
 
-    let informational = args.show_help || args.show_version || args.explain.is_some();
+    let informational = args.show_help
+        || args.show_version
+        || args.explain.is_some()
+        || args.emit_runtime.is_some();
     if !informational && args.inputs.is_empty() {
         return Err(ArgError::NoInputs);
     }
@@ -271,6 +292,8 @@ OPTIONS:
     -g, --debug-info             Emit DWARF debug information
     --emit <check|obj|asm|exe>   Artifact to produce (default: exe)
     -o, --output <PATH>          Output path (single input only)
+    --emit-runtime <PATH>        Write the embedded host runtime archive
+    --runtime-archive <PATH>     Link with this runtime archive instead
     --target <TRIPLE>            Target triple (default: host)
     --language-version <X.Y>     Language version (default: current)
     --allow-unstable-features    Accept unstable language features
@@ -375,6 +398,18 @@ mod tests {
         assert!(parse(vec!["--help".to_owned()]).is_ok());
         assert!(parse(vec!["--version".to_owned()]).is_ok());
         assert!(parse(vec!["--explain=E0001".to_owned()]).is_ok());
+        assert!(parse(vec!["--emit-runtime=seal_rt.a".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn runtime_flags_parse() {
+        let exported = parse_ok(&["--emit-runtime", "seal_rt.a"]);
+        assert_eq!(exported.emit_runtime, Some(PathBuf::from("seal_rt.a")));
+        assert!(exported.inputs.is_empty());
+
+        let linked = parse_ok(&["--runtime-archive=seal_rt.a", "main.sl"]);
+        assert_eq!(linked.runtime_archive, Some(PathBuf::from("seal_rt.a")));
+        assert_eq!(linked.inputs, vec![PathBuf::from("main.sl")]);
     }
 
     #[test]

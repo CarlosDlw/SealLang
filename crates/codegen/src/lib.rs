@@ -34,6 +34,7 @@
 //!     opt_level: seal_session::OptLevel::O2,
 //!     debug_info: true,
 //!     crate_name: Some("program".to_owned()),
+//!     runtime_archive: None,
 //! };
 //! seal_codegen::emit(input, &options)?;
 //! ```
@@ -59,3 +60,12 @@ mod types;
 pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
 pub use options::{CodegenOptions, Emit};
+
+/// Returns the runtime archive embedded in this compiler build.
+///
+/// The bytes are the host archive used by default when linking an executable.
+/// They can be written to disk for manual links of object files produced with
+/// [`Emit::Object`].
+pub fn runtime_archive() -> &'static [u8] {
+    runtime::ARCHIVE
+}
