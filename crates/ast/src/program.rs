@@ -6,9 +6,10 @@ use seal_symbol::Symbol;
 
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
 use crate::expr::{Expr, ExprKind};
+use crate::generics::{Bound, GenericParamDecl};
 use crate::id::{
-    BlockId, ExprId, FieldDeclId, ItemId, ParamId, PatternId, StmtId, TupleFieldDeclId, TypeId,
-    VariantDeclId,
+    BlockId, BoundId, ExprId, FieldDeclId, GenericParamId, ItemId, ParamId, PatternId, StmtId,
+    TupleFieldDeclId, TypeId, VariantDeclId,
 };
 use crate::item::{
     FieldDecl, Item, ItemKind, Param, TupleFieldDecl, VariantDecl, VariantFieldList,
@@ -50,6 +51,8 @@ impl Program {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ast {
     items: IndexVec<ItemId, Item>,
+    generic_params: IndexVec<GenericParamId, GenericParamDecl>,
+    bounds: IndexVec<BoundId, Bound>,
     params: IndexVec<ParamId, Param>,
     fields: IndexVec<FieldDeclId, FieldDecl>,
     tuple_fields: IndexVec<TupleFieldDeclId, TupleFieldDecl>,
@@ -73,6 +76,18 @@ impl Ast {
     #[inline]
     pub fn item(&self, id: ItemId) -> &Item {
         &self.items[id]
+    }
+
+    /// Returns a generic parameter declaration.
+    #[inline]
+    pub fn generic_param(&self, id: GenericParamId) -> &GenericParamDecl {
+        &self.generic_params[id]
+    }
+
+    /// Returns a bound.
+    #[inline]
+    pub fn bound(&self, id: BoundId) -> &Bound {
+        &self.bounds[id]
     }
 
     /// Returns a parameter.
@@ -133,6 +148,18 @@ impl Ast {
     #[inline]
     pub fn item_arena(&self) -> &IndexVec<ItemId, Item> {
         &self.items
+    }
+
+    /// Returns all generic parameter nodes, indexable by [`GenericParamId`].
+    #[inline]
+    pub fn generic_param_arena(&self) -> &IndexVec<GenericParamId, GenericParamDecl> {
+        &self.generic_params
+    }
+
+    /// Returns all bound nodes, indexable by [`BoundId`].
+    #[inline]
+    pub fn bound_arena(&self) -> &IndexVec<BoundId, Bound> {
+        &self.bounds
     }
 
     /// Returns all parameter nodes, indexable by [`ParamId`].
@@ -211,6 +238,27 @@ impl AstBuilder {
     /// Adds an item and returns its ID.
     pub fn push_item(&mut self, kind: ItemKind, span: Span) -> ItemId {
         self.ast.items.push(Item { kind, span })
+    }
+
+    /// Adds a generic parameter declaration and returns its ID.
+    pub fn push_generic_param(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        bounds: Vec<BoundId>,
+        span: Span,
+    ) -> GenericParamId {
+        self.ast.generic_params.push(GenericParamDecl {
+            name,
+            name_span,
+            bounds,
+            span,
+        })
+    }
+
+    /// Adds a bound and returns its ID.
+    pub fn push_bound(&mut self, kind: crate::generics::BoundKind, span: Span) -> BoundId {
+        self.ast.bounds.push(Bound { kind, span })
     }
 
     /// Adds a parameter and returns its ID.

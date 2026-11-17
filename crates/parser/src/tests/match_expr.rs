@@ -155,7 +155,10 @@ fn a_plain_name_is_a_binding() {
         panic!("expected a binding pattern");
     };
     assert_eq!(fixture.symbol(*symbol), "value");
-    assert!(matches!(&ast.expr(arms[0].body).kind, ExprKind::Path(_)));
+    assert!(matches!(
+        &ast.expr(arms[0].body).kind,
+        ExprKind::Path { .. }
+    ));
 }
 
 #[test]

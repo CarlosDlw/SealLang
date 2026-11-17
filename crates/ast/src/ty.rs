@@ -1,8 +1,8 @@
 //! Type syntax.
 
 use seal_span::Span;
-use seal_symbol::Symbol;
 
+use crate::generics::TypePath;
 use crate::id::TypeId;
 
 /// A built-in type name.
@@ -120,7 +120,10 @@ pub enum TypeKind {
         mutable: bool,
     },
     /// A named type, resolved against the type namespace during lowering.
-    Path(Symbol),
+    ///
+    /// The optional argument list is kept here so nested generic types and
+    /// `Self` arguments retain their exact source spans.
+    Path(TypePath),
     /// A tuple type, written `(A, B, ...)`.
     ///
     /// The empty list is the unit type `()`. A one-element tuple must keep its

@@ -5,9 +5,10 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::{
-    Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemId, ItemKind, ParamId,
-    PatternId, PatternKind, StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId,
-    VariantFieldList, VariantPatternFields,
+    Ast, Block, BlockId, BoundId, BoundKind, Expr, ExprId, ExprKind, FieldDeclId, FnDecl,
+    GenericArgs, GenericParamId, GenericParams, ItemId, ItemKind, ParamId, PatternId, PatternKind,
+    StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
+    VariantPatternFields, WhereClause,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -161,6 +162,8 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         exprs: BTreeSet::new(),
         stmts: BTreeSet::new(),
         blocks: BTreeSet::new(),
+        generic_params: BTreeSet::new(),
+        bounds: BTreeSet::new(),
         fields: BTreeSet::new(),
         tuple_fields: BTreeSet::new(),
         variants: BTreeSet::new(),
@@ -178,6 +181,8 @@ struct Reachability<'a> {
     exprs: BTreeSet<ExprId>,
     stmts: BTreeSet<StmtId>,
     blocks: BTreeSet<BlockId>,
+    generic_params: BTreeSet<GenericParamId>,
+    bounds: BTreeSet<BoundId>,
     fields: BTreeSet<FieldDeclId>,
     tuple_fields: BTreeSet<TupleFieldDeclId>,
     variants: BTreeSet<VariantDeclId>,
@@ -238,6 +243,16 @@ impl Reachability<'_> {
             self.ast.param_arena().len(),
             "unreachable parameter nodes"
         );
+        assert_eq!(
+            self.generic_params.len(),
+            self.ast.generic_param_arena().len(),
+            "unreachable generic parameter nodes"
+        );
+        assert_eq!(
+            self.bounds.len(),
+            self.ast.bound_arena().len(),
+            "unreachable bound nodes"
+        );
     }
 
     fn check_item(&mut self, id: ItemId) {
@@ -250,36 +265,50 @@ impl Reachability<'_> {
             ItemKind::Func(declaration) => self.check_function(&declaration),
             ItemKind::Struct(declaration) => {
                 self.assert_span(declaration.name_span);
+                self.check_generics(&declaration.generics);
+                self.check_where(&declaration.where_clause);
                 for field in &declaration.fields {
                     self.check_field(*field);
                 }
             }
             ItemKind::Enum(declaration) => {
                 self.assert_span(declaration.name_span);
+                self.check_generics(&declaration.generics);
+                self.check_where(&declaration.where_clause);
                 for variant in &declaration.variants {
                     self.check_variant(*variant);
                 }
             }
             ItemKind::Impl(declaration) => {
-                if let Some((_, trait_span)) = declaration.trait_name {
-                    self.assert_span(trait_span);
+                self.check_generics(&declaration.generics);
+                self.check_type(declaration.self_ty);
+                if let Some(trait_ref) = &declaration.trait_ref {
+                    self.assert_span(trait_ref.name_span);
+                    self.assert_span(trait_ref.span);
+                    if let Some(args) = &trait_ref.args {
+                        self.check_generic_args(args);
+                    }
                 }
-                self.assert_span(declaration.type_span);
+                self.check_where(&declaration.where_clause);
                 for function in &declaration.functions {
                     self.check_item(*function);
                 }
             }
             ItemKind::Trait(declaration) => {
                 self.assert_span(declaration.name_span);
+                self.check_generics(&declaration.generics);
+                self.check_where(&declaration.where_clause);
                 for method in &declaration.methods {
                     self.check_item(*method);
                 }
             }
             ItemKind::TraitMethod(declaration) => {
                 self.assert_span(declaration.name_span);
+                self.check_generics(&declaration.generics);
                 if let Some(ret) = declaration.ret {
                     self.check_type(ret);
                 }
+                self.check_where(&declaration.where_clause);
                 for param in &declaration.params {
                     self.check_param(*param);
                 }
@@ -326,13 +355,67 @@ impl Reachability<'_> {
 
     fn check_function(&mut self, declaration: &FnDecl) {
         self.assert_span(declaration.name_span);
+        self.check_generics(&declaration.generics);
         if let Some(ret) = declaration.ret {
             self.check_type(ret);
         }
+        self.check_where(&declaration.where_clause);
         for param_id in &declaration.params {
             self.check_param(*param_id);
         }
         self.check_block(declaration.body);
+    }
+
+    fn check_generics(&mut self, generics: &GenericParams) {
+        self.assert_span(generics.span);
+        for id in &generics.params {
+            assert!(
+                self.generic_params.insert(*id),
+                "generic parameter {id:?} visited twice"
+            );
+            let (name_span, span, bounds) = {
+                let param = self.ast.generic_param(*id);
+                (param.name_span, param.span, param.bounds.clone())
+            };
+            self.assert_span(name_span);
+            self.assert_span(span);
+            for bound in bounds {
+                self.check_bound(bound);
+            }
+        }
+    }
+
+    fn check_where(&mut self, clause: &WhereClause) {
+        for predicate in &clause.predicates {
+            self.assert_span(predicate.span);
+            self.check_type(predicate.ty);
+            for bound in &predicate.bounds {
+                self.check_bound(*bound);
+            }
+        }
+    }
+
+    fn check_bound(&mut self, id: BoundId) {
+        assert!(self.bounds.insert(id), "bound {id:?} visited twice");
+        let (span, kind) = {
+            let bound = self.ast.bound(id);
+            (bound.span, bound.kind.clone())
+        };
+        self.assert_span(span);
+        if let BoundKind::Trait(trait_ref) = kind {
+            self.assert_span(trait_ref.name_span);
+            self.assert_span(trait_ref.span);
+            if let Some(args) = &trait_ref.args {
+                self.check_generic_args(args);
+            }
+        }
+    }
+
+    fn check_generic_args(&mut self, args: &GenericArgs) {
+        self.assert_span(args.span);
+        for arg in &args.args {
+            self.check_type(*arg);
+        }
     }
 
     fn assert_span(&self, span: Span) {
@@ -492,9 +575,15 @@ impl Reachability<'_> {
                 }
             }
             ExprKind::Struct {
-                name_span, fields, ..
+                name_span,
+                type_args,
+                fields,
+                ..
             } => {
                 self.assert_span(name_span);
+                if let Some(args) = type_args {
+                    self.check_generic_args(&args);
+                }
                 for field in fields {
                     self.assert_span(field.name_span);
                     self.assert_span(field.span);
@@ -504,11 +593,15 @@ impl Reachability<'_> {
             ExprKind::Variant {
                 type_span,
                 name_span,
+                type_args,
                 fields,
                 ..
             } => {
                 self.assert_span(type_span);
                 self.assert_span(name_span);
+                if let Some(args) = type_args {
+                    self.check_generic_args(&args);
+                }
                 for field in fields {
                     self.assert_span(field.name_span);
                     self.assert_span(field.span);
@@ -533,10 +626,14 @@ impl Reachability<'_> {
             ExprKind::MethodCall {
                 receiver,
                 name_span,
+                generic_args,
                 args,
                 ..
             } => {
                 self.assert_span(name_span);
+                if let Some(args) = generic_args {
+                    self.check_generic_args(&args);
+                }
                 self.check_expr(receiver);
                 for arg in args {
                     self.check_expr(arg);
@@ -581,12 +678,24 @@ impl Reachability<'_> {
             ExprKind::PathQualified {
                 type_span,
                 name_span,
+                type_args,
                 ..
             } => {
                 self.assert_span(type_span);
                 self.assert_span(name_span);
+                if let Some(args) = type_args {
+                    self.check_generic_args(&args);
+                }
             }
-            ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
+            ExprKind::Path {
+                name_span, args, ..
+            } => {
+                self.assert_span(name_span);
+                if let Some(args) = args {
+                    self.check_generic_args(&args);
+                }
+            }
+            ExprKind::Lit(_) | ExprKind::Error => {}
         }
     }
 
@@ -681,6 +790,12 @@ impl Reachability<'_> {
             TypeKind::Tuple(elements) => {
                 for element in elements {
                     self.check_type(element);
+                }
+            }
+            TypeKind::Path(path) => {
+                self.assert_span(path.name_span);
+                if let Some(args) = &path.args {
+                    self.check_generic_args(args);
                 }
             }
             _ => {}

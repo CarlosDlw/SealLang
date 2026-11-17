@@ -32,7 +32,7 @@ fn traits_group_signatures_and_reify_self() {
         panic!("expected a pointer receiver");
     };
     assert!(!mutable);
-    assert!(matches!(ast.ty(pointee).kind, TypeKind::Path(_)));
+    assert!(matches!(ast.ty(pointee).kind, TypeKind::Path { .. }));
 
     let ItemKind::TraitMethod(make) = &ast.item(declaration.methods[1]).kind else {
         panic!("expected a trait method");
@@ -53,9 +53,15 @@ fn impl_blocks_record_the_trait_they_implement() {
     let ItemKind::Impl(declaration) = &ast.item(ast.program().items()[2]).kind else {
         panic!("expected an impl item");
     };
-    let (trait_name, _) = declaration.trait_name.expect("the impl names a trait");
-    assert_eq!(fixture.symbol(trait_name), "Shape");
-    assert_eq!(fixture.symbol(declaration.type_name), "Circle");
+    let trait_ref = declaration
+        .trait_ref
+        .as_ref()
+        .expect("the impl names a trait");
+    assert_eq!(fixture.symbol(trait_ref.name), "Shape");
+    let TypeKind::Path(self_path) = &ast.ty(declaration.self_ty).kind else {
+        panic!("expected a named impl target");
+    };
+    assert_eq!(fixture.symbol(self_path.name), "Circle");
     assert_eq!(declaration.functions.len(), 1);
 }
 
@@ -67,7 +73,7 @@ fn inherent_impls_have_no_trait() {
     let ItemKind::Impl(declaration) = &ast.item(ast.program().items()[1]).kind else {
         panic!("expected an impl item");
     };
-    assert!(declaration.trait_name.is_none());
+    assert!(declaration.trait_ref.is_none());
 }
 
 #[test]

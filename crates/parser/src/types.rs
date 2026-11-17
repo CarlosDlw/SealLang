@@ -1,6 +1,6 @@
 //! Type syntax.
 
-use seal_ast::{PrimitiveType, TypeId, TypeKind};
+use seal_ast::{PrimitiveType, TypeId, TypeKind, TypePath};
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
 
@@ -89,9 +89,18 @@ impl Parser<'_> {
                 }
                 None => {
                     // Named types are resolved during lowering, where the type
-                    // namespace is known; the parser only records the name.
+                    // namespace is known; the parser records the name and any
+                    // explicit arguments.
                     let token = self.bump();
-                    self.builder.push_type(TypeKind::Path(symbol), token.span)
+                    let args = self.parse_optional_generic_args();
+                    let end = args.as_ref().map_or(token.span, |args| args.span);
+                    let path = TypePath {
+                        name: symbol,
+                        name_span: token.span,
+                        args,
+                    };
+                    self.builder
+                        .push_type(TypeKind::Path(path), token.span.cover(end))
                 }
             }
         } else {
@@ -117,7 +126,7 @@ impl Parser<'_> {
 
 /// Delimiters after which a missing type should not force token consumption:
 /// the initializer or the surrounding syntax still needs them.
-fn can_start_type(kind: TokenKind) -> bool {
+pub(crate) fn can_start_type(kind: TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Star | TokenKind::LBracket | TokenKind::LParen | TokenKind::Ident(_)
@@ -137,5 +146,8 @@ fn is_type_stop(kind: TokenKind) -> bool {
             | TokenKind::Eq
             | TokenKind::Arrow
             | TokenKind::Colon
+            | TokenKind::Plus
+            | TokenKind::Gt
+            | TokenKind::Shr
     )
 }

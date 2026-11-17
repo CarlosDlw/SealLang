@@ -42,7 +42,7 @@ impl Lowering<'_> {
                 let element = self.lower_type(element);
                 self.hir.ty_ctxt_mut().slice_ty(element)
             }
-            TypeKind::Path(symbol) if symbol == self.self_symbol => {
+            TypeKind::Path(path) if path.name == self.self_symbol => {
                 let span = self.ast.ty(ty).span;
                 match self.self_ty {
                     Some(self_ty) => self_ty,
@@ -58,7 +58,8 @@ impl Lowering<'_> {
                     }
                 }
             }
-            TypeKind::Path(symbol) => {
+            TypeKind::Path(path) => {
+                let symbol = path.name;
                 if let Some(definition) = self.types.get(&symbol).copied() {
                     let adt = self
                         .hir

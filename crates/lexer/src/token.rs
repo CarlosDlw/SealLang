@@ -198,6 +198,8 @@ pub enum TokenKind {
     True,
     /// `false`
     False,
+    /// `where`
+    Where,
 
     /// `(`
     LParen,

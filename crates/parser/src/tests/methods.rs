@@ -19,7 +19,7 @@ fn a_method_call_is_distinct_from_a_field_access() {
     };
     assert_eq!(fixture.symbol(name), "len");
     assert!(args.is_empty());
-    assert!(matches!(ast.expr(receiver).kind, ExprKind::Path(_)));
+    assert!(matches!(ast.expr(receiver).kind, ExprKind::Path { .. }));
 
     let (_, ast) = parse_clean("func f(p: P) -> i32 { p.x }");
     let declaration = sole_function(&ast);

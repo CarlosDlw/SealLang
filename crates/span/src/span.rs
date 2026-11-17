@@ -94,6 +94,22 @@ impl Span {
         self.lo.0 <= other.lo.0 && other.hi.0 <= self.hi.0
     }
 
+    /// Splits the span at `offset` bytes from its start.
+    ///
+    /// The two returned spans are adjacent and cover exactly this span. The
+    /// lexer emits multi-character tokens such as `>>`; the parser uses this to
+    /// recover the two `>` tokens required by nested generic argument lists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset` is greater than the span's length.
+    #[inline]
+    pub fn split(self, offset: u32) -> (Span, Span) {
+        assert!(offset <= self.len(), "split offset is outside the span");
+        let middle = BytePos::from_u32(self.lo.0 + offset);
+        (Span::new(self.lo, middle), Span::new(middle, self.hi))
+    }
+
     /// Returns the smallest span covering both spans.
     ///
     /// Callers must only combine spans from the same file. Parsers use this to
@@ -152,6 +168,21 @@ mod tests {
             first.cover(empty),
             Span::new(BytePos::from_u32(10), BytePos::from_u32(15))
         );
+    }
+
+    #[test]
+    fn splitting_produces_adjacent_spans() {
+        let span = Span::new(BytePos::from_u32(10), BytePos::from_u32(12));
+        let (first, second) = span.split(1);
+        assert_eq!(
+            first,
+            Span::new(BytePos::from_u32(10), BytePos::from_u32(11))
+        );
+        assert_eq!(
+            second,
+            Span::new(BytePos::from_u32(11), BytePos::from_u32(12))
+        );
+        assert_eq!(first.cover(second), span);
     }
 
     #[test]

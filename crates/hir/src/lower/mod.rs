@@ -167,7 +167,7 @@ impl<'a> Lowering<'a> {
             };
             let span = self.ast.item(item_id).span;
             let declaration = declaration.clone();
-            if declaration.trait_name.is_some() {
+            if declaration.trait_ref.is_some() {
                 self.collect_trait_impl(&declaration, span);
             } else {
                 self.collect_inherent_impl(&declaration);
@@ -313,16 +313,16 @@ impl<'a> Lowering<'a> {
     }
 
     fn trait_receiver_kind(&self, ty: AstTypeId) -> Option<ReceiverKind> {
-        match self.ast.ty(ty).kind {
-            TypeKind::Path(symbol) if symbol == self.self_symbol => Some(ReceiverKind::Value),
+        match &self.ast.ty(ty).kind {
+            TypeKind::Path(path) if path.name == self.self_symbol => Some(ReceiverKind::Value),
             TypeKind::Pointer { pointee, mutable } => {
-                let TypeKind::Path(symbol) = self.ast.ty(pointee).kind else {
+                let TypeKind::Path(path) = &self.ast.ty(*pointee).kind else {
                     return None;
                 };
-                if symbol != self.self_symbol {
+                if path.name != self.self_symbol {
                     return None;
                 }
-                Some(if mutable {
+                Some(if *mutable {
                     ReceiverKind::Exclusive
                 } else {
                     ReceiverKind::Shared
@@ -344,20 +344,21 @@ impl<'a> Lowering<'a> {
 
     /// Resolves the nominal type an impl block targets.
     fn impl_target(&mut self, declaration: &ImplDecl) -> Option<DefId> {
-        let Some(&type_def) = self.types.get(&declaration.type_name) else {
-            let name = self.interner.resolve(declaration.type_name);
-            if self.traits.contains_key(&declaration.type_name) {
+        let (type_name, type_span) = self.impl_self_name(declaration)?;
+        let Some(&type_def) = self.types.get(&type_name) else {
+            let name = self.interner.resolve(type_name);
+            if self.traits.contains_key(&type_name) {
                 self.error(
                     codes::E2027,
-                    declaration.type_span,
+                    type_span,
                     format!("`{name}` is a trait, not a type"),
                 )
                 .help("write `impl TraitName for TypeName` to implement a trait")
                 .emit();
-            } else if self.globals.contains_key(&declaration.type_name) {
+            } else if self.globals.contains_key(&type_name) {
                 self.error(
                     codes::E2015,
-                    declaration.type_span,
+                    type_span,
                     format!("`{name}` is a value, not a type"),
                 )
                 .help("an impl block attaches methods to a struct or enum")
@@ -365,7 +366,7 @@ impl<'a> Lowering<'a> {
             } else {
                 self.error(
                     codes::E2015,
-                    declaration.type_span,
+                    type_span,
                     format!("cannot find type `{name}` for this impl"),
                 )
                 .help("declare it with `struct` or `enum`, then implement it")
@@ -376,11 +377,26 @@ impl<'a> Lowering<'a> {
         Some(type_def)
     }
 
+    fn impl_self_name(&mut self, declaration: &ImplDecl) -> Option<(Symbol, Span)> {
+        match self.ast.ty(declaration.self_ty).kind.clone() {
+            TypeKind::Path(path) => Some((path.name, path.name_span)),
+            _ => {
+                let span = self.ast.ty(declaration.self_ty).span;
+                self.error(codes::E2015, span, "this is not a valid impl target")
+                    .help("an impl block targets a struct or enum declared in this file")
+                    .emit();
+                None
+            }
+        }
+    }
+
     /// Registers every function in one trait impl block.
     fn collect_trait_impl(&mut self, declaration: &ImplDecl, span: Span) {
-        let Some((trait_name, trait_span)) = declaration.trait_name else {
+        let Some(trait_ref) = declaration.trait_ref.as_ref() else {
             return;
         };
+        let trait_name = trait_ref.name;
+        let trait_span = trait_ref.name_span;
         let Some(&trait_def) = self.traits.get(&trait_name) else {
             let name = self.interner.resolve(trait_name);
             if self.types.contains_key(&trait_name) {
@@ -405,6 +421,10 @@ impl<'a> Lowering<'a> {
         let Some(type_def) = self.impl_target(declaration) else {
             return;
         };
+        let self_name = self.impl_self_name(declaration).map_or_else(
+            || "<unknown>".to_owned(),
+            |(name, _)| self.interner.resolve(name).to_owned(),
+        );
 
         if let Some(first) = self.hir.trait_impl_span(trait_def, type_def) {
             self.error(
@@ -413,7 +433,7 @@ impl<'a> Lowering<'a> {
                 format!(
                     "the trait `{}` is already implemented for `{}`",
                     self.interner.resolve(trait_name),
-                    self.interner.resolve(declaration.type_name)
+                    self_name
                 ),
             )
             .secondary(first, "first implemented here")

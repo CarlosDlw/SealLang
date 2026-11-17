@@ -123,7 +123,7 @@ fn expression_statements_and_tail_expressions_are_distinct() {
         StmtKind::Expr(_)
     ));
     let tail = block.tail.expect("tail exists");
-    assert!(matches!(ast.expr(tail).kind, ExprKind::Path(_)));
+    assert!(matches!(ast.expr(tail).kind, ExprKind::Path { .. }));
 }
 
 #[test]

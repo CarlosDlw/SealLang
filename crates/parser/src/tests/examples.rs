@@ -93,7 +93,7 @@ fn variables_example_has_bindings_and_a_tail_name() {
     }
     let tail = tail(&ast, declaration);
     match tail.kind {
-        ExprKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "c"),
+        ExprKind::Path { name, .. } => assert_eq!(fixture.symbol(name), "c"),
         ref other => panic!("expected path tail, got {other:?}"),
     }
 }
@@ -108,7 +108,7 @@ fn operators_example_has_expression_statements_and_a_tail() {
     assert!(block.tail.is_some());
     let tail = tail(&ast, declaration);
     match tail.kind {
-        ExprKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "b1"),
+        ExprKind::Path { name, .. } => assert_eq!(fixture.symbol(name), "b1"),
         ref other => panic!("expected path tail, got {other:?}"),
     }
     assert!(fixture.file.text().contains("+="));

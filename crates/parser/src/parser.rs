@@ -1,9 +1,9 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
 use seal_ast::{
-    Ast, AstBuilder, EnumDecl, ExprId, FieldDeclId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId,
-    StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId, TypeId, VariantDeclId,
-    VariantFieldList,
+    Ast, AstBuilder, EnumDecl, ExprId, FieldDeclId, FnDecl, GenericParams, ImplDecl, ItemId,
+    ItemKind, ParamId, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId, TypeId,
+    VariantDeclId, VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -22,6 +22,10 @@ pub(crate) const MAX_DEPTH: usize = 256;
 pub(crate) struct Parser<'a> {
     pub(crate) tokens: &'a [Token],
     pub(crate) index: usize,
+    /// A virtual token produced by splitting a multi-character token. The lexer
+    /// emits `>>`, but a nested generic list needs two `>` tokens in source
+    /// order. Nothing else uses virtual tokens.
+    pub(crate) pending: Option<Token>,
     pub(crate) previous: Span,
     pub(crate) dcx: &'a DiagCtxt,
     pub(crate) interner: &'a Interner,
@@ -44,6 +48,7 @@ impl<'a> Parser<'a> {
         Self {
             tokens,
             index: 0,
+            pending: None,
             previous,
             dcx,
             interner,
@@ -105,7 +110,8 @@ impl<'a> Parser<'a> {
 
     fn parse_function(&mut self) -> ItemId {
         let keyword = self.bump();
-        let (name, name_span, params, ret) = self.parse_signature();
+        let (name, name_span, generics, params, ret) = self.parse_signature();
+        let where_clause = self.parse_where_clause();
         let body = if self.at(TokenKind::LBrace) {
             self.parse_block()
         } else {
@@ -126,8 +132,10 @@ impl<'a> Parser<'a> {
             ItemKind::Func(FnDecl {
                 name,
                 name_span,
+                generics,
                 params,
                 ret,
+                where_clause,
                 body,
             }),
             span,
@@ -140,8 +148,9 @@ impl<'a> Parser<'a> {
     /// Parameters stop at the closing parenthesis, the arrow, a `{`, or a `;`,
     /// so a missing `)` in a trait signature does not swallow the semicolon that
     /// ends the declaration.
-    fn parse_signature(&mut self) -> (Symbol, Span, Vec<ParamId>, Option<TypeId>) {
+    fn parse_signature(&mut self) -> (Symbol, Span, GenericParams, Vec<ParamId>, Option<TypeId>) {
         let (name, name_span) = self.expect_ident("a function name");
+        let generics = self.parse_generic_params();
         let _ = self.expect(TokenKind::LParen, "`(` after the function name");
 
         let mut params: Vec<ParamId> = Vec::new();
@@ -192,7 +201,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        (name, name_span, params, ret)
+        (name, name_span, generics, params, ret)
     }
 
     /// Parses `impl Type { func ... }` and `impl Trait for Type { func ... }`.
@@ -202,13 +211,20 @@ impl<'a> Parser<'a> {
     /// reachable without a second declaration grammar.
     fn parse_impl(&mut self) -> ItemId {
         let keyword = self.bump();
-        let (first, first_span) = self.expect_ident("a type or trait name after `impl`");
-        let (trait_name, type_name, type_span) = if self.eat(TokenKind::For) {
-            let (type_name, type_span) = self.expect_ident("a type name after `for`");
-            (Some((first, first_span)), type_name, type_span)
+        let generics = self.parse_generic_params();
+        let (trait_ref, self_ty) = if self.starts_trait_path_before_for() {
+            let trait_ref = self.parse_trait_path();
+            let _ = self.expect(TokenKind::For, "`for` after the trait name");
+            (Some(trait_ref), self.parse_type())
         } else {
-            (None, first, first_span)
+            let first = self.parse_type();
+            if self.eat(TokenKind::For) {
+                (Some(self.trait_path_from_type(first)), self.parse_type())
+            } else {
+                (None, first)
+            }
         };
+        let where_clause = self.parse_where_clause();
         let _ = self.expect(TokenKind::LBrace, "`{` after the impl type");
 
         let mut functions = Vec::new();
@@ -236,9 +252,10 @@ impl<'a> Parser<'a> {
         let span = keyword.span.cover(self.previous_span());
         self.builder.push_item(
             ItemKind::Impl(ImplDecl {
-                type_name,
-                type_span,
-                trait_name,
+                generics,
+                self_ty,
+                trait_ref,
+                where_clause,
                 functions,
             }),
             span,
@@ -252,6 +269,8 @@ impl<'a> Parser<'a> {
     fn parse_trait(&mut self) -> ItemId {
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("a trait name");
+        let generics = self.parse_generic_params();
+        let where_clause = self.parse_where_clause();
         let _ = self.expect(TokenKind::LBrace, "`{` after the trait name");
 
         let mut methods = Vec::new();
@@ -281,6 +300,8 @@ impl<'a> Parser<'a> {
             ItemKind::Trait(TraitDecl {
                 name,
                 name_span,
+                generics,
+                where_clause,
                 methods,
             }),
             span,
@@ -290,7 +311,8 @@ impl<'a> Parser<'a> {
     /// Parses one `func name(...) -> Type;` trait method signature.
     fn parse_trait_method(&mut self) -> ItemId {
         let keyword = self.bump();
-        let (name, name_span, params, ret) = self.parse_signature();
+        let (name, name_span, generics, params, ret) = self.parse_signature();
+        let where_clause = self.parse_where_clause();
 
         if !self.eat(TokenKind::Semicolon) {
             let found = self.describe(self.current_kind());
@@ -321,8 +343,10 @@ impl<'a> Parser<'a> {
             ItemKind::TraitMethod(TraitMethodDecl {
                 name,
                 name_span,
+                generics,
                 params,
                 ret,
+                where_clause,
             }),
             span,
         )
@@ -331,6 +355,8 @@ impl<'a> Parser<'a> {
     fn parse_struct(&mut self) -> ItemId {
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("a struct name");
+        let generics = self.parse_generic_params();
+        let where_clause = self.parse_where_clause();
         let _ = self.expect(TokenKind::LBrace, "`{` after the struct name");
 
         let mut fields = Vec::new();
@@ -371,6 +397,8 @@ impl<'a> Parser<'a> {
             ItemKind::Struct(StructDecl {
                 name,
                 name_span,
+                generics,
+                where_clause,
                 fields,
             }),
             span,
@@ -380,6 +408,8 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self) -> ItemId {
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("an enum name");
+        let generics = self.parse_generic_params();
+        let where_clause = self.parse_where_clause();
         let _ = self.expect(TokenKind::LBrace, "`{` after the enum name");
 
         let mut variants = Vec::new();
@@ -413,6 +443,8 @@ impl<'a> Parser<'a> {
             ItemKind::Enum(EnumDecl {
                 name,
                 name_span,
+                generics,
+                where_clause,
                 variants,
             }),
             span,
@@ -584,11 +616,13 @@ impl<'a> Parser<'a> {
     /// Returns the current token; at or past the end, a synthetic `Eof` tied to
     /// the previous token's position.
     pub(crate) fn current(&self) -> Token {
-        self.tokens.get(self.index).copied().unwrap_or(Token {
-            kind: TokenKind::Eof,
-            span: self.previous,
-            preceded_by_newline: false,
-        })
+        self.pending
+            .or_else(|| self.tokens.get(self.index).copied())
+            .unwrap_or(Token {
+                kind: TokenKind::Eof,
+                span: self.previous,
+                preceded_by_newline: false,
+            })
     }
 
     #[inline]
@@ -604,7 +638,8 @@ impl<'a> Parser<'a> {
     /// Returns the kind of the token after the current one, if any.
     #[inline]
     pub(crate) fn peek_kind(&self) -> Option<TokenKind> {
-        self.tokens.get(self.index + 1).map(|token| token.kind)
+        let offset = if self.pending.is_some() { 0 } else { 1 };
+        self.tokens.get(self.index + offset).map(|token| token.kind)
     }
 
     #[inline]
@@ -626,6 +661,10 @@ impl<'a> Parser<'a> {
 
     /// Consumes and returns the current token. `Eof` is never consumed.
     pub(crate) fn bump(&mut self) -> Token {
+        if let Some(token) = self.pending.take() {
+            self.previous = token.span;
+            return token;
+        }
         let token = self.current();
         if !matches!(token.kind, TokenKind::Eof) && self.index < self.tokens.len() {
             self.index += 1;
@@ -816,6 +855,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Return => "return",
         TokenKind::True => "true",
         TokenKind::False => "false",
+        TokenKind::Where => "where",
         TokenKind::LParen => "(",
         TokenKind::RParen => ")",
         TokenKind::LBrace => "{",

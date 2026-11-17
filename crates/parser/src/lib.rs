@@ -50,6 +50,7 @@
 #![warn(missing_docs)]
 
 mod expr;
+mod generics;
 mod parser;
 mod pattern;
 mod stmt;

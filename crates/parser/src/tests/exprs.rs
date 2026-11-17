@@ -45,7 +45,7 @@ fn int(expr: &Expr) -> (u128, u32, Option<seal_symbol::Symbol>) {
 
 fn path(expr: &Expr) -> seal_symbol::Symbol {
     match expr.kind {
-        ExprKind::Path(symbol) => symbol,
+        ExprKind::Path { name, .. } => name,
         ref other => panic!("expected a path, got {other:?}"),
     }
 }
@@ -56,7 +56,7 @@ fn exclusive_borrows_parse() {
     match &ast.expr(id).kind {
         ExprKind::Borrow { operand, mutable } => {
             assert!(mutable);
-            assert!(matches!(ast.expr(*operand).kind, ExprKind::Path(_)));
+            assert!(matches!(ast.expr(*operand).kind, ExprKind::Path { .. }));
         }
         other => panic!("expected an exclusive borrow, got {other:?}"),
     }
@@ -337,7 +337,7 @@ fn every_compound_assignment_is_mapped() {
         let id = ast.block(declaration.body).tail.expect("tail exists");
         let (op, target, value) = assign(&ast, ast.expr(id));
         assert_eq!(op, expected, "operator {spelling}");
-        assert!(matches!(target.kind, ExprKind::Path(_)));
+        assert!(matches!(target.kind, ExprKind::Path { .. }));
         assert_eq!(int(value).0, 1);
     }
 }

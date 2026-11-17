@@ -119,6 +119,31 @@ impl Parser<'_> {
                     continue;
                 }
                 let (name, name_span) = self.expect_ident("a field name after `.`");
+                let mut generic_args = None;
+                if self.eat(TokenKind::ColonColon) {
+                    if self.at(TokenKind::Lt) {
+                        generic_args = self.parse_generic_args();
+                    } else {
+                        let found = self.describe(self.current_kind());
+                        self.error(
+                            codes::E1002,
+                            self.current_span(),
+                            format!("expected `<` after `::` on a method, found {found}"),
+                        )
+                        .help("write `.method::<T>()` for explicit method arguments")
+                        .emit();
+                    }
+                } else if self.looks_like_bare_method_generics(name_span) {
+                    generic_args = self.parse_generic_args();
+                    let span = generic_args.as_ref().map_or(name_span, |args| args.span);
+                    self.error(
+                        codes::E1002,
+                        span,
+                        "type arguments on a method call require `::`",
+                    )
+                    .help("write `.method::<T>()` instead of `.method<T>()`")
+                    .emit();
+                }
                 if self.at(TokenKind::LParen) {
                     let (args, end) = self.parse_call_arguments();
                     let span = self.builder.ast().expr(lhs).span.cover(end);
@@ -127,6 +152,7 @@ impl Parser<'_> {
                             receiver: lhs,
                             name,
                             name_span,
+                            generic_args,
                             args,
                         },
                         span,
@@ -261,27 +287,7 @@ impl Parser<'_> {
             }
             TokenKind::Ident(symbol) => {
                 self.bump();
-                if self.eat(TokenKind::ColonColon) {
-                    let (name, name_span) = self.expect_ident("an associated name after `::`");
-                    if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-                        self.parse_variant_literal(symbol, token.span, name, name_span)
-                    } else {
-                        let span = token.span.cover(name_span);
-                        self.builder.push_expr(
-                            ExprKind::PathQualified {
-                                type_name: symbol,
-                                type_span: token.span,
-                                name,
-                                name_span,
-                            },
-                            span,
-                        )
-                    }
-                } else if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-                    self.parse_struct_literal(symbol, token.span)
-                } else {
-                    self.builder.push_expr(ExprKind::Path(symbol), token.span)
-                }
+                self.parse_named_expr(symbol, token.span)
             }
             TokenKind::Minus => {
                 self.bump();
@@ -509,13 +515,105 @@ impl Parser<'_> {
         condition
     }
 
-    fn parse_struct_literal(&mut self, name: Symbol, start: seal_span::Span) -> ExprId {
+    /// Parses a name, its optional turbofish, and any qualified continuation.
+    fn parse_named_expr(&mut self, name: Symbol, name_span: seal_span::Span) -> ExprId {
+        if self.eat(TokenKind::ColonColon) {
+            let type_args = self.parse_optional_generic_args();
+            if type_args.is_some() {
+                if self.eat(TokenKind::ColonColon) {
+                    let (associated, associated_span) =
+                        self.expect_ident("an associated name after `::`");
+                    if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                        return self.parse_variant_literal(
+                            name,
+                            name_span,
+                            type_args,
+                            associated,
+                            associated_span,
+                        );
+                    }
+                    let span = name_span.cover(associated_span);
+                    return self.builder.push_expr(
+                        ExprKind::PathQualified {
+                            type_name: name,
+                            type_span: name_span,
+                            type_args,
+                            name: associated,
+                            name_span: associated_span,
+                        },
+                        span,
+                    );
+                }
+                if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                    return self.parse_struct_literal(name, name_span, type_args);
+                }
+                if self.at(TokenKind::Gt) || self.at(TokenKind::Shr) {
+                    self.error(
+                        codes::E1002,
+                        self.current_span(),
+                        "unexpected `>` after the type arguments",
+                    )
+                    .help("remove the extra `>`")
+                    .emit();
+                    let _ = self.eat_gt();
+                }
+                return self.path_expr(name, name_span, type_args);
+            }
+
+            let (associated, associated_span) = self.expect_ident("an associated name after `::`");
+            if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                self.parse_variant_literal(name, name_span, None, associated, associated_span)
+            } else {
+                let span = name_span.cover(associated_span);
+                self.builder.push_expr(
+                    ExprKind::PathQualified {
+                        type_name: name,
+                        type_span: name_span,
+                        type_args: None,
+                        name: associated,
+                        name_span: associated_span,
+                    },
+                    span,
+                )
+            }
+        } else if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+            self.parse_struct_literal(name, name_span, None)
+        } else {
+            self.path_expr(name, name_span, None)
+        }
+    }
+
+    fn path_expr(
+        &mut self,
+        name: Symbol,
+        name_span: seal_span::Span,
+        args: Option<seal_ast::GenericArgs>,
+    ) -> ExprId {
+        let end = args.as_ref().map_or(name_span, |args| args.span);
+        let span = name_span.cover(end);
+        self.builder.push_expr(
+            ExprKind::Path {
+                name,
+                name_span,
+                args,
+            },
+            span,
+        )
+    }
+
+    fn parse_struct_literal(
+        &mut self,
+        name: Symbol,
+        start: seal_span::Span,
+        type_args: Option<seal_ast::GenericArgs>,
+    ) -> ExprId {
         let fields = self.parse_field_initializers(InitializerContext::Struct);
         let span = start.cover(self.previous_span());
         self.builder.push_expr(
             ExprKind::Struct {
                 name,
                 name_span: start,
+                type_args,
                 fields,
             },
             span,
@@ -527,6 +625,7 @@ impl Parser<'_> {
         &mut self,
         type_name: Symbol,
         type_span: seal_span::Span,
+        type_args: Option<seal_ast::GenericArgs>,
         name: Symbol,
         name_span: seal_span::Span,
     ) -> ExprId {
@@ -536,12 +635,37 @@ impl Parser<'_> {
             ExprKind::Variant {
                 type_name,
                 type_span,
+                type_args,
                 name,
                 name_span,
                 fields,
             },
             span,
         )
+    }
+
+    /// Returns `true` for `value.method<Type>()`: generic arguments written
+    /// without the required turbofish `::`.
+    fn looks_like_bare_method_generics(&self, name_span: seal_span::Span) -> bool {
+        if !self.at(TokenKind::Lt) || name_span.hi() != self.current_span().lo() {
+            return false;
+        }
+        let mut depth = 0i32;
+        for token in &self.tokens[self.index..] {
+            match token.kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => depth -= 1,
+                TokenKind::Shr => depth -= 2,
+                TokenKind::LParen if depth <= 0 => return true,
+                TokenKind::Semicolon
+                | TokenKind::LBrace
+                | TokenKind::RBrace
+                | TokenKind::Eq
+                | TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Parses a braced field initializer list, starting at `{`.
@@ -769,7 +893,7 @@ impl Parser<'_> {
 
     fn is_assignable(&self, expr: ExprId) -> bool {
         match &self.builder.ast().expr(expr).kind {
-            ExprKind::Path(_)
+            ExprKind::Path { .. }
             | ExprKind::Deref { .. }
             | ExprKind::Field { .. }
             | ExprKind::TupleField { .. }

@@ -24,7 +24,7 @@ impl Lowering<'_> {
 
         let kind = match kind {
             AstExprKind::Lit(literal) => ExprKind::Lit(literal),
-            AstExprKind::Path(name) => match self.resolve(name, span) {
+            AstExprKind::Path { name, .. } => match self.resolve(name, span) {
                 Some(res) => ExprKind::Path(res),
                 None => ExprKind::Error,
             },
@@ -33,6 +33,7 @@ impl Lowering<'_> {
                 type_span,
                 name,
                 name_span,
+                ..
             } => self.lower_qualified_path(type_name, type_span, name, name_span),
             AstExprKind::Unary { op, operand } => ExprKind::Unary {
                 op,
@@ -110,6 +111,7 @@ impl Lowering<'_> {
                 name,
                 name_span,
                 fields,
+                ..
             } => self.lower_struct_literal(name, name_span, &fields),
             AstExprKind::Variant {
                 type_name,
@@ -117,6 +119,7 @@ impl Lowering<'_> {
                 name,
                 name_span,
                 fields,
+                ..
             } => self.lower_variant_literal(type_name, type_span, name, name_span, &fields),
             AstExprKind::Array { elements } => ExprKind::Array {
                 elements: elements
@@ -210,6 +213,7 @@ impl Lowering<'_> {
                 name,
                 name_span,
                 args,
+                ..
             } => ExprKind::MethodCall {
                 receiver: self.lower_expr(receiver),
                 name,
@@ -525,7 +529,7 @@ impl Lowering<'_> {
     /// A user function or binding named `len` shadows the intrinsic, so existing
     /// and future programs keep control over the name.
     fn is_len_builtin(&self, callee: AstExprId) -> bool {
-        let AstExprKind::Path(name) = self.ast.expr(callee).kind else {
+        let AstExprKind::Path { name, .. } = self.ast.expr(callee).kind else {
             return false;
         };
         self.interner.resolve(name) == "len"

@@ -56,6 +56,7 @@ fn qualified_variant_literals_keep_their_initializers() {
         name,
         name_span,
         fields,
+        ..
     } = &ast.expr(tail).kind
     else {
         panic!("expected a variant literal");

@@ -125,8 +125,8 @@ fn named_types_are_kept_for_lowering_to_resolve() {
     let (fixture, ast) = parse_clean("func f(value: Missing) {}");
     let declaration = sole_function(&ast);
     let param = ast.param(declaration.params[0]);
-    match ast.ty(param.ty).kind {
-        TypeKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "Missing"),
+    match &ast.ty(param.ty).kind {
+        TypeKind::Path(path) => assert_eq!(fixture.symbol(path.name), "Missing"),
         ref other => panic!("expected a named type, got {other:?}"),
     }
 }

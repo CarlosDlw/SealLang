@@ -3,6 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
+use crate::generics::{GenericParams, TraitPath, WhereClause};
 use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId};
 
 /// A top-level item.
@@ -41,6 +42,10 @@ pub struct StructDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Declared type parameters.
+    pub generics: GenericParams,
+    /// Bounds written after the header.
+    pub where_clause: WhereClause,
     /// Fields in declaration order.
     pub fields: Vec<FieldDeclId>,
 }
@@ -52,6 +57,10 @@ pub struct EnumDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Declared type parameters.
+    pub generics: GenericParams,
+    /// Bounds written after the header.
+    pub where_clause: WhereClause,
     /// Variants in declaration order (also discriminant order).
     pub variants: Vec<VariantDeclId>,
 }
@@ -119,13 +128,15 @@ pub struct FieldDecl {
 /// every other function is an associated function.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplDecl {
-    /// The struct receiving the functions.
-    pub type_name: Symbol,
-    /// The span of the type name, for diagnostics.
-    pub type_span: Span,
+    /// Declared type parameters.
+    pub generics: GenericParams,
+    /// The type receiving the functions.
+    pub self_ty: TypeId,
     /// The trait being implemented, when the block has the `Trait for Type`
-    /// form. It holds the trait name and the span of that name.
-    pub trait_name: Option<(Symbol, Span)>,
+    /// form.
+    pub trait_ref: Option<TraitPath>,
+    /// Bounds written after the header.
+    pub where_clause: WhereClause,
     /// The functions declared in source order.
     pub functions: Vec<ItemId>,
 }
@@ -142,6 +153,10 @@ pub struct TraitDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Declared type parameters.
+    pub generics: GenericParams,
+    /// Bounds written after the header.
+    pub where_clause: WhereClause,
     /// Method signatures in declaration order.
     pub methods: Vec<ItemId>,
 }
@@ -156,10 +171,14 @@ pub struct TraitMethodDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Declared method type parameters.
+    pub generics: GenericParams,
     /// Parameters in source order, including the receiver when present.
     pub params: Vec<ParamId>,
     /// The declared return type; `None` means unit.
     pub ret: Option<TypeId>,
+    /// Bounds written after the return type.
+    pub where_clause: WhereClause,
 }
 
 /// A function declaration.
@@ -169,10 +188,14 @@ pub struct FnDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Declared function type parameters.
+    pub generics: GenericParams,
     /// Parameters in source order.
     pub params: Vec<ParamId>,
     /// The declared return type; `None` means unit.
     pub ret: Option<TypeId>,
+    /// Bounds written after the return type.
+    pub where_clause: WhereClause,
     /// The function body.
     pub body: BlockId,
 }

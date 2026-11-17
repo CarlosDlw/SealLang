@@ -17,6 +17,16 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Identifies one declared generic parameter.
+    pub struct GenericParamId;
+}
+
+newtype_index! {
+    /// Identifies one bound on a generic parameter or where predicate.
+    pub struct BoundId;
+}
+
+newtype_index! {
     /// Identifies a struct field declaration.
     pub struct FieldDeclId;
 }

@@ -43,8 +43,8 @@ fn named_types_are_recorded_for_resolution() {
     };
     let next = ast.field(declaration.fields[0]);
     match &ast.ty(next.ty).kind {
-        TypeKind::Pointer { pointee, .. } => match ast.ty(*pointee).kind {
-            TypeKind::Path(symbol) => assert_eq!(fixture.symbol(symbol), "Node"),
+        TypeKind::Pointer { pointee, .. } => match &ast.ty(*pointee).kind {
+            TypeKind::Path(path) => assert_eq!(fixture.symbol(path.name), "Node"),
             ref other => panic!("expected a named pointee, got {other:?}"),
         },
         other => panic!("expected a pointer, got {other:?}"),
@@ -76,7 +76,7 @@ fn field_access_chains_bind_tighter_than_binary_operators() {
         panic!("expected an inner field access");
     };
     assert_eq!(fixture.symbol(*name), "x");
-    assert!(matches!(ast.expr(*base).kind, ExprKind::Path(_)));
+    assert!(matches!(ast.expr(*base).kind, ExprKind::Path { .. }));
 }
 
 #[test]
@@ -88,6 +88,7 @@ fn struct_literals_keep_source_order() {
         name,
         name_span,
         fields,
+        ..
     } = &ast.expr(tail).kind
     else {
         panic!("expected a struct literal");

@@ -3,6 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
+use crate::generics::GenericArgs;
 use crate::id::{BlockId, ExprId, PatternId};
 use crate::pattern::MatchArm;
 
@@ -218,14 +219,23 @@ pub struct Expr {
 pub enum ExprKind {
     /// A literal.
     Lit(Literal),
-    /// A variable reference.
-    Path(Symbol),
+    /// A variable reference, optionally with turbofish type arguments.
+    Path {
+        /// The referenced name.
+        name: Symbol,
+        /// The span of the name.
+        name_span: Span,
+        /// Explicit arguments written as `name::<...>`.
+        args: Option<GenericArgs>,
+    },
     /// A qualified path, written `Type::name`, used for associated functions.
     PathQualified {
         /// The type or namespace name.
         type_name: Symbol,
         /// The span of the type name.
         type_span: Span,
+        /// Explicit type arguments written as `Type::<...>::name`.
+        type_args: Option<GenericArgs>,
         /// The associated name.
         name: Symbol,
         /// The span of the associated name.
@@ -277,6 +287,8 @@ pub enum ExprKind {
         name: Symbol,
         /// The span of the struct name.
         name_span: Span,
+        /// Explicit type arguments written as `Name::<...>`.
+        type_args: Option<GenericArgs>,
         /// Initializers in source order.
         fields: Vec<FieldInit>,
     },
@@ -290,6 +302,8 @@ pub enum ExprKind {
         type_name: Symbol,
         /// The span of the enum name.
         type_span: Span,
+        /// Explicit type arguments written as `Enum::<...>::Variant`.
+        type_args: Option<GenericArgs>,
         /// The variant name.
         name: Symbol,
         /// The span of the variant name.
@@ -379,6 +393,8 @@ pub enum ExprKind {
         name: Symbol,
         /// The span of the method name.
         name_span: Span,
+        /// Explicit method arguments written as `.name::<...>`.
+        generic_args: Option<GenericArgs>,
         /// Arguments in source order, excluding the receiver.
         args: Vec<ExprId>,
     },

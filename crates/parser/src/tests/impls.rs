@@ -20,7 +20,7 @@ fn impl_blocks_group_functions_under_a_type() {
     let ItemKind::Impl(declaration) = &ast.item(impl_id).kind else {
         panic!("expected an impl item");
     };
-    assert_eq!(fixture.symbol(declaration.type_name), "Point");
+    assert_eq!(impl_target_name(&fixture, &ast, declaration), "Point");
     assert_eq!(declaration.functions.len(), 3);
 
     let names: Vec<String> = declaration
@@ -116,6 +116,17 @@ fn paths_without_a_name_are_diagnosed() {
     ));
 }
 
+fn impl_target_name(
+    fixture: &super::support::Fixture,
+    ast: &seal_ast::Ast,
+    declaration: &seal_ast::ImplDecl,
+) -> String {
+    match &ast.ty(declaration.self_ty).kind {
+        TypeKind::Path(path) => fixture.symbol(path.name),
+        other => panic!("expected a named impl target, got {other:?}"),
+    }
+}
+
 fn sole_function_at(ast: &seal_ast::Ast, index: usize) -> &seal_ast::FnDecl {
     let id = ast.program().items()[index];
     let ItemKind::Func(declaration) = &ast.item(id).kind else {
@@ -136,13 +147,13 @@ fn impl_target_is_not_parsed_as_a_primitive() {
     let ItemKind::Impl(declaration) = &ast.item(ast.program().items()[1]).kind else {
         panic!("expected an impl item");
     };
-    assert_eq!(fixture.symbol(declaration.type_name), "Marker");
+    assert_eq!(impl_target_name(&fixture, &ast, declaration), "Marker");
     let ItemKind::Func(make) = &ast.item(declaration.functions[0]).kind else {
         panic!("expected a function");
     };
     assert!(matches!(
         ast.ty(make.ret.expect("return type")).kind,
-        TypeKind::Path(_)
+        TypeKind::Path { .. }
     ));
     assert!(make.params.is_empty());
 }
