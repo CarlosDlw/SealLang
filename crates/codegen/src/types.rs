@@ -17,7 +17,7 @@ use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionTy
 use seal_index::Idx;
 use seal_layout::{Layout, LayoutCtxt, LayoutError};
 use seal_symbol::Interner;
-use seal_ty::{AdtId, FloatTy, IntTy, TyCtxt, TyId, TyKind, UintTy};
+use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, TyCtxt, TyId, TyKind, UintTy};
 
 use crate::error::CodegenError;
 
@@ -79,13 +79,46 @@ impl<'ctx> TypeMapper<'ctx> {
         for index in 0..self.adts.len() {
             let adt = AdtId::from_usize(index);
             let definition = self.tcx.adt(adt);
-            let mut field_types = Vec::with_capacity(definition.fields.len());
-            for field in &definition.fields {
-                field_types.push(self.basic(field.ty)?);
-            }
+            let field_types = match definition.kind {
+                AdtKind::Struct => {
+                    let mut field_types = Vec::with_capacity(definition.fields.len());
+                    for field in &definition.fields {
+                        field_types.push(self.basic(field.ty)?);
+                    }
+                    field_types
+                }
+                AdtKind::Enum => self.enum_fields(adt)?,
+            };
             self.adts[index].set_body(&field_types, false);
         }
         Ok(())
+    }
+
+    /// Builds the LLVM body of an enum: the tag, an alignment anchor, and the
+    /// payload bytes.
+    ///
+    /// The zero-length array of a payload-aligned integer contributes the
+    /// payload's alignment without occupying storage, so the payload array lands
+    /// exactly at the language layout's payload offset. Variant fields are later
+    /// stored into the payload through byte offsets, which keeps one LLVM type
+    /// able to hold every variant.
+    fn enum_fields(&self, adt: AdtId) -> Result<Vec<BasicTypeEnum<'ctx>>, CodegenError> {
+        let layout = self.enum_layout(adt)?;
+        let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
+            CodegenError::internal(format!("enum {adt:?} has a tag too wide for LLVM"))
+        })?;
+        let anchor_bits = u16::try_from(layout.payload_align * 8).map_err(|_| {
+            CodegenError::internal(format!(
+                "enum {adt:?} has a payload alignment too wide for LLVM"
+            ))
+        })?;
+        let payload_size = u32::try_from(layout.payload_size).map_err(|_| {
+            CodegenError::internal(format!("enum {adt:?} has a payload too large for LLVM"))
+        })?;
+        let tag = self.integer(Some(tag_bits))?;
+        let anchor = self.integer(Some(anchor_bits))?.array_type(0);
+        let payload = self.context.i8_type().array_type(payload_size);
+        Ok(vec![tag.into(), anchor.into(), payload.into()])
     }
 
     /// Returns the LLVM type of `ty`.
@@ -149,6 +182,19 @@ impl<'ctx> TypeMapper<'ctx> {
     /// Returns the layout of `ty`.
     pub(crate) fn layout(&self, ty: TyId) -> Result<Layout, CodegenError> {
         self.layouts.layout_of(ty).map_err(layout_error)
+    }
+
+    /// Returns the tag and payload layout of the enum `adt`.
+    pub(crate) fn enum_layout(&self, adt: AdtId) -> Result<seal_layout::EnumLayout, CodegenError> {
+        self.layouts.enum_layout(adt).map_err(layout_error)
+    }
+
+    /// Returns an integer type of `bits` bits.
+    pub(crate) fn integer_type(
+        &self,
+        bits: u16,
+    ) -> Result<inkwell::types::IntType<'ctx>, CodegenError> {
+        self.integer(Some(bits))
     }
 
     /// Returns the layout of every field of `adt`, in declaration order.

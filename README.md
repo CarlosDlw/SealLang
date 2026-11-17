@@ -51,7 +51,9 @@ func main() -> i32 {
 
 Every value has one owner. Assignment, argument passing, and return move the
 value unless its type is `Copy`; a struct owns its fields and is moved as a
-whole. `*T` grants shared access and `*mut T` grants exclusive access, and the
+whole. An enum is a nominal sum type: every value is exactly one variant, either
+a unit variant or one with named fields, and the layout carries a discriminant
+plus the active payload. `*T` grants shared access and `*mut T` grants exclusive access, and the
 two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
@@ -100,6 +102,7 @@ isolation check on its own.
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
+| Enums | `enum E { … }` | Nominal sum type with one active variant; owns the payload and is not `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls, no vtable |
 | Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch: each call binds to the concrete implementation of the receiver's type |
 
@@ -121,12 +124,12 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 ## Status
 
-The current language surface is functions, nominal structs, fixed-size arrays,
-slices, shared and exclusive references, `let` bindings with definite
-initialization, `if`, `while`, `break`, `continue`, `return`, the usual
+The current language surface is functions, nominal structs and enums,
+fixed-size arrays, slices, shared and exclusive references, `let` bindings with
+definite initialization, `if`, `while`, `break`, `continue`, `return`, the usual
 arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
 methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`
-methods and associated functions on nominal structs, and traits with static
+methods and associated functions on nominal types, and traits with static
 dispatch. Every call resolves statically: there is no vtable, dynamic dispatch,
 or hidden allocation, and modifying methods borrow the receiver exclusively.
 User methods declare their receiver explicitly as `self: S`, `self: *S`, or
@@ -134,6 +137,6 @@ User methods declare their receiver explicitly as `self: S`, `self: *S`, or
 method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
 read-only method. A trait writes `Self` for the implementing type and every
 `impl Trait for S` binds one concrete function per method, so a trait call is an
-ordinary direct call. Generics, enums, trait objects, and an `unsafe` layer are
-not part of the surface yet; the memory model records how they fit without
-redesigning the type system.
+ordinary direct call. Pattern matching over enum variants, generics, trait
+objects, and an `unsafe` layer are not part of the surface yet; the memory model
+records how they fit without redesigning the type system.

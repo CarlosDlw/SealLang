@@ -29,7 +29,7 @@ use seal_index::Idx;
 use seal_mir::{Body, LocalDecl};
 use seal_span::{FileId, SourceMap, Span};
 use seal_symbol::Interner;
-use seal_ty::{AdtId, TyCtxt, TyId, TyKind};
+use seal_ty::{AdtId, AdtKind, TyCtxt, TyId, TyKind};
 
 use crate::error::CodegenError;
 use crate::types::TypeMapper;
@@ -473,24 +473,30 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         let name = self.interner.resolve(definition.name);
         let (file, line, _) = self.definition_location(definition.def);
         let layout = self.mapper.layout(self.tcx.adt_ty(adt))?;
-        let field_layouts = self.mapper.field_layouts(adt)?;
         let scope = self.unit.as_debug_info_scope();
-        let mut members = Vec::with_capacity(definition.fields.len());
-        for (field, field_layout) in definition.fields.iter().zip(&field_layouts) {
-            let member_type = self.di_type(field.ty)?;
-            let member = self.builder.create_member_type(
-                scope,
-                self.interner.resolve(field.name),
-                file,
-                line,
-                field_layout.layout.size() * 8,
-                bits_u32(field_layout.layout.align() * 8)?,
-                field_layout.offset * 8,
-                DIFlags::ZERO,
-                member_type,
-            );
-            members.push(member.as_type());
-        }
+        let members = match definition.kind {
+            AdtKind::Struct => {
+                let field_layouts = self.mapper.field_layouts(adt)?;
+                let mut members = Vec::with_capacity(definition.fields.len());
+                for (field, field_layout) in definition.fields.iter().zip(&field_layouts) {
+                    let member_type = self.di_type(field.ty)?;
+                    let member = self.builder.create_member_type(
+                        scope,
+                        self.interner.resolve(field.name),
+                        file,
+                        line,
+                        field_layout.layout.size() * 8,
+                        bits_u32(field_layout.layout.align() * 8)?,
+                        field_layout.offset * 8,
+                        DIFlags::ZERO,
+                        member_type,
+                    );
+                    members.push(member.as_type());
+                }
+                members
+            }
+            AdtKind::Enum => self.enum_members(adt, file, line)?,
+        };
         let created = self
             .builder
             .create_struct_type(
@@ -511,6 +517,93 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         self.in_progress.borrow_mut().remove(&adt);
         self.adts.borrow_mut().insert(adt, created);
         Ok(created)
+    }
+
+    /// Describes an enum as its discriminant plus its payload bytes.
+    ///
+    /// DWARF variant parts would let a debugger name the active variant, but the
+    /// layout stays faithful: the tag is a real unsigned member and the payload
+    /// is a byte array at the language payload offset, so every field can be
+    /// inspected through its offset.
+    fn enum_members(
+        &self,
+        adt: AdtId,
+        file: DIFile<'ctx>,
+        line: u32,
+    ) -> Result<Vec<DIType<'ctx>>, CodegenError> {
+        let layout = self.mapper.enum_layout(adt)?;
+        let scope = self.unit.as_debug_info_scope();
+        let tag_bits = layout.tag.size() * 8;
+        let tag = self
+            .builder
+            .create_basic_type("tag", tag_bits, encoding::UNSIGNED, DIFlags::ZERO)
+            .map_err(|error| {
+                CodegenError::internal(format!(
+                    "cannot describe an enum tag in debug info: {error:?}"
+                ))
+            })?
+            .as_type();
+        let mut members = vec![
+            self.builder
+                .create_member_type(
+                    scope,
+                    "tag",
+                    file,
+                    line,
+                    tag_bits,
+                    bits_u32(tag_bits)?,
+                    0,
+                    DIFlags::ZERO,
+                    tag,
+                )
+                .as_type(),
+        ];
+
+        if layout.payload_size > 0 {
+            let payload_bits = layout.payload_size.checked_mul(8).ok_or_else(|| {
+                CodegenError::internal(format!(
+                    "enum {adt:?} payload is too large for debug information"
+                ))
+            })?;
+            let byte = self
+                .builder
+                .create_basic_type("u8", 8, encoding::UNSIGNED, DIFlags::ZERO)
+                .map_err(|error| {
+                    CodegenError::internal(format!(
+                        "cannot describe enum payload bytes in debug info: {error:?}"
+                    ))
+                })?
+                .as_type();
+            let upper = i64::try_from(layout.payload_size).map_err(|_| {
+                CodegenError::internal(format!(
+                    "enum {adt:?} payload is too large for a DWARF subscript"
+                ))
+            })?;
+            let subscript = 0..upper;
+            let payload = self
+                .builder
+                .create_array_type(
+                    byte,
+                    payload_bits,
+                    bits_u32(layout.payload_align * 8)?,
+                    std::slice::from_ref(&subscript),
+                )
+                .as_type();
+            let member = self.builder.create_member_type(
+                scope,
+                "payload",
+                file,
+                line,
+                payload_bits,
+                bits_u32(layout.payload_align * 8)?,
+                layout.payload_offset * 8,
+                DIFlags::ZERO,
+                payload,
+            );
+            members.push(member.as_type());
+        }
+
+        Ok(members)
     }
 
     fn definition_location(&self, def: seal_def::DefId) -> (DIFile<'ctx>, u32, u32) {

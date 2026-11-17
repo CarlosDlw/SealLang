@@ -11,7 +11,7 @@ use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_mir::{AggregateKind, BinOp, Rvalue, UnOp};
 use seal_span::Span;
-use seal_ty::TyKind;
+use seal_ty::{TyKind, VariantIdx};
 
 use crate::error::CodegenError;
 use crate::function::FunctionLowerer;
@@ -734,7 +734,17 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         kind: AggregateKind,
         fields: &[(DefId, seal_mir::Operand)],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
-        let AggregateKind::Adt(def) = kind;
+        match kind {
+            AggregateKind::Struct(def) => self.struct_aggregate(def, fields),
+            AggregateKind::Variant { adt, variant } => self.variant_aggregate(adt, variant, fields),
+        }
+    }
+
+    fn struct_aggregate(
+        &self,
+        def: DefId,
+        fields: &[(DefId, seal_mir::Operand)],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let adt = self.adt_of(def)?;
         let definition = self.tcx.adt(adt);
         let struct_type = self.mapper.adt(adt);
@@ -768,5 +778,88 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             };
         }
         Ok(aggregate.into())
+    }
+
+    /// Builds one enum variant by writing its discriminant and payload fields.
+    ///
+    /// The storage is a temporary in the function prologue, so constructing an
+    /// enum inside a loop does not grow the stack. The payload is addressed as
+    /// bytes: every variant shares one LLVM type, and the language layout gives
+    /// each field's absolute offset.
+    fn variant_aggregate(
+        &self,
+        def: DefId,
+        variant: VariantIdx,
+        fields: &[(DefId, seal_mir::Operand)],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let adt = self.adt_of(def)?;
+        let layout = self.mapper.enum_layout(adt)?;
+        let definition = self.tcx.adt(adt);
+        let variant_def = definition.variant(variant).ok_or_else(|| {
+            CodegenError::internal(format!(
+                "variant {variant:?} does not belong to enum {adt:?}"
+            ))
+        })?;
+        let enum_type = self.mapper.adt(adt);
+        let storage = self.entry_alloca(enum_type.into(), "enum.value")?;
+
+        let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
+            CodegenError::internal(format!("enum {adt:?} has a tag too wide for codegen"))
+        })?;
+        let tag_type = self.mapper.integer_type(tag_bits)?;
+        let tag = self.int_constant(tag_type, u128::from(variant.index()));
+        let tag_ptr = self.build(
+            self.builder
+                .build_struct_gep(enum_type, storage, 0, "enum.tag"),
+            "enum tag projection",
+        )?;
+        self.build(self.builder.build_store(tag_ptr, tag), "enum tag store")?;
+
+        let mut values = FxHashMap::default();
+        for (field, operand) in fields {
+            values.insert(*field, self.load_operand(operand)?);
+        }
+
+        let mut field_types = Vec::with_capacity(variant_def.fields.len());
+        for field in &variant_def.fields {
+            field_types.push(self.mapper.basic(field.ty)?);
+        }
+        let variant_type = self.context.struct_type(&field_types, false);
+        let mut payload = variant_type.get_undef();
+        for (index, field) in variant_def.fields.iter().enumerate() {
+            let value = values.remove(&field.def).ok_or_else(|| {
+                CodegenError::internal(format!(
+                    "variant {variant:?} is missing an initializer for {field:?}"
+                ))
+            })?;
+            let next = self.build(
+                self.builder
+                    .build_insert_value(payload, value, index as u32, "variant.field"),
+                "variant field",
+            )?;
+            payload = match next {
+                inkwell::values::AggregateValueEnum::StructValue(value) => value,
+                other => {
+                    return Err(CodegenError::internal(format!(
+                        "variant construction produced {other:?}"
+                    )));
+                }
+            };
+        }
+        let payload_ptr = self.build(
+            self.builder
+                .build_struct_gep(enum_type, storage, 2, "enum.payload"),
+            "enum payload projection",
+        )?;
+        self.build(
+            self.builder.build_store(payload_ptr, payload),
+            "enum payload store",
+        )?;
+
+        let value = self.build(
+            self.builder.build_load(enum_type, storage, "enum.value"),
+            "enum load",
+        )?;
+        Ok(value)
     }
 }

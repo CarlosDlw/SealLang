@@ -3,6 +3,7 @@
 use seal_def::DefId;
 use seal_methods::MethodId;
 use seal_span::Span;
+use seal_ty::VariantIdx;
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -110,7 +111,15 @@ pub enum IntrinsicReceiver {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AggregateKind {
     /// A struct, identified by its definition.
-    Adt(DefId),
+    Struct(DefId),
+    /// One variant of an enum, identified by the enum definition and the
+    /// variant's position in declaration order.
+    Variant {
+        /// The enum definition.
+        adt: DefId,
+        /// The variant's discriminant.
+        variant: VariantIdx,
+    },
 }
 
 /// An expression that produces a value and can be assigned to a place.

@@ -298,7 +298,7 @@ mod tests {
     fn point(ctxt: &TyCtxt, interner: &Interner) -> (TyId, AdtId) {
         let name = interner.intern("Point");
         let struct_def = def(0);
-        let adt = ctxt.push_adt(struct_def, name);
+        let adt = ctxt.push_adt(struct_def, name, crate::AdtKind::Struct);
         let int = ctxt.int_ty(IntTy::I32);
         ctxt.fill_adt(
             adt,

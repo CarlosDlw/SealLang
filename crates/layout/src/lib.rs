@@ -7,6 +7,10 @@
 //! - every field starts at the next multiple of its alignment;
 //! - a struct's alignment is the maximum of its fields' alignments, or 1;
 //! - a struct's size is the end of its last field rounded up to its alignment;
+//! - an enum starts with the smallest unsigned tag that addresses every
+//!   variant, followed by the payload at the next multiple of the payload
+//!   alignment; the payload is as large as the largest variant and the whole
+//!   value is padded to the maximum alignment;
 //! - scalar alignment equals size, references use the target pointer width,
 //!   `char` is 4 bytes, `bool` is 1, and `()`/`!` are zero-sized.
 //!
@@ -18,4 +22,6 @@
 
 mod layout;
 
-pub use layout::{FieldLayout, Layout, LayoutCtxt, LayoutError};
+pub use layout::{
+    EnumLayout, FieldLayout, Layout, LayoutCtxt, LayoutError, VariantLayout, tag_layout,
+};

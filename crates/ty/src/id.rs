@@ -15,6 +15,15 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Index of an enum variant inside its [`AdtDef`](crate::AdtDef).
+    ///
+    /// The index is also the discriminant stored in the value, so it stays
+    /// stable for the whole compilation and drives layout, code generation, and
+    /// the future `match` lowering.
+    pub struct VariantIdx;
+}
+
+newtype_index! {
     /// Index of an aggregate definition in a [`TyCtxt`](crate::TyCtxt).
     ///
     /// The ID names the nominal definition, not the type: two fields with the

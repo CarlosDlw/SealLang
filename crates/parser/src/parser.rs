@@ -1,8 +1,8 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
 use seal_ast::{
-    Ast, AstBuilder, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl, TraitDecl,
-    TraitMethodDecl, TypeId,
+    Ast, AstBuilder, EnumDecl, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl,
+    TraitDecl, TraitMethodDecl, TypeId, VariantDeclId,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -63,6 +63,9 @@ impl<'a> Parser<'a> {
             } else if self.at(TokenKind::Struct) {
                 let item = self.parse_struct();
                 self.items.push(item);
+            } else if self.at(TokenKind::Enum) {
+                let item = self.parse_enum();
+                self.items.push(item);
             } else if self.at(TokenKind::Impl) {
                 let item = self.parse_impl();
                 self.items.push(item);
@@ -77,11 +80,12 @@ impl<'a> Parser<'a> {
                     start,
                     format!("expected an item, found {found}"),
                 )
-                .help("top-level items start with `func`, `struct`, `impl`, or `trait`")
+                .help("top-level items start with `func`, `struct`, `enum`, `impl`, or `trait`")
                 .emit();
                 while !self.is_eof()
                     && !self.at(TokenKind::Func)
                     && !self.at(TokenKind::Struct)
+                    && !self.at(TokenKind::Enum)
                     && !self.at(TokenKind::Impl)
                     && !self.at(TokenKind::Trait)
                 {
@@ -370,6 +374,120 @@ impl<'a> Parser<'a> {
             }),
             span,
         )
+    }
+
+    fn parse_enum(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (name, name_span) = self.expect_ident("an enum name");
+        let _ = self.expect(TokenKind::LBrace, "`{` after the enum name");
+
+        let mut variants = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            variants.push(self.parse_enum_variant());
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RBrace) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` between variants, found {found}"),
+            )
+            .help("separate variants with `,`")
+            .emit();
+            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the enum");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::Enum(EnumDecl {
+                name,
+                name_span,
+                variants,
+            }),
+            span,
+        )
+    }
+
+    /// Parses one variant: a name, optionally followed by named fields.
+    fn parse_enum_variant(&mut self) -> VariantDeclId {
+        let (name, name_span) = self.expect_ident("a variant name");
+        let mut fields = Vec::new();
+
+        if self.at(TokenKind::LParen) {
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                "a variant cannot declare tuple fields",
+            )
+            .help("write named fields, as in `Circle { radius: i32 }`")
+            .emit();
+            let mut depth = 0usize;
+            while !self.is_eof() {
+                match self.current_kind() {
+                    TokenKind::LParen => {
+                        depth += 1;
+                        self.bump();
+                    }
+                    TokenKind::RParen => {
+                        self.bump();
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {
+                        self.bump();
+                    }
+                }
+            }
+        }
+
+        if self.eat(TokenKind::LBrace) {
+            while !self.at(TokenKind::RBrace) && !self.is_eof() {
+                let before = self.index;
+                let (field_name, field_name_span) = self.expect_ident("a field name");
+                let _ = self.expect(TokenKind::Colon, "`:` after the field name");
+                let ty = self.parse_type();
+                let field_span = field_name_span.cover(self.builder.ast().ty(ty).span);
+                fields.push(
+                    self.builder
+                        .push_field(field_name, field_name_span, ty, field_span),
+                );
+
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                if self.at(TokenKind::RBrace) || self.is_eof() {
+                    break;
+                }
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `,` between fields, found {found}"),
+                )
+                .help("separate fields with `,`")
+                .emit();
+                if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                    break;
+                }
+                self.ensure_progress(before);
+            }
+            let _ = self.expect(TokenKind::RBrace, "`}` to close the variant");
+        }
+
+        let span = name_span.cover(self.previous_span());
+        self.builder.push_variant(name, name_span, fields, span)
     }
 
     /// Returns the current token; at or past the end, a synthetic `Eof` tied to

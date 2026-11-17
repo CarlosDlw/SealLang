@@ -22,6 +22,11 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Identifies an enum variant declaration.
+    pub struct VariantDeclId;
+}
+
+newtype_index! {
     /// Identifies a block.
     pub struct BlockId;
 }

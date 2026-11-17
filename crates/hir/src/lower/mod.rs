@@ -10,12 +10,14 @@ use seal_error_codes::ErrorCode;
 use seal_hash::FxHashMap;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::{RefKind, TyCtxt, TyId, TyKind};
+use seal_ty::{AdtKind, RefKind, TyCtxt, TyId, TyKind};
 
 use crate::body::{Body, ParamData};
 use crate::res::Res;
 use crate::{Block, Hir, HirBlockId, ReceiverKind};
 
+mod aggregates;
+mod enums;
 mod expr;
 mod scope;
 mod stmt;
@@ -41,6 +43,7 @@ pub(crate) struct Lowering<'a> {
     function_item_of: FxHashMap<DefId, ItemId>,
     function_items: Vec<ItemId>,
     struct_items: Vec<(ItemId, DefId)>,
+    enum_items: Vec<(ItemId, DefId)>,
     traits: FxHashMap<Symbol, DefId>,
     trait_methods: FxHashMap<(DefId, Symbol), TraitMethodSig>,
     trait_method_order: FxHashMap<DefId, Vec<Symbol>>,
@@ -92,6 +95,7 @@ impl<'a> Lowering<'a> {
             function_item_of: FxHashMap::default(),
             function_items: Vec::new(),
             struct_items: Vec::new(),
+            enum_items: Vec::new(),
             traits: FxHashMap::default(),
             trait_methods: FxHashMap::default(),
             trait_method_order: FxHashMap::default(),
@@ -107,7 +111,8 @@ impl<'a> Lowering<'a> {
         self.collect_items();
         self.validate_trait_impls();
         self.lower_structs();
-        self.validate_structs();
+        self.lower_enums();
+        self.validate_aggregates();
         self.lower_bodies();
         self.hir
     }
@@ -115,11 +120,11 @@ impl<'a> Lowering<'a> {
     /// Creates a definition for every item before any body is lowered, so calls
     /// and type annotations work regardless of declaration order.
     ///
-    /// Collection runs in dependency order: structs, traits, free functions, and
-    /// finally impl blocks. An impl needs its target struct and, when it names a
-    /// trait, the trait declaration; a body that calls `Point::new` needs the
-    /// impl registry to be complete, so bodies are lowered only after all four
-    /// passes.
+    /// Collection runs in dependency order: structs, enums, traits, free
+    /// functions, and finally impl blocks. An impl needs its target type and,
+    /// when it names a trait, the trait declaration; a body that calls
+    /// `Point::new` needs the impl registry to be complete, so bodies are
+    /// lowered only after every pass.
     fn collect_items(&mut self) {
         let items: Vec<ItemId> = self.ast.program().items().to_vec();
 
@@ -129,6 +134,14 @@ impl<'a> Lowering<'a> {
             };
             let span = self.ast.item(item_id).span;
             self.collect_struct(item_id, declaration.name, declaration.name_span, span);
+        }
+
+        for &item_id in &items {
+            let ItemKind::Enum(declaration) = &self.ast.item(item_id).kind else {
+                continue;
+            };
+            let span = self.ast.item(item_id).span;
+            self.collect_enum(item_id, declaration.name, declaration.name_span, span);
         }
 
         for &item_id in &items {
@@ -188,7 +201,7 @@ impl<'a> Lowering<'a> {
                 ),
             )
             .secondary(first_span, "first defined here")
-            .help("give each struct and trait a distinct name")
+            .help("give each struct, enum, and trait a distinct name")
             .emit();
         } else {
             self.traits.insert(name, definition);
@@ -328,7 +341,7 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Resolves the struct an impl block targets.
+    /// Resolves the nominal type an impl block targets.
     fn impl_target(&mut self, declaration: &ImplDecl) -> Option<DefId> {
         let Some(&type_def) = self.types.get(&declaration.type_name) else {
             let name = self.interner.resolve(declaration.type_name);
@@ -336,9 +349,9 @@ impl<'a> Lowering<'a> {
                 self.error(
                     codes::E2027,
                     declaration.type_span,
-                    format!("`{name}` is a trait, not a struct"),
+                    format!("`{name}` is a trait, not a type"),
                 )
-                .help("write `impl TraitName for StructName` to implement a trait")
+                .help("write `impl TraitName for TypeName` to implement a trait")
                 .emit();
             } else if self.globals.contains_key(&declaration.type_name) {
                 self.error(
@@ -346,15 +359,15 @@ impl<'a> Lowering<'a> {
                     declaration.type_span,
                     format!("`{name}` is a value, not a type"),
                 )
-                .help("an impl block attaches methods to a struct")
+                .help("an impl block attaches methods to a struct or enum")
                 .emit();
             } else {
                 self.error(
                     codes::E2015,
                     declaration.type_span,
-                    format!("cannot find struct `{name}` for this impl"),
+                    format!("cannot find type `{name}` for this impl"),
                 )
-                .help("declare the struct with `struct`, then implement it")
+                .help("declare it with `struct` or `enum`, then implement it")
                 .emit();
             }
             return None;
@@ -373,7 +386,7 @@ impl<'a> Lowering<'a> {
                 self.error(
                     codes::E2020,
                     trait_span,
-                    format!("`{name}` is a struct, not a trait"),
+                    format!("`{name}` is a type, not a trait"),
                 )
                 .help("write `impl Type { ... }` for an inherent implementation")
                 .emit();
@@ -822,8 +835,11 @@ impl<'a> Lowering<'a> {
             parent: None,
             mutable: false,
         });
-        let adt = self.hir.ty_ctxt().push_adt(definition, name);
-        self.hir.insert_struct(definition, adt);
+        let adt = self
+            .hir
+            .ty_ctxt()
+            .push_adt(definition, name, AdtKind::Struct);
+        self.hir.insert_adt(definition, adt);
         self.struct_items.push((item_id, definition));
 
         if let Some(first) = self.types.get(&name).copied() {
@@ -837,7 +853,38 @@ impl<'a> Lowering<'a> {
                 ),
             )
             .secondary(first_span, "first defined here")
-            .help("give each struct a distinct name")
+            .help("give each struct, enum, and trait a distinct name")
+            .emit();
+        } else {
+            self.types.insert(name, definition);
+        }
+    }
+
+    fn collect_enum(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        let definition = self.define(DefData {
+            kind: DefKind::Enum,
+            name,
+            name_span,
+            span,
+            parent: None,
+            mutable: false,
+        });
+        let adt = self.hir.ty_ctxt().push_adt(definition, name, AdtKind::Enum);
+        self.hir.insert_adt(definition, adt);
+        self.enum_items.push((item_id, definition));
+
+        if let Some(first) = self.types.get(&name).copied() {
+            let first_span = self.hir.definitions().get(first).name_span;
+            self.error(
+                codes::E2005,
+                name_span,
+                format!(
+                    "the type `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+            )
+            .secondary(first_span, "first defined here")
+            .help("give each struct, enum, and trait a distinct name")
             .emit();
         } else {
             self.types.insert(name, definition);

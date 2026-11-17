@@ -86,6 +86,14 @@ The ABI is defined by the language, not by a C header:
   pointer width, `bool` is one byte, and `()`/`!` are zero-sized structs. The
   layout comes from `seal-layout`, so code generation and semantic layout cannot
   disagree.
+- An enum is an LLVM struct `{ tag, anchor, payload }`: the tag is the smallest
+  integer that addresses every variant, a zero-length array of payload-aligned
+  integers contributes the payload alignment without occupying storage, and the
+  payload is a byte array as large as the largest variant. Constructing a
+  variant stores the discriminant and then stores a variant-shaped struct at the
+  payload address; the temporary lives in the function prologue, so a loop does
+  not grow the stack. Every variant shares the same LLVM type, and the payload
+  bytes at the language offsets are what `match` will later read.
 - Array indexing evaluates the index once, checks it against the length, and
   then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
   unsafe operation and every compiler crate except the debug bridge forbids
@@ -160,14 +168,19 @@ The ABI is defined by the language, not by a C header:
   declared at their stack slots with source line and column;
 - `DW_TAG_structure_type` for every struct, with member names, bit offsets, and
   sizes from `seal-layout`;
+- `DW_TAG_structure_type` for every enum with its discriminant member and a
+  payload byte-array member at the layout offset. Variant parts are not emitted
+  yet, so a debugger shows the tag and raw payload rather than the active
+  variant's fields; the layout is still exact;
 - pointer and fat-pointer types, including `&str` and `&[T]` as two-member
   structs;
 - array types with their element type, length, size, and alignment;
 - a line-table entry for every statement and terminator, so debuggers stop on
   source lines rather than function boundaries.
 
-Recursive structs use forward declarations for the pointee of a reference; a
-struct cannot contain itself by value, so this models every legal recursion.
+Recursive structs and enums use forward declarations for the pointee of a
+reference; an aggregate cannot contain itself by value, so this models every
+legal recursion.
 
 LLVM 19 replaced debug intrinsics with debug records. The C API that appends a
 declaration returns a record, not an instruction, and inkwell 0.11 mis-wraps
@@ -293,5 +306,9 @@ method/associated-function namespaces, symbol uniqueness across types, and
 receiver borrow conflicts. Trait tests cover static dispatch across two impls,
 trait associated functions, `Self` substitution and contract errors, ambiguity,
 shared reborrow from a mutable receiver, and the rule that no method named
-`main` becomes the entry point. The driver tests export the embedded archive with
+`main` becomes the entry point. Enum tests cover unit and payload variants,
+construction into struct fields, moves through calls, associated constructors,
+variant and field diagnostics, recursive and unsized variant fields, and the
+generated tag/payload layout in debug and release. The driver tests export the
+embedded archive with
 `--emit-runtime` and reuse it with `--runtime-archive` to link that example.

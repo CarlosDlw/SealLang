@@ -12,6 +12,7 @@ pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
     Some(match text {
         "func" => TokenKind::Func,
         "struct" => TokenKind::Struct,
+        "enum" => TokenKind::Enum,
         "impl" => TokenKind::Impl,
         "trait" => TokenKind::Trait,
         "for" => TokenKind::For,

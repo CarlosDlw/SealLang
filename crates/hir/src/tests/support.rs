@@ -369,6 +369,30 @@ impl Reachability<'_> {
                     self.check_expr(value);
                 }
             }
+            ExprKind::Variant {
+                adt,
+                variant,
+                fields,
+            } => {
+                let data = self.hir.definitions().get(adt);
+                assert_eq!(data.kind, DefKind::Enum);
+                let aggregate = self.hir.adt(adt).expect("an enum reserves an aggregate");
+                let variant_def = self
+                    .hir
+                    .ty_ctxt()
+                    .variant(aggregate, variant)
+                    .expect("the variant index is registered")
+                    .def;
+                let variant_data = self.hir.definitions().get(variant_def);
+                assert_eq!(variant_data.kind, DefKind::Variant);
+                assert_eq!(variant_data.parent, Some(adt));
+                for (field, value) in fields {
+                    let field_data = self.hir.definitions().get(field);
+                    assert_eq!(field_data.kind, DefKind::Field);
+                    assert_eq!(field_data.parent, Some(variant_def));
+                    self.check_expr(value);
+                }
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.check_expr(lhs);
                 self.check_expr(rhs);

@@ -28,7 +28,7 @@ allowed to depend only on crates below it in the list.
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
 | `seal-ty` | Interned semantic types, aggregates, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
-| `seal-layout` | Deterministic struct and array layout: field offsets, alignment, and size derived from `TyCtxt` types. |
+| `seal-layout` | Deterministic struct, enum, and array layout: field offsets, alignment, tag and payload layout, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
@@ -213,36 +213,43 @@ allowed to depend only on crates below it in the list.
     after type checking reported no errors, so every place, operand, and edge is
     well formed; `seal-mir` validation runs first, and a structural failure is
     an internal compiler error rather than a user diagnostic.
-44. **Aggregates are nominal and structural.** A struct declaration interns an
-    `AdtId`; its type is `TyKind::Adt`, never a structural tuple. Two structs
-    with identical fields are different types, and `Copy`, `Sized`, `Drop`, and
-    `contains_reference` are derived by walking the field types, with a cycle
-    guard so a malformed declaration cannot hang a query.
-45. **Struct literals are complete.** Every field appears exactly once, every
-    named field exists, every field initializer has the declared field type, and
-    a literal in value position is rejected in favor of a type name
-    (`E2005`–`E2010`). Duplicate field names and duplicate struct names are
-    rejected at declaration.
+44. **Aggregates are nominal and structural.** A struct or enum declaration
+    interns an `AdtId`; its type is `TyKind::Adt`, never a structural tuple. Two
+    aggregates with identical members are different types, and `Copy`, `Sized`,
+    `Drop`, and `contains_reference` are derived by walking struct fields and
+    every variant field, with a cycle guard so a malformed declaration cannot
+    hang a query.
+45. **Struct and variant literals are complete.** Every field of the chosen
+    struct or variant appears exactly once, every named field exists, every
+    initializer has the declared field type, and a literal in value position is
+    rejected in favor of a type name (`E2005`–`E2010`). Duplicate aggregate,
+    variant, and field names are rejected at declaration, and enum-specific
+    mistakes use `E2029`–`E2035`.
 46. **Fields are places, not accessors.** `p.x` denotes storage: it needs a
     place base (`E2012`), never autodereferences a `*T` (`E3015` tells the user
     to write `(*p).x`), and selects a field whose resolved `DefId` is recorded
     once by the checker for MIR. Reading a field reads only that field's move
-    path; it does not require sibling fields to be initialized.
-47. **Structs own their fields and are not `Copy`.** A struct value moves as a
-    whole; a `Copy` field still copies when read. Field writes require the root
-    binding to be `mut` (`E3004`), because a field write does not initialize the
-    binding as a whole. Field-by-field initialization needs a declared type and
-    `mut`, and a whole assignment initializes every field at once.
-48. **Recursion needs indirection.** A struct cannot contain itself by value
-    (`E3016`); a reference field breaks the cycle. A struct field must be
-    `Sized` (`E3010`).
+    path; it does not require sibling fields to be initialized. An enum value
+    has no field place until `match` names its variant.
+47. **Aggregates own their fields and are not `Copy`.** A struct or enum value
+    moves as a whole; a `Copy` field still copies when read. Field writes
+    require the root binding to be `mut` (`E3004`), because a field write does
+    not initialize the binding as a whole. Field-by-field initialization needs
+    a declared type and `mut`, and a whole assignment initializes every field at
+    once.
+48. **Recursion needs indirection.** A struct or enum cannot contain itself by
+    value (`E3016`); a reference field breaks the cycle. Every struct field and
+    every enum variant field must be `Sized` (`E3010`).
 49. **Layout is deterministic.** `seal-layout` assigns offsets in declaration
     order with natural alignment and no reordering, so the same types produce
     the same layout in every phase and on every target with the same data model.
+    An enum adds a tag sized by its variant count and a payload at the widest
+    variant alignment; variant offsets are absolute.
 50. **MIR places carry projections.** A `Place` is a local plus
     `Projection::{Deref, Field(DefId)}`; a struct literal lowers to
-    `Rvalue::Aggregate` with field operands in evaluation order, and a non-`Copy`
-    field read is a `Move`. Validation checks every projected place's local. A
+    `Rvalue::Aggregate` with `AggregateKind::Struct`, a variant literal lowers
+    with `AggregateKind::Variant { adt, variant }`, and a non-`Copy` field read
+    is a `Move`. Validation checks every projected place's local. A
     dereference of a reference value (`*identity(&v)`, `*&x`) has no local to
     project from, so lowering stores the reference in a temporary and projects
     through it; the read still copies, because the place is reached through a

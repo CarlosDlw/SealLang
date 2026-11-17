@@ -436,7 +436,27 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(
                         dest,
                         Rvalue::Aggregate {
-                            kind: AggregateKind::Adt(adt),
+                            kind: AggregateKind::Struct(adt),
+                            fields,
+                        },
+                        span,
+                    );
+                }
+            }
+            ExprKind::Variant {
+                adt,
+                variant,
+                fields,
+            } => {
+                if let Some(dest) = dest {
+                    let fields = fields
+                        .iter()
+                        .map(|(field, value)| (*field, self.lower_operand(*value)))
+                        .collect();
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::Aggregate {
+                            kind: AggregateKind::Variant { adt, variant },
                             fields,
                         },
                         span,

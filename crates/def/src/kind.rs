@@ -7,6 +7,10 @@ pub enum DefKind {
     Function,
     /// A struct item.
     Struct,
+    /// An enum item.
+    Enum,
+    /// An enum variant declaration.
+    Variant,
     /// A trait item.
     Trait,
     /// A struct field declaration.
@@ -30,6 +34,8 @@ impl DefKind {
         match self {
             Self::Function => "function",
             Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Variant => "variant",
             Self::Trait => "trait",
             Self::Field => "field",
             Self::Param => "parameter",
@@ -45,6 +51,8 @@ mod tests {
     #[test]
     fn only_parameters_and_bindings_are_local() {
         assert!(!DefKind::Function.is_local());
+        assert!(!DefKind::Enum.is_local());
+        assert!(!DefKind::Variant.is_local());
         assert!(!DefKind::Trait.is_local());
         assert!(DefKind::Param.is_local());
         assert!(DefKind::Binding.is_local());
@@ -55,6 +63,8 @@ mod tests {
         let descriptions = [
             DefKind::Function.description(),
             DefKind::Struct.description(),
+            DefKind::Enum.description(),
+            DefKind::Variant.description(),
             DefKind::Trait.description(),
             DefKind::Field.description(),
             DefKind::Param.description(),

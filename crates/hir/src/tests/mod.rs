@@ -3,6 +3,7 @@
 mod arrays;
 mod borrows;
 mod control_flow;
+mod enums;
 mod examples;
 mod methods;
 mod resolve;

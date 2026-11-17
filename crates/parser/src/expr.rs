@@ -20,6 +20,29 @@ const ASSIGN_BP: u8 = 1;
 /// Binding power of prefix operators; higher than every binary operator.
 const PREFIX_BP: u8 = 13;
 
+/// Which braced initializer list is being parsed, for diagnostic wording.
+#[derive(Clone, Copy)]
+enum InitializerContext {
+    Struct,
+    Variant,
+}
+
+impl InitializerContext {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Struct => "struct literal",
+            Self::Variant => "variant literal",
+        }
+    }
+
+    fn closing(self) -> &'static str {
+        match self {
+            Self::Struct => "`}` to close the struct literal",
+            Self::Variant => "`}` to close the variant literal",
+        }
+    }
+}
+
 impl Parser<'_> {
     /// Parses an expression with operators that bind at least `min_bp`.
     pub(crate) fn parse_expr(&mut self, min_bp: u8) -> ExprId {
@@ -193,16 +216,20 @@ impl Parser<'_> {
                 self.bump();
                 if self.eat(TokenKind::ColonColon) {
                     let (name, name_span) = self.expect_ident("an associated name after `::`");
-                    let span = token.span.cover(name_span);
-                    self.builder.push_expr(
-                        ExprKind::PathQualified {
-                            type_name: symbol,
-                            type_span: token.span,
-                            name,
-                            name_span,
-                        },
-                        span,
-                    )
+                    if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                        self.parse_variant_literal(symbol, token.span, name, name_span)
+                    } else {
+                        let span = token.span.cover(name_span);
+                        self.builder.push_expr(
+                            ExprKind::PathQualified {
+                                type_name: symbol,
+                                type_span: token.span,
+                                name,
+                                name_span,
+                            },
+                            span,
+                        )
+                    }
                 } else if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
                     self.parse_struct_literal(symbol, token.span)
                 } else {
@@ -348,6 +375,46 @@ impl Parser<'_> {
     }
 
     fn parse_struct_literal(&mut self, name: Symbol, start: seal_span::Span) -> ExprId {
+        let fields = self.parse_field_initializers(InitializerContext::Struct);
+        let span = start.cover(self.previous_span());
+        self.builder.push_expr(
+            ExprKind::Struct {
+                name,
+                name_span: start,
+                fields,
+            },
+            span,
+        )
+    }
+
+    /// Parses a qualified variant literal after its name.
+    fn parse_variant_literal(
+        &mut self,
+        type_name: Symbol,
+        type_span: seal_span::Span,
+        name: Symbol,
+        name_span: seal_span::Span,
+    ) -> ExprId {
+        let fields = self.parse_field_initializers(InitializerContext::Variant);
+        let span = type_span.cover(self.previous_span());
+        self.builder.push_expr(
+            ExprKind::Variant {
+                type_name,
+                type_span,
+                name,
+                name_span,
+                fields,
+            },
+            span,
+        )
+    }
+
+    /// Parses a braced field initializer list, starting at `{`.
+    ///
+    /// Struct literals and variant literals share the same grammar, so both use
+    /// this routine; `context` only changes the wording of diagnostics.
+    fn parse_field_initializers(&mut self, context: InitializerContext) -> Vec<FieldInit> {
+        debug_assert!(self.at(TokenKind::LBrace));
         self.bump();
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
@@ -376,7 +443,10 @@ impl Parser<'_> {
             self.error(
                 codes::E1002,
                 self.current_span(),
-                format!("expected `,` or `}}` in the struct literal, found {found}"),
+                format!(
+                    "expected `,` or `}}` in the {}, found {found}",
+                    context.description()
+                ),
             )
             .help("separate field initializers with `,`")
             .emit();
@@ -385,16 +455,8 @@ impl Parser<'_> {
             }
             self.ensure_progress(before);
         }
-        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct literal");
-        let span = start.cover(self.previous_span());
-        self.builder.push_expr(
-            ExprKind::Struct {
-                name,
-                name_span: start,
-                fields,
-            },
-            span,
-        )
+        let _ = self.expect(TokenKind::RBrace, context.closing());
+        fields
     }
 
     /// Parses an array literal or a repeated array literal.

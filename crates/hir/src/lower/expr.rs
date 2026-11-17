@@ -83,6 +83,13 @@ impl Lowering<'_> {
                 name_span,
                 fields,
             } => self.lower_struct_literal(name, name_span, &fields),
+            AstExprKind::Variant {
+                type_name,
+                type_span,
+                name,
+                name_span,
+                fields,
+            } => self.lower_variant_literal(type_name, type_span, name, name_span, &fields),
             AstExprKind::Array { elements } => ExprKind::Array {
                 elements: elements
                     .iter()
@@ -240,6 +247,37 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
+        if let Some(variant) = self.hir.variant(type_def, name) {
+            let adt = self
+                .hir
+                .adt(type_def)
+                .expect("every enum definition reserves an aggregate");
+            let definition = self
+                .hir
+                .ty_ctxt()
+                .variant(adt, variant)
+                .expect("a registered variant belongs to its enum");
+            if !definition.fields.is_empty() {
+                let type_name = self.interner.resolve(type_name).to_owned();
+                let variant_name = self.interner.resolve(name).to_owned();
+                self.error(
+                    codes::E2034,
+                    name_span,
+                    format!("the variant `{type_name}::{variant_name}` has fields"),
+                )
+                .help(format!(
+                    "construct it with `{type_name}::{variant_name} {{ ... }}`"
+                ))
+                .emit();
+                return ExprKind::Error;
+            }
+            return ExprKind::Variant {
+                adt: type_def,
+                variant,
+                fields: Vec::new(),
+            };
+        }
+
         if let Some(function) = self.hir.method(type_def, name) {
             return self.qualified_function(function, name, name_span);
         }
@@ -280,13 +318,13 @@ impl Lowering<'_> {
                     codes::E2018,
                     name_span,
                     format!(
-                        "the type `{}` has no associated function `{}`",
+                        "the type `{}` has neither a variant nor an associated function `{}`",
                         self.interner.resolve(type_name),
                         self.interner.resolve(name)
                     ),
                 )
                 .help(
-                    "declare it in an `impl` block for the type, or in a trait the type implements",
+                    "declare it in an `impl` block for the type, in a trait the type implements, or as an enum variant",
                 )
                 .emit();
                 ExprKind::Error
@@ -332,13 +370,7 @@ impl Lowering<'_> {
         name_span: seal_span::Span,
         fields: &[seal_ast::FieldInit],
     ) -> ExprKind {
-        // Initializers are evaluated in the order they are written, even when a
-        // name is invalid or repeated, so later resolution never reorders side
-        // effects.
-        let mut initializers = Vec::with_capacity(fields.len());
-        for field in fields {
-            initializers.push((field.name, field.name_span, self.lower_expr(field.value)));
-        }
+        let initializers = self.lower_initializers(fields);
 
         let Some(definition) = self.types.get(&name).copied() else {
             let struct_name = self.interner.resolve(name);
@@ -364,9 +396,9 @@ impl Lowering<'_> {
                 self.error(
                     codes::E2002,
                     name_span,
-                    format!("cannot find struct `{struct_name}` in this scope"),
+                    format!("cannot find type `{struct_name}` in this scope"),
                 )
-                .help("declare it with `struct`")
+                .help("declare it with `struct` or `enum`")
                 .emit();
             }
             return ExprKind::Error;
@@ -375,13 +407,192 @@ impl Lowering<'_> {
         let adt = self
             .hir
             .adt(definition)
-            .expect("every struct definition reserves an aggregate");
+            .expect("every type definition reserves an aggregate");
         let adt_def = self.hir.ty_ctxt().adt(adt);
+        if adt_def.is_enum() {
+            let type_name = self.interner.resolve(name).to_owned();
+            self.error(
+                codes::E2035,
+                name_span,
+                format!("`{type_name}` is an enum, not a struct"),
+            )
+            .help(format!(
+                "construct a variant with `{type_name}::Variant {{ ... }}`"
+            ))
+            .emit();
+            return ExprKind::Error;
+        }
+
+        let what = format!("the struct `{}`", self.interner.resolve(name));
+        let resolved = self.resolve_named_fields(
+            initializers,
+            &adt_def.fields,
+            &what,
+            name_span,
+            "this struct literal is missing fields",
+        );
+
+        ExprKind::Struct {
+            adt: definition,
+            fields: resolved,
+        }
+    }
+
+    /// Lowers the initializers of a struct or variant literal.
+    ///
+    /// Initializers are evaluated in the order they are written, even when a
+    /// name is invalid or repeated, so later resolution never reorders side
+    /// effects.
+    fn lower_initializers(
+        &mut self,
+        fields: &[seal_ast::FieldInit],
+    ) -> Vec<(Symbol, Span, HirExprId)> {
+        let mut initializers = Vec::with_capacity(fields.len());
+        for field in fields {
+            initializers.push((field.name, field.name_span, self.lower_expr(field.value)));
+        }
+        initializers
+    }
+
+    fn lower_variant_literal(
+        &mut self,
+        type_name: Symbol,
+        type_span: Span,
+        name: Symbol,
+        name_span: Span,
+        fields: &[seal_ast::FieldInit],
+    ) -> ExprKind {
+        let initializers = self.lower_initializers(fields);
+
+        let Some(definition) = self.types.get(&type_name).copied() else {
+            let missing = self.interner.resolve(type_name);
+            if self.traits.contains_key(&type_name) {
+                self.error(
+                    codes::E2027,
+                    type_span,
+                    format!("`{missing}` is a trait, not a type"),
+                )
+                .help("construct a variant of an enum")
+                .emit();
+            } else if self.globals.contains_key(&type_name) {
+                self.error(
+                    codes::E2015,
+                    type_span,
+                    format!("`{missing}` is a value, not a type"),
+                )
+                .help("a variant literal starts with an enum name")
+                .emit();
+            } else {
+                self.error(
+                    codes::E2002,
+                    type_span,
+                    format!("cannot find type `{missing}` in this scope"),
+                )
+                .help("declare it with `enum`, or check the spelling")
+                .emit();
+            }
+            return ExprKind::Error;
+        };
+
+        let adt = self
+            .hir
+            .adt(definition)
+            .expect("every type definition reserves an aggregate");
+        let adt_def = self.hir.ty_ctxt().adt(adt);
+        if !adt_def.is_enum() {
+            let type_name = self.interner.resolve(type_name).to_owned();
+            self.error(
+                codes::E2031,
+                type_span,
+                format!("`{type_name}` is a struct, not an enum"),
+            )
+            .help(format!("construct the struct with `{type_name} {{ ... }}`"))
+            .emit();
+            return ExprKind::Error;
+        }
+
+        let Some(variant) = self.hir.variant(definition, name) else {
+            let type_name = self.interner.resolve(type_name).to_owned();
+            let variant_name = self.interner.resolve(name).to_owned();
+            let declared: Vec<String> = adt_def
+                .variants
+                .iter()
+                .map(|variant| format!("`{}`", self.interner.resolve(variant.name)))
+                .collect();
+            let help = if declared.is_empty() {
+                "this enum declares no variants".to_owned()
+            } else {
+                format!("the enum declares {}", declared.join(", "))
+            };
+            self.error(
+                codes::E2032,
+                name_span,
+                format!("the enum `{type_name}` has no variant `{variant_name}`"),
+            )
+            .help(help)
+            .emit();
+            return ExprKind::Error;
+        };
+
+        let variant_def = adt_def
+            .variant(variant)
+            .expect("a registered variant belongs to its enum")
+            .clone();
+        if variant_def.is_unit() {
+            if initializers.is_empty() {
+                return ExprKind::Variant {
+                    adt: definition,
+                    variant,
+                    fields: Vec::new(),
+                };
+            }
+            let enum_type = self.interner.resolve(type_name).to_owned();
+            let variant_name = self.interner.resolve(name).to_owned();
+            self.error(
+                codes::E2033,
+                name_span,
+                format!("the unit variant `{enum_type}::{variant_name}` has no fields"),
+            )
+            .help(format!(
+                "write `{enum_type}::{variant_name}` without braces"
+            ))
+            .emit();
+            return ExprKind::Error;
+        }
+
+        let what = format!(
+            "the variant `{}::{}`",
+            self.interner.resolve(type_name),
+            self.interner.resolve(name)
+        );
+        let resolved = self.resolve_named_fields(
+            initializers,
+            &variant_def.fields,
+            &what,
+            name_span,
+            "this variant literal is missing fields",
+        );
+        ExprKind::Variant {
+            adt: definition,
+            variant,
+            fields: resolved,
+        }
+    }
+
+    /// Resolves named initializers against a field list.
+    fn resolve_named_fields(
+        &mut self,
+        initializers: Vec<(Symbol, Span, HirExprId)>,
+        fields: &[seal_ty::FieldDef],
+        what: &str,
+        span: Span,
+        missing_message: &str,
+    ) -> Vec<(DefId, HirExprId)> {
         let mut seen = FxHashSet::default();
         let mut resolved = Vec::new();
 
         for (field_name, field_span, value) in initializers {
-            match adt_def.field_by_name(field_name) {
+            match fields.iter().find(|field| field.name == field_name) {
                 Some(field) => {
                     if !seen.insert(field.def) {
                         self.error(
@@ -403,36 +614,26 @@ impl Lowering<'_> {
                         codes::E2007,
                         field_span,
                         format!(
-                            "the struct `{}` has no field `{}`",
-                            self.interner.resolve(name),
+                            "{what} has no field `{}`",
                             self.interner.resolve(field_name)
                         ),
                     )
-                    .help("check the field name against the struct declaration")
+                    .help("check the field name against the declaration")
                     .emit();
                 }
             }
         }
 
-        let missing: Vec<String> = adt_def
-            .fields
+        let missing: Vec<String> = fields
             .iter()
             .filter(|field| !seen.contains(&field.def))
             .map(|field| format!("`{}`", self.interner.resolve(field.name)))
             .collect();
         if !missing.is_empty() {
-            self.error(
-                codes::E2009,
-                name_span,
-                "this struct literal is missing fields",
-            )
-            .help(format!("add {}", missing.join(", ")))
-            .emit();
+            self.error(codes::E2009, span, missing_message)
+                .help(format!("add {}", missing.join(", ")))
+                .emit();
         }
-
-        ExprKind::Struct {
-            adt: definition,
-            fields: resolved,
-        }
+        resolved
     }
 }

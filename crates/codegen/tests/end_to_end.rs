@@ -23,6 +23,7 @@ const METHOD_BORROWS: &str = include_str!("../../../examples/013_method_borrows.
 const METHOD_NAMESPACES: &str = include_str!("../../../examples/014_method_namespaces.sl");
 const TRAITS: &str = include_str!("../../../examples/015_traits.sl");
 const TRAIT_RECEIVERS: &str = include_str!("../../../examples/016_trait_receivers.sl");
+const ENUMS: &str = include_str!("../../../examples/017_enums.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -736,6 +737,29 @@ fn a_mutable_receiver_reborrows_shared_for_trait_methods() {
     )
     .expect("the trait receiver example compiles");
     assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
+fn enums_construct_and_move_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "enums-debug"),
+        (OptLevel::O2, false, "enums-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            ENUMS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the enum example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
 }
 
 #[test]

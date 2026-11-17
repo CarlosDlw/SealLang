@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TypeId};
+use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TypeId, VariantDeclId};
 
 /// A top-level item.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,8 @@ pub enum ItemKind {
     Func(FnDecl),
     /// A struct declaration.
     Struct(StructDecl),
+    /// An enum declaration.
+    Enum(EnumDecl),
     /// An inherent implementation block for a nominal struct, or a trait
     /// implementation for one.
     Impl(ImplDecl),
@@ -43,7 +45,35 @@ pub struct StructDecl {
     pub fields: Vec<FieldDeclId>,
 }
 
-/// One field in a struct declaration.
+/// An enum declaration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumDecl {
+    /// The enum name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// Variants in declaration order (also discriminant order).
+    pub variants: Vec<VariantDeclId>,
+}
+
+/// One variant in an enum declaration.
+///
+/// A variant either carries no fields (`Variant`) or a list of named fields
+/// (`Variant { name: Type, ... }`). Seal has no tuple variants, so the field
+/// list is always the braced form.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VariantDecl {
+    /// The variant name.
+    pub name: Symbol,
+    /// The span of the variant name.
+    pub name_span: Span,
+    /// Fields in declaration order; empty for a unit variant.
+    pub fields: Vec<FieldDeclId>,
+    /// The span from the variant name through the closing brace.
+    pub span: Span,
+}
+
+/// One field in a struct or variant declaration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldDecl {
     /// The field name.

@@ -6,8 +6,8 @@ use seal_symbol::Symbol;
 
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
 use crate::expr::{Expr, ExprKind};
-use crate::id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId};
-use crate::item::{FieldDecl, Item, ItemKind, Param};
+use crate::id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId, VariantDeclId};
+use crate::item::{FieldDecl, Item, ItemKind, Param, VariantDecl};
 use crate::ty::{Type, TypeKind};
 
 /// The items of one source file, in source order.
@@ -46,6 +46,7 @@ pub struct Ast {
     items: IndexVec<ItemId, Item>,
     params: IndexVec<ParamId, Param>,
     fields: IndexVec<FieldDeclId, FieldDecl>,
+    variants: IndexVec<VariantDeclId, VariantDecl>,
     blocks: IndexVec<BlockId, Block>,
     stmts: IndexVec<StmtId, Stmt>,
     exprs: IndexVec<ExprId, Expr>,
@@ -76,6 +77,12 @@ impl Ast {
     #[inline]
     pub fn field(&self, id: FieldDeclId) -> &FieldDecl {
         &self.fields[id]
+    }
+
+    /// Returns an enum variant declaration.
+    #[inline]
+    pub fn variant(&self, id: VariantDeclId) -> &VariantDecl {
+        &self.variants[id]
     }
 
     /// Returns a block.
@@ -118,6 +125,13 @@ impl Ast {
     #[inline]
     pub fn field_arena(&self) -> &IndexVec<FieldDeclId, FieldDecl> {
         &self.fields
+    }
+
+    /// Returns all enum variant declaration nodes, indexable by
+    /// [`VariantDeclId`].
+    #[inline]
+    pub fn variant_arena(&self) -> &IndexVec<VariantDeclId, VariantDecl> {
+        &self.variants
     }
 
     /// Returns all block nodes, indexable by [`BlockId`].
@@ -188,6 +202,22 @@ impl AstBuilder {
             name,
             name_span,
             ty,
+            span,
+        })
+    }
+
+    /// Adds an enum variant declaration and returns its ID.
+    pub fn push_variant(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        fields: Vec<FieldDeclId>,
+        span: Span,
+    ) -> VariantDeclId {
+        self.ast.variants.push(VariantDecl {
+            name,
+            name_span,
+            fields,
             span,
         })
     }

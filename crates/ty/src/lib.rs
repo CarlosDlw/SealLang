@@ -24,10 +24,10 @@ mod infer;
 mod init;
 mod kind;
 
-pub use adt::{AdtDef, AdtKind, FieldDef};
+pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 pub use ctxt::TyCtxt;
 pub use display::TyDisplay;
-pub use id::{AdtId, InferTyId, TyId};
+pub use id::{AdtId, InferTyId, TyId, VariantIdx};
 pub use infer::{InferCtxt, UnifyError};
 pub use init::{InitPaths, InitState, PathElem, place_type};
 pub use kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};

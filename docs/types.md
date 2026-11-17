@@ -37,6 +37,7 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | Slice reference | `*[T]`, `*mut [T]` | 2 × pointer | pointer | yes | yes | no |
 | Slice pointee | `[T]` | unsized | unsized | no | no | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
+| Enum | `E` | computed | computed | no | yes, if every variant field is | no |
 | Array | `[T; N]` | N × size(T) | align(T) | yes, if `T` is | yes, if `T` is | no |
 | Unit | not writable | 0 | 1 | yes | yes | no |
 | Never | not writable | 0 | 1 | yes | yes | no |
@@ -193,6 +194,52 @@ dereference and does not move out of the reference.
 An aggregate may contain itself only behind a reference. A recursive field by
 value has no finite size and is rejected during type checking before layout
 runs.
+
+## Enums
+
+```seal
+enum Shape {
+  Empty,
+  Circle { radius: i32 },
+  Ring { inner: i32, width: i32 },
+}
+
+func unit() -> Shape {
+  Shape::Empty
+}
+
+func circle() -> Shape {
+  Shape::Circle { radius: 3 }
+}
+```
+
+An enum is a **nominal sum type**: a value is exactly one variant. A variant
+either carries no fields (a *unit* variant, written `Enum::Variant`) or a list of
+named fields (written `Enum::Variant { field: value, ... }`). Seal has no tuple
+variants: every payload uses the braced form, and fields are resolved by name.
+Two enums with the same variants are distinct types, and a variant name is only
+meaningful through its enum.
+
+Construction initializes the discriminant and every field of the chosen variant
+exactly once. An unknown variant is `E2032`, a struct used with `::Variant` is
+`E2031`, an enum used as a struct literal is `E2035`, a unit variant given fields
+is `E2033`, and a payload variant written as a bare path is `E2034`. Field
+mistakes reuse the struct codes: an unknown field is `E2007`, a repeated field is
+`E2008`, and a missing field is `E2009`. Duplicate variant and field names are
+rejected at declaration (`E2029`, `E2006`).
+
+Variants and associated functions share the `Type::name` namespace, so a variant
+may not have the same name as an inherent or trait associated function of its
+enum (`E2030`). An `impl` block may target an enum, which is how an associated
+constructor such as `Shape::unit()` is declared; methods receive `self` exactly
+as on a struct, and a trait may be implemented for an enum. A method cannot read
+the payload until `match` exists, but it can construct and return variants.
+
+An enum owns its payload and is never `Copy`, so assignment, argument passing,
+and return move the whole value. It is `Sized` when every field of every variant
+is; an unsized variant field is `E3010`, and a variant field that makes the enum
+recursive by value is `E3016`. Moving a payload variant moves its fields as a
+unit; there is no partial move out of a variant without `match`.
 
 ## Arrays
 
@@ -551,9 +598,9 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str`, slices, and every struct are not, even when a slice's elements are `Copy`. |
-| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an array is sized when its element is. |
-| `needs_drop` | No current type runs a destructor. An array and a struct derive the answer from their elements or fields once a type with a destructor exists. |
+| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str`, slices, and every struct or enum are not, even when a slice's elements are `Copy`. |
+| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is. |
+| `needs_drop` | No current type runs a destructor. An array, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the
@@ -572,9 +619,15 @@ Layout is deterministic and defined by the language, not by the host C ABI:
 4. A struct's alignment is the maximum of its fields' alignments, or 1 when it
    has no fields. Its size is the end of its last field rounded up to its own
    alignment, so trailing padding belongs to the value.
-5. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
+5. An enum starts with a tag: the smallest unsigned integer that addresses every
+   variant (1 byte up to 256 variants, 2 bytes up to 65_536, 4 bytes above).
+   The payload starts at the next multiple of the widest variant field alignment,
+   is as large as the largest variant, and the whole value is padded to its
+   maximum alignment. Variant field offsets are measured from the start of the
+   enum, which is what code generation and debug information use.
+6. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
    its own.
-6. An array has the element's alignment and `length × size(element)` bytes. It
+7. An array has the element's alignment and `length × size(element)` bytes. It
    adds no padding between elements beyond the element's own size, which already
    includes its trailing padding.
 
@@ -584,6 +637,7 @@ Layout is deterministic and defined by the language, not by the host C ABI:
 | `Mixed { flag: bool, value: i32, small: i8 }` | 12 | 4 | `flag` at 0, `value` at 4, `small` at 8 |
 | `Segment { start: Point, end: Point }` | 16 | 4 | `start` at 0, `end` at 8 |
 | `Empty {}` | 0 | 1 | none |
+| `enum Number { Small { value: u8 }, Large { value: u64 } }` | 16 | 8 | tag at 0, payload at 8 |
 | `[i32; 4]` | 16 | 4 | elements at 0, 4, 8, 12 |
 | `[u8; 0]` | 0 | 1 | none |
 | `*i32` on a 64-bit target | 8 | 8 | none |
@@ -598,8 +652,8 @@ zero-sized structs in the ABI.
 
 Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
 and its interning key before it can appear in a signature. Slices reuse the
-element stride and add a runtime length; generics will instantiate the same
-rules per concrete argument; owning heap types will add field-derived
-destructors. None of these requires changing the identity, layout, or ownership
+element stride and add a runtime length; enum variants reuse the field, query,
+and layout rules per variant; generics will instantiate the same rules per
+concrete argument; owning heap types will add field-derived destructors. None of these requires changing the identity, layout, or ownership
 model above: `TyId` equality, declaration-order layout, and the move/borrow
 rules stay the same.

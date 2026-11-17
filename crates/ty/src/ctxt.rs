@@ -7,8 +7,8 @@ use seal_hash::{FxHashMap, FxHashSet};
 use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
-use crate::adt::{AdtDef, FieldDef};
-use crate::id::{AdtId, InferTyId, TyId};
+use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
+use crate::id::{AdtId, InferTyId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
 /// Interns types and answers structural queries about them.
@@ -63,27 +63,39 @@ impl TyCtxt {
 
     /// Reserves an aggregate slot for `def` and returns its ID.
     ///
-    /// Fields are filled later, because a struct may refer to another struct
-    /// declared after it. Reserving first lets field types name the aggregate
-    /// before its declaration is complete.
-    pub fn push_adt(&self, def: DefId, name: Symbol) -> AdtId {
+    /// Fields and variants are filled later, because an aggregate may refer to
+    /// another one declared after it. Reserving first lets member types name the
+    /// aggregate before its declaration is complete.
+    pub fn push_adt(&self, def: DefId, name: Symbol, kind: AdtKind) -> AdtId {
         self.adts.borrow_mut().push(AdtDef {
             def,
             name,
-            kind: crate::adt::AdtKind::Struct,
+            kind,
             fields: Vec::new(),
+            variants: Vec::new(),
         })
     }
 
-    /// Fills the fields of a reserved aggregate.
+    /// Fills the fields of a reserved struct.
     pub fn fill_adt(&self, adt: AdtId, fields: Vec<FieldDef>) {
         self.adts.borrow_mut()[adt].fields = fields;
+    }
+
+    /// Fills the variants of a reserved enum, in declaration order.
+    pub fn fill_variants(&self, adt: AdtId, variants: Vec<VariantDef>) {
+        self.adts.borrow_mut()[adt].variants = variants;
     }
 
     /// Replaces one field type, used to quarantine a recursive field more
     /// precisely than replacing the whole aggregate.
     pub fn set_field_ty(&self, adt: AdtId, index: usize, ty: TyId) {
         self.adts.borrow_mut()[adt].fields[index].ty = ty;
+    }
+
+    /// Replaces one field type of one enum variant, with the same purpose as
+    /// [`TyCtxt::set_field_ty`].
+    pub fn set_variant_field_ty(&self, adt: AdtId, variant: VariantIdx, index: usize, ty: TyId) {
+        self.adts.borrow_mut()[adt].variants[variant.index() as usize].fields[index].ty = ty;
     }
 
     /// Returns a copy of the aggregate definition.
@@ -130,14 +142,30 @@ impl TyCtxt {
         self.intern(TyKind::Adt(adt))
     }
 
-    /// Returns the field with the given definition in `adt`.
+    /// Returns the struct field with the given definition in `adt`.
+    ///
+    /// Enum fields live on their variant; use [`TyCtxt::variant_field`] for
+    /// those.
     pub fn field(&self, adt: AdtId, def: DefId) -> Option<FieldDef> {
         self.adts.borrow()[adt].field(def).copied()
     }
 
-    /// Returns the field with the given name in `adt`.
+    /// Returns the struct field with the given name in `adt`.
     pub fn field_by_name(&self, adt: AdtId, name: Symbol) -> Option<FieldDef> {
         self.adts.borrow()[adt].field_by_name(name).copied()
+    }
+
+    /// Returns the enum variant at `variant` in `adt`.
+    pub fn variant(&self, adt: AdtId, variant: VariantIdx) -> Option<VariantDef> {
+        self.adts.borrow()[adt].variant(variant).cloned()
+    }
+
+    /// Returns the field with the given definition inside `variant`.
+    pub fn variant_field(&self, adt: AdtId, variant: VariantIdx, def: DefId) -> Option<FieldDef> {
+        self.adts.borrow()[adt]
+            .variant(variant)
+            .and_then(|variant| variant.field(def))
+            .copied()
     }
 
     /// Returns the number of interned types.
@@ -253,7 +281,9 @@ impl TyCtxt {
     /// Returns `true` if `ty` has a size known at compile time.
     ///
     /// `str` and slices are unsized; an unresolved inference variable reports
-    /// `false` because its size is not known yet.
+    /// `false` because its size is not known yet. An enum is sized when every
+    /// field of every variant is sized, because any of them may be the variant
+    /// the value holds.
     pub fn is_sized(&self, ty: TyId) -> bool {
         self.is_sized_inner(ty, &mut FxHashSet::default())
     }
@@ -270,8 +300,7 @@ impl TyCtxt {
                 }
                 let def = self.adt(adt);
                 let sized = def
-                    .fields
-                    .iter()
+                    .all_fields()
                     .all(|field| self.is_sized_inner(field.ty, visiting));
                 visiting.remove(&adt);
                 sized
@@ -283,9 +312,10 @@ impl TyCtxt {
     /// Returns `true` if dropping a value of `ty` runs a destructor.
     ///
     /// No current type has one: scalars, references, `str`, `()`, and `!` are
-    /// trivially disposable. Aggregates will compute this from their fields and
-    /// their own destructor. An unresolved variable reports `false`; the caller
-    /// must resolve it first, as with [`TyCtxt::is_copy`].
+    /// trivially disposable. An aggregate computes this from every field of
+    /// every variant and, later, from its own destructor. An unresolved
+    /// variable reports `false`; the caller must resolve it first, as with
+    /// [`TyCtxt::is_copy`].
     pub fn needs_drop(&self, ty: TyId) -> bool {
         self.needs_drop_inner(ty, &mut FxHashSet::default())
     }
@@ -299,8 +329,7 @@ impl TyCtxt {
                 }
                 let def = self.adt(adt);
                 let needs_drop = def
-                    .fields
-                    .iter()
+                    .all_fields()
                     .any(|field| self.needs_drop_inner(field.ty, visiting));
                 visiting.remove(&adt);
                 needs_drop
@@ -329,8 +358,7 @@ impl TyCtxt {
                 }
                 let def = self.adt(adt);
                 let contains = def
-                    .fields
-                    .iter()
+                    .all_fields()
                     .any(|field| self.contains_reference_inner(field.ty, visiting));
                 visiting.remove(&adt);
                 contains
@@ -365,8 +393,7 @@ impl TyCtxt {
                 }
                 let def = self.adt(adt);
                 let contains = def
-                    .fields
-                    .iter()
+                    .all_fields()
                     .any(|field| self.contains_exclusive_reference_inner(field.ty, visiting));
                 visiting.remove(&adt);
                 contains
@@ -378,9 +405,17 @@ impl TyCtxt {
 
 #[cfg(test)]
 mod tests {
+    use crate::adt::{AdtKind, FieldDef, VariantDef};
+    use crate::id::VariantIdx;
     use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
+    use seal_def::DefId;
+    use seal_symbol::Interner;
 
     use super::TyCtxt;
+
+    fn def(index: u32) -> DefId {
+        DefId::from_u32(index).expect("test definitions are small")
+    }
 
     #[test]
     fn interning_is_deduplicated() {
@@ -576,5 +611,80 @@ mod tests {
         let str_array = ctxt.array_ty(ctxt.str_ty(), 1);
         assert!(!ctxt.is_copy(str_array));
         assert!(!ctxt.is_sized(str_array));
+    }
+
+    #[test]
+    fn enum_properties_cover_every_variant() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let adt = ctxt.push_adt(def(0), interner.intern("Shape"), AdtKind::Enum);
+        let int = ctxt.int_ty(IntTy::I32);
+        let shared = ctxt.ref_ty(int);
+        let exclusive = ctxt.mut_ref_ty(int);
+        ctxt.fill_variants(
+            adt,
+            vec![
+                VariantDef {
+                    def: def(1),
+                    name: interner.intern("Empty"),
+                    fields: Vec::new(),
+                },
+                VariantDef {
+                    def: def(2),
+                    name: interner.intern("Shared"),
+                    fields: vec![FieldDef {
+                        def: def(3),
+                        name: interner.intern("value"),
+                        ty: shared,
+                    }],
+                },
+                VariantDef {
+                    def: def(4),
+                    name: interner.intern("Exclusive"),
+                    fields: vec![FieldDef {
+                        def: def(5),
+                        name: interner.intern("value"),
+                        ty: exclusive,
+                    }],
+                },
+            ],
+        );
+
+        let ty = ctxt.adt_ty(adt);
+        assert!(ctxt.is_sized(ty));
+        assert!(!ctxt.is_copy(ty));
+        assert!(!ctxt.needs_drop(ty));
+        assert!(ctxt.contains_reference(ty));
+        assert!(ctxt.contains_exclusive_reference(ty));
+
+        let variant = VariantIdx::from_u32(1).expect("small index");
+        let definition = ctxt.variant(adt, variant).expect("the variant exists");
+        assert_eq!(definition.fields.len(), 1);
+        assert_eq!(
+            ctxt.variant_field(adt, variant, definition.fields[0].def)
+                .expect("the field exists")
+                .ty,
+            shared
+        );
+    }
+
+    #[test]
+    fn an_enum_is_unsized_when_any_variant_field_is_unsized() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let adt = ctxt.push_adt(def(0), interner.intern("Bad"), AdtKind::Enum);
+        ctxt.fill_variants(
+            adt,
+            vec![VariantDef {
+                def: def(1),
+                name: interner.intern("Text"),
+                fields: vec![FieldDef {
+                    def: def(2),
+                    name: interner.intern("text"),
+                    ty: ctxt.str_ty(),
+                }],
+            }],
+        );
+        assert!(!ctxt.is_sized(ctxt.adt_ty(adt)));
     }
 }

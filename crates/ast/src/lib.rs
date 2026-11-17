@@ -29,9 +29,10 @@ mod ty;
 
 pub use block::{Block, LetStmt, Stmt, StmtKind};
 pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
-pub use id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId};
+pub use id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId, VariantDeclId};
 pub use item::{
-    FieldDecl, FnDecl, ImplDecl, Item, ItemKind, Param, StructDecl, TraitDecl, TraitMethodDecl,
+    EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, Param, StructDecl, TraitDecl,
+    TraitMethodDecl, VariantDecl,
 };
 pub use program::{Ast, AstBuilder, Program};
 pub use ty::{PrimitiveType, Type, TypeKind};

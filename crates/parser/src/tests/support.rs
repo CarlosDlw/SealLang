@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use seal_ast::{
     Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemId, ItemKind, ParamId,
-    StmtId, StmtKind, TypeId, TypeKind,
+    StmtId, StmtKind, TypeId, TypeKind, VariantDeclId,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -161,6 +161,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         stmts: BTreeSet::new(),
         blocks: BTreeSet::new(),
         fields: BTreeSet::new(),
+        variants: BTreeSet::new(),
         types: BTreeSet::new(),
         params: BTreeSet::new(),
         items: BTreeSet::new(),
@@ -176,6 +177,7 @@ struct Reachability<'a> {
     stmts: BTreeSet<StmtId>,
     blocks: BTreeSet<BlockId>,
     fields: BTreeSet<FieldDeclId>,
+    variants: BTreeSet<VariantDeclId>,
     types: BTreeSet<TypeId>,
     params: BTreeSet<ParamId>,
     items: BTreeSet<ItemId>,
@@ -214,6 +216,11 @@ impl Reachability<'_> {
             "unreachable field nodes"
         );
         assert_eq!(
+            self.variants.len(),
+            self.ast.variant_arena().len(),
+            "unreachable variant nodes"
+        );
+        assert_eq!(
             self.types.len(),
             self.ast.type_arena().len(),
             "unreachable type nodes"
@@ -237,6 +244,12 @@ impl Reachability<'_> {
                 self.assert_span(declaration.name_span);
                 for field in &declaration.fields {
                     self.check_field(*field);
+                }
+            }
+            ItemKind::Enum(declaration) => {
+                self.assert_span(declaration.name_span);
+                for variant in &declaration.variants {
+                    self.check_variant(*variant);
                 }
             }
             ItemKind::Impl(declaration) => {
@@ -264,6 +277,19 @@ impl Reachability<'_> {
                 }
             }
             ItemKind::Error => {}
+        }
+    }
+
+    fn check_variant(&mut self, id: VariantDeclId) {
+        assert!(self.variants.insert(id), "variant {id:?} visited twice");
+        let (span, name_span, fields) = {
+            let variant = self.ast.variant(id);
+            (variant.span, variant.name_span, variant.fields.clone())
+        };
+        self.assert_span(span);
+        self.assert_span(name_span);
+        for field in fields {
+            self.check_field(field);
         }
     }
 
@@ -402,6 +428,20 @@ impl Reachability<'_> {
             ExprKind::Struct {
                 name_span, fields, ..
             } => {
+                self.assert_span(name_span);
+                for field in fields {
+                    self.assert_span(field.name_span);
+                    self.assert_span(field.span);
+                    self.check_expr(field.value);
+                }
+            }
+            ExprKind::Variant {
+                type_span,
+                name_span,
+                fields,
+                ..
+            } => {
+                self.assert_span(type_span);
                 self.assert_span(name_span);
                 for field in fields {
                     self.assert_span(field.name_span);

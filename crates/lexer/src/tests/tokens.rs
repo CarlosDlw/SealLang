@@ -111,7 +111,7 @@ fn ambiguous_runs_split_by_maximal_munch() {
 #[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
-        "func funcx struct structx impl implx trait traitx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
+        "func funcx struct structx enum enumx impl implx trait traitx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
     );
     let lexed = fixture.lex();
     fixture.assert_clean();
@@ -122,6 +122,8 @@ fn keywords_are_not_identifiers() {
             TokenKind::Ident(fixture.interner.intern("funcx")),
             TokenKind::Struct,
             TokenKind::Ident(fixture.interner.intern("structx")),
+            TokenKind::Enum,
+            TokenKind::Ident(fixture.interner.intern("enumx")),
             TokenKind::Impl,
             TokenKind::Ident(fixture.interner.intern("implx")),
             TokenKind::Trait,

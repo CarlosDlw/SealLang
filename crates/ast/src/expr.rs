@@ -260,6 +260,23 @@ pub enum ExprKind {
         /// Initializers in source order.
         fields: Vec<FieldInit>,
     },
+    /// A qualified enum variant literal, written
+    /// `Enum::Variant { field: value, ... }`.
+    ///
+    /// A unit variant has no braces and is written as a qualified path; this
+    /// node always has the literal form.
+    Variant {
+        /// The enum name.
+        type_name: Symbol,
+        /// The span of the enum name.
+        type_span: Span,
+        /// The variant name.
+        name: Symbol,
+        /// The span of the variant name.
+        name_span: Span,
+        /// Initializers in source order.
+        fields: Vec<FieldInit>,
+    },
     /// An array literal, written `[a, b, c]`.
     Array {
         /// Elements in source order; an empty literal has no elements.

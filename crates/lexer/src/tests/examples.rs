@@ -30,6 +30,7 @@ fn all_examples_lex_cleanly() {
         "014_method_namespaces.sl",
         "015_traits.sl",
         "016_trait_receivers.sl",
+        "017_enums.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);
@@ -38,7 +39,7 @@ fn all_examples_lex_cleanly() {
         assert!(
             matches!(
                 lexed.tokens.first().map(|token| token.kind),
-                Some(TokenKind::Func | TokenKind::Struct)
+                Some(TokenKind::Func | TokenKind::Struct | TokenKind::Enum)
             ),
             "first token of {name}"
         );

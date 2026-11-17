@@ -695,6 +695,80 @@ method with the same name takes precedence over every trait method and is not
 ambiguous.",
 };
 
+/// An enum declares the same variant name twice.
+pub const E2029: ErrorCode = ErrorCode {
+    code: "E2029",
+    title: "enum variant is declared twice",
+    explanation: "\
+A variant name identifies exactly one variant inside an enum. Declaring the name
+twice would make construction, layout order, and pattern matching depend on
+declaration order, so the compiler rejects it.\n\nRename or remove one of the variants. Different enums may reuse a variant name,
+and a variant name is independent of the field names it carries.",
+};
+
+/// A variant name collides with an associated function of the same enum.
+pub const E2030: ErrorCode = ErrorCode {
+    code: "E2030",
+    title: "variant name conflicts with an associated function",
+    explanation: "\
+`Type::name` resolves through one namespace: it either names an enum variant or
+an associated function. Allowing both would make `Type::name` ambiguous and the
+result depend on lookup order, so the compiler rejects the collision.\n\nRename the variant or the function.",
+};
+
+/// A variant literal starts with a struct name.
+pub const E2031: ErrorCode = ErrorCode {
+    code: "E2031",
+    title: "variant literal names a struct",
+    explanation: "\
+`Type::Variant { ... }` constructs an enum value: the name before `::` must be an
+enum and the name after it one of its variants. A struct has no variants, so the
+literal cannot name a value.\n\nConstruct the struct with a plain literal such as `Point { x: 1 }`, or check
+that the type before `::` is the enum you meant.",
+};
+
+/// A variant literal names a variant the enum does not declare.
+pub const E2032: ErrorCode = ErrorCode {
+    code: "E2032",
+    title: "no such enum variant",
+    explanation: "\
+A variant literal names a variant of the enum written before `::`. The enum does
+not declare that name, so there is no discriminant or field list to use.\n\nCheck the spelling against the enum declaration. Variants are resolved by name,
+not by position.",
+};
+
+/// A unit variant is constructed with fields.
+pub const E2033: ErrorCode = ErrorCode {
+    code: "E2033",
+    title: "unit variant cannot have fields",
+    explanation: "\
+A unit variant carries no data: its value is just the discriminant. Writing
+`{ ... }` after it would silently discard the initializers and the expressions
+that produce them, so the compiler rejects it.\n\nRemove the braces, or declare fields on the variant if it needs to carry data.",
+};
+
+/// A variant with fields is written without an initializer list.
+pub const E2034: ErrorCode = ErrorCode {
+    code: "E2034",
+    title: "variant fields are missing",
+    explanation: "\
+A variant that declares fields must be constructed with a braced initializer
+list, such as `Shape::Circle { radius: 1 }`. The bare path `Shape::Circle` would
+leave the fields uninitialized, and safe Seal code never observes uninitialized
+storage.\n\nAdd the initializer list, or use the variant that carries no fields.",
+};
+
+/// A struct literal names an enum.
+pub const E2035: ErrorCode = ErrorCode {
+    code: "E2035",
+    title: "struct literal names an enum",
+    explanation: "\
+`Name { field: value }` builds a struct. An enum value always carries a
+discriminant, so it is built one variant at a time; a literal naming the enum
+itself has no variant to store and is rejected.\n\nWrite `Name::Variant { ... }` for a variant with fields, or `Name::Variant` for a
+unit variant.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1311,11 +1385,11 @@ pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
     E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016, E2017,
-    E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E3001, E3002,
-    E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015,
-    E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028,
-    E3029, E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E6001, E6002, E6003, E9001, E9002,
+    E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E2029, E2030,
+    E2031, E2032, E2033, E2034, E2035, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008,
+    E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021,
+    E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E5001, E5002, E5003,
+    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1427,7 +1501,7 @@ mod tests {
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
                 "E2010", "E2011", "E2012", "E2013", "E2014", "E2015", "E2016", "E2017", "E2018",
                 "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
-                "E2028",
+                "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035",
             ]
         );
     }

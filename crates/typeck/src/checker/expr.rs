@@ -104,6 +104,11 @@ impl Checker<'_> {
                 mode,
             ),
             ExprKind::Struct { adt, fields } => self.check_struct_literal(adt, &fields, flow, span),
+            ExprKind::Variant {
+                adt,
+                variant,
+                fields,
+            } => self.check_variant_literal(adt, variant, &fields, flow, span),
             ExprKind::Array { elements } => self.check_array(&elements, expected, flow, span),
             ExprKind::ArrayRepeat { value, length } => {
                 self.check_array_repeat(value, length, expected, flow, span)
@@ -489,6 +494,45 @@ impl Checker<'_> {
             self.check_expr(*value, field_ty, flow);
         }
         ty
+    }
+
+    /// Checks a constructed enum variant against its declared fields.
+    fn check_variant_literal(
+        &mut self,
+        definition: seal_def::DefId,
+        variant: seal_ty::VariantIdx,
+        fields: &[(seal_def::DefId, HirExprId)],
+        flow: &mut Flow,
+        span: Span,
+    ) -> TyId {
+        let Some(adt) = self.hir.adt(definition) else {
+            return self.error_ty();
+        };
+        let Some(variant_def) = self.hir.ty_ctxt().variant(adt, variant) else {
+            self.error(
+                seal_error_codes::E2032,
+                span,
+                "this enum variant no longer exists",
+            )
+            .emit();
+            return self.error_ty();
+        };
+        for (field, value) in fields {
+            let field_ty = match variant_def.field(*field) {
+                Some(field) => field.ty,
+                None => {
+                    self.error(
+                        seal_error_codes::E2007,
+                        span,
+                        "this variant literal names a field that no longer exists",
+                    )
+                    .emit();
+                    self.error_ty()
+                }
+            };
+            self.check_expr(*value, field_ty, flow);
+        }
+        self.hir.ty_ctxt().adt_ty(adt)
     }
 
     /// Checks that `condition` has type `bool`.

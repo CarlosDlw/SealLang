@@ -183,7 +183,7 @@ fn an_unknown_trait_is_reported() {
 fn a_struct_cannot_be_used_as_a_trait() {
     let fixture = Fixture::new("struct Circle { radius: i32 } impl Circle for Circle {}");
     let _ = fixture.lower();
-    fixture.expect("E2020", "is a struct, not a trait");
+    fixture.expect("E2020", "is a type, not a trait");
 }
 
 #[test]

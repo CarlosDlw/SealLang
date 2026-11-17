@@ -166,6 +166,8 @@ pub enum TokenKind {
     Func,
     /// `struct`
     Struct,
+    /// `enum`
+    Enum,
     /// `impl`
     Impl,
     /// `trait`

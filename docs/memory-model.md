@@ -43,7 +43,8 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
 `*T`/`*mut T`, and an array whose element type is `Copy`. Not copied: `str` and
-slices (unsized) and every struct value, even one whose fields are all `Copy`. Arrays
+slices (unsized) and every struct or enum value, even one whose fields are all
+`Copy`. Arrays
 gain nothing from an explicit opt-in because their elements already decide
 whether a bitwise copy is safe. Keeping structs non-`Copy` means ownership is
 explicit at every aggregate boundary; field reads still copy `Copy` fields
@@ -181,12 +182,12 @@ field or element out marks that path moved and leaves its siblings usable.
 
 ### D10 — Values are sized
 
-Locals, parameters, return values, by-value operands, and struct fields must have
-a size known at compile time. `str` and slices are unsized and can only appear
+Locals, parameters, return values, by-value operands, struct fields, and enum
+variant fields must have a size known at compile time. `str` and slices are unsized and can only appear
 behind a reference. An array is sized when its element is, and its size must fit
 the target address space (`E3023`). Recursive types are only possible through a
-reference, which indirection makes finite; a struct that contains itself by
-value is `E3016`.
+reference, which indirection makes finite; a struct or enum that contains
+itself by value is `E3016`.
 
 ### D11 — No address-dependent semantics in safe code
 
@@ -202,21 +203,29 @@ types only unify when they are identical. Mixed-width arithmetic is an error.
 Widening and narrowing require explicit casts (added with the cast syntax), so
 no silent truncation or sign change can happen.
 
-### D13 — Structs are nominal and their layout is deterministic
+### D13 — Nominal aggregates and deterministic layout
 
-`struct Point { x: i32, y: i32 }` declares a nominal type: two structs with the
-same fields are distinct and never unify. A literal `Point { x: 1, y: 2 }` must
-initialize every field exactly once, and a type name is never a value (`E2010`).
+`struct Point { x: i32, y: i32 }` declares a nominal product type: two structs
+with the same fields are distinct and never unify.
+`enum Shape { Empty, Circle { radius: i32 } }` declares a nominal **sum** type:
+every value is exactly one variant, identified by a tag, and two enums with the
+same variants are also distinct. A struct or variant literal initializes every
+field exactly once, and a type name is never a value (`E2010`).
 Field access applies to a place; there is no autodereference, so a reference
 field is read as `(*p).x` and a field of a temporary is rejected. Fields have no
 separate visibility in v0.1, and adding visibility later does not change the
 layout.
 
 `seal-layout` assigns offsets in declaration order with natural alignment and no
-reordering, so the layout is deterministic and reproducible. The struct owns its
-fields: moving the struct moves all of them, and moving one field out leaves the
-rest initialized, which is what the move-path initializer tracks (D9). A borrow
-may select a field (`&p.x`), which is what lets a sibling stay writable (D6).
+reordering, so the layout is deterministic and reproducible. An enum starts with
+the smallest unsigned tag that addresses every variant, followed by a payload at
+the next multiple of the widest variant field alignment; the payload is as large
+as the largest variant and the whole value is padded to its alignment. The
+aggregate owns its fields: moving it moves all of them, and moving one field out
+leaves the rest initialized, which is what the move-path initializer tracks
+(D9). A borrow may select a struct field (`&p.x`), which is what lets a sibling
+stay writable (D6). There is no field projection on an enum value until `match`
+names the active variant.
 
 ### D14 — Slices are borrowed views with a length
 
@@ -351,25 +360,29 @@ call.
 5. `Copy` and `Drop` never hold for the same type.
 6. A `Sized` value never contains an unsized value directly.
 7. Type layout and addresses never affect the meaning of safe programs.
-8. A struct literal initializes every field exactly once; unknown, missing, and
-   duplicate fields are rejected (`E2006`–`E2009`).
-9. A struct value is never `Copy` in v0.1; moving one field out leaves its
-   siblings initialized and usable.
-10. A struct cannot contain itself by value (`E3016`), and every field is
-    `Sized` (`E3010`).
+8. A struct or variant literal initializes every field exactly once; unknown,
+   missing, and duplicate fields are rejected (`E2006`–`E2009`).
+9. A struct or enum value is never `Copy` in v0.1; moving one field out leaves
+   its siblings initialized and usable.
+10. A struct or enum cannot contain itself by value (`E3016`), and every field
+    is `Sized` (`E3010`). An enum is sized when every field of every variant is.
 11. Layout is deterministic: declaration order, natural alignment, no
     reordering, so offsets are stable across phases and targets with the same
-    data model.
+    data model. An enum adds a tag followed by an aligned payload, and the tag
+    is the smallest unsigned integer that addresses every variant.
 
 ## Reserved syntax
 
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- Generics, user-defined `impl` methods, visibility, and `Drop` for aggregates
-  — layers on the nominal struct and array foundation, not redesigns of it.
-  Intrinsic methods already use the static lookup and receiver-borrow model
-  that user methods will share.
+- Generics, visibility, and `Drop` for aggregates — layers on the nominal
+  struct, enum, and array foundation, not redesigns of it.
+- Pattern matching over enum variants (`match`) — the next layer on the tag and
+  payload layout above; construction and layout already reserve the tag.
+- User-defined implementations, trait implementations, and intrinsic methods
+  already share the static lookup and receiver-borrow model that generics will
+  parameterize.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

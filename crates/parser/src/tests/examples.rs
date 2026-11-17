@@ -31,6 +31,7 @@ fn all_examples_parse_without_diagnostics() {
         ("014_method_namespaces.sl", 5),
         ("015_traits.sl", 8),
         ("016_trait_receivers.sl", 5),
+        ("017_enums.sl", 6),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

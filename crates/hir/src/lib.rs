@@ -51,7 +51,7 @@ use seal_hash::FxHashMap;
 use seal_index::IndexVec;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::{AdtId, TyCtxt};
+use seal_ty::{AdtId, TyCtxt, VariantIdx};
 
 /// How an instance method takes its receiver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +74,8 @@ pub struct Hir {
     exprs: IndexVec<HirExprId, Expr>,
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
-    structs: FxHashMap<DefId, AdtId>,
+    adts: FxHashMap<DefId, AdtId>,
+    variants: FxHashMap<(DefId, Symbol), VariantIdx>,
     traits: FxHashMap<Symbol, DefId>,
     trait_impls: traits::TraitImpls,
     methods: FxHashMap<(DefId, Symbol), DefId>,
@@ -168,9 +169,20 @@ impl Hir {
         }
     }
 
-    /// Returns the aggregate reserved for the struct definition `def`.
+    /// Returns the aggregate reserved for the nominal type definition `def`.
+    ///
+    /// Structs and enums both reserve one aggregate; use the type context to
+    /// distinguish them when the distinction matters.
     pub fn adt(&self, def: DefId) -> Option<AdtId> {
-        self.structs.get(&def).copied()
+        self.adts.get(&def).copied()
+    }
+
+    /// Returns the variant of the enum `type_def` named `name`.
+    ///
+    /// The registry is keyed by the enum definition, so a variant name is only
+    /// found through its own enum. Structs have no entries.
+    pub fn variant(&self, type_def: DefId, name: Symbol) -> Option<VariantIdx> {
+        self.variants.get(&(type_def, name)).copied()
     }
 
     /// Returns the impl function named `name` attached to `type_def`.
@@ -204,8 +216,12 @@ impl Hir {
         self.trait_impls.span_of(trait_def, type_def)
     }
 
-    pub(crate) fn insert_struct(&mut self, def: DefId, adt: AdtId) {
-        self.structs.insert(def, adt);
+    pub(crate) fn insert_adt(&mut self, def: DefId, adt: AdtId) {
+        self.adts.insert(def, adt);
+    }
+
+    pub(crate) fn insert_variant(&mut self, type_def: DefId, name: Symbol, variant: VariantIdx) {
+        self.variants.insert((type_def, name), variant);
     }
 
     pub(crate) fn insert_trait_name(&mut self, name: Symbol, def: DefId) {
@@ -256,7 +272,8 @@ impl Hir {
             exprs: IndexVec::new(),
             ty_ctxt,
             body_of: FxHashMap::default(),
-            structs: FxHashMap::default(),
+            adts: FxHashMap::default(),
+            variants: FxHashMap::default(),
             traits: FxHashMap::default(),
             trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),

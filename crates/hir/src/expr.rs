@@ -130,6 +130,18 @@ pub enum ExprKind {
         /// Initializers in source order, one per valid source field.
         fields: Vec<(DefId, HirExprId)>,
     },
+    /// A constructed enum value: a variant and its resolved fields.
+    ///
+    /// A unit variant has no fields; the node still names the variant, so later
+    /// phases build the value by writing the discriminant.
+    Variant {
+        /// The enum definition the variant belongs to.
+        adt: DefId,
+        /// The variant's position in declaration order.
+        variant: seal_ty::VariantIdx,
+        /// Initializers in source order, one per valid variant field.
+        fields: Vec<(DefId, HirExprId)>,
+    },
     /// An array literal.
     Array {
         /// Elements in source order; an empty literal has no elements.

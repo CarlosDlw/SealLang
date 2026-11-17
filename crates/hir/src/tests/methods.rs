@@ -94,7 +94,10 @@ fn a_missing_associated_function_is_reported() {
         "struct Point { x: i32 } impl Point {} func main() -> i32 { Point::missing() }",
     );
     let _ = fixture.lower();
-    fixture.expect("E2018", "has no associated function `missing`");
+    fixture.expect(
+        "E2018",
+        "has neither a variant nor an associated function `missing`",
+    );
 }
 
 #[test]
@@ -136,14 +139,14 @@ fn self_must_be_the_first_parameter() {
 }
 
 #[test]
-fn impl_targets_must_be_structs() {
+fn impl_targets_must_be_nominal_types() {
     let fixture = Fixture::new("func helper() {} impl helper { func call() {} }");
     let _ = fixture.lower();
     fixture.expect("E2015", "is a value, not a type");
 
     let fixture = Fixture::new("impl Missing { func call() {} }");
     let _ = fixture.lower();
-    fixture.expect("E2015", "cannot find struct `Missing`");
+    fixture.expect("E2015", "cannot find type `Missing`");
 }
 
 fn type_named(fixture: &Fixture, hir: &crate::Hir, name: &str) -> seal_def::DefId {
