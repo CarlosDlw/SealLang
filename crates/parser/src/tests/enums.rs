@@ -1,6 +1,6 @@
 //! Enum declarations and qualified variant literals.
 
-use seal_ast::{ExprKind, ItemKind, Literal, PrimitiveType, TypeKind};
+use seal_ast::{ExprKind, ItemKind, Literal, PrimitiveType, TypeKind, VariantFieldList};
 
 use crate::tests::support::{Fixture, body, function, parse_clean};
 
@@ -18,12 +18,15 @@ fn enum_declarations_keep_variants_and_fields_in_source_order() {
 
     let empty = ast.variant(declaration.variants[0]);
     assert_eq!(fixture.symbol(empty.name), "Empty");
-    assert!(empty.fields.is_empty());
+    assert!(matches!(&empty.fields, VariantFieldList::Unit));
 
     let circle = ast.variant(declaration.variants[1]);
     assert_eq!(fixture.symbol(circle.name), "Circle");
-    assert_eq!(circle.fields.len(), 1);
-    let radius = ast.field(circle.fields[0]);
+    let VariantFieldList::Named(circle_fields) = &circle.fields else {
+        panic!("expected named fields");
+    };
+    assert_eq!(circle_fields.len(), 1);
+    let radius = ast.field(circle_fields[0]);
     assert_eq!(fixture.symbol(radius.name), "radius");
     assert!(matches!(
         ast.ty(radius.ty).kind,
@@ -31,9 +34,12 @@ fn enum_declarations_keep_variants_and_fields_in_source_order() {
     ));
 
     let ring = ast.variant(declaration.variants[2]);
-    assert_eq!(ring.fields.len(), 2);
-    assert_eq!(fixture.symbol(ast.field(ring.fields[0]).name), "inner");
-    assert_eq!(fixture.symbol(ast.field(ring.fields[1]).name), "width");
+    let VariantFieldList::Named(ring_fields) = &ring.fields else {
+        panic!("expected named fields");
+    };
+    assert_eq!(ring_fields.len(), 2);
+    assert_eq!(fixture.symbol(ast.field(ring_fields[0]).name), "inner");
+    assert_eq!(fixture.symbol(ast.field(ring_fields[1]).name), "width");
 }
 
 #[test]
@@ -82,16 +88,32 @@ fn a_unit_variant_path_is_still_a_qualified_path() {
 }
 
 #[test]
-fn tuple_variants_are_diagnosed_without_losing_the_enum() {
-    let fixture = Fixture::new("enum Option { Some(i32), None } func main() {}");
-    let ast = fixture.parse();
-    fixture.expect("E1002", "tuple fields");
+fn tuple_variant_fields_are_declared_by_type_only() {
+    let (fixture, ast) = parse_clean("enum Option { Some(i32, *i32), None } func main() {}");
     let ItemKind::Enum(declaration) = &ast.item(ast.program().items()[0]).kind else {
         panic!("expected an enum item");
     };
+    assert_eq!(
+        fixture.symbol(ast.variant(declaration.variants[0]).name),
+        "Some"
+    );
     assert_eq!(declaration.variants.len(), 2);
-    assert!(ast.variant(declaration.variants[0]).fields.is_empty());
-    assert!(ast.variant(declaration.variants[1]).fields.is_empty());
+    let VariantFieldList::Tuple(fields) = &ast.variant(declaration.variants[0]).fields else {
+        panic!("expected positional fields");
+    };
+    assert_eq!(fields.len(), 2);
+    assert!(matches!(
+        ast.ty(ast.tuple_field(fields[0]).ty).kind,
+        TypeKind::Primitive(PrimitiveType::I32)
+    ));
+    assert!(matches!(
+        ast.ty(ast.tuple_field(fields[1]).ty).kind,
+        TypeKind::Pointer { .. }
+    ));
+    assert!(matches!(
+        &ast.variant(declaration.variants[1]).fields,
+        VariantFieldList::Unit
+    ));
 }
 
 #[test]

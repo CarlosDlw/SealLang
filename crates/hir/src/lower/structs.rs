@@ -53,7 +53,7 @@ impl Lowering<'_> {
                 });
                 fields.push(FieldDef {
                     def: field_def,
-                    name,
+                    name: Some(name),
                     ty,
                 });
             }

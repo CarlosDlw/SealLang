@@ -480,9 +480,12 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 let mut members = Vec::with_capacity(definition.fields.len());
                 for (field, field_layout) in definition.fields.iter().zip(&field_layouts) {
                     let member_type = self.di_type(field.ty)?;
+                    let field_name = field.name.ok_or_else(|| {
+                        CodegenError::internal(format!("struct field {field:?} has no name"))
+                    })?;
                     let member = self.builder.create_member_type(
                         scope,
-                        self.interner.resolve(field.name),
+                        self.interner.resolve(field_name),
                         file,
                         line,
                         field_layout.layout.size() * 8,

@@ -362,6 +362,21 @@ or suffixed `usize`, and must fit in a 32-bit unsigned value because the backend
 represents array lengths with 32 bits.",
 };
 
+/// A variant field list is malformed.
+pub const E1010: ErrorCode = ErrorCode {
+    code: "E1010",
+    title: "invalid variant field list",
+    explanation: "\
+A variant declares either positional fields (`Some(i32)`), named fields
+(`Circle { radius: i32 }`), or no fields at all (`Empty`). The three forms cannot
+be mixed: positional fields have no names, so a braced list after them would
+have nothing to bind, and a positional list without a type has no field.
+
+Write one form. An empty positional list is a unit variant: write `Empty` rather
+than `Empty()`. A positional field is written as its type alone; names belong in
+the braced form.",
+};
+
 /// A definition is declared twice in the same scope.
 pub const E2001: ErrorCode = ErrorCode {
     code: "E2001",
@@ -752,10 +767,11 @@ pub const E2034: ErrorCode = ErrorCode {
     code: "E2034",
     title: "variant fields are missing",
     explanation: "\
-A variant that declares fields must be constructed with a braced initializer
-list, such as `Shape::Circle { radius: 1 }`. The bare path `Shape::Circle` would
-leave the fields uninitialized, and safe Seal code never observes uninitialized
-storage.\n\nAdd the initializer list, or use the variant that carries no fields.",
+A variant that declares fields must be constructed with its field list: a braced
+initializer list for named fields (`Shape::Circle { radius: 1 }`) or
+parenthesized arguments for positional fields (`Option::Some(1)`). The bare path
+would leave the fields uninitialized, and safe Seal code never observes
+uninitialized storage.\n\nAdd the matching field list, or use the variant that carries no fields.",
 };
 
 /// A struct literal names an enum.
@@ -765,8 +781,49 @@ pub const E2035: ErrorCode = ErrorCode {
     explanation: "\
 `Name { field: value }` builds a struct. An enum value always carries a
 discriminant, so it is built one variant at a time; a literal naming the enum
-itself has no variant to store and is rejected.\n\nWrite `Name::Variant { ... }` for a variant with fields, or `Name::Variant` for a
-unit variant.",
+itself has no variant to store and is rejected.\n\nWrite `Name::Variant { ... }` for named fields, `Name::Variant(...)` for
+positional fields, or `Name::Variant` for a unit variant.",
+};
+
+/// A positional variant is constructed with named fields.
+pub const E2036: ErrorCode = ErrorCode {
+    code: "E2036",
+    title: "positional variant uses named fields",
+    explanation: "\
+A variant declared with positional fields, such as `Option::Some(i32)`, takes
+positional arguments at construction. Writing `{ ... }` would bind them by name
+that the declaration does not have, so the compiler rejects the expression.\n\nWrite the values between parentheses, as in `Option::Some(1)`.",
+};
+
+/// A named variant is constructed with positional arguments.
+pub const E2037: ErrorCode = ErrorCode {
+    code: "E2037",
+    title: "named variant uses positional arguments",
+    explanation: "\
+A variant declared with named fields, such as `Shape::Circle { radius: i32 }`,
+takes a braced initializer list. Parenthesized arguments would have no field
+names to bind them to, so the compiler rejects the expression.\n\nWrite the initializer list, as in `Shape::Circle { radius: 1 }`.",
+};
+
+/// A positional variant receives the wrong number of arguments.
+pub const E2038: ErrorCode = ErrorCode {
+    code: "E2038",
+    title: "wrong number of variant fields",
+    explanation: "\
+A positional variant is a constructor whose arity is fixed by its declaration.
+Every field must receive exactly one argument, in declaration order, because
+there are no names to supply them by.\n\nSupply one value per declared field. The diagnostic names the expected and the
+actual count.",
+};
+
+/// A unit variant is called with parentheses.
+pub const E2039: ErrorCode = ErrorCode {
+    code: "E2039",
+    title: "unit variant is written without parentheses",
+    explanation: "\
+A unit variant carries no payload, so it is a value rather than a constructor.
+Writing `Variant()` would suggest a callable that takes no arguments and would
+give the same value two spellings.\n\nWrite the variant without parentheses, as in `Mode::On`.",
 };
 
 /// Expression types do not match.
@@ -1383,13 +1440,14 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
-    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016, E2017,
-    E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E2029, E2030,
-    E2031, E2032, E2033, E2034, E2035, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008,
-    E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021,
-    E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E5001, E5002, E5003,
-    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010, E2001, E2002, E2003,
+    E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016,
+    E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E2029,
+    E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E3001, E3002, E3003,
+    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
+    E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001,
+    E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1482,6 +1540,7 @@ mod tests {
             codes,
             [
                 "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008", "E1009",
+                "E1010",
             ]
         );
         assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
@@ -1501,7 +1560,8 @@ mod tests {
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
                 "E2010", "E2011", "E2012", "E2013", "E2014", "E2015", "E2016", "E2017", "E2018",
                 "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
-                "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035",
+                "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035", "E2036",
+                "E2037", "E2038", "E2039",
             ]
         );
     }

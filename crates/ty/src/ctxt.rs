@@ -634,7 +634,7 @@ mod tests {
                     name: interner.intern("Shared"),
                     fields: vec![FieldDef {
                         def: def(3),
-                        name: interner.intern("value"),
+                        name: Some(interner.intern("value")),
                         ty: shared,
                     }],
                 },
@@ -643,7 +643,7 @@ mod tests {
                     name: interner.intern("Exclusive"),
                     fields: vec![FieldDef {
                         def: def(5),
-                        name: interner.intern("value"),
+                        name: Some(interner.intern("value")),
                         ty: exclusive,
                     }],
                 },
@@ -680,7 +680,7 @@ mod tests {
                 name: interner.intern("Text"),
                 fields: vec![FieldDef {
                     def: def(2),
-                    name: interner.intern("text"),
+                    name: Some(interner.intern("text")),
                     ty: ctxt.str_ty(),
                 }],
             }],

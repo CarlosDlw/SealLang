@@ -1,8 +1,9 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
 use seal_ast::{
-    Ast, AstBuilder, EnumDecl, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl,
-    TraitDecl, TraitMethodDecl, TypeId, VariantDeclId,
+    Ast, AstBuilder, EnumDecl, ExprId, FieldDeclId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId,
+    StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId, TypeId, VariantDeclId,
+    VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -418,76 +419,166 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// Parses one variant: a name, optionally followed by named fields.
+    /// Parses one variant: a name, optionally followed by positional or named
+    /// fields.
     fn parse_enum_variant(&mut self) -> VariantDeclId {
         let (name, name_span) = self.expect_ident("a variant name");
-        let mut fields = Vec::new();
-
-        if self.at(TokenKind::LParen) {
-            self.error(
-                codes::E1002,
-                self.current_span(),
-                "a variant cannot declare tuple fields",
-            )
-            .help("write named fields, as in `Circle { radius: i32 }`")
-            .emit();
-            let mut depth = 0usize;
-            while !self.is_eof() {
-                match self.current_kind() {
-                    TokenKind::LParen => {
-                        depth += 1;
-                        self.bump();
-                    }
-                    TokenKind::RParen => {
-                        self.bump();
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ => {
-                        self.bump();
-                    }
-                }
-            }
-        }
-
-        if self.eat(TokenKind::LBrace) {
-            while !self.at(TokenKind::RBrace) && !self.is_eof() {
-                let before = self.index;
-                let (field_name, field_name_span) = self.expect_ident("a field name");
-                let _ = self.expect(TokenKind::Colon, "`:` after the field name");
-                let ty = self.parse_type();
-                let field_span = field_name_span.cover(self.builder.ast().ty(ty).span);
-                fields.push(
-                    self.builder
-                        .push_field(field_name, field_name_span, ty, field_span),
-                );
-
-                if self.eat(TokenKind::Comma) {
-                    continue;
-                }
-                if self.at(TokenKind::RBrace) || self.is_eof() {
-                    break;
-                }
-                let found = self.describe(self.current_kind());
+        let fields = if self.at(TokenKind::LParen) {
+            let tuple_fields = self.parse_tuple_variant_fields();
+            if self.at(TokenKind::LBrace) {
                 self.error(
-                    codes::E1002,
+                    codes::E1010,
                     self.current_span(),
-                    format!("expected `,` between fields, found {found}"),
+                    "a variant cannot have both positional and named fields",
                 )
-                .help("separate fields with `,`")
+                .help("choose `Variant(Type, ...)` or `Variant { name: Type, ... }`")
                 .emit();
-                if !matches!(self.current_kind(), TokenKind::Ident(_)) {
-                    break;
-                }
-                self.ensure_progress(before);
+                self.skip_variant_braces();
             }
-            let _ = self.expect(TokenKind::RBrace, "`}` to close the variant");
-        }
+            if tuple_fields.is_empty() {
+                VariantFieldList::Unit
+            } else {
+                VariantFieldList::Tuple(tuple_fields)
+            }
+        } else if self.at(TokenKind::LBrace) {
+            VariantFieldList::Named(self.parse_named_variant_fields())
+        } else {
+            VariantFieldList::Unit
+        };
 
         let span = name_span.cover(self.previous_span());
         self.builder.push_variant(name, name_span, fields, span)
+    }
+
+    /// Parses a positional field list, starting at `(`.
+    ///
+    /// A positional field has only a type. A written name is diagnosed and then
+    /// skipped, so the rest of the list still parses into a usable declaration.
+    fn parse_tuple_variant_fields(&mut self) -> Vec<TupleFieldDeclId> {
+        self.bump();
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RParen) && !self.is_eof() {
+            let before = self.index;
+            if matches!(self.current_kind(), TokenKind::Ident(_))
+                && self.peek_kind() == Some(TokenKind::Colon)
+            {
+                let field_name = self.bump();
+                self.bump();
+                self.error(
+                    codes::E1010,
+                    field_name.span.cover(self.previous_span()),
+                    "a positional field has no name",
+                )
+                .help("write only the field type, such as `Some(i32)`")
+                .emit();
+            }
+            let ty = self.parse_type();
+            let span = self.builder.ast().ty(ty).span;
+            fields.push(self.builder.push_tuple_field(ty, span));
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RParen) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` or `)` in the positional field list, found {found}"),
+            )
+            .help("separate field types with `,`")
+            .emit();
+            if !is_type_start(self.current_kind()) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+        let _ = self.expect(TokenKind::RParen, "`)` to close the positional fields");
+        if fields.is_empty() {
+            self.error(
+                codes::E1010,
+                self.previous_span(),
+                "an empty positional field list is written as a unit variant",
+            )
+            .help("remove the parentheses, as in `Variant`")
+            .emit();
+        }
+        fields
+    }
+
+    /// Parses a named field list, starting at `{`.
+    fn parse_named_variant_fields(&mut self) -> Vec<FieldDeclId> {
+        let _ = self.expect(TokenKind::LBrace, "`{` to start the variant fields");
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            let (field_name, field_name_span) = self.expect_ident("a field name");
+            let _ = self.expect(TokenKind::Colon, "`:` after the field name");
+            let ty = self.parse_type();
+            let field_span = field_name_span.cover(self.builder.ast().ty(ty).span);
+            fields.push(
+                self.builder
+                    .push_field(field_name, field_name_span, ty, field_span),
+            );
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RBrace) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` between fields, found {found}"),
+            )
+            .help("separate fields with `,`")
+            .emit();
+            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the variant");
+        fields
+    }
+
+    /// Skips a discarded braced field list after a mixed-form diagnostic.
+    ///
+    /// The nodes cannot be attached to the variant because the positional form
+    /// already owns its fields, and leaving them in the AST arena would violate
+    /// the reachability invariant. Balanced skipping keeps recovery local.
+    fn skip_variant_braces(&mut self) {
+        if !self.eat(TokenKind::LBrace) {
+            return;
+        }
+        let mut depth = 1usize;
+        while !self.is_eof() && depth > 0 {
+            match self.current_kind() {
+                TokenKind::LBrace => {
+                    depth += 1;
+                    self.bump();
+                }
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    self.bump();
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+        if depth > 0 {
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                "expected `}` to close the variant fields",
+            )
+            .help("add the missing `}`")
+            .emit();
+        }
     }
 
     /// Returns the current token; at or past the end, a synthetic `Eof` tied to
@@ -508,6 +599,12 @@ impl<'a> Parser<'a> {
     #[inline]
     pub(crate) fn current_span(&self) -> Span {
         self.current().span
+    }
+
+    /// Returns the kind of the token after the current one, if any.
+    #[inline]
+    pub(crate) fn peek_kind(&self) -> Option<TokenKind> {
+        self.tokens.get(self.index + 1).map(|token| token.kind)
     }
 
     #[inline]
@@ -764,6 +861,14 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::ShrEq => ">>=",
         _ => return None,
     })
+}
+
+/// Returns `true` when a token can start a type.
+fn is_type_start(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Star | TokenKind::LBracket | TokenKind::Ident(_)
+    )
 }
 
 /// Returns `true` when a token cannot start an expression and parsing should

@@ -305,12 +305,12 @@ mod tests {
             vec![
                 FieldDef {
                     def: def(1),
-                    name: interner.intern("x"),
+                    name: Some(interner.intern("x")),
                     ty: int,
                 },
                 FieldDef {
                     def: def(2),
-                    name: interner.intern("y"),
+                    name: Some(interner.intern("y")),
                     ty: int,
                 },
             ],

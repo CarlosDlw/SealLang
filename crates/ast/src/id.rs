@@ -27,6 +27,11 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Identifies one positional field of an enum variant.
+    pub struct TupleFieldDeclId;
+}
+
+newtype_index! {
     /// Identifies a block.
     pub struct BlockId;
 }

@@ -222,9 +222,11 @@ allowed to depend only on crates below it in the list.
 45. **Struct and variant literals are complete.** Every field of the chosen
     struct or variant appears exactly once, every named field exists, every
     initializer has the declared field type, and a literal in value position is
-    rejected in favor of a type name (`E2005`–`E2010`). Duplicate aggregate,
-    variant, and field names are rejected at declaration, and enum-specific
-    mistakes use `E2029`–`E2035`.
+    rejected in favor of a type name (`E2005`–`E2010`). A variant is unit,
+    positional (`Some(i32)`), or named (`Circle { radius: i32 }`). Positional
+    arguments bind in declaration order, so names and parentheses cannot be
+    mixed (`E2036`–`E2039`). Duplicate aggregate, variant, and field names are
+    rejected at declaration, and enum-specific mistakes use `E2029`–`E2039`.
 46. **Fields are places, not accessors.** `p.x` denotes storage: it needs a
     place base (`E2012`), never autodereferences a `*T` (`E3015` tells the user
     to write `(*p).x`), and selects a field whose resolved `DefId` is recorded

@@ -26,7 +26,10 @@ fn variants_and_their_fields_are_registered() {
     assert_eq!(fixture.symbol(data.variants[0].name), "Empty");
     assert!(data.variants[0].is_unit());
     assert_eq!(fixture.symbol(data.variants[1].name), "Circle");
-    assert_eq!(fixture.symbol(data.variants[1].fields[0].name), "radius");
+    assert_eq!(
+        fixture.symbol(data.variants[1].fields[0].name.expect("named field")),
+        "radius"
+    );
 
     let circle = fixture.interner.intern("Circle");
     let index = hir

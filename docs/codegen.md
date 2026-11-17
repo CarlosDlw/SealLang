@@ -92,8 +92,9 @@ The ABI is defined by the language, not by a C header:
   payload is a byte array as large as the largest variant. Constructing a
   variant stores the discriminant and then stores a variant-shaped struct at the
   payload address; the temporary lives in the function prologue, so a loop does
-  not grow the stack. Every variant shares the same LLVM type, and the payload
-  bytes at the language offsets are what `match` will later read.
+  not grow the stack. Every variant shares the same LLVM type, positional and
+  named fields are stored in declaration order, and the payload bytes at the
+  language offsets are what `match` will later read.
 - Array indexing evaluates the index once, checks it against the length, and
   then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
   unsafe operation and every compiler crate except the debug bridge forbids

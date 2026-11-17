@@ -24,6 +24,7 @@ const METHOD_NAMESPACES: &str = include_str!("../../../examples/014_method_names
 const TRAITS: &str = include_str!("../../../examples/015_traits.sl");
 const TRAIT_RECEIVERS: &str = include_str!("../../../examples/016_trait_receivers.sl");
 const ENUMS: &str = include_str!("../../../examples/017_enums.sl");
+const TUPLE_VARIANTS: &str = include_str!("../../../examples/018_tuple_variants.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -754,6 +755,29 @@ fn enums_construct_and_move_in_debug_and_release() {
             debug_info,
         )
         .expect("the enum example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn tuple_variants_construct_and_move_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "tuple-variants-debug"),
+        (OptLevel::O2, false, "tuple-variants-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            TUPLE_VARIANTS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the tuple variant example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

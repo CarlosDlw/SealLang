@@ -50,6 +50,27 @@ fn a_unit_variant_lowers_to_an_empty_variant_aggregate() {
     assert!(fields.is_empty());
 }
 
+#[test]
+fn a_positional_variant_aggregate_keeps_argument_order() {
+    let (fixture, hir, mir) = lower_clean(
+        "enum Pair { Both(i32, bool), Empty } \
+         func main() -> Pair { Pair::Both(1, true) }",
+    );
+    let body = function(&fixture, &hir, &mir, "main");
+    let block = body.block(body.entry);
+    let (_, rvalue) = assignment(&block.statements[0]);
+    let Rvalue::Aggregate { kind, fields } = rvalue else {
+        panic!("expected an aggregate, got {rvalue:?}");
+    };
+    let AggregateKind::Variant { variant, .. } = kind else {
+        panic!("expected a variant aggregate, got {kind:?}");
+    };
+    assert_eq!(*variant, VariantIdx::from_u32(0).expect("small index"));
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fixture.symbol(hir.definitions().name(fields[0].0)), "#0");
+    assert_eq!(fixture.symbol(hir.definitions().name(fields[1].0)), "#1");
+}
+
 fn kind_adt(kind: AggregateKind) -> seal_def::DefId {
     match kind {
         AggregateKind::Variant { adt, .. } | AggregateKind::Struct(adt) => adt,

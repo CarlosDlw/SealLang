@@ -23,8 +23,14 @@ fn struct_fields_are_registered_in_the_type_context() {
     let adt = hir.adt(definition).expect("the struct has an aggregate");
     let def = hir.ty_ctxt().adt(adt);
     assert_eq!(def.fields.len(), 2);
-    assert_eq!(fixture.symbol(def.fields[0].name), "x");
-    assert_eq!(fixture.symbol(def.fields[1].name), "y");
+    assert_eq!(
+        fixture.symbol(def.fields[0].name.expect("named field")),
+        "x"
+    );
+    assert_eq!(
+        fixture.symbol(def.fields[1].name.expect("named field")),
+        "y"
+    );
     assert!(matches!(
         hir.ty_ctxt().kind(def.fields[1].ty),
         TyKind::Ref { .. }

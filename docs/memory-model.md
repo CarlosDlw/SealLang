@@ -207,10 +207,13 @@ no silent truncation or sign change can happen.
 
 `struct Point { x: i32, y: i32 }` declares a nominal product type: two structs
 with the same fields are distinct and never unify.
-`enum Shape { Empty, Circle { radius: i32 } }` declares a nominal **sum** type:
-every value is exactly one variant, identified by a tag, and two enums with the
-same variants are also distinct. A struct or variant literal initializes every
-field exactly once, and a type name is never a value (`E2010`).
+`enum Shape { Empty, Circle { radius: i32 }, Dot(i32) }` declares a nominal
+**sum** type: every value is exactly one variant, identified by a tag, and two
+enums with the same variants are also distinct. A variant carries no fields
+(`Empty`), positional fields (`Dot(i32)`), or named fields
+(`Circle { radius: i32 }`). A struct or variant literal initializes every field
+exactly once: named fields by name, positional fields in declaration order. A
+type name is never a value (`E2010`).
 Field access applies to a place; there is no autodereference, so a reference
 field is read as `(*p).x` and a field of a temporary is rejected. Fields have no
 separate visibility in v0.1, and adding visibility later does not change the
@@ -360,8 +363,10 @@ call.
 5. `Copy` and `Drop` never hold for the same type.
 6. A `Sized` value never contains an unsized value directly.
 7. Type layout and addresses never affect the meaning of safe programs.
-8. A struct or variant literal initializes every field exactly once; unknown,
-   missing, and duplicate fields are rejected (`E2006`–`E2009`).
+8. A struct or named variant literal initializes every field exactly once;
+   unknown, missing, and duplicate fields are rejected (`E2006`–`E2009`), and a
+   positional variant receives exactly one argument per field in declaration
+   order (`E2038`).
 9. A struct or enum value is never `Copy` in v0.1; moving one field out leaves
    its siblings initialized and usable.
 10. A struct or enum cannot contain itself by value (`E3016`), and every field

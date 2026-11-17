@@ -1,6 +1,6 @@
 //! Enum variant lowering.
 
-use seal_ast::ItemKind;
+use seal_ast::{ItemKind, VariantFieldList};
 use seal_def::{DefData, DefKind};
 use seal_error_codes as codes;
 use seal_hash::FxHashSet;
@@ -31,7 +31,7 @@ impl Lowering<'_> {
             let mut variants = Vec::with_capacity(declaration.variants.len());
             let mut names = FxHashSet::default();
             for variant_id in &declaration.variants {
-                let (name, name_span, field_ids, variant_span) = {
+                let (name, name_span, field_list, variant_span) = {
                     let variant = self.ast.variant(*variant_id);
                     (
                         variant.name,
@@ -64,41 +64,67 @@ impl Lowering<'_> {
                     mutable: false,
                 });
 
-                let mut fields = Vec::with_capacity(field_ids.len());
-                let mut field_names = FxHashSet::default();
-                for field_id in &field_ids {
-                    let (field_name, field_name_span, ty_id, field_span) = {
-                        let field = self.ast.field(*field_id);
-                        (field.name, field.name_span, field.ty, field.span)
-                    };
-                    let ty = self.lower_type(ty_id);
-                    if !field_names.insert(field_name) {
-                        self.error(
-                            codes::E2006,
-                            field_name_span,
-                            format!(
-                                "the field `{}` is declared twice",
-                                self.interner.resolve(field_name)
-                            ),
-                        )
-                        .secondary(variant_span, "in this variant")
-                        .help("rename or remove one of the fields")
-                        .emit();
-                        continue;
+                let mut fields = Vec::new();
+                match &field_list {
+                    VariantFieldList::Unit => {}
+                    VariantFieldList::Named(field_ids) => {
+                        let mut field_names = FxHashSet::default();
+                        for field_id in field_ids {
+                            let (field_name, field_name_span, ty_id, field_span) = {
+                                let field = self.ast.field(*field_id);
+                                (field.name, field.name_span, field.ty, field.span)
+                            };
+                            let ty = self.lower_type(ty_id);
+                            if !field_names.insert(field_name) {
+                                self.error(
+                                    codes::E2006,
+                                    field_name_span,
+                                    format!(
+                                        "the field `{}` is declared twice",
+                                        self.interner.resolve(field_name)
+                                    ),
+                                )
+                                .secondary(variant_span, "in this variant")
+                                .help("rename or remove one of the fields")
+                                .emit();
+                                continue;
+                            }
+                            let field_def = self.define(DefData {
+                                kind: DefKind::Field,
+                                name: field_name,
+                                name_span: field_name_span,
+                                span: field_span,
+                                parent: Some(variant_def),
+                                mutable: false,
+                            });
+                            fields.push(FieldDef {
+                                def: field_def,
+                                name: Some(field_name),
+                                ty,
+                            });
+                        }
                     }
-                    let field_def = self.define(DefData {
-                        kind: DefKind::Field,
-                        name: field_name,
-                        name_span: field_name_span,
-                        span: field_span,
-                        parent: Some(variant_def),
-                        mutable: false,
-                    });
-                    fields.push(FieldDef {
-                        def: field_def,
-                        name: field_name,
-                        ty,
-                    });
+                    VariantFieldList::Tuple(field_ids) => {
+                        for (index, field_id) in field_ids.iter().enumerate() {
+                            let field = self.ast.tuple_field(*field_id);
+                            let ty = self.lower_type(field.ty);
+                            let field_span = field.span;
+                            let internal_name = self.interner.intern(&format!("#{index}"));
+                            let field_def = self.define(DefData {
+                                kind: DefKind::Field,
+                                name: internal_name,
+                                name_span: field_span,
+                                span: field_span,
+                                parent: Some(variant_def),
+                                mutable: false,
+                            });
+                            fields.push(FieldDef {
+                                def: field_def,
+                                name: None,
+                                ty,
+                            });
+                        }
+                    }
                 }
 
                 let index = VariantIdx::from_usize(variants.len());

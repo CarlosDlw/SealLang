@@ -52,8 +52,9 @@ func main() -> i32 {
 Every value has one owner. Assignment, argument passing, and return move the
 value unless its type is `Copy`; a struct owns its fields and is moved as a
 whole. An enum is a nominal sum type: every value is exactly one variant, either
-a unit variant or one with named fields, and the layout carries a discriminant
-plus the active payload. `*T` grants shared access and `*mut T` grants exclusive access, and the
+a unit variant, a positional variant such as `Some(i32)`, or a named variant
+such as `Circle { radius: i32 }`, and the layout carries a discriminant plus the
+active payload. `*T` grants shared access and `*mut T` grants exclusive access, and the
 two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
@@ -102,7 +103,7 @@ isolation check on its own.
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
-| Enums | `enum E { … }` | Nominal sum type with one active variant; owns the payload and is not `Copy` |
+| Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is not `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls, no vtable |
 | Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch: each call binds to the concrete implementation of the receiver's type |
 

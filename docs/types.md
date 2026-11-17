@@ -202,6 +202,7 @@ enum Shape {
   Empty,
   Circle { radius: i32 },
   Ring { inner: i32, width: i32 },
+  Dot(i32, i32),
 }
 
 func unit() -> Shape {
@@ -211,22 +212,33 @@ func unit() -> Shape {
 func circle() -> Shape {
   Shape::Circle { radius: 3 }
 }
+
+func dot() -> Shape {
+  Shape::Dot(3, 4)
+}
 ```
 
 An enum is a **nominal sum type**: a value is exactly one variant. A variant
-either carries no fields (a *unit* variant, written `Enum::Variant`) or a list of
-named fields (written `Enum::Variant { field: value, ... }`). Seal has no tuple
-variants: every payload uses the braced form, and fields are resolved by name.
-Two enums with the same variants are distinct types, and a variant name is only
-meaningful through its enum.
+carries no fields (a *unit* variant, written `Enum::Variant`), positional fields
+(written `Enum::Variant(T, U)`), or named fields (written
+`Enum::Variant { field: value, ... }`). The three forms are exclusive: a variant
+cannot mix positional and named fields. Positional fields are written as types
+only and bind by position; named fields are resolved by name. `Variant()` is not
+a fourth form: an empty positional list is a unit variant and is rejected
+(`E2039`), so the canonical spelling stays the bare path `Variant`. Two enums
+with the same variants are distinct types, and a variant name is only meaningful
+through its enum.
 
 Construction initializes the discriminant and every field of the chosen variant
 exactly once. An unknown variant is `E2032`, a struct used with `::Variant` is
 `E2031`, an enum used as a struct literal is `E2035`, a unit variant given fields
-is `E2033`, and a payload variant written as a bare path is `E2034`. Field
-mistakes reuse the struct codes: an unknown field is `E2007`, a repeated field is
-`E2008`, and a missing field is `E2009`. Duplicate variant and field names are
-rejected at declaration (`E2029`, `E2006`).
+is `E2033`, and a payload variant written as a bare path is `E2034`. A positional
+variant written with braces is `E2036`, a named variant called with parentheses
+is `E2037`, the wrong number of positional arguments is `E2038`, and a unit
+variant called with `()` is `E2039`. A malformed declaration field list is
+`E1010`. Named-field mistakes reuse the struct codes: an unknown field is
+`E2007`, a repeated field is `E2008`, and a missing field is `E2009`. Duplicate
+variant and field names are rejected at declaration (`E2029`, `E2006`).
 
 Variants and associated functions share the `Type::name` namespace, so a variant
 may not have the same name as an inherent or trait associated function of its

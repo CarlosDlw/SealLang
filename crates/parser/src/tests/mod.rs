@@ -14,3 +14,4 @@ mod stmts;
 mod structs;
 mod support;
 mod traits;
+mod tuple_variants;

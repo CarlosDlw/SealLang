@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TypeId, VariantDeclId};
+use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId};
 
 /// A top-level item.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,18 +58,43 @@ pub struct EnumDecl {
 
 /// One variant in an enum declaration.
 ///
-/// A variant either carries no fields (`Variant`) or a list of named fields
-/// (`Variant { name: Type, ... }`). Seal has no tuple variants, so the field
-/// list is always the braced form.
+/// A variant carries no fields (`Variant`), positional fields
+/// (`Variant(Type, ...)`), or named fields (`Variant { name: Type, ... }`).
+/// The three forms are exclusive: mixing positional and named fields would make
+/// construction and pattern matching depend on two orders, so the parser
+/// rejects it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VariantDecl {
     /// The variant name.
     pub name: Symbol,
     /// The span of the variant name.
     pub name_span: Span,
-    /// Fields in declaration order; empty for a unit variant.
-    pub fields: Vec<FieldDeclId>,
-    /// The span from the variant name through the closing brace.
+    /// The declared field list.
+    pub fields: VariantFieldList,
+    /// The span from the variant name through the closing delimiter.
+    pub span: Span,
+}
+
+/// The fields declared by one enum variant.
+#[derive(Clone, Debug, PartialEq)]
+pub enum VariantFieldList {
+    /// The variant carries no payload.
+    Unit,
+    /// Positional fields, in declaration order.
+    Tuple(Vec<TupleFieldDeclId>),
+    /// Named fields, in declaration order.
+    Named(Vec<FieldDeclId>),
+}
+
+/// One positional field in an enum variant declaration.
+///
+/// The field has no name; its position in the variant is its identity. The
+/// type's span is also the field's span, because there is no name to point at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TupleFieldDecl {
+    /// The declared field type.
+    pub ty: TypeId,
+    /// The span of the field type.
     pub span: Span,
 }
 

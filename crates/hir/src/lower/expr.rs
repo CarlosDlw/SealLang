@@ -146,7 +146,9 @@ impl Lowering<'_> {
                 postfix,
             },
             AstExprKind::Call { callee, args } => {
-                if self.is_len_builtin(callee) {
+                if let Some(kind) = self.lower_variant_call(callee, &args) {
+                    kind
+                } else if self.is_len_builtin(callee) {
                     match args.as_slice() {
                         [operand] => ExprKind::Len {
                             operand: self.lower_expr(*operand),
@@ -265,9 +267,11 @@ impl Lowering<'_> {
                     name_span,
                     format!("the variant `{type_name}::{variant_name}` has fields"),
                 )
-                .help(format!(
-                    "construct it with `{type_name}::{variant_name} {{ ... }}`"
-                ))
+                .help(if definition.is_tuple() {
+                    format!("construct it with `{type_name}::{variant_name}(...)`")
+                } else {
+                    format!("construct it with `{type_name}::{variant_name} {{ ... }}`")
+                })
                 .emit();
                 return ExprKind::Error;
             }
@@ -330,6 +334,104 @@ impl Lowering<'_> {
                 ExprKind::Error
             }
         }
+    }
+
+    /// Lowers `Enum::Variant(value, ...)` when the qualified name is a variant.
+    ///
+    /// Parsing keeps every qualified call in the same `Call` node, because the
+    /// parser cannot know whether `Type::name` is a variant or an associated
+    /// function. Resolution decides here: when `name` is a variant, the call
+    /// becomes a positional variant value; otherwise it falls through to the
+    /// ordinary function-call path.
+    fn lower_variant_call(&mut self, callee: AstExprId, args: &[AstExprId]) -> Option<ExprKind> {
+        let AstExprKind::PathQualified {
+            type_name,
+            name,
+            name_span,
+            ..
+        } = self.ast.expr(callee).kind.clone()
+        else {
+            return None;
+        };
+        let definition = *self.types.get(&type_name)?;
+        let adt = self.hir.adt(definition)?;
+        let adt_def = self.hir.ty_ctxt().adt(adt);
+        if !adt_def.is_enum() {
+            return None;
+        }
+        let variant = self.hir.variant(definition, name)?;
+        let variant_def = adt_def.variant(variant)?.clone();
+        let enum_name = self.interner.resolve(type_name).to_owned();
+        let variant_name = self.interner.resolve(name).to_owned();
+        let path = format!("{enum_name}::{variant_name}");
+
+        if variant_def.is_unit() {
+            let code = if args.is_empty() {
+                codes::E2039
+            } else {
+                codes::E2033
+            };
+            let message = if args.is_empty() {
+                format!("the unit variant `{path}` is written without parentheses")
+            } else {
+                format!("the unit variant `{path}` has no fields")
+            };
+            self.error(code, name_span, message)
+                .help(format!("write `{path}`"))
+                .emit();
+            for arg in args {
+                self.lower_expr(*arg);
+            }
+            return Some(ExprKind::Error);
+        }
+
+        if !variant_def.is_tuple() {
+            self.error(
+                codes::E2037,
+                name_span,
+                format!("the variant `{path}` has named fields"),
+            )
+            .help(format!("construct it with `{path} {{ ... }}`"))
+            .emit();
+            for arg in args {
+                self.lower_expr(*arg);
+            }
+            return Some(ExprKind::Error);
+        }
+
+        if args.len() != variant_def.fields.len() {
+            self.error(
+                codes::E2038,
+                name_span,
+                format!(
+                    "the variant `{path}` takes {} field(s), but {} were supplied",
+                    variant_def.fields.len(),
+                    args.len()
+                ),
+            )
+            .help(if args.len() < variant_def.fields.len() {
+                "supply the missing values"
+            } else {
+                "remove the extra values"
+            })
+            .emit();
+            for arg in args {
+                self.lower_expr(*arg);
+            }
+            return Some(ExprKind::Error);
+        }
+
+        let fields = variant_def
+            .fields
+            .iter()
+            .zip(args)
+            .map(|(field, arg)| (field.def, self.lower_expr(*arg)))
+            .collect();
+        Some(ExprKind::Variant {
+            adt: definition,
+            variant,
+            fields,
+        })
     }
 
     /// Turns a resolved associated function into a callable path.
@@ -533,11 +635,26 @@ impl Lowering<'_> {
             .emit();
             return ExprKind::Error;
         };
-
         let variant_def = adt_def
             .variant(variant)
             .expect("a registered variant belongs to its enum")
             .clone();
+
+        if variant_def.is_tuple() {
+            let enum_type = self.interner.resolve(type_name).to_owned();
+            let variant_name = self.interner.resolve(name).to_owned();
+            self.error(
+                codes::E2036,
+                name_span,
+                format!("the variant `{enum_type}::{variant_name}` has positional fields"),
+            )
+            .help(format!(
+                "construct it with `{enum_type}::{variant_name}(...)`"
+            ))
+            .emit();
+            return ExprKind::Error;
+        }
+
         if variant_def.is_unit() {
             if initializers.is_empty() {
                 return ExprKind::Variant {
@@ -592,7 +709,7 @@ impl Lowering<'_> {
         let mut resolved = Vec::new();
 
         for (field_name, field_span, value) in initializers {
-            match fields.iter().find(|field| field.name == field_name) {
+            match fields.iter().find(|field| field.name == Some(field_name)) {
                 Some(field) => {
                     if !seen.insert(field.def) {
                         self.error(
@@ -626,8 +743,12 @@ impl Lowering<'_> {
 
         let missing: Vec<String> = fields
             .iter()
-            .filter(|field| !seen.contains(&field.def))
-            .map(|field| format!("`{}`", self.interner.resolve(field.name)))
+            .filter(|field| field.name.is_some() && !seen.contains(&field.def))
+            .filter_map(|field| {
+                field
+                    .name
+                    .map(|name| format!("`{}`", self.interner.resolve(name)))
+            })
             .collect();
         if !missing.is_empty() {
             self.error(codes::E2009, span, missing_message)

@@ -23,8 +23,8 @@ pub enum AdtKind {
 pub struct FieldDef {
     /// The field definition, used for spans and diagnostics.
     pub def: DefId,
-    /// The declared field name.
-    pub name: Symbol,
+    /// The declared field name, or `None` for a positional enum variant field.
+    pub name: Option<Symbol>,
     /// The declared field type.
     pub ty: TyId,
 }
@@ -53,7 +53,17 @@ impl VariantDef {
 
     /// Returns the field with the given name, if it exists.
     pub fn field_by_name(&self, name: Symbol) -> Option<&FieldDef> {
-        self.fields.iter().find(|field| field.name == name)
+        self.fields.iter().find(|field| field.name == Some(name))
+    }
+
+    /// Returns `true` when the variant declares positional fields.
+    ///
+    /// A unit variant and a named variant with no fields both report `false`;
+    /// the parser rejects a positional field list with no fields.
+    pub fn is_tuple(&self) -> bool {
+        self.fields
+            .first()
+            .is_some_and(|field| field.name.is_none())
     }
 
     /// Returns `true` if the variant carries no fields.
@@ -91,7 +101,7 @@ impl AdtDef {
 
     /// Returns the field with the given name, if it exists in this struct.
     pub fn field_by_name(&self, name: Symbol) -> Option<&FieldDef> {
-        self.fields.iter().find(|field| field.name == name)
+        self.fields.iter().find(|field| field.name == Some(name))
     }
 
     /// Returns the variant at `index`, if it exists.

@@ -353,12 +353,12 @@ mod tests {
             vec![
                 FieldDef {
                     def: def(1),
-                    name: interner.intern("x"),
+                    name: Some(interner.intern("x")),
                     ty: int,
                 },
                 FieldDef {
                     def: def(2),
-                    name: interner.intern("y"),
+                    name: Some(interner.intern("y")),
                     ty: int,
                 },
             ],
@@ -393,17 +393,17 @@ mod tests {
             vec![
                 FieldDef {
                     def: def(1),
-                    name: interner.intern("flag"),
+                    name: Some(interner.intern("flag")),
                     ty: ctxt.bool_ty(),
                 },
                 FieldDef {
                     def: def(2),
-                    name: interner.intern("value"),
+                    name: Some(interner.intern("value")),
                     ty: ctxt.int_ty(IntTy::I32),
                 },
                 FieldDef {
                     def: def(3),
-                    name: interner.intern("small"),
+                    name: Some(interner.intern("small")),
                     ty: ctxt.int_ty(IntTy::I8),
                 },
             ],
@@ -513,7 +513,7 @@ mod tests {
             adt,
             vec![FieldDef {
                 def: def(1),
-                name: interner.intern("next"),
+                name: Some(interner.intern("next")),
                 ty: own,
             }],
         );
@@ -576,7 +576,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, (name, ty))| FieldDef {
                     def: def(base + index as u32 + 1),
-                    name: interner.intern(name),
+                    name: Some(interner.intern(name)),
                     ty,
                 })
                 .collect(),
@@ -786,5 +786,40 @@ mod tests {
         assert_eq!(tag_layout(257), Layout::new(2, 2));
         assert_eq!(tag_layout(65_536), Layout::new(2, 2));
         assert_eq!(tag_layout(65_537), Layout::new(4, 4));
+    }
+
+    #[test]
+    fn positional_variant_fields_use_declaration_order_offsets() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let adt = ctxt.push_adt(def(0), interner.intern("Pair"), AdtKind::Enum);
+        ctxt.fill_variants(
+            adt,
+            vec![VariantDef {
+                def: def(1),
+                name: interner.intern("Both"),
+                fields: vec![
+                    FieldDef {
+                        def: def(2),
+                        name: None,
+                        ty: ctxt.int_ty(IntTy::I32),
+                    },
+                    FieldDef {
+                        def: def(3),
+                        name: None,
+                        ty: ctxt.uint_ty(seal_ty::UintTy::U8),
+                    },
+                ],
+            }],
+        );
+
+        let layout = LayoutCtxt::new(&ctxt, 64)
+            .enum_layout(adt)
+            .expect("positional fields lay out");
+        assert_eq!(layout.payload_offset, 4);
+        assert_eq!(layout.variants[0].fields[0].offset, 4);
+        assert_eq!(layout.variants[0].fields[1].offset, 8);
+        assert_eq!(layout.payload_size, 5);
+        assert_eq!(layout.layout, Layout::new(12, 4));
     }
 }

@@ -6,8 +6,12 @@ use seal_symbol::Symbol;
 
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
 use crate::expr::{Expr, ExprKind};
-use crate::id::{BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TypeId, VariantDeclId};
-use crate::item::{FieldDecl, Item, ItemKind, Param, VariantDecl};
+use crate::id::{
+    BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TupleFieldDeclId, TypeId, VariantDeclId,
+};
+use crate::item::{
+    FieldDecl, Item, ItemKind, Param, TupleFieldDecl, VariantDecl, VariantFieldList,
+};
 use crate::ty::{Type, TypeKind};
 
 /// The items of one source file, in source order.
@@ -46,6 +50,7 @@ pub struct Ast {
     items: IndexVec<ItemId, Item>,
     params: IndexVec<ParamId, Param>,
     fields: IndexVec<FieldDeclId, FieldDecl>,
+    tuple_fields: IndexVec<TupleFieldDeclId, TupleFieldDecl>,
     variants: IndexVec<VariantDeclId, VariantDecl>,
     blocks: IndexVec<BlockId, Block>,
     stmts: IndexVec<StmtId, Stmt>,
@@ -83,6 +88,12 @@ impl Ast {
     #[inline]
     pub fn variant(&self, id: VariantDeclId) -> &VariantDecl {
         &self.variants[id]
+    }
+
+    /// Returns a positional field of an enum variant.
+    #[inline]
+    pub fn tuple_field(&self, id: TupleFieldDeclId) -> &TupleFieldDecl {
+        &self.tuple_fields[id]
     }
 
     /// Returns a block.
@@ -132,6 +143,13 @@ impl Ast {
     #[inline]
     pub fn variant_arena(&self) -> &IndexVec<VariantDeclId, VariantDecl> {
         &self.variants
+    }
+
+    /// Returns all positional variant field nodes, indexable by
+    /// [`TupleFieldDeclId`].
+    #[inline]
+    pub fn tuple_field_arena(&self) -> &IndexVec<TupleFieldDeclId, TupleFieldDecl> {
+        &self.tuple_fields
     }
 
     /// Returns all block nodes, indexable by [`BlockId`].
@@ -211,7 +229,7 @@ impl AstBuilder {
         &mut self,
         name: Symbol,
         name_span: Span,
-        fields: Vec<FieldDeclId>,
+        fields: VariantFieldList,
         span: Span,
     ) -> VariantDeclId {
         self.ast.variants.push(VariantDecl {
@@ -220,6 +238,11 @@ impl AstBuilder {
             fields,
             span,
         })
+    }
+
+    /// Adds a positional field of an enum variant and returns its ID.
+    pub fn push_tuple_field(&mut self, ty: TypeId, span: Span) -> TupleFieldDeclId {
+        self.ast.tuple_fields.push(TupleFieldDecl { ty, span })
     }
 
     /// Adds a block and returns its ID.

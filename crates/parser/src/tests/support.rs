@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use seal_ast::{
     Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemId, ItemKind, ParamId,
-    StmtId, StmtKind, TypeId, TypeKind, VariantDeclId,
+    StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -161,6 +161,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         stmts: BTreeSet::new(),
         blocks: BTreeSet::new(),
         fields: BTreeSet::new(),
+        tuple_fields: BTreeSet::new(),
         variants: BTreeSet::new(),
         types: BTreeSet::new(),
         params: BTreeSet::new(),
@@ -177,6 +178,7 @@ struct Reachability<'a> {
     stmts: BTreeSet<StmtId>,
     blocks: BTreeSet<BlockId>,
     fields: BTreeSet<FieldDeclId>,
+    tuple_fields: BTreeSet<TupleFieldDeclId>,
     variants: BTreeSet<VariantDeclId>,
     types: BTreeSet<TypeId>,
     params: BTreeSet<ParamId>,
@@ -214,6 +216,11 @@ impl Reachability<'_> {
             self.fields.len(),
             self.ast.field_arena().len(),
             "unreachable field nodes"
+        );
+        assert_eq!(
+            self.tuple_fields.len(),
+            self.ast.tuple_field_arena().len(),
+            "unreachable tuple field nodes"
         );
         assert_eq!(
             self.variants.len(),
@@ -288,9 +295,32 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
         self.assert_span(name_span);
-        for field in fields {
-            self.check_field(field);
+        match fields {
+            VariantFieldList::Unit => {}
+            VariantFieldList::Named(field_ids) => {
+                for field in field_ids {
+                    self.check_field(field);
+                }
+            }
+            VariantFieldList::Tuple(field_ids) => {
+                for field in field_ids {
+                    self.check_tuple_field(field);
+                }
+            }
         }
+    }
+
+    fn check_tuple_field(&mut self, id: TupleFieldDeclId) {
+        assert!(
+            self.tuple_fields.insert(id),
+            "tuple field {id:?} visited twice"
+        );
+        let (span, ty) = {
+            let field = self.ast.tuple_field(id);
+            (field.span, field.ty)
+        };
+        self.assert_span(span);
+        self.check_type(ty);
     }
 
     fn check_function(&mut self, declaration: &FnDecl) {
