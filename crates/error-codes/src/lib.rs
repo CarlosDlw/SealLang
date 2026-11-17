@@ -1100,6 +1100,23 @@ requirement graph contains a cycle, proving one bound would require proving the
 same bound again, so no implementation could ever satisfy it.\n\nRemove one of the supertrait requirements that closes the cycle.",
 };
 
+/// A trait cannot be used as a trait object.
+pub const E2065: ErrorCode = ErrorCode {
+    code: "E2065",
+    title: "trait is not dyn-compatible",
+    explanation: "\
+A `dyn Trait` type needs a finite vtable, so every method must be callable
+without knowing the concrete type. A trait is dyn-compatible only when all of
+its supertraits are dyn-compatible and every method can be dispatched. A method
+is dispatchable when it takes `*Self` or `*mut Self`, has no type parameters of
+its own, does not mention `Self` outside the receiver, and is not an associated
+function. A supertrait argument may not mention `Self` either.\n\nA trait that is not dyn-compatible can still be used for static dispatch. To
+form a trait object, change the offending methods to pointer receivers, remove
+method type parameters and `Self` from parameter and return types, make every
+supertrait dyn-compatible, and remove associated functions from the
+dispatchable surface.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1776,6 +1793,33 @@ combinations. The limit exists so such a program reports an error instead of
 consuming unbounded memory.",
 };
 
+/// A vtable slot has no concrete method implementation.
+pub const E7005: ErrorCode = ErrorCode {
+    code: "E7005",
+    title: "vtable method has no implementation",
+    explanation: "\
+Monomorphization builds one vtable for each concrete type and trait reference.
+Every method slot must resolve to the concrete method instance selected by the
+implementation. A slot with no implementation means the vtable would contain a
+missing entry, so code generation cannot produce a safe indirect call.\n\nType checking normally rejects this before monomorphization. If it reaches
+this stage, make sure the trait is implemented for the concrete type and that
+the trait arguments match the implementation. Report the program if the
+implementation exists and the compiler still cannot find it.",
+};
+
+/// The vtable collection limit was reached.
+pub const E7006: ErrorCode = ErrorCode {
+    code: "E7006",
+    title: "vtable limit reached",
+    explanation: "\
+Every distinct concrete type and trait reference pair needs its own vtable. A
+program that creates trait objects for very many combinations can exhaust the
+vtable collection limit before code generation starts.\n\nReduce the number of concrete type and trait combinations, for example by
+grouping implementations behind fewer traits, or split the program so each part
+uses fewer trait objects. The limit exists so such a program reports an error
+instead of consuming unbounded memory.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -1927,6 +1971,34 @@ call without a unique target.\n\nRemove one of the overlapping methods, or use t
 impl self type.",
 };
 
+/// A trait-object coercion has no unique implementation.
+pub const E3046: ErrorCode = ErrorCode {
+    code: "E3046",
+    title: "no unique implementation for trait object",
+    explanation: "\
+Coercing `*S` to `*dyn Trait` or `*mut S` to `*mut dyn Trait` needs exactly one
+implementation of the target trait for `S`, with the exact trait arguments
+written in the `dyn` type. The coercion cannot choose between several
+candidates, and it cannot invent an implementation that does not exist.\n\nImplement the trait for the concrete type, correct the trait arguments, or
+remove the conflicting implementation. If the value should keep static
+dispatch, use the concrete pointer type instead of a trait object.",
+};
+
+/// A trait-object coercion is not valid.
+pub const E3047: ErrorCode = ErrorCode {
+    code: "E3047",
+    title: "invalid trait object coercion",
+    explanation: "\
+A trait object can only be formed from a pointer to a sized concrete value. The
+allowed coercions are `*S` to `*dyn Trait` and `*mut S` to `*mut dyn Trait`.
+The reference kind is preserved: a mutable pointer does not silently become a
+shared trait object, and a shared pointer cannot become mutable. Nested
+coercions such as `*[S]` to `*[dyn Trait]` are also rejected because they would
+change the element layout, not just the pointer metadata.\n\nUse a pointer with the same mutability, make the pointee sized, or reborrow
+explicitly with `&*pointer` when a shared trait object is required. Trait-object
+upcasting from one trait to a supertrait is not a coercion in this language.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -1935,12 +2007,13 @@ pub static ALL: &[ErrorCode] = &[
     E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
     E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
     E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051, E2052, E2053, E2054,
-    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064, E3001, E3002, E3003,
-    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
-    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
-    E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
-    E3043, E3044, E3045, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E6001, E6002, E6003, E7001, E7002, E7003, E7004, E9001, E9002,
+    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064, E2065, E3001, E3002,
+    E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015,
+    E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028,
+    E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041,
+    E3042, E3043, E3044, E3045, E3046, E3047, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
+    E5008, E5009, E5010, E6001, E6002, E6003, E7001, E7002, E7003, E7004, E7005, E7006, E9001,
+    E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2014,6 +2087,23 @@ mod tests {
     }
 
     #[test]
+    fn trait_object_codes_have_explanations() {
+        for (code, fragment) in [
+            ("E2065", "needs a finite vtable"),
+            ("E3046", "cannot choose between several"),
+            ("E3047", "reference kind is preserved"),
+            ("E7005", "missing entry"),
+            ("E7006", "vtable collection limit"),
+        ] {
+            let entry = lookup(code).expect("trait-object code is registered");
+            assert!(
+                entry.explanation().contains(fragment),
+                "{code} explanation is missing {fragment:?}"
+            );
+        }
+    }
+
+    #[test]
     fn codes_are_grouped_by_phase() {
         for code in [E0001, E0002, E0003, E0012] {
             assert_eq!(code.code()[1..2].parse::<u8>().expect("digit"), 0);
@@ -2057,7 +2147,7 @@ mod tests {
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
                 "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
                 "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
-                "E2064",
+                "E2064", "E2065",
             ]
         );
     }
@@ -2077,6 +2167,7 @@ mod tests {
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
+                "E3046", "E3047",
             ]
         );
     }
@@ -2114,7 +2205,10 @@ mod tests {
             .map(|entry| entry.code())
             .filter(|code| code.starts_with("E70"))
             .collect();
-        assert_eq!(codes, ["E7001", "E7002", "E7003", "E7004"]);
+        assert_eq!(
+            codes,
+            ["E7001", "E7002", "E7003", "E7004", "E7005", "E7006"]
+        );
     }
 
     #[test]

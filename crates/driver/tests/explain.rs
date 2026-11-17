@@ -10,12 +10,17 @@ fn monomorphization_codes_explain_the_action() {
     for (code, fragment) in [
         ("E1002", "The grammar required a specific token"),
         ("E2051", "A generic parameter name must be unique"),
+        ("E2065", "needs a finite vtable"),
         ("E3038", "A generic parameter has no value"),
         ("E3041", "A type parameter is opaque inside a generic body"),
+        ("E3046", "needs exactly one"),
+        ("E3047", "reference kind is preserved"),
         ("E7001", "instance chain that reached it"),
         ("E7002", "selects the implementation"),
         ("E7003", "there is no caller to supply its type"),
         ("E7004", "Reduce the number of distinct instantiations"),
+        ("E7005", "missing entry"),
+        ("E7006", "vtable collection limit"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_sealc"))
             .arg("explain")
