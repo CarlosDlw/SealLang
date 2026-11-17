@@ -840,6 +840,37 @@ fn a_value_receiver_accepts_a_temporary_receiver() {
 }
 
 #[test]
+fn a_value_receiver_moves_a_field_out_of_a_struct() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "trait-value-field-debug"),
+        (OptLevel::O2, false, "trait-value-field-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Token { value: i32 }\n\
+             struct Holder { token: Token }\n\
+             trait Consume { func consume(self: Self) -> i32; }\n\
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } }\n\
+             func main() -> i32 {\n\
+               let token = Token { value: 21 };\n\
+               let holder = Holder { token: token };\n\
+               holder.token.consume() * 2\n\
+             }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("a field receiver compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\
