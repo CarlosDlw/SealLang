@@ -10,6 +10,7 @@ mod options;
 mod output;
 mod pipeline;
 mod report;
+mod temp;
 
 use std::panic::AssertUnwindSafe;
 use std::process::ExitCode;
@@ -38,7 +39,7 @@ fn main() -> ExitCode {
 fn run(cli: &cli::Cli) -> Result<ExitCode, String> {
     match &cli.command {
         CliCommand::Build(args) => pipeline::build(args),
-        CliCommand::Run(args) => actions::run(args),
+        CliCommand::Run(args) => pipeline::run(args),
         CliCommand::Check(args) => pipeline::check(args),
         CliCommand::Explain(args) => actions::explain(&args.code),
         CliCommand::EmitRuntime(args) => actions::emit_runtime(&args.path),

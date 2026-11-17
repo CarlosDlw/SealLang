@@ -8,16 +8,19 @@
 //! structural: only a build carries an artifact to write, so no command can
 //! accidentally produce files or silently skip code generation.
 
+use std::ffi::OsString;
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, ExitStatus};
 
 use seal_codegen::{CodegenInput, CodegenOptions, Emit};
 use seal_session::Session;
+use seal_target::host_triple;
 
-use crate::cli::{BuildArgs, CheckArgs, CompileArgs, OutputArgs};
+use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, OutputArgs, RunArgs};
 use crate::options::session_options;
 use crate::output::artifact_path;
 use crate::report;
+use crate::temp::TemporaryDirectory;
 
 /// What the selected command asks the pipeline to do.
 #[derive(Clone, Copy)]
@@ -30,6 +33,24 @@ enum Request<'a> {
         output: &'a OutputArgs,
         runtime_archive: Option<&'a Path>,
     },
+}
+
+/// Whether compilation completed without errors.
+enum Outcome {
+    /// All inputs compiled successfully.
+    Success,
+    /// Compilation reported errors and produced no usable artifact.
+    Failed(ExitCode),
+}
+
+impl Outcome {
+    /// Returns the process status a build or check should report.
+    fn code(self) -> ExitCode {
+        match self {
+            Self::Success => ExitCode::SUCCESS,
+            Self::Failed(code) => code,
+        }
+    }
 }
 
 impl Request<'_> {
@@ -60,15 +81,95 @@ pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
             runtime_archive: args.runtime_archive.as_deref(),
         },
     )
+    .map(Outcome::code)
+}
+
+/// Builds one input into a temporary executable and runs it.
+///
+/// The executable is removed when this function returns, whether compilation
+/// or execution succeeds or fails. Standard streams are inherited so the
+/// program behaves as it would when launched from a shell.
+pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
+    ensure_host_target(args)?;
+    let temporary = TemporaryDirectory::new()?;
+    let executable = temporary.executable();
+    let output = OutputArgs {
+        emit: EmitArg::Exe,
+        path: Some(executable.clone()),
+        optimization: args.optimization.clone(),
+    };
+    let compile_arguments = CompileArgs {
+        inputs: vec![args.input.clone()],
+        target: args.target.clone(),
+        diagnostics: args.diagnostics.clone(),
+    };
+    let request = Request::Build {
+        emit: Emit::Executable,
+        output: &output,
+        runtime_archive: args.runtime_archive.as_deref(),
+    };
+
+    match compile(&compile_arguments, request)? {
+        Outcome::Failed(code) => Ok(code),
+        Outcome::Success => execute(&executable, &args.program_args),
+    }
+}
+
+/// Rejects execution of a binary built for a different architecture or OS.
+fn ensure_host_target(args: &RunArgs) -> Result<(), String> {
+    let Some(target) = &args.target.target else {
+        return Ok(());
+    };
+    let host = host_triple();
+    if target.arch() == host.arch() && target.os() == host.os() {
+        return Ok(());
+    }
+    Err(format!(
+        "`run` can only execute host programs; build for `{}` with `sealc build` and run the executable separately",
+        target
+    ))
+}
+
+/// Executes the built program and maps its termination status to `sealc`'s.
+fn execute(executable: &Path, arguments: &[OsString]) -> Result<ExitCode, String> {
+    let status = Command::new(executable)
+        .args(arguments)
+        .status()
+        .map_err(|error| format!("cannot execute `{}`: {error}", executable.display()))?;
+    program_exit_code(status)
+}
+
+/// Converts the child status into the status `sealc` returns to its caller.
+#[cfg(unix)]
+fn program_exit_code(status: ExitStatus) -> Result<ExitCode, String> {
+    use std::os::unix::process::ExitStatusExt;
+
+    if let Some(code) = status.code() {
+        return Ok(ExitCode::from(code as u8));
+    }
+    if let Some(signal) = status.signal() {
+        // Shells report a signal-terminated child as 128 + the signal number.
+        return Ok(ExitCode::from((128 + signal) as u8));
+    }
+    Err("the program terminated without an exit status".to_owned())
+}
+
+/// Converts the child status into the status `sealc` returns to its caller.
+#[cfg(not(unix))]
+fn program_exit_code(status: ExitStatus) -> Result<ExitCode, String> {
+    status
+        .code()
+        .map(|code| ExitCode::from(code as u8))
+        .ok_or_else(|| "the program terminated without an exit status".to_owned())
 }
 
 /// Analyzes every input without writing anything.
 pub(crate) fn check(args: &CheckArgs) -> Result<ExitCode, String> {
-    compile(&args.compile, Request::Check)
+    compile(&args.compile, Request::Check).map(Outcome::code)
 }
 
 /// Creates the session, compiles each input, and reports the final status.
-fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<ExitCode, String> {
+fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, String> {
     let session = Session::new(session_options(arguments, request.output()))
         .map_err(|error| error.to_string())?;
     for input in &arguments.inputs {
@@ -92,9 +193,9 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<ExitCode, St
             errors,
             plural(errors, "error", "errors"),
         );
-        return Ok(ExitCode::from(1));
+        return Ok(Outcome::Failed(ExitCode::from(1)));
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(Outcome::Success)
 }
 
 /// Selects the singular or plural spelling of a counted noun.
@@ -191,8 +292,8 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     let options = CodegenOptions {
         emit,
         output: artifact_path(output, input, emit),
-        opt_level: output.opt_level,
-        debug_info: output.debug_info,
+        opt_level: output.optimization.opt_level,
+        debug_info: output.optimization.debug_info,
         crate_name: input
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned()),

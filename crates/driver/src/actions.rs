@@ -6,16 +6,6 @@ use std::process::ExitCode;
 use seal_target::host_triple;
 use seal_version::LanguageVersion;
 
-use crate::cli::RunArgs;
-
-/// Reports that the reserved `run` command is not available yet.
-pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
-    Err(format!(
-        "the `run` command is not implemented yet; build `{}` with `sealc build` and run the executable",
-        args.input.display()
-    ))
-}
-
 /// Prints the explanation for `code` and reports success.
 pub(crate) fn explain(code: &str) -> Result<ExitCode, String> {
     match seal_error_codes::explain(code) {

@@ -338,9 +338,11 @@ allowed to depend only on crates below it in the list.
     target archive.
 60. **The command line is declarative.** `seal-driver` parses a required
     subcommand with `clap`. Each command declares only the options it honors:
-    shared compile options (inputs, target, diagnostics) are reused, while
-    output and runtime options belong to `build`. Checking is a command, not an
-    artifact kind, so it cannot write files. One module converts the parsed
+    shared compile options (inputs, target, diagnostics, optimization, runtime)
+    are reused, while output selection belongs to `build`. Checking is a
+    command, not an artifact kind, so it cannot write files. `run` owns a
+    temporary executable path, executes only host targets, forwards arguments
+    after `--`, and returns the child status. One module converts the parsed
     arguments into session options, and rules that span arguments, such as a
     single `-o`, are ordinary usage errors with status 2.
 61. **A call accesses through its reference arguments.** An exclusive argument

@@ -18,8 +18,8 @@ use crate::cli::{CompileArgs, OutputArgs};
 pub(crate) fn session_options(arguments: &CompileArgs, output: Option<&OutputArgs>) -> Options {
     Options {
         target: arguments.target.target.clone().unwrap_or_else(host_triple),
-        opt_level: output.map_or(OptLevel::O0, |output| output.opt_level),
-        debug_info: output.is_some_and(|output| output.debug_info),
+        opt_level: output.map_or(OptLevel::O0, |output| output.optimization.opt_level),
+        debug_info: output.is_some_and(|output| output.optimization.debug_info),
         language_version: arguments
             .target
             .language_version

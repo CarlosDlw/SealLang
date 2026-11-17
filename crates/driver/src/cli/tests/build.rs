@@ -19,8 +19,8 @@ fn build_defaults_match_the_compiler_defaults() {
     assert_eq!(args.compile.inputs, vec![PathBuf::from("main.sl")]);
     assert_eq!(args.output.emit, EmitArg::Exe);
     assert_eq!(args.output.artifact(), Emit::Executable);
-    assert_eq!(args.output.opt_level, OptLevel::O0);
-    assert!(!args.output.debug_info);
+    assert_eq!(args.output.optimization.opt_level, OptLevel::O0);
+    assert!(!args.output.optimization.debug_info);
     assert_eq!(args.compile.diagnostics.error_format, ErrorFormatArg::Human);
     assert_eq!(
         ErrorFormat::from(args.compile.diagnostics.error_format),
@@ -55,22 +55,30 @@ fn check_uses_the_same_analysis_options_without_output_options() {
 #[test]
 fn optimization_levels_accept_attached_separate_and_bare_forms() {
     assert_eq!(
-        build_args(&["build", "main.sl", "-O"]).output.opt_level,
+        build_args(&["build", "main.sl", "-O"])
+            .output
+            .optimization
+            .opt_level,
         OptLevel::O3
     );
     assert_eq!(
-        build_args(&["build", "-O2", "main.sl"]).output.opt_level,
+        build_args(&["build", "-O2", "main.sl"])
+            .output
+            .optimization
+            .opt_level,
         OptLevel::O2
     );
     assert_eq!(
         build_args(&["build", "--opt-level=1", "main.sl"])
             .output
+            .optimization
             .opt_level,
         OptLevel::O1
     );
     assert_eq!(
         build_args(&["build", "--opt-level", "3", "main.sl"])
             .output
+            .optimization
             .opt_level,
         OptLevel::O3
     );
@@ -140,7 +148,7 @@ fn runtime_archive_is_a_build_option() {
 #[test]
 fn codegen_flags_parse() {
     let args = build_args(&["build", "-g", "--emit=obj", "-o", "out.o", "main.sl"]);
-    assert!(args.output.debug_info);
+    assert!(args.output.optimization.debug_info);
     assert_eq!(args.output.artifact(), Emit::Object);
     assert_eq!(args.output.path, Some(PathBuf::from("out.o")));
 

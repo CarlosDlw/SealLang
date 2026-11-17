@@ -5,7 +5,7 @@ use clap::Args;
 use super::values::{ColorArg, ErrorFormatArg, parse_positive};
 
 /// How diagnostics are rendered and limited.
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 pub(crate) struct DiagnosticArgs {
     /// Diagnostic format.
     #[arg(

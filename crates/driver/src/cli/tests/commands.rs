@@ -66,11 +66,11 @@ fn informational_commands_do_not_require_an_input() {
 }
 
 #[test]
-fn run_is_reserved_and_parses_its_input() {
+fn run_parses_its_input() {
     let cli = parsed(&["run", "main.sl"]);
     assert!(matches!(
         cli.command,
-        CliCommand::Run(crate::cli::RunArgs { input })
+        CliCommand::Run(crate::cli::RunArgs { input, .. })
             if input.as_os_str() == "main.sl"
     ));
 }

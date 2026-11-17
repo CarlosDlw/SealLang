@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use clap::Args;
 use seal_codegen::Emit;
-use seal_session::OptLevel;
 
-use super::values::{EmitArg, parse_opt_level};
+use super::optimization::OptimizationArgs;
+use super::values::EmitArg;
 
 /// What to produce and how to optimize it.
 #[derive(Debug, Args)]
@@ -30,22 +30,8 @@ pub(crate) struct OutputArgs {
     )]
     pub(crate) path: Option<PathBuf>,
 
-    /// Emit DWARF debug information.
-    #[arg(short = 'g', long = "debug-info", help_heading = "Output")]
-    pub(crate) debug_info: bool,
-
-    /// Optimization level; `-O` alone selects 3.
-    #[arg(
-        short = 'O',
-        long = "opt-level",
-        value_name = "LEVEL",
-        num_args = 0..=1,
-        default_value = "0",
-        default_missing_value = "3",
-        value_parser = parse_opt_level,
-        help_heading = "Optimization"
-    )]
-    pub(crate) opt_level: OptLevel,
+    #[command(flatten)]
+    pub(crate) optimization: OptimizationArgs,
 }
 
 impl OutputArgs {

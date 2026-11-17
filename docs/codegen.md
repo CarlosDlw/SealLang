@@ -41,14 +41,16 @@ assembly output do not require an entry point; executables do.
 ```text
 sealc build [OPTIONS] <INPUT>...
 sealc check [OPTIONS] <INPUT>...
+sealc run [OPTIONS] <INPUT> [-- <ARGS>...]
 sealc emit-runtime <PATH>
 sealc explain <CODE>
 ```
 
 `sealc help` lists the commands, and `sealc help build` lists every build option
 grouped by concern: output, optimization, target, diagnostics, and runtime.
-Options accept `--name value` and `--name=value`, and `--` ends option parsing so
-a file named like a flag stays an input.
+Options accept `--name value` and `--name=value`. In `build` and `check`, `--`
+ends option parsing so a file named like a flag stays an input; in `run`, `--`
+separates the program arguments.
 
 - `sealc build --emit=exe` (the default) links an executable,
   `sealc build --emit=obj` writes an object, and `sealc build --emit=asm` writes
@@ -64,10 +66,16 @@ a file named like a flag stays an input.
   compiling, and `sealc build --runtime-archive <PATH>` links against a
   different archive.
 - `sealc explain <CODE>` prints an error-code explanation without compiling.
+- `sealc run` builds an executable inside an isolated temporary directory, runs
+  it with inherited standard streams, removes the directory on every path, and
+  returns the program's exit status. It shares the optimization, runtime,
+  target, and diagnostic options with `build`, but owns its output path. Only
+  host programs can run: a target with another architecture or OS is rejected
+  before compilation. Arguments after `--` are forwarded to the program.
 
-The exit status is 0 on success, 1 after a compile error or the unimplemented
-`run` command, 2 after a usage error, and 101 after an internal compiler error
-or a runtime panic.
+The exit status is 0 on success, 1 after a compile error, 2 after a usage
+error, and 101 after an internal compiler error. `sealc run` returns the
+program's status, including 101 for a Seal runtime panic.
 
 The linker is selected from `SEAL_LINKER`, then `CC`, then `cc`. Arguments are
 passed directly, never through a shell. A linker failure is `E6003` and includes

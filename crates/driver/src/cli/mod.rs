@@ -13,6 +13,7 @@ mod compile;
 mod diagnostics;
 mod emit_runtime;
 mod explain;
+mod optimization;
 mod output;
 mod run;
 mod target;
@@ -32,6 +33,7 @@ pub(crate) use emit_runtime::EmitRuntimeArgs;
 pub(crate) use explain::ExplainArgs;
 pub(crate) use output::OutputArgs;
 pub(crate) use run::RunArgs;
+pub(crate) use values::EmitArg;
 
 /// Parsed command-line options.
 #[derive(Debug, Parser)]
@@ -42,13 +44,14 @@ pub(crate) use run::RunArgs;
     long_about = "The Seal compiler\n\n\
                   Builds, checks, and inspects Seal programs. Run `sealc help <COMMAND>`\n\
                   for the options of one command.\n\n\
-                  Exit status: 0 on success, 1 after a compile error or an unimplemented\n\
-                  command, 2 after a usage error, and 101 after an internal compiler error\n\
-                  or a runtime panic.",
+                  Exit status: 0 on success, 1 after a compile error, 2 after a usage error,\n\
+                  and 101 after an internal compiler error or a runtime panic. `sealc run`\n\
+                  returns the exit status of the program it executes.",
     subcommand_required = true,
     arg_required_else_help = true,
     after_help = "Examples:\n  \
                   sealc build examples/006_structs.sl\n  \
+                  sealc run examples/006_structs.sl\n  \
                   sealc check examples/006_structs.sl\n  \
                   sealc build --emit=obj -O2 examples/006_structs.sl -o /tmp/structs.o\n  \
                   sealc explain E5005\n  \
@@ -65,10 +68,7 @@ pub(crate) struct Cli {
 pub(crate) enum CliCommand {
     /// Compile inputs into executables, objects, or assembly.
     Build(BuildArgs),
-    /// Build and run a program (not implemented yet).
-    ///
-    /// The command is reserved. It currently reports that execution is not
-    /// available and points at `sealc build`.
+    /// Build a program into a temporary executable and run it.
     Run(RunArgs),
     /// Check inputs without writing an artifact.
     Check(CheckArgs),

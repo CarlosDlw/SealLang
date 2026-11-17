@@ -26,9 +26,11 @@ cargo build --release
 ```
 
 `sealc build` runs the whole pipeline: it type-checks, borrow-checks, lowers
-checked MIR to LLVM IR, optimizes, and links an executable. `sealc check` stops
-after analysis, while `sealc build --emit=obj` and `sealc build --emit=asm` write
-intermediate artifacts.
+checked MIR to LLVM IR, optimizes, and links an executable. `sealc run` builds
+that executable in a temporary directory, runs it with inherited standard
+streams, removes it afterwards, and returns the program's exit status. `sealc check`
+stops after analysis, while `sealc build --emit=obj` and `sealc build --emit=asm`
+write intermediate artifacts.
 
 ## The language at a glance
 
@@ -105,7 +107,7 @@ innermost loop, and `continue` reevaluates the scrutinee.
 ```text
 sealc build [OPTIONS] <INPUT>...
 sealc check [OPTIONS] <INPUT>...
-sealc run <INPUT>              # reserved; not implemented yet
+sealc run [OPTIONS] <INPUT> [-- <ARGS>...]
 sealc explain <CODE>
 sealc emit-runtime <PATH>
 sealc version
@@ -116,7 +118,7 @@ sealc help [COMMAND]
 |---------|--------|
 | `build` | Type-check, borrow-check, and write an executable, object, or assembly |
 | `check` | Run every analysis pass through monomorphization; write nothing |
-| `run` | Reserved for building and running a program; currently exits with an error |
+| `run` | Build into a temporary executable, run it, and return its exit status |
 | `explain` | Print the long-form explanation of a diagnostic code |
 | `emit-runtime` | Export the embedded runtime archive |
 | `version` | Print the compiler version, language version, and host triple |
@@ -138,10 +140,15 @@ sealc help [COMMAND]
 `--allow-unstable-features`, and the diagnostic options (`--error-format`,
 `--color`, `--max-errors`, `--remap-path-prefix`, `--time-passes`).
 
+`run` accepts the optimization, target, runtime, and diagnostic options above,
+but not `--emit` or `-o`: it owns the temporary output path. It executes only
+host programs, so a target with a different architecture or OS is rejected with
+status `1` before compilation. Arguments after `--` are forwarded unchanged.
+
 Without `-o`, `sealc build` writes `file`, `file.o`, or `file.s` next to the
-input. The exit status is `0` on success, `1` after a compile error or the
-unimplemented `run` command, `2` after a usage error, and `101` after an internal
-compiler error or a runtime panic.
+input. The exit status is `0` on success, `1` after a compile error, `2` after a
+usage error, and `101` after an internal compiler error. `sealc run` returns the
+exit status of the program it executes, including `101` for a Seal runtime panic.
 
 ## Verifying a commit
 
