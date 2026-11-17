@@ -814,6 +814,32 @@ fn a_trait_method_with_a_value_receiver_moves_the_value() {
 }
 
 #[test]
+fn a_value_receiver_accepts_a_temporary_receiver() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "trait-value-temporary-debug"),
+        (OptLevel::O2, false, "trait-value-temporary-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Token { value: i32 }\n\
+             trait Consume { func consume(self: Self) -> i32; }\n\
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } }\n\
+             func main() -> i32 { Token { value: 21 }.consume() * 2 }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("a temporary receiver compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\
