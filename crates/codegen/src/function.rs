@@ -8,11 +8,12 @@ use inkwell::module::Module;
 use inkwell::types::{BasicTypeEnum, IntType};
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use seal_def::DefId;
+use seal_hash::FxHashMap;
 use seal_hir::Hir;
 use seal_mir::{Body, LocalId, LocalKind, StatementKind, SwitchTarget, TerminatorKind};
 use seal_span::{SourceMap, Span};
 use seal_symbol::Interner;
-use seal_ty::{TyCtxt, TyId};
+use seal_ty::{Instance, TyCtxt, TyId};
 
 use crate::constant::Constants;
 use crate::debug::DebugContext;
@@ -40,6 +41,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     /// Constants for this module.
     pub(crate) constants: &'a Constants<'a, 'ctx>,
+    /// Declared functions, keyed by instance.
+    pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     /// Symbol interner.
     pub(crate) interner: &'a Interner,
     /// Source map, used for runtime panic locations.
@@ -61,6 +64,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) tcx: &'a TyCtxt,
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     pub(crate) constants: &'a Constants<'a, 'ctx>,
+    pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     pub(crate) interner: &'a Interner,
     pub(crate) source_map: &'a SourceMap,
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
@@ -94,6 +98,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             tcx: self.tcx,
             mapper: self.mapper,
             constants: self.constants,
+            functions: self.functions,
             interner: self.interner,
             source_map: self.source_map,
             debug: self.debug,
@@ -298,11 +303,6 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     /// Returns the type of a local.
     pub(crate) fn local_type(&self, local: LocalId) -> TyId {
         self.body.local(local).ty
-    }
-
-    /// Returns the HIR definition table.
-    pub(crate) fn definitions(&self) -> &seal_def::Definitions {
-        self.hir.definitions()
     }
 
     /// Resolves an aggregate definition.

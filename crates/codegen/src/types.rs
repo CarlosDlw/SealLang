@@ -11,7 +11,7 @@
 //! their size as alignment, references use the target pointer width, and `bool`
 //! is a one-byte `i1`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use inkwell::AddressSpace;
 use inkwell::context::Context;
@@ -20,19 +20,27 @@ use seal_hash::FxHashMap;
 use seal_index::Idx;
 use seal_layout::{Layout, LayoutCtxt, LayoutError};
 use seal_symbol::Interner;
-use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, TupleId, TyCtxt, TyId, TyKind, UintTy};
+use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, SubstsId, TupleId, TyCtxt, TyId, TyKind, UintTy};
 
 use crate::error::CodegenError;
 
 /// Maps interned Seal types to LLVM types.
+///
+/// Generic aggregates are mapped per instantiation: `Pair<i32, bool>` and
+/// `Pair<u8, i32>` receive distinct LLVM structs with their own field types and
+/// layouts. Each struct is reserved as opaque before its body is filled, so a
+/// reference to it can be created first, and a recursive reference finds the
+/// reservation instead of recursing forever.
 pub(crate) struct TypeMapper<'ctx> {
     context: &'ctx Context,
     tcx: &'ctx TyCtxt,
+    interner: &'ctx Interner,
     layouts: LayoutCtxt<'ctx>,
     pointer_width: u8,
     empty: StructType<'ctx>,
     fat_pointer: StructType<'ctx>,
-    adts: Vec<StructType<'ctx>>,
+    adts: RefCell<FxHashMap<(AdtId, SubstsId), StructType<'ctx>>>,
+    next_instantiation: Cell<u32>,
     tuples: RefCell<FxHashMap<TupleId, StructType<'ctx>>>,
 }
 
@@ -41,7 +49,7 @@ impl<'ctx> TypeMapper<'ctx> {
     pub(crate) fn new(
         context: &'ctx Context,
         tcx: &'ctx TyCtxt,
-        interner: &Interner,
+        interner: &'ctx Interner,
         pointer_width: u8,
     ) -> Result<Self, CodegenError> {
         let empty = context.struct_type(&[], false);
@@ -58,43 +66,35 @@ impl<'ctx> TypeMapper<'ctx> {
         let fat_pointer = context.struct_type(&[byte_ptr.into(), usize_ty.into()], false);
         let layouts = LayoutCtxt::new(tcx, pointer_width);
 
-        let mut adts = Vec::with_capacity(tcx.adt_len());
-        for index in 0..tcx.adt_len() {
-            let adt = AdtId::from_usize(index);
-            let definition = tcx.adt(adt);
-            let name = format!("seal.adt.{index}.{}", interner.resolve(definition.name));
-            adts.push(context.opaque_struct_type(&name));
-        }
-
         let mapper = Self {
             context,
             tcx,
+            interner,
             layouts,
             pointer_width,
             empty,
             fat_pointer,
-            adts,
+            adts: RefCell::new(FxHashMap::default()),
+            next_instantiation: Cell::new(0),
             tuples: RefCell::new(FxHashMap::default()),
         };
-        mapper.fill_aggregates()?;
+        mapper.fill_non_generic_aggregates()?;
         Ok(mapper)
     }
 
-    fn fill_aggregates(&self) -> Result<(), CodegenError> {
-        for index in 0..self.adts.len() {
+    /// Builds every aggregate that declares no type parameters.
+    ///
+    /// A generic aggregate has no single LLVM type: it is built lazily for each
+    /// `(definition, type arguments)` pair the program actually uses. Concrete
+    /// aggregates keep their eager construction so a malformed definition is
+    /// reported before any function body is lowered.
+    fn fill_non_generic_aggregates(&self) -> Result<(), CodegenError> {
+        for index in 0..self.tcx.adt_len() {
             let adt = AdtId::from_usize(index);
-            let definition = self.tcx.adt(adt);
-            let field_types = match definition.kind {
-                AdtKind::Struct => {
-                    let mut field_types = Vec::with_capacity(definition.fields.len());
-                    for field in &definition.fields {
-                        field_types.push(self.basic(field.ty)?);
-                    }
-                    field_types
-                }
-                AdtKind::Enum => self.enum_fields(adt)?,
-            };
-            self.adts[index].set_body(&field_types, false);
+            if self.tcx.adt_generic_count(adt) != 0 {
+                continue;
+            }
+            self.adt(adt, self.tcx.empty_substs())?;
         }
         Ok(())
     }
@@ -107,8 +107,12 @@ impl<'ctx> TypeMapper<'ctx> {
     /// exactly at the language layout's payload offset. Variant fields are later
     /// stored into the payload through byte offsets, which keeps one LLVM type
     /// able to hold every variant.
-    fn enum_fields(&self, adt: AdtId) -> Result<Vec<BasicTypeEnum<'ctx>>, CodegenError> {
-        let layout = self.enum_layout(adt)?;
+    fn enum_fields(
+        &self,
+        adt: AdtId,
+        args: SubstsId,
+    ) -> Result<Vec<BasicTypeEnum<'ctx>>, CodegenError> {
+        let layout = self.enum_layout(adt, args)?;
         let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
             CodegenError::internal(format!("enum {adt:?} has a tag too wide for LLVM"))
         })?;
@@ -150,7 +154,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 })?;
                 BasicTypeEnum::ArrayType(self.basic(element)?.array_type(length))
             }
-            TyKind::Adt { adt, .. } => BasicTypeEnum::StructType(self.adt(adt)),
+            TyKind::Adt { adt, args } => BasicTypeEnum::StructType(self.adt(adt, args)?),
             TyKind::Tuple(tuple) => {
                 let cached = self.tuples.borrow().get(&tuple).copied();
                 let tuple_type = match cached {
@@ -200,9 +204,49 @@ impl<'ctx> TypeMapper<'ctx> {
         Ok(self.basic(returns)?.fn_type(&llvm_parameters, false))
     }
 
-    /// Returns the named struct type for `adt`.
-    pub(crate) fn adt(&self, adt: AdtId) -> StructType<'ctx> {
-        self.adts[adt.index() as usize]
+    /// Returns the LLVM struct of `adt` instantiated with `args`.
+    ///
+    /// The struct is created on first use, reserved as opaque, then filled from
+    /// the instantiated field types. A non-generic aggregate uses the empty
+    /// argument list and keeps the historical `seal.adt.<index>.<name>` type
+    /// name; each generic instantiation receives a unique suffix.
+    pub(crate) fn adt(&self, adt: AdtId, args: SubstsId) -> Result<StructType<'ctx>, CodegenError> {
+        let key = (adt, args);
+        if let Some(found) = self.adts.borrow().get(&key).copied() {
+            return Ok(found);
+        }
+        let definition = self.tcx.adt(adt);
+        let name = if self.tcx.substs_args(args).is_empty() {
+            format!(
+                "seal.adt.{}.{}",
+                adt.index(),
+                self.interner.resolve(definition.name)
+            )
+        } else {
+            let serial = self.next_instantiation.get();
+            self.next_instantiation.set(serial + 1);
+            format!(
+                "seal.adt.{}.{}.{serial}",
+                adt.index(),
+                self.interner.resolve(definition.name)
+            )
+        };
+        let created = self.context.opaque_struct_type(&name);
+        self.adts.borrow_mut().insert(key, created);
+
+        let field_types = match definition.kind {
+            AdtKind::Struct => {
+                let mut field_types = Vec::with_capacity(definition.fields.len());
+                for field in &definition.fields {
+                    let field_ty = self.tcx.substitute(field.ty, args);
+                    field_types.push(self.basic(field_ty)?);
+                }
+                field_types
+            }
+            AdtKind::Enum => self.enum_fields(adt, args)?,
+        };
+        created.set_body(&field_types, false);
+        Ok(created)
     }
 
     /// Returns the layout of `ty`.
@@ -210,9 +254,16 @@ impl<'ctx> TypeMapper<'ctx> {
         self.layouts.layout_of(ty).map_err(layout_error)
     }
 
-    /// Returns the tag and payload layout of the enum `adt`.
-    pub(crate) fn enum_layout(&self, adt: AdtId) -> Result<seal_layout::EnumLayout, CodegenError> {
-        self.layouts.enum_layout(adt).map_err(layout_error)
+    /// Returns the tag and payload layout of the enum `adt` instantiated with
+    /// `args`.
+    pub(crate) fn enum_layout(
+        &self,
+        adt: AdtId,
+        args: SubstsId,
+    ) -> Result<seal_layout::EnumLayout, CodegenError> {
+        self.layouts
+            .enum_layout_with(adt, args)
+            .map_err(layout_error)
     }
 
     /// Returns an integer type of `bits` bits.
@@ -223,12 +274,16 @@ impl<'ctx> TypeMapper<'ctx> {
         self.integer(Some(bits))
     }
 
-    /// Returns the layout of every field of `adt`, in declaration order.
+    /// Returns the layout of every field of `adt` instantiated with `args`, in
+    /// declaration order.
     pub(crate) fn field_layouts(
         &self,
         adt: AdtId,
+        args: SubstsId,
     ) -> Result<Vec<seal_layout::FieldLayout>, CodegenError> {
-        self.layouts.field_layouts(adt).map_err(layout_error)
+        self.layouts
+            .field_layouts_with(adt, args)
+            .map_err(layout_error)
     }
 
     /// Returns the layout of every tuple element, in declaration order.

@@ -64,7 +64,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                                 "field {field:?} does not belong to aggregate {adt:?}"
                             ))
                         })?;
-                    let struct_type = self.mapper.adt(adt);
+                    let struct_type = self.mapper.adt(adt, args)?;
                     pointer = self.build(
                         self.builder
                             .build_struct_gep(struct_type, pointer, index as u32, "field"),
@@ -95,7 +95,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = element;
                 }
                 Projection::VariantField { variant, field } => {
-                    let TyKind::Adt { adt, args: _ } = self.tcx.kind(ty) else {
+                    let TyKind::Adt { adt, args } = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
                             "cannot project an enum field from `{ty:?}` during code generation"
                         )));
@@ -115,7 +115,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                                 "field {field:?} does not belong to variant {variant:?}"
                             ))
                         })?;
-                    let layout = self.mapper.enum_layout(adt)?;
+                    let layout = self.mapper.enum_layout(adt, args)?;
                     let offset = layout
                         .variants
                         .get(variant.index() as usize)
@@ -127,7 +127,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             ))
                         })?;
                     pointer = self.offset_ptr(pointer, offset)?;
-                    ty = variant_def.fields[index].ty;
+                    ty = self.tcx.substitute(variant_def.fields[index].ty, args);
                 }
                 Projection::Index { local, constant } => {
                     let element = match self.tcx.kind(ty) {

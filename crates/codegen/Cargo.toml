@@ -21,6 +21,7 @@ seal-layout.workspace = true
 seal-llvm-debug.workspace = true
 seal-methods.workspace = true
 seal-mir.workspace = true
+seal-mono.workspace = true
 seal-session.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
@@ -31,6 +32,7 @@ seal-ty.workspace = true
 seal-ast.workspace = true
 seal-borrowck.workspace = true
 seal-lexer.workspace = true
+seal-mono.workspace = true
 seal-parser.workspace = true
 seal-typeck.workspace = true
 

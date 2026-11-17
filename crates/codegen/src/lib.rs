@@ -5,10 +5,12 @@
 //!
 //! # Pipeline
 //!
-//! 1. Every MIR body is declared as an LLVM function first, so calls can target
-//!    functions declared later.
+//! 1. Every monomorphized instance's body is declared as an LLVM function first,
+//!    so calls can target functions declared later. A generic instance appends a
+//!    stable fingerprint of its type arguments to its symbol.
 //! 2. Each body is lowered with stack slots for its locals, explicit projections
-//!    for fields and dereferences, and one LLVM block per MIR block.
+//!    for fields and dereferences, and one LLVM block per MIR block. Generic
+//!    aggregates get one LLVM struct per instantiation.
 //! 3. DWARF information is emitted alongside the IR when requested: compile unit,
 //!    subroutine and aggregate types, parameters, bindings, and one location per
 //!    statement and terminator.

@@ -4,13 +4,17 @@
 //! LLVM, and exercises the produced artifact. Executable tests assert the
 //! language-level exit status; artifact tests inspect the emitted file.
 
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use seal_codegen::{CodegenError, CodegenInput, CodegenOptions, Emit, EntryPointError};
-use seal_session::{OptLevel, Options, Session};
-use seal_span::FileName;
+use seal_codegen::{CodegenError, Emit, EntryPointError};
+use seal_session::OptLevel;
+
+mod support;
+
+use support::{
+    TempOutput, compile, compile_for_target, compile_for_target_with_runtime, contains, run,
+    run_captured,
+};
 
 const STRUCTS: &str = include_str!("../../../examples/006_structs.sl");
 const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl");
@@ -33,139 +37,6 @@ const FOR_LOOP: &str = include_str!("../../../examples/023_for.sl");
 const IF_LET: &str = include_str!("../../../examples/024_if_let.sl");
 const WHILE_LET: &str = include_str!("../../../examples/025_while_let.sl");
 const TUPLES: &str = include_str!("../../../examples/026_tuples.sl");
-
-static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
-
-struct TempOutput(PathBuf);
-
-impl TempOutput {
-    fn new(suffix: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "seal-codegen-test-{}-{}-{suffix}",
-            std::process::id(),
-            NEXT_OUTPUT.fetch_add(1, Ordering::Relaxed)
-        ));
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempOutput {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-fn compile(
-    source: &str,
-    output: &Path,
-    emit: Emit,
-    opt_level: OptLevel,
-    debug_info: bool,
-) -> Result<(), CodegenError> {
-    compile_for_target(
-        source,
-        output,
-        emit,
-        opt_level,
-        debug_info,
-        seal_target::host_triple(),
-    )
-}
-
-fn compile_for_target(
-    source: &str,
-    output: &Path,
-    emit: Emit,
-    opt_level: OptLevel,
-    debug_info: bool,
-    target: seal_target::TargetTriple,
-) -> Result<(), CodegenError> {
-    compile_for_target_with_runtime(source, output, emit, opt_level, debug_info, target, None)
-}
-
-fn compile_for_target_with_runtime(
-    source: &str,
-    output: &Path,
-    emit: Emit,
-    opt_level: OptLevel,
-    debug_info: bool,
-    target: seal_target::TargetTriple,
-    runtime_archive: Option<PathBuf>,
-) -> Result<(), CodegenError> {
-    let session = Session::new(Options {
-        target,
-        ..Options::default()
-    })
-    .expect("session starts");
-    let file = session
-        .add_file(FileName::virtual_name("test.sl"), source.to_owned())
-        .unwrap_or_else(|_| panic!("source registers"));
-    let source_file = session
-        .source_map()
-        .file(file)
-        .expect("registered source exists");
-
-    let tokens = seal_lexer::lex(&source_file, session.diag(), session.interner());
-    let ast = seal_parser::parse(&tokens, session.diag(), session.interner());
-    let hir = seal_hir::lower(&ast, session.diag(), session.interner());
-    assert!(
-        !session.diag().has_errors(),
-        "lexing, parsing, or HIR failed"
-    );
-
-    let typeck = seal_typeck::check(
-        &hir,
-        session.diag(),
-        session.interner(),
-        session.target().pointer_width(),
-    );
-    assert!(!session.diag().has_errors(), "type checking failed");
-
-    let mir = seal_mir::lower(&hir, &typeck);
-    mir.validate()
-        .expect("MIR lowering preserves its invariants");
-    let aliasing = seal_borrowck::check(&hir, &mir, session.diag(), session.interner());
-    assert!(!session.diag().has_errors(), "borrow checking failed");
-
-    seal_codegen::emit(
-        CodegenInput {
-            mir: &mir,
-            hir: &hir,
-            source_map: session.source_map(),
-            interner: session.interner(),
-            target: session.target(),
-            file,
-            noalias_functions: aliasing.noalias_functions(),
-        },
-        &CodegenOptions {
-            emit,
-            output: output.to_path_buf(),
-            opt_level,
-            debug_info,
-            crate_name: Some("test".to_owned()),
-            runtime_archive,
-        },
-    )
-    .map(|_| ())
-}
-
-fn run(path: &Path) -> std::process::ExitStatus {
-    Command::new(path).status().expect("artifact runs")
-}
-
-fn run_captured(path: &Path) -> std::process::Output {
-    Command::new(path).output().expect("artifact runs")
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
-}
 
 #[test]
 fn debug_and_release_executables_produce_the_language_result() {

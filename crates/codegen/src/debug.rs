@@ -25,11 +25,10 @@ use inkwell::module::Module;
 use inkwell::values::PointerValue;
 use seal_def::Definitions;
 use seal_hash::{FxHashMap, FxHashSet};
-use seal_index::Idx;
 use seal_mir::{Body, LocalDecl};
 use seal_span::{FileId, SourceMap, Span};
 use seal_symbol::Interner;
-use seal_ty::{AdtId, AdtKind, TyCtxt, TyId, TyKind};
+use seal_ty::{AdtId, AdtKind, SubstsId, TyCtxt, TyId, TyKind};
 
 use crate::error::CodegenError;
 use crate::types::TypeMapper;
@@ -64,9 +63,9 @@ pub(crate) struct DebugContext<'a, 'ctx> {
     optimized: bool,
     files: RefCell<FxHashMap<FileId, DIFile<'ctx>>>,
     types: RefCell<FxHashMap<TyId, DIType<'ctx>>>,
-    adts: RefCell<FxHashMap<AdtId, DIType<'ctx>>>,
-    forwards: FxHashMap<AdtId, DIType<'ctx>>,
-    in_progress: RefCell<FxHashSet<AdtId>>,
+    adts: RefCell<FxHashMap<(AdtId, SubstsId), DIType<'ctx>>>,
+    forwards: RefCell<FxHashMap<(AdtId, SubstsId), DIType<'ctx>>>,
+    in_progress: RefCell<FxHashSet<(AdtId, SubstsId)>>,
 }
 
 impl<'a, 'ctx> DebugContext<'a, 'ctx> {
@@ -105,7 +104,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             "",
         );
         let unit_file = builder.create_file(&file_name, &directory);
-        let mut context = Self {
+        Ok(Self {
             context,
             builder,
             unit,
@@ -119,46 +118,22 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             files: RefCell::new(FxHashMap::default()),
             types: RefCell::new(FxHashMap::default()),
             adts: RefCell::new(FxHashMap::default()),
-            forwards: FxHashMap::default(),
+            forwards: RefCell::new(FxHashMap::default()),
             in_progress: RefCell::new(FxHashSet::default()),
-        };
-        context.create_forward_declarations()?;
-        Ok(context)
+        })
     }
 
-    fn create_forward_declarations(&mut self) -> Result<(), CodegenError> {
-        for index in 0..self.tcx.adt_len() {
-            let adt = AdtId::from_usize(index);
-            let definition = self.tcx.adt(adt);
-            let (file, line, _) = self.definition_location(definition.def);
-            let name = self.interner.resolve(definition.name);
-            let forward = self.builder.create_struct_type(
-                self.unit.as_debug_info_scope(),
-                name,
-                file,
-                line,
-                0,
-                0,
-                DIFlags::FWD_DECL,
-                None,
-                &[],
-                0,
-                None,
-                "",
-            );
-            self.forwards.insert(adt, forward.as_type());
-        }
-        Ok(())
-    }
-
-    /// Creates the `DISubprogram` describing `body`'s function.
+    /// Creates the `DISubprogram` describing one instance's function.
+    ///
+    /// `name` is the readable instance name, such as `identity<i32>`, and
+    /// `linkage_name` is the unique linker symbol. Every instance gets its own
+    /// subprogram; they share source locations but not types or names.
     pub(crate) fn subprogram(
         &self,
         body: &Body,
+        name: &str,
         linkage_name: &str,
     ) -> Result<DISubprogram<'ctx>, CodegenError> {
-        let definition = self.definitions.get(body.owner);
-        let name = self.interner.resolve(definition.name);
         let (file, line, _) = self.definition_location(body.owner);
 
         let return_type = body.local(Body::return_local()).ty;
@@ -397,7 +372,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                     )
                     .as_type()
             }
-            TyKind::Adt { adt, .. } => self.adt_type(adt)?,
+            TyKind::Adt { adt, args } => self.adt_type(adt, args)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {
@@ -511,30 +486,27 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             .as_type())
     }
 
-    fn adt_type(&self, adt: AdtId) -> Result<DIType<'ctx>, CodegenError> {
-        if let Some(found) = self.adts.borrow().get(&adt).copied() {
+    fn adt_type(&self, adt: AdtId, args: SubstsId) -> Result<DIType<'ctx>, CodegenError> {
+        let key = (adt, args);
+        if let Some(found) = self.adts.borrow().get(&key).copied() {
             return Ok(found);
         }
-        if self.in_progress.borrow().contains(&adt) {
-            return self
-                .forwards
-                .get(&adt)
-                .copied()
-                .ok_or_else(|| CodegenError::internal("missing aggregate forward declaration"));
+        if self.in_progress.borrow().contains(&key) {
+            return self.forward(key);
         }
-        self.in_progress.borrow_mut().insert(adt);
+        self.in_progress.borrow_mut().insert(key);
 
         let definition = self.tcx.adt(adt);
-        let name = self.interner.resolve(definition.name);
+        let name = self.aggregate_name(adt, args);
         let (file, line, _) = self.definition_location(definition.def);
-        let layout = self.mapper.layout(self.tcx.adt_ty(adt))?;
+        let layout = self.mapper.layout(self.tcx.adt_ty_with(adt, args))?;
         let scope = self.unit.as_debug_info_scope();
         let members = match definition.kind {
             AdtKind::Struct => {
-                let field_layouts = self.mapper.field_layouts(adt)?;
+                let field_layouts = self.mapper.field_layouts(adt, args)?;
                 let mut members = Vec::with_capacity(definition.fields.len());
                 for (field, field_layout) in definition.fields.iter().zip(&field_layouts) {
-                    let member_type = self.di_type(field.ty)?;
+                    let member_type = self.di_type(self.tcx.substitute(field.ty, args))?;
                     let field_name = field.name.ok_or_else(|| {
                         CodegenError::internal(format!("struct field {field:?} has no name"))
                     })?;
@@ -553,13 +525,13 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 }
                 members
             }
-            AdtKind::Enum => self.enum_members(adt, file, line)?,
+            AdtKind::Enum => self.enum_members(adt, args, file, line)?,
         };
         let created = self
             .builder
             .create_struct_type(
                 scope,
-                name,
+                &name,
                 file,
                 line,
                 layout.size() * 8,
@@ -572,9 +544,54 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 "",
             )
             .as_type();
-        self.in_progress.borrow_mut().remove(&adt);
-        self.adts.borrow_mut().insert(adt, created);
+        self.in_progress.borrow_mut().remove(&key);
+        self.adts.borrow_mut().insert(key, created);
         Ok(created)
+    }
+
+    /// Returns the readable debug name of one aggregate instantiation.
+    ///
+    /// Non-generic aggregates keep their declared name. Generic instantiations
+    /// render their arguments (`Pair<i32, bool>`), which makes a debugger's type
+    /// list tell instances apart.
+    fn aggregate_name(&self, adt: AdtId, args: SubstsId) -> String {
+        self.tcx
+            .display_with(self.tcx.adt_ty_with(adt, args), self.interner)
+            .to_string()
+    }
+
+    /// Returns the forward declaration reserved before the aggregate is filled.
+    ///
+    /// Recursive aggregates reach themselves through a reference and must find a
+    /// type record before their members are complete, exactly like the LLVM
+    /// opaque reservation in the type mapper.
+    fn forward(&self, key: (AdtId, SubstsId)) -> Result<DIType<'ctx>, CodegenError> {
+        if let Some(found) = self.forwards.borrow().get(&key).copied() {
+            return Ok(found);
+        }
+        let (adt, args) = key;
+        let definition = self.tcx.adt(adt);
+        let name = self.aggregate_name(adt, args);
+        let (file, line, _) = self.definition_location(definition.def);
+        let forward = self
+            .builder
+            .create_struct_type(
+                self.unit.as_debug_info_scope(),
+                &name,
+                file,
+                line,
+                0,
+                0,
+                DIFlags::FWD_DECL,
+                None,
+                &[],
+                0,
+                None,
+                "",
+            )
+            .as_type();
+        self.forwards.borrow_mut().insert(key, forward);
+        Ok(forward)
     }
 
     /// Describes an enum as its discriminant plus its payload bytes.
@@ -586,10 +603,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
     fn enum_members(
         &self,
         adt: AdtId,
+        args: SubstsId,
         file: DIFile<'ctx>,
         line: u32,
     ) -> Result<Vec<DIType<'ctx>>, CodegenError> {
-        let layout = self.mapper.enum_layout(adt)?;
+        let layout = self.mapper.enum_layout(adt, args)?;
         let scope = self.unit.as_debug_info_scope();
         let tag_bits = layout.tag.size() * 8;
         let tag = self

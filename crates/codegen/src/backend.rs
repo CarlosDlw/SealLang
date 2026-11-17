@@ -14,12 +14,13 @@ use inkwell::values::FunctionValue;
 use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
-use seal_mir::{Body, Mir};
+use seal_mir::Body;
+use seal_mono::MonoProgram;
 use seal_session::OptLevel;
 use seal_span::{FileId, SourceMap};
 use seal_symbol::Interner;
 use seal_target::TargetSpec;
-use seal_ty::{RefKind, TyId, TyKind};
+use seal_ty::{Instance, RefKind, TyId, TyKind};
 
 use crate::artifact;
 use crate::constant::Constants;
@@ -33,8 +34,12 @@ use crate::types::TypeMapper;
 
 /// The checked program a code generation request consumes.
 pub struct CodegenInput<'a> {
-    /// Checked MIR for every function.
-    pub mir: &'a Mir,
+    /// The monomorphized program: one concrete body per reachable instance.
+    ///
+    /// Code generation never reads generic MIR. Every type in these bodies has
+    /// its instance arguments substituted and every call names a collected
+    /// instance, so no parameter or symbolic trait call can reach LLVM.
+    pub mono: &'a MonoProgram,
     /// HIR, used for aggregate definitions and debug names.
     pub hir: &'a Hir,
     /// Source map, used to resolve debug file names and positions.
@@ -129,7 +134,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     };
 
     let entry_point = if options.emit == Emit::Executable {
-        Some(entry::validate(input.hir, input.mir)?)
+        Some(entry::validate(input.hir, input.mono)?)
     } else {
         None
     };
@@ -138,7 +143,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         &context,
         &module,
         input.hir,
-        input.mir,
+        input.mono,
         input.interner,
         &mapper,
         input.noalias_functions,
@@ -146,18 +151,14 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     let builder = context.create_builder();
     let constants = Constants::new(&context, &module, &mapper, input.interner);
 
-    for body in input.mir.bodies().iter() {
-        let function = functions[&body.owner];
+    for mono in input.mono.instances().iter() {
+        let body = &mono.body;
+        let function = functions[&mono.instance];
         let scope = match &debug {
             Some(debug) => {
-                let definition = input.hir.definitions().get(body.owner);
-                let parent = definition.parent.map(|parent| {
-                    input
-                        .interner
-                        .resolve(input.hir.definitions().get(parent).name)
-                });
-                let linkage = names::function(input.interner.resolve(definition.name), parent);
-                let scope = debug.subprogram(body, &linkage)?;
+                let name = seal_mono::instance_name(input.hir, input.interner, mono.instance);
+                let linkage = symbol(input.hir, input.interner, mono.instance);
+                let scope = debug.subprogram(body, &name, &linkage)?;
                 function.set_subprogram(scope);
                 Some(scope)
             }
@@ -173,6 +174,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             tcx: input.hir.ty_ctxt(),
             mapper: &mapper,
             constants: &constants,
+            functions: &functions,
             interner: input.interner,
             source_map: input.source_map,
             debug: debug.as_ref(),
@@ -305,18 +307,15 @@ pub(crate) fn declare_functions<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
     hir: &Hir,
-    mir: &Mir,
+    mono: &MonoProgram,
     interner: &Interner,
     mapper: &TypeMapper<'ctx>,
     noalias_functions: &FxHashSet<DefId>,
-) -> Result<FxHashMap<DefId, FunctionValue<'ctx>>, CodegenError> {
+) -> Result<FxHashMap<Instance, FunctionValue<'ctx>>, CodegenError> {
     let mut functions = FxHashMap::default();
-    for body in mir.bodies().iter() {
-        let definition = hir.definitions().get(body.owner);
-        let parent = definition
-            .parent
-            .map(|parent| interner.resolve(hir.definitions().get(parent).name));
-        let name = names::function(interner.resolve(definition.name), parent);
+    for mono in mono.instances().iter() {
+        let body = &mono.body;
+        let name = symbol(hir, interner, mono.instance);
         let parameters: Vec<TyId> = body.args().map(|parameter| parameter.ty).collect();
         let returns = body.local(Body::return_local()).ty;
         let function_type = mapper.function_type(&parameters, returns)?;
@@ -328,9 +327,28 @@ pub(crate) fn declare_functions<'ctx>(
             body,
             noalias_functions.contains(&body.owner),
         );
-        functions.insert(body.owner, function);
+        functions.insert(mono.instance, function);
     }
     Ok(functions)
+}
+
+/// Returns the linker symbol of one instance.
+///
+/// An instance without type arguments keeps the symbol the definition always
+/// had. A generic instance appends the stable instance fingerprint, which
+/// covers the definition and every type argument, so two instantiations cannot
+/// collide and repeated builds produce the same symbol.
+pub(crate) fn symbol(hir: &Hir, interner: &Interner, instance: Instance) -> String {
+    let definition = hir.definitions().get(instance.def);
+    let parent = definition
+        .parent
+        .map(|parent| interner.resolve(hir.definitions().get(parent).name));
+    let base = names::function(interner.resolve(definition.name), parent);
+    if hir.ty_ctxt().substs_args(instance.args).is_empty() {
+        base
+    } else {
+        names::instance(&base, seal_mono::instance_hash(hir, instance))
+    }
 }
 
 /// Adds the attributes every reference parameter can carry.

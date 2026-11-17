@@ -132,7 +132,7 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
         runtime_archive: cli.runtime.runtime_archive.clone(),
     };
     let codegen_input = CodegenInput {
-        mir: &mir,
+        mono: &mono,
         hir: &hir,
         source_map: session.source_map(),
         interner: session.interner(),

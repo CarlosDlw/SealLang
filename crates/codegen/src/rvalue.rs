@@ -11,7 +11,7 @@ use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_mir::{AggregateKind, BinOp, Rvalue, UnOp};
 use seal_span::Span;
-use seal_ty::{TyKind, VariantIdx};
+use seal_ty::{Instance, SubstsId, TyKind, VariantIdx};
 
 use crate::error::CodegenError;
 use crate::function::FunctionLowerer;
@@ -57,7 +57,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                          resolve it first",
                     ));
                 }
-                self.call(target.instance().def, args)
+                self.call(target.instance(), args)
             }
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
             Rvalue::Tuple { elements, ty } => self.tuple_aggregate(elements, *ty),
@@ -68,14 +68,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
 
     fn discriminant(&self, place: &seal_mir::Place) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let ty = self.place_type(place)?;
-        let TyKind::Adt { adt, .. } = self.tcx.kind(ty) else {
+        let TyKind::Adt { adt, args } = self.tcx.kind(ty) else {
             return Err(CodegenError::internal(format!(
                 "cannot read a discriminant from `{ty:?}`"
             )));
         };
-        let enum_type = self.mapper.adt(adt);
+        let enum_type = self.mapper.adt(adt, args)?;
         let pointer = self.place_ptr(place)?;
-        let layout = self.mapper.enum_layout(adt)?;
+        let layout = self.mapper.enum_layout(adt, args)?;
         let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
             CodegenError::internal(format!("enum {adt:?} has a tag too wide for codegen"))
         })?;
@@ -788,22 +788,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
 
     fn call(
         &self,
-        func: DefId,
+        instance: Instance,
         arguments: &[seal_mir::Operand],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
-        let definition = self.definitions().get(func);
-        let parent = definition
-            .parent
-            .map(|parent| self.interner.resolve(self.definitions().get(parent).name));
-        let function = self
-            .module
-            .get_function(&crate::names::function(
-                self.interner.resolve(definition.name),
-                parent,
-            ))
-            .ok_or_else(|| {
-                CodegenError::internal(format!("call target {func:?} was not declared"))
-            })?;
+        let function = self.functions.get(&instance).copied().ok_or_else(|| {
+            CodegenError::internal(format!("call target {instance:?} was not declared"))
+        })?;
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
             values.push(BasicMetadataValueEnum::from(self.load_operand(argument)?));
@@ -826,9 +816,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         fields: &[(DefId, seal_mir::Operand)],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match kind {
-            AggregateKind::Struct { adt, .. } => self.struct_aggregate(adt, fields),
-            AggregateKind::Variant { adt, variant, .. } => {
-                self.variant_aggregate(adt, variant, fields)
+            AggregateKind::Struct { adt, args } => self.struct_aggregate(adt, args, fields),
+            AggregateKind::Variant { adt, variant, args } => {
+                self.variant_aggregate(adt, variant, args, fields)
             }
         }
     }
@@ -836,11 +826,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     fn struct_aggregate(
         &self,
         def: DefId,
+        args: SubstsId,
         fields: &[(DefId, seal_mir::Operand)],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let adt = self.adt_of(def)?;
         let definition = self.tcx.adt(adt);
-        let struct_type = self.mapper.adt(adt);
+        let struct_type = self.mapper.adt(adt, args)?;
 
         // Field operands are in evaluation order. Reads have no side effects, so
         // collecting them first and inserting in declaration order preserves the
@@ -883,17 +874,18 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         &self,
         def: DefId,
         variant: VariantIdx,
+        args: SubstsId,
         fields: &[(DefId, seal_mir::Operand)],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let adt = self.adt_of(def)?;
-        let layout = self.mapper.enum_layout(adt)?;
+        let layout = self.mapper.enum_layout(adt, args)?;
         let definition = self.tcx.adt(adt);
         let variant_def = definition.variant(variant).ok_or_else(|| {
             CodegenError::internal(format!(
                 "variant {variant:?} does not belong to enum {adt:?}"
             ))
         })?;
-        let enum_type = self.mapper.adt(adt);
+        let enum_type = self.mapper.adt(adt, args)?;
         let storage = self.entry_alloca(enum_type.into(), "enum.value")?;
 
         let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
@@ -915,7 +907,8 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
 
         let mut field_types = Vec::with_capacity(variant_def.fields.len());
         for field in &variant_def.fields {
-            field_types.push(self.mapper.basic(field.ty)?);
+            let field_ty = self.tcx.substitute(field.ty, args);
+            field_types.push(self.mapper.basic(field_ty)?);
         }
         let variant_type = self.context.struct_type(&field_types, false);
         let mut payload = variant_type.get_undef();

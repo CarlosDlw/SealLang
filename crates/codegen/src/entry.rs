@@ -7,18 +7,21 @@ use inkwell::module::Module;
 use inkwell::values::{BasicValueEnum, FunctionValue, ValueKind};
 use seal_def::{DefId, DefKind};
 use seal_hir::Hir;
-use seal_mir::{Body, Mir};
+use seal_mir::Body;
+use seal_mono::MonoProgram;
 use seal_symbol::PredefinedSymbol;
-use seal_ty::{IntTy, TyKind};
+use seal_ty::{Instance, IntTy, TyKind};
 
 use crate::error::{CodegenError, EntryPointError};
 use crate::names;
 
-/// Validates the program's entry point and returns its definition.
+/// Validates the program's entry point and returns its instance.
 ///
 /// Only executables need an entry point; object and assembly output can be
-/// produced for a file with no `main`.
-pub(crate) fn validate(hir: &Hir, mir: &Mir) -> Result<DefId, CodegenError> {
+/// produced for a file with no `main`. The generic check runs before looking at
+/// the monomorphized body, so a generic `main` is rejected with the entry-point
+/// diagnostic instead of the monomorphizer's instance diagnostic.
+pub(crate) fn validate(hir: &Hir, mono: &MonoProgram) -> Result<Instance, CodegenError> {
     let main = PredefinedSymbol::Main.symbol();
     let candidates: Vec<DefId> = hir
         .definitions()
@@ -35,13 +38,21 @@ pub(crate) fn validate(hir: &Hir, mir: &Mir) -> Result<DefId, CodegenError> {
         1 => candidates[0],
         count => return Err(CodegenError::EntryPoint(EntryPointError::Multiple(count))),
     };
-    let body = mir.body_of(definition).ok_or_else(|| {
-        CodegenError::internal("the entry point has no MIR body; lowering is incomplete")
-    })?;
     let generics = hir.flattened_generics(definition).len();
     if generics != 0 {
         return Err(CodegenError::EntryPoint(EntryPointError::Generic(generics)));
     }
+    let instance = Instance::new(definition, hir.ty_ctxt().empty_substs());
+    let body = mono
+        .instances()
+        .iter()
+        .find(|mono| mono.instance == instance)
+        .map(|mono| &mono.body)
+        .ok_or_else(|| {
+            CodegenError::internal(
+                "the entry point has no monomorphized body; collection is incomplete",
+            )
+        })?;
     if body.arg_count != 0 {
         return Err(CodegenError::EntryPoint(EntryPointError::Parameters(
             body.arg_count,
@@ -49,7 +60,7 @@ pub(crate) fn validate(hir: &Hir, mir: &Mir) -> Result<DefId, CodegenError> {
     }
     let returns = body.local(Body::return_local()).ty;
     match hir.ty_ctxt().kind(returns) {
-        TyKind::Unit | TyKind::Int(IntTy::I32) => Ok(definition),
+        TyKind::Unit | TyKind::Int(IntTy::I32) => Ok(instance),
         other => Err(CodegenError::EntryPoint(EntryPointError::ReturnType(
             describe(other),
         ))),

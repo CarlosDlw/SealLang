@@ -7,16 +7,20 @@ produces one artifact per invocation:
 - target assembly (`--emit=asm`), or
 - a linked native executable (`--emit=exe`, the default).
 
-`--emit=check` stops after borrow checking and writes nothing. Object and
+`--emit=check` stops after monomorphization and writes nothing. Object and
 assembly output do not require an entry point; executables do.
 
 ## Pipeline
 
-1. **Declare.** Every MIR body becomes an LLVM function with external linkage
-   and the signature derived from its argument and return types. A free
-   function is `seal.<name>`; an impl function is `seal.<Type>.<name>`, so
-   same-named methods on different types stay distinct. Declaring first lets a
-   body call a function declared later.
+1. **Declare.** Every instance in the monomorphized program becomes an LLVM
+   function with external linkage and the signature derived from its concrete
+   argument and return types. A non-generic free function is `seal.<name>`; a
+   non-generic impl function is `seal.<Type>.<name>`, so same-named methods on
+   different types stay distinct. A generic instance appends the stable
+   fingerprint of its definition and full type arguments
+   (`seal.identity.<hash>`), so two instantiations cannot collide and repeated
+   builds produce the same symbol. Declaring first lets a body call a function
+   declared later; calls resolve by `Instance`, never by name.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
    block, and explicit loads/stores for places. Struct field and tuple element
    projections use struct GEPs; array indices use a byte offset after the MIR
@@ -45,8 +49,8 @@ diagnostics, and runtime. Options accept `--name value` and `--name=value`, and
 `--` ends option parsing so a file named like a flag stays an input.
 
 - `--emit=exe` (the default) links an executable, `--emit=obj` writes an object,
-  `--emit=asm` writes assembly, and `--emit=check` stops after borrow checking
-  and writes nothing.
+  `--emit=asm` writes assembly, and `--emit=check` stops after
+  monomorphization and writes nothing.
 - Without `-o`, `file.sl` produces `file` for an executable, `file.o` for an
   object, or `file.s` for assembly, next to the input.
 - `-o` accepts one output path and is rejected with more than one input.
@@ -69,10 +73,14 @@ the linker's stderr.
 
 The ABI is defined by the language, not by a C header:
 
-- A free Seal function has external visibility and the symbol `seal.<name>`;
-  an impl function, inherent or from a trait implementation, uses
-  `seal.<Type>.<name>`. The C `main` wrapper is the only symbol named `main`,
-  and only a free function can be the language entry point.
+- A non-generic free Seal function has external visibility and the symbol
+  `seal.<name>`; a non-generic impl function, inherent or from a trait
+  implementation, uses `seal.<Type>.<name>`. A generic instance keeps that base
+  and appends `.<hash>`, where the hash is the `seal-hash` stable fingerprint of
+  the definition and every type argument, flattened outermost first. Symbols
+  never contain type syntax, spaces, or angle brackets. The C `main` wrapper is
+  the only symbol named `main`, and only a non-generic free function can be the
+  language entry point.
 - A user `main` must take no parameters and return `i32` or `()`. The wrapper
   always returns `i32`, using the returned value or zero for unit. A missing or
   invalid entry point is `E6001`.
@@ -98,6 +106,14 @@ The ABI is defined by the language, not by a C header:
   and named fields are stored in declaration order. `match` reads the payload
   through the same offsets: a field pattern is a `Projection::VariantField` GEP
   into the payload, valid because the tag test selected that variant.
+- A generic aggregate has no single LLVM type. `TypeMapper` caches one struct
+  per `(AdtId, SubstsId)` pair: it reserves an opaque struct on first use, then
+  fills it from the field types with the instance's arguments substituted, so a
+  recursive reference finds the reservation instead of recursing forever.
+  Field and variant GEPs, enum tag/payload offsets, and aggregate construction
+  all query that same instantiation. Non-generic aggregates keep the historical
+  `seal.adt.<index>.<name>` type name; each generic instantiation receives a
+  unique suffix.
 - `match` lowers to control flow. The scrutinee is moved into a temporary,
   `Rvalue::Discriminant` reads the tag into a `u32`, and a chain of `SwitchInt`
   tests selects the arm; a literal pattern compares with `Rvalue::Binary`
@@ -186,14 +202,16 @@ The ABI is defined by the language, not by a C header:
 `-g` requests `DWARFEmissionKind::Full` with `DWARFSourceLanguage::Rust`:
 
 - one compile unit per input file, with the displayed (possibly remapped) path;
-- one `DW_TAG_subprogram` per Seal function, linked to the LLVM function;
+- one `DW_TAG_subprogram` per monomorphized instance, named with readable type
+  arguments (`identity<i32>`) and linked to the instance's LLVM function;
 - `DW_TAG_formal_parameter` for parameters and `DW_TAG_variable` for bindings,
   declared at their stack slots with source line and column;
-- `DW_TAG_structure_type` for every struct, with member names, bit offsets, and
-  sizes from `seal-layout`; a tuple uses the same structure type with member
-  names `0`, `1`, and so on;
-- `DW_TAG_structure_type` for every enum with its discriminant member and a
-  payload byte-array member at the layout offset. Variant parts are not emitted
+- `DW_TAG_structure_type` for every struct instantiation, named with its type
+  arguments (`Pair<i32, bool>`), with instantiated member types, member names,
+  bit offsets, and sizes from `seal-layout`; a tuple uses the same structure
+  type with member names `0`, `1`, and so on;
+- `DW_TAG_structure_type` for every enum instantiation with its discriminant
+  member and a payload byte-array member at the layout offset. Variant parts are not emitted
   yet, so a debugger shows the tag and raw payload rather than the active
   variant's fields; the layout is still exact;
 - pointer and fat-pointer types, including `&str` and `&[T]` as two-member

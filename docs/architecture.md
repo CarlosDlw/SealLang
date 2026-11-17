@@ -280,10 +280,12 @@ allowed to depend only on crates below it in the list.
     read of a field whose sibling moved is allowed. Borrow conflicts compare path prefixes, so
     borrowing `p.x` leaves `p.y` writable and borrowing `p` blocks both. A
     whole-place borrow with a moved field is `E5006`.
-52. **Code generation consumes only checked MIR.** The driver calls the backend
-    only after type checking and borrow checking report no errors, and MIR
-    validation succeeds first. A layout failure, an unresolved inference type,
-    or invalid generated IR is an internal compiler error, never an artifact.
+52. **Code generation consumes only monomorphized MIR.** The driver calls the
+    backend only after type checking, borrow checking, and monomorphization
+    report no errors, and both MIR and `MonoProgram` validation succeed first.
+    The backend iterates `MonoProgram` instances, never generic bodies, so a
+    layout failure, a leftover type parameter or inference type, or invalid
+    generated IR is an internal compiler error, never an artifact.
 53. **Every local has storage.** Locals, parameters, and the return place are
     `alloca` slots; reads and writes are loads and stores, and calls use the
     checked signature. Aggregates are built with `insertvalue` in declaration
@@ -292,15 +294,20 @@ allowed to depend only on crates below it in the list.
     and layout agree.
     A slice range is lowered to explicit checks followed by a fat-pointer
     construction; `len` reads the length member.
-54. **The ABI is compiler-owned.** A free function uses the `seal.<name>`
-    symbol and an impl function uses `seal.<Type>.<name>`, so same-named methods
-    on different types cannot collide. The C `main` wrapper is the only `main`,
-    and only a free function can be the language entry point. A user `main`
+54. **The ABI is compiler-owned and per instance.** A non-generic free function
+    uses the `seal.<name>` symbol and a non-generic impl function uses
+    `seal.<Type>.<name>`, so same-named methods on different types cannot
+    collide. A generic instance appends the stable fingerprint of its full type
+    arguments, so two instantiations never share a symbol and repeated builds
+    agree. Generic aggregates are one LLVM struct per `(definition,
+    arguments)` pair. The C `main` wrapper is the only `main`, and only a
+    non-generic free function can be the language entry point. A user `main`
     takes no parameters and returns `i32` or `()`. `*str`, `*[T]`, and
     `*mut [T]` are `{ data, length }`; `()`/`!` are zero-sized structs; the
     object is position independent.
 55. **Debug information describes the generated IR.** `-g` emits a Rust compile
-    unit, subprograms, parameters, bindings, aggregate types with layout
+    unit, one subprogram and one aggregate type record per instance with
+    readable type arguments, parameters, bindings, aggregate types with layout
     offsets, and a source location per statement and terminator, all finalized
     before verification and optimization.
 56. **Arithmetic cannot silently invoke LLVM undefined behavior.** Integer
