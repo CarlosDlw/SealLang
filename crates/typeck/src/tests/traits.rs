@@ -165,3 +165,14 @@ func main() -> i32 { let token = Token { value: 1 }; let view = &token; view.con
     let (fixture, _, _) = check_errors(source);
     fixture.expect("E3031", "expects `Token`");
 }
+
+#[test]
+fn a_value_receiver_cannot_move_out_of_a_reference() {
+    let source = "\
+struct Token { value: i32 } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func take(p: *mut Token) -> i32 { (*p).consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3018", "cannot move out of a reference");
+}
