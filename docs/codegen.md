@@ -103,7 +103,11 @@ The ABI is defined by the language, not by a C header:
   on the start and `Le` or `Lt` on the end), a struct pattern projects each
   field with `Projection::Field`, and an array pattern projects each fixed
   element with `Projection::Index` at a constant position; the patterns after
-  `..` use positions measured from the array length. An or-pattern becomes one
+  `..` use positions measured from the array length. A slice pattern reads the
+  runtime length with `Rvalue::Len`, switches on it (equality without `..`, a
+  `>=` test with `..`), then indexes the dereferenced slice; suffix positions
+  are computed as `length - k`, and the length test proves every index in
+  bounds. An or-pattern becomes one
   such chain per alternative. Bindings are stores from the field or element
   places, emitted after the whole pattern matched, and a guard is another
   `SwitchInt` on its boolean result. Falling past the last arm enters an

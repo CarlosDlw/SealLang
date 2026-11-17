@@ -35,6 +35,7 @@ fn all_examples_parse_without_diagnostics() {
         ("018_tuple_variants.sl", 8),
         ("019_match.sl", 3),
         ("020_match_advanced.sl", 8),
+        ("021_match_slice.sl", 5),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

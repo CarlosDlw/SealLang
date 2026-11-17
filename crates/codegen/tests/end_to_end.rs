@@ -27,6 +27,7 @@ const ENUMS: &str = include_str!("../../../examples/017_enums.sl");
 const TUPLE_VARIANTS: &str = include_str!("../../../examples/018_tuple_variants.sl");
 const MATCH: &str = include_str!("../../../examples/019_match.sl");
 const ADVANCED_MATCH: &str = include_str!("../../../examples/020_match_advanced.sl");
+const SLICE_MATCH: &str = include_str!("../../../examples/021_match_slice.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -826,6 +827,29 @@ fn advanced_match_produces_the_language_result_in_debug_and_release() {
             debug_info,
         )
         .expect("the advanced match example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn slice_match_produces_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "slice-match-debug"),
+        (OptLevel::O2, false, "slice-match-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            SLICE_MATCH,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the slice match example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

@@ -289,6 +289,7 @@ func classify(command: Command) -> i32 {
 | `a..=b`, `a..b` | an integer or `char` value inside the range |
 | `name @ p` | any value matching `p`, also bound as `name` |
 | `[p, q]`, `[first, .., last]` | a fixed-size array; `..` skips the elements between the fixed patterns |
+| the same forms on `*[T]` | a slice; without `..` the pattern tests the exact runtime length |
 | `p \| q` | either alternative |
 
 A pattern name is always a binding: an enum variant is written with its enum
@@ -303,8 +304,14 @@ order (`E2044`). A struct pattern has the same rules with its own codes: an
 unknown field is `E2046`, a field written twice is `E2047`, and an omitted field
 is `E2048`. An array pattern writes one pattern per element, or uses a single
 `..` to skip the elements between its fixed patterns; a pattern with more fixed
-elements than the array has is `E2049`. A range whose start is past its end
-matches nothing (`E2050`). Lowering reorders
+elements than the array has is `E2049`. On a slice reference (`*[T]` or
+`*mut [T]`) the same forms test a runtime length: without `..` the length must
+match exactly, and with `..` it must be at least the number of fixed patterns.
+The length itself is not part of the type, so coverage partitions the length
+domain: `[]`, `[only]`, and `[first, .., last]` together are exhaustive, and a
+missing length is reported with a slice witness. Binding an element moves it,
+so a slice whose element type is not `Copy` can only be matched by literals and
+`_` (`E3018`). A range whose start is past its end matches nothing (`E2050`). Lowering reorders
 named fields into declaration order, so every later phase sees one canonical
 shape. An `@` binding is a binding with a subpattern: the subpattern must match
 before the name is stored, and the name is available in the arm body and guard

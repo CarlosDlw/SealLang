@@ -362,7 +362,11 @@ allowed to depend only on crates below it in the list.
     (`E2045`). Coverage and reachability come from the usefulness algorithm
     (`E3032`, `E3033`), and a guard never contributes coverage. Scalar ranges
     are constructors over domain partitions, so adjacent integer or character
-    ranges are exhaustive and gaps have concrete witnesses.
+    ranges are exhaustive and gaps have concrete witnesses. A slice pattern
+    tests the runtime length and then indexes the dereferenced slice; coverage
+    partitions the length domain at every pattern boundary and reuses the array
+    usefulness check per length, so exact, prefix, and suffix patterns can
+    exhaust a slice.
 
 ## Extension points
 

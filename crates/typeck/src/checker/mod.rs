@@ -11,6 +11,7 @@ mod operators;
 mod pattern;
 mod place;
 mod slice;
+mod slice_patterns;
 mod stmt;
 mod types;
 

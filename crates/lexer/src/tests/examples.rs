@@ -34,6 +34,7 @@ fn all_examples_lex_cleanly() {
         "018_tuple_variants.sl",
         "019_match.sl",
         "020_match_advanced.sl",
+        "021_match_slice.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

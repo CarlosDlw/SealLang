@@ -13,6 +13,7 @@ mod match_expr;
 mod methods;
 mod operators;
 mod sized;
+mod slice_patterns;
 mod slices;
 mod structs;
 mod support;

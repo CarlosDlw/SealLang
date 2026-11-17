@@ -160,9 +160,40 @@ impl Checker<'_> {
                 has_rest,
                 suffix,
             } => {
+                if let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(expected)
+                    && let TyKind::Slice { element } = self.hir.ty_ctxt().kind(pointee)
+                {
+                    let binds = prefix
+                        .iter()
+                        .chain(suffix.iter())
+                        .any(|pattern| self.pattern_binds_anything(*pattern));
+                    if binds && !self.is_copy(element) {
+                        self.error(
+                            codes::E3018,
+                            span,
+                            format!(
+                                "cannot move a `{}` value out of a slice pattern",
+                                self.ty_text(element)
+                            ),
+                        )
+                        .help(
+                            "the element is not `Copy`; match it with `_` or a literal, or copy it first",
+                        )
+                        .emit();
+                    }
+                    for pattern in prefix.iter().chain(suffix.iter()) {
+                        self.check_pattern(*pattern, element, flow);
+                    }
+                    return;
+                }
                 let (element_ty, length) = match self.hir.ty_ctxt().kind(expected) {
                     TyKind::Array { element, length } => (element, length),
-                    TyKind::Error => return,
+                    TyKind::Error => {
+                        for pattern in prefix.iter().chain(suffix.iter()) {
+                            self.check_pattern(*pattern, expected, flow);
+                        }
+                        return;
+                    }
                     _ => {
                         if !self.is_error(expected) {
                             self.error(
@@ -175,6 +206,10 @@ impl Checker<'_> {
                             )
                             .help("match an array value, or use `_`")
                             .emit();
+                        }
+                        let error = self.error_ty();
+                        for pattern in prefix.iter().chain(suffix.iter()) {
+                            self.check_pattern(*pattern, error, flow);
                         }
                         return;
                     }
@@ -210,6 +245,28 @@ impl Checker<'_> {
                     self.check_pattern(alternative, expected, flow);
                 }
             }
+        }
+    }
+
+    /// Returns `true` when a pattern binds at least one value, which means it
+    /// moves the matched value unless its type is `Copy`.
+    fn pattern_binds_anything(&self, pattern: HirPatternId) -> bool {
+        match &self.hir.pattern(pattern).kind {
+            PatternKind::Binding { .. } => true,
+            PatternKind::Variant { fields, .. } | PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .any(|(_, pattern)| self.pattern_binds_anything(*pattern)),
+            PatternKind::Array { prefix, suffix, .. } => prefix
+                .iter()
+                .chain(suffix.iter())
+                .any(|pattern| self.pattern_binds_anything(*pattern)),
+            PatternKind::Or(alternatives) => alternatives
+                .iter()
+                .any(|alternative| self.pattern_binds_anything(*alternative)),
+            PatternKind::Wildcard
+            | PatternKind::Literal(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Error => false,
         }
     }
 

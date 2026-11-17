@@ -18,15 +18,29 @@ use seal_ty::{AdtId, FloatTy, TyCtxt, TyId, TyKind, VariantIdx};
 use super::Checker;
 
 /// Upper bound on the cartesian product of nested or-patterns.
-const MAX_ALTERNATIVES: usize = 65_536;
+pub(super) const MAX_ALTERNATIVES: usize = 65_536;
 
 const SIGN_BIT: u128 = 1 << 127;
-const CHAR_MAX: u128 = 0x10FFFF;
+pub(super) const CHAR_MAX: u128 = 0x10FFFF;
 
 /// A pattern shape used by the usefulness algorithm.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Cover {
+pub(super) enum Cover {
     Wildcard,
+    /// A pattern whose coverage cannot be represented in this lattice. It
+    /// matches no constructor when it appears in a matrix, and behaves like a
+    /// wildcard when it is the candidate being tested for reachability.
+    Opaque,
+    /// A slice pattern inside a larger pattern: a length plus prefix and suffix
+    /// element constraints.
+    Slice {
+        prefix: Vec<Cover>,
+        suffix: Vec<Cover>,
+        min_length: u64,
+        exact: Option<u64>,
+        wildcard: bool,
+        matches_nothing: bool,
+    },
     Bool(bool),
     IntRange {
         ty: TyId,
@@ -62,12 +76,13 @@ enum Ctor {
     Variant { adt: AdtId, variant: VariantIdx },
     Struct { adt: AdtId },
     Array { element: TyId, length: u64 },
+    SliceLength { element: TyId, length: u64 },
 }
 
 /// Tracks the or-pattern expansion budget.
-struct Budget {
-    remaining: usize,
-    exhausted: bool,
+pub(super) struct Budget {
+    pub(super) remaining: usize,
+    pub(super) exhausted: bool,
 }
 
 impl Checker<'_> {
@@ -79,6 +94,10 @@ impl Checker<'_> {
         arms: &[MatchArm],
         span: Span,
     ) -> bool {
+        if let Some(element) = self.slice_reference_element(scrutinee_ty) {
+            return self.check_slice_coverage(element, arms, span);
+        }
+
         let mut covered: Vec<Vec<Cover>> = Vec::new();
 
         for arm in arms {
@@ -146,7 +165,12 @@ impl Checker<'_> {
     }
 
     /// Expands a pattern into constructor shapes, distributing or-patterns.
-    fn cover_pattern(&self, pattern: HirPatternId, ty: TyId, budget: &mut Budget) -> Vec<Cover> {
+    pub(super) fn cover_pattern(
+        &self,
+        pattern: HirPatternId,
+        ty: TyId,
+        budget: &mut Budget,
+    ) -> Vec<Cover> {
         if budget.remaining == 0 {
             budget.exhausted = true;
             return Vec::new();
@@ -234,7 +258,41 @@ impl Checker<'_> {
                 has_rest,
                 suffix,
             } => {
-                let TyKind::Array { element, length } = self.hir.ty_ctxt().kind(ty) else {
+                let shape = match self.hir.ty_ctxt().kind(ty) {
+                    TyKind::Array { element, length } => Some((element, length)),
+                    TyKind::Ref { pointee, .. } => match self.hir.ty_ctxt().kind(pointee) {
+                        TyKind::Slice { element } => {
+                            let fixed = prefix.len() + suffix.len();
+                            if *has_rest && fixed == 0 {
+                                return vec![Cover::Wildcard];
+                            }
+                            let prefixes = self.cover_sequence(prefix, element, budget);
+                            let suffixes = self.cover_sequence(suffix, element, budget);
+                            if budget.exhausted || prefixes.is_empty() || suffixes.is_empty() {
+                                return vec![Cover::Opaque];
+                            }
+                            let fixed = fixed as u64;
+                            let mut covers = Vec::new();
+                            for prefix in &prefixes {
+                                for suffix in &suffixes {
+                                    covers.push(Cover::Slice {
+                                        prefix: prefix.clone(),
+                                        suffix: suffix.clone(),
+                                        min_length: fixed,
+                                        exact: if *has_rest { None } else { Some(fixed) },
+                                        wildcard: false,
+                                        matches_nothing: false,
+                                    });
+                                }
+                            }
+                            return covers;
+                        }
+                        TyKind::Array { element, length } => Some((element, length)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some((element, length)) = shape else {
                     return vec![Cover::Wildcard];
                 };
                 let fixed = prefix.len() + suffix.len();
@@ -349,9 +407,9 @@ impl Checker<'_> {
     }
 
     /// Renders one witness value for the diagnostic.
-    fn cover_text(&self, cover: &Cover) -> String {
+    pub(super) fn cover_text(&self, cover: &Cover) -> String {
         match cover {
-            Cover::Wildcard => "_".to_owned(),
+            Cover::Wildcard | Cover::Opaque => "_".to_owned(),
             Cover::Bool(value) => value.to_string(),
             Cover::IntRange { ty, start, end } => {
                 if start == end {
@@ -374,6 +432,7 @@ impl Checker<'_> {
                 }
             }
             Cover::Float(bits) => format!("{}", f64::from_bits(*bits)),
+            Cover::Slice { .. } => "[..]".to_owned(),
             Cover::Variant {
                 adt,
                 variant,
@@ -433,8 +492,11 @@ impl Checker<'_> {
         }
     }
 }
-
-fn combine(prefixes: Vec<Vec<Cover>>, options: Vec<Cover>, budget: &mut Budget) -> Vec<Vec<Cover>> {
+pub(super) fn combine(
+    prefixes: Vec<Vec<Cover>>,
+    options: Vec<Cover>,
+    budget: &mut Budget,
+) -> Vec<Vec<Cover>> {
     let mut next = Vec::new();
     for prefix in &prefixes {
         for option in &options {
@@ -478,7 +540,7 @@ fn render_int(ty: TyId, key: u128, tcx: &TyCtxt) -> String {
 }
 
 /// Returns the closed key range of a scalar type.
-fn scalar_domain(ty: TyId, tcx: &TyCtxt, pointer_width: u8) -> Option<(u128, u128)> {
+pub(super) fn scalar_domain(ty: TyId, tcx: &TyCtxt, pointer_width: u8) -> Option<(u128, u128)> {
     match tcx.kind(ty) {
         TyKind::Int(kind) => {
             let bits = kind
@@ -537,11 +599,59 @@ fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) ->
             }
         }
         TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
+        TyKind::Ref { pointee, .. } => match tcx.kind(pointee) {
+            TyKind::Slice { element } => Some(slice_constructors(element, covers)),
+            _ => None,
+        },
         TyKind::Int(_) | TyKind::Uint(_) => Some(interval_ctors(ty, covers, tcx, pointer_width)),
         TyKind::Char => Some(char_ctors(covers)),
         TyKind::Never | TyKind::Error => Some(Vec::new()),
         _ => None,
     }
+}
+
+/// Returns the length constructors for a slice pattern column.
+fn slice_constructors(element: TyId, covers: &[&Cover]) -> Vec<Ctor> {
+    let mut lengths = vec![0u64, 1];
+    let mut max_total = 0u64;
+    for cover in covers {
+        let Cover::Slice {
+            prefix,
+            suffix,
+            min_length,
+            exact,
+            wildcard,
+            matches_nothing,
+        } = cover
+        else {
+            continue;
+        };
+        if *wildcard || *matches_nothing {
+            continue;
+        }
+        let fixed = prefix.len() as u64 + suffix.len() as u64;
+        max_total = max_total.max(fixed);
+        lengths.push(fixed);
+        lengths.push(fixed.saturating_add(1));
+        match exact {
+            Some(exact) => {
+                max_total = max_total.max(*exact);
+                lengths.push(*exact);
+            }
+            None => {
+                max_total = max_total.max(*min_length);
+                lengths.push(*min_length);
+            }
+        }
+    }
+    lengths.push(max_total.saturating_add(1));
+    lengths.retain(|length| *length <= max_total.saturating_add(1));
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
+        .into_iter()
+        .map(|length| Ctor::SliceLength { element, length })
+        .collect()
 }
 
 /// Partitions a scalar domain at the endpoints of every observed range.
@@ -619,6 +729,7 @@ fn ctor_fields(tcx: &TyCtxt, ctor: Ctor) -> Vec<TyId> {
             .unwrap_or_default(),
         Ctor::Struct { adt } => tcx.adt(adt).fields.iter().map(|field| field.ty).collect(),
         Ctor::Array { element, length } => vec![element; length as usize],
+        Ctor::SliceLength { element, length } => vec![element; length as usize],
     }
 }
 
@@ -654,6 +765,26 @@ fn ctor_matches(cover: &Cover, ctor: Ctor) -> bool {
         ) => *left_adt == right_adt && *left_variant == right_variant,
         (Cover::Struct { adt: left, .. }, Ctor::Struct { adt: right }) => *left == right,
         (Cover::Array { .. }, Ctor::Array { .. }) => true,
+        (
+            Cover::Slice {
+                min_length,
+                exact,
+                wildcard,
+                matches_nothing,
+                ..
+            },
+            Ctor::SliceLength { length, .. },
+        ) => {
+            if *matches_nothing {
+                false
+            } else if *wildcard {
+                true
+            } else if let Some(exact) = exact {
+                *exact == length
+            } else {
+                length >= *min_length
+            }
+        }
         _ => false,
     }
 }
@@ -683,8 +814,23 @@ fn cover_from_ctor(ctor: Ctor, fields: Vec<Cover>, ty: Option<TyId>) -> Cover {
             fields,
         },
         Ctor::Struct { adt } => Cover::Struct { adt, fields },
-        Ctor::Array { .. } => Cover::Array { fields },
+        Ctor::Array { .. } | Ctor::SliceLength { .. } => Cover::Array { fields },
     }
+}
+
+/// Expands a slice cover at the length selected by `ctor`, or returns its
+/// ordinary constructor fields.
+fn expanded_fields(cover: &Cover, ctor: Ctor) -> Vec<Cover> {
+    if let Cover::Slice { prefix, suffix, .. } = cover
+        && let Ctor::SliceLength { length, .. } = ctor
+    {
+        let fixed = prefix.len() as u64 + suffix.len() as u64;
+        let mut fields = prefix.clone();
+        fields.extend((0..length - fixed).map(|_| Cover::Wildcard));
+        fields.extend(suffix.iter().cloned());
+        return fields;
+    }
+    cover_fields(cover).to_vec()
 }
 
 /// Keeps rows that can match `ctor`, expanding wildcards into its fields.
@@ -699,7 +845,7 @@ fn specialize(matrix: &[Vec<Cover>], ctor: Ctor, arity: usize) -> Vec<Vec<Cover>
             expanded.extend_from_slice(&row[1..]);
             specialized.push(expanded);
         } else if ctor_matches(first, ctor) {
-            let mut expanded = cover_fields(first).to_vec();
+            let mut expanded = expanded_fields(first, ctor);
             expanded.extend_from_slice(&row[1..]);
             specialized.push(expanded);
         }
@@ -717,7 +863,7 @@ fn default_matrix(matrix: &[Vec<Cover>]) -> Vec<Vec<Cover>> {
 }
 
 /// Returns `true` when `candidate` matches a value that no matrix row matches.
-fn is_useful(
+pub(super) fn is_useful(
     matrix: &[Vec<Cover>],
     candidate: &[Cover],
     types: &[TyId],
@@ -744,7 +890,25 @@ fn is_useful(
         );
     };
 
-    if matches!(first, Cover::Wildcard) {
+    if matches!(first, Cover::Slice { .. }) {
+        for ctor in constructors {
+            if !ctor_matches(first, ctor) {
+                continue;
+            }
+            let fields = expanded_fields(first, ctor);
+            let specialized = specialize(matrix, ctor, fields.len());
+            let mut nested = fields;
+            nested.extend_from_slice(&candidate[1..]);
+            let mut nested_types = ctor_fields(tcx, ctor);
+            nested_types.extend_from_slice(&types[1..]);
+            if is_useful(&specialized, &nested, &nested_types, tcx, pointer_width) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if matches!(first, Cover::Wildcard | Cover::Opaque) {
         for ctor in constructors {
             let fields = ctor_fields(tcx, ctor);
             let specialized = specialize(matrix, ctor, fields.len());
@@ -783,6 +947,7 @@ fn cover_ctor(cover: &Cover, ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
             end: *end,
         }),
         Cover::Float(value) => Some(Ctor::Float(*value)),
+        Cover::Slice { .. } => None,
         Cover::Variant { adt, variant, .. } => Some(Ctor::Variant {
             adt: *adt,
             variant: *variant,
@@ -792,13 +957,13 @@ fn cover_ctor(cover: &Cover, ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
             TyKind::Array { element, length } => Some(Ctor::Array { element, length }),
             _ => None,
         },
-        Cover::Wildcard => None,
+        Cover::Opaque | Cover::Wildcard => None,
     }
 }
 
 /// Returns a value that the matrix does not cover, or `None` when it covers
 /// every value of `types`.
-fn witness(
+pub(super) fn witness(
     matrix: &[Vec<Cover>],
     types: &[TyId],
     tcx: &TyCtxt,

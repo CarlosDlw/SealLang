@@ -1205,7 +1205,8 @@ storage uninitialized behind the owner's back. Only `Copy` values may be read
 through a reference by value.
 
 Borrow the pointee instead, as in `&*reference`, or copy the fields you need into
-a new value.",
+a new value. The same rule applies to an element bound by a slice pattern: only
+`Copy` elements may be bound, because the slice still owns its storage.",
 };
 
 /// An empty array literal has no element type to infer.

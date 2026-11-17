@@ -57,7 +57,16 @@ enum FlatPatternKind {
     Array {
         prefix: Vec<FlatPattern>,
         suffix: Vec<FlatPattern>,
+        has_rest: bool,
     },
+}
+
+/// The fixed parts of an array or slice pattern.
+struct ArrayParts<'a> {
+    prefix: &'a [FlatPattern],
+    suffix: &'a [FlatPattern],
+    has_rest: bool,
+    span: Span,
 }
 
 impl BodyLowering<'_> {
@@ -310,7 +319,11 @@ impl BodyLowering<'_> {
                     })
                     .collect()
             }
-            PatternKind::Array { prefix, suffix, .. } => {
+            PatternKind::Array {
+                prefix,
+                suffix,
+                has_rest,
+            } => {
                 let prefixes = self.expand_sequence(prefix);
                 let suffixes = self.expand_sequence(suffix);
                 let mut combinations = Vec::new();
@@ -322,7 +335,11 @@ impl BodyLowering<'_> {
                 combinations
                     .into_iter()
                     .map(|(prefix, suffix)| FlatPattern {
-                        kind: FlatPatternKind::Array { prefix, suffix },
+                        kind: FlatPatternKind::Array {
+                            prefix,
+                            suffix,
+                            has_rest: *has_rest,
+                        },
                         span,
                     })
                     .collect()
@@ -476,33 +493,160 @@ impl BodyLowering<'_> {
                     self.lower_flat_pattern(child, field_place, field_ty, fail, bindings);
                 }
             }
-            FlatPatternKind::Array { prefix, suffix } => {
-                let TyKind::Array { element, length } = self.hir.ty_ctxt().kind(ty) else {
-                    self.current = Some(fail);
-                    return;
+            FlatPatternKind::Array {
+                prefix,
+                suffix,
+                has_rest,
+            } => {
+                let parts = ArrayParts {
+                    prefix,
+                    suffix,
+                    has_rest: *has_rest,
+                    span: pattern.span,
                 };
-                for (index, child) in prefix.iter().enumerate() {
-                    self.lower_array_element(
-                        child,
-                        place.clone(),
-                        element,
-                        index as u64,
-                        fail,
-                        bindings,
-                    );
-                }
-                let offset = length.saturating_sub(suffix.len() as u64);
-                for (position, child) in suffix.iter().enumerate() {
-                    self.lower_array_element(
-                        child,
-                        place.clone(),
-                        element,
-                        offset + position as u64,
-                        fail,
-                        bindings,
-                    );
+                match self.hir.ty_ctxt().kind(ty) {
+                    TyKind::Array { .. } => {
+                        self.lower_array_pattern(&parts, place, ty, fail, bindings);
+                    }
+                    TyKind::Ref { pointee, .. } => {
+                        let TyKind::Slice { element } = self.hir.ty_ctxt().kind(pointee) else {
+                            self.current = Some(fail);
+                            return;
+                        };
+                        self.lower_slice_pattern(&parts, place, element, fail, bindings);
+                    }
+                    _ => {
+                        self.current = Some(fail);
+                    }
                 }
             }
+        }
+    }
+
+    /// Lowers an array pattern over a fixed-size array value.
+    fn lower_array_pattern(
+        &mut self,
+        parts: &ArrayParts<'_>,
+        place: Place,
+        ty: TyId,
+        fail: BasicBlockId,
+        bindings: &mut Vec<(DefId, Place)>,
+    ) {
+        let TyKind::Array { element, length } = self.hir.ty_ctxt().kind(ty) else {
+            self.current = Some(fail);
+            return;
+        };
+        for (index, child) in parts.prefix.iter().enumerate() {
+            self.lower_array_element(child, place.clone(), element, index as u64, fail, bindings);
+        }
+        let offset = length.saturating_sub(parts.suffix.len() as u64);
+        for (position, child) in parts.suffix.iter().enumerate() {
+            self.lower_array_element(
+                child,
+                place.clone(),
+                element,
+                offset + position as u64,
+                fail,
+                bindings,
+            );
+        }
+    }
+
+    /// Lowers an array pattern over a slice reference.
+    ///
+    /// The pattern tests the runtime length first, then reads the fixed prefix
+    /// from the start and the fixed suffix from the end. The test guarantees
+    /// every index is in bounds, so the element projections need no further
+    /// check.
+    fn lower_slice_pattern(
+        &mut self,
+        parts: &ArrayParts<'_>,
+        place: Place,
+        element: TyId,
+        fail: BasicBlockId,
+        bindings: &mut Vec<(DefId, Place)>,
+    ) {
+        let usize_ty = self.usize_ty();
+        let length = self.new_temp(usize_ty, parts.span);
+        self.assign_rvalue(
+            length.clone(),
+            Rvalue::Len {
+                slice: Operand::Copy(place.clone()),
+            },
+            parts.span,
+        );
+        let fixed = parts.prefix.len() + parts.suffix.len();
+        if !parts.has_rest {
+            let success = self.new_block();
+            self.terminate(
+                TerminatorKind::SwitchInt {
+                    discriminant: Operand::Copy(length.clone()),
+                    targets: vec![SwitchTarget {
+                        value: fixed as u128,
+                        target: success,
+                    }],
+                    otherwise: fail,
+                },
+                parts.span,
+            );
+            self.current = Some(success);
+        } else if fixed > 0 {
+            let bool_ty = self
+                .hir
+                .ty_ctxt()
+                .lookup(TyKind::Bool)
+                .expect("HIR lowering interns every primitive type");
+            let enough = self.new_temp(bool_ty, parts.span);
+            self.assign_rvalue(
+                enough.clone(),
+                Rvalue::Binary {
+                    op: BinOp::Ge,
+                    lhs: Operand::Copy(length.clone()),
+                    rhs: Operand::Constant(Constant::Int {
+                        value: fixed as u128,
+                        ty: usize_ty,
+                    }),
+                    span: parts.span,
+                },
+                parts.span,
+            );
+            let success = self.new_block();
+            self.terminate(
+                TerminatorKind::SwitchInt {
+                    discriminant: Operand::Copy(enough),
+                    targets: vec![SwitchTarget {
+                        value: 1,
+                        target: success,
+                    }],
+                    otherwise: fail,
+                },
+                parts.span,
+            );
+            self.current = Some(success);
+        }
+
+        let slice = place.deref();
+        for (index, child) in parts.prefix.iter().enumerate() {
+            self.lower_array_element(child, slice.clone(), element, index as u64, fail, bindings);
+        }
+        for (position, child) in parts.suffix.iter().enumerate() {
+            let back = (parts.suffix.len() - position) as u64;
+            let index = self.new_temp(usize_ty, parts.span);
+            self.assign_rvalue(
+                index.clone(),
+                Rvalue::Binary {
+                    op: BinOp::Sub,
+                    lhs: Operand::Copy(length.clone()),
+                    rhs: Operand::Constant(Constant::Int {
+                        value: back as u128,
+                        ty: usize_ty,
+                    }),
+                    span: parts.span,
+                },
+                parts.span,
+            );
+            let element_place = slice.clone().index(index.local, None);
+            self.lower_flat_pattern(child, element_place, element, fail, bindings);
         }
     }
 
