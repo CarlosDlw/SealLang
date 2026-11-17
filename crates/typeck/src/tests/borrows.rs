@@ -130,6 +130,17 @@ fn borrowing_a_non_copy_pointee_is_accepted() {
 }
 
 #[test]
+fn moving_an_element_out_of_a_slice_is_rejected() {
+    let (fixture, _, _) = check_errors("struct P { x: i32 }\nfunc f(p: *[P]) -> P { p[0] }");
+    fixture.expect("E3018", "cannot move out of a reference");
+}
+
+#[test]
+fn borrowing_an_element_of_a_slice_is_accepted() {
+    check_clean("struct P { x: i32 }\nfunc f(p: *[P]) -> *P { &p[0] }");
+}
+
+#[test]
 fn mutably_borrowing_a_field_of_a_mutable_binding_is_accepted() {
     check_clean(
         "struct P { x: i32, y: i32 }\n\

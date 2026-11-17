@@ -14,6 +14,7 @@ use seal_symbol::Symbol;
 use seal_ty::{RefKind, TyId, TyKind};
 
 use super::Checker;
+use super::PlaceMode;
 use super::flow::Flow;
 use crate::results::{MethodKind, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace};
 
@@ -39,7 +40,9 @@ impl Checker<'_> {
             args,
             span,
         } = call;
-        let receiver_ty = self.infer_expr(receiver, None, flow);
+        // A receiver is a place: the resolved receiver decides whether it is
+        // moved or borrowed, so typing it must not read a non-`Copy` pointee.
+        let receiver_ty = self.infer_expr_mode(receiver, None, flow, PlaceMode::Borrow);
         let receiver_place = self.results.place(receiver).cloned();
 
         let target = match self.user_method_target(receiver_ty, name, name_span) {
@@ -82,6 +85,15 @@ impl Checker<'_> {
             }
             return self.error_ty();
         };
+
+        if resolution.def.receiver == ReceiverMode::Value
+            && receiver_place
+                .as_ref()
+                .is_some_and(|place| place.contains_deref())
+            && !self.is_copy(resolution.receiver_ty)
+        {
+            self.report_move_out_of_reference(resolution.receiver_ty, self.hir.expr(receiver).span);
+        }
 
         if resolution.def.receiver == ReceiverMode::Exclusive
             && !self.receiver_is_writable(receiver, receiver_place.as_ref(), &resolution)
@@ -334,6 +346,15 @@ impl Checker<'_> {
             .emit();
             ReceiverAdjust::None
         };
+
+        if adjust == ReceiverAdjust::None
+            && receiver_place
+                .as_ref()
+                .is_some_and(|place| place.contains_deref())
+            && !self.is_copy(base_ty)
+        {
+            self.report_move_out_of_reference(base_ty, self.hir.expr(receiver).span);
+        }
 
         if adjust == ReceiverAdjust::ExclusiveBorrow
             && !self.receiver_place_is_writable(receiver_place.as_ref())

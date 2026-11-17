@@ -45,7 +45,7 @@ impl Checker<'_> {
     ///
     /// A move would leave the storage the reference reaches without a value,
     /// and this function does not own that storage.
-    fn report_move_out_of_reference(&mut self, pointee: TyId, span: Span) {
+    pub(super) fn report_move_out_of_reference(&mut self, pointee: TyId, span: Span) {
         self.error(
             seal_error_codes::E3018,
             span,

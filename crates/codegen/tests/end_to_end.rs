@@ -931,6 +931,38 @@ fn sibling_fields_stay_usable_after_moving_a_trait_receiver_field() {
 }
 
 #[test]
+fn a_shared_receiver_borrows_through_a_slice_and_an_explicit_dereference() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "receiver-auto-borrow-debug"),
+        (OptLevel::O2, false, "receiver-auto-borrow-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Counter { value: i32 }\n\
+             trait ReadValue { func read(self: *Self) -> i32; }\n\
+             impl ReadValue for Counter { func read(self: *Counter) -> i32 { (*self).value } }\n\
+             func first(counters: *[Counter; 1]) -> i32 { counters[0].read() }\n\
+             func peek(counter: *mut Counter) -> i32 { (*counter).read() }\n\
+             func main() -> i32 {\n\
+               let counters = [Counter { value: 21 }];\n\
+               let mut counter = Counter { value: 21 };\n\
+               first(&counters) + peek(&mut counter)\n\
+             }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("auto-borrowed receivers compile");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\

@@ -187,3 +187,23 @@ func first(tokens: *[Token]) -> i32 { tokens[0].consume() }";
     let (fixture, _, _) = check_errors(source);
     fixture.expect("E3018", "cannot move out of a reference");
 }
+
+#[test]
+fn a_shared_receiver_borrows_a_slice_element_instead_of_moving_it() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         trait View { func view(self: *Self) -> i32; }\n\
+         impl View for Token { func view(self: *Token) -> i32 { (*self).value } }\n\
+         func first(tokens: *[Token]) -> i32 { tokens[0].view() }",
+    );
+}
+
+#[test]
+fn a_shared_receiver_borrows_an_explicit_dereference_instead_of_moving_it() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         trait View { func view(self: *Self) -> i32; }\n\
+         impl View for Token { func view(self: *Token) -> i32 { (*self).value } }\n\
+         func peek(token: *mut Token) -> i32 { (*token).view() }",
+    );
+}
