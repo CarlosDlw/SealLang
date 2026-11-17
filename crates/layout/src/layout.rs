@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use seal_ty::{AdtId, AdtKind, TyCtxt, TyId, TyKind};
+use seal_ty::{AdtId, AdtKind, ParamTyId, SubstsId, TyCtxt, TyId, TyKind};
 
 /// The size and alignment of a type, in bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +87,8 @@ pub enum LayoutError {
     Unsized(TyId),
     /// The type is still an inference variable.
     Unknown(TyId),
+    /// The type is a declared parameter and has no layout before instantiation.
+    Parameter(ParamTyId),
     /// The field index does not belong to the aggregate.
     UnknownField(AdtId, usize),
     /// The type's size does not fit in `u64`.
@@ -107,6 +109,12 @@ impl fmt::Display for LayoutError {
             Self::Recursive(adt) => write!(f, "aggregate {adt:?} is recursive by value"),
             Self::Unsized(ty) => write!(f, "type {ty:?} has no static size"),
             Self::Unknown(ty) => write!(f, "type {ty:?} was not inferred"),
+            Self::Parameter(param) => {
+                write!(
+                    f,
+                    "type parameter {param:?} has no layout before instantiation"
+                )
+            }
             Self::UnknownField(adt, index) => {
                 write!(f, "aggregate {adt:?} has no field {index}")
             }
@@ -142,23 +150,46 @@ impl<'a> LayoutCtxt<'a> {
         self.layout_inner(ty, &mut Vec::new())
     }
 
-    /// Returns the layouts of every field of the struct `adt`, in declaration
-    /// order.
+    /// Returns the layouts of every field of the non-generic struct `adt`.
     pub fn field_layouts(&self, adt: AdtId) -> Result<Vec<FieldLayout>, LayoutError> {
+        self.field_layouts_with(adt, self.tcx.empty_substs())
+    }
+
+    /// Returns the layouts of every field of `adt` instantiated with `args`.
+    pub fn field_layouts_with(
+        &self,
+        adt: AdtId,
+        args: SubstsId,
+    ) -> Result<Vec<FieldLayout>, LayoutError> {
         if !self.tcx.adt(adt).is_struct() {
             return Err(LayoutError::NotAStruct(adt));
         }
-        self.aggregate_fields(adt, &mut vec![adt])
+        self.aggregate_fields(adt, args, &mut vec![(adt, args)])
     }
 
-    /// Returns the tag and payload layout of the enum `adt`.
+    /// Returns the tag and payload layout of the non-generic enum `adt`.
     pub fn enum_layout(&self, adt: AdtId) -> Result<EnumLayout, LayoutError> {
-        self.enum_layout_inner(adt, &mut Vec::new())
+        self.enum_layout_with(adt, self.tcx.empty_substs())
     }
 
-    /// Returns the layout of one field of `adt`.
+    /// Returns the tag and payload layout of `adt` instantiated with `args`.
+    pub fn enum_layout_with(&self, adt: AdtId, args: SubstsId) -> Result<EnumLayout, LayoutError> {
+        self.enum_layout_inner(adt, args, &mut Vec::new())
+    }
+
+    /// Returns the layout of one field of the non-generic `adt`.
     pub fn field_layout(&self, adt: AdtId, index: usize) -> Result<FieldLayout, LayoutError> {
-        self.field_layouts(adt)?
+        self.field_layout_with(adt, self.tcx.empty_substs(), index)
+    }
+
+    /// Returns the layout of one field of `adt` instantiated with `args`.
+    pub fn field_layout_with(
+        &self,
+        adt: AdtId,
+        args: SubstsId,
+        index: usize,
+    ) -> Result<FieldLayout, LayoutError> {
+        self.field_layouts_with(adt, args)?
             .get(index)
             .copied()
             .ok_or(LayoutError::UnknownField(adt, index))
@@ -183,7 +214,11 @@ impl<'a> LayoutCtxt<'a> {
         Ok(fields)
     }
 
-    fn layout_inner(&self, ty: TyId, stack: &mut Vec<AdtId>) -> Result<Layout, LayoutError> {
+    fn layout_inner(
+        &self,
+        ty: TyId,
+        stack: &mut Vec<(AdtId, SubstsId)>,
+    ) -> Result<Layout, LayoutError> {
         let pointer = u64::from(self.pointer_width) / 8;
         let layout = match self.tcx.kind(ty) {
             TyKind::Bool => Layout::new(1, 1),
@@ -225,18 +260,21 @@ impl<'a> LayoutCtxt<'a> {
             }
             TyKind::Str | TyKind::Slice { .. } => return Err(LayoutError::Unsized(ty)),
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
-            TyKind::Adt(adt) => {
+            TyKind::Param(param) => return Err(LayoutError::Parameter(param)),
+            TyKind::Adt { adt, args } => {
                 let definition = self.tcx.adt(adt);
                 match definition.kind {
                     AdtKind::Struct => {
-                        if stack.contains(&adt) {
+                        let key = (adt, args);
+                        if stack.contains(&key) {
                             return Err(LayoutError::Recursive(adt));
                         }
-                        stack.push(adt);
+                        stack.push(key);
                         let mut offset = 0;
                         let mut align = 1;
                         for field in &definition.fields {
-                            let field_layout = self.layout_inner(field.ty, stack)?;
+                            let field_ty = self.tcx.substitute(field.ty, args);
+                            let field_layout = self.layout_inner(field_ty, stack)?;
                             offset = round_up(offset, field_layout.align);
                             offset = offset
                                 .checked_add(field_layout.size)
@@ -246,7 +284,7 @@ impl<'a> LayoutCtxt<'a> {
                         stack.pop();
                         Layout::new(round_up(offset, align), align)
                     }
-                    AdtKind::Enum => self.enum_layout_inner(adt, stack)?.layout,
+                    AdtKind::Enum => self.enum_layout_inner(adt, args, stack)?.layout,
                 }
             }
         };
@@ -256,7 +294,8 @@ impl<'a> LayoutCtxt<'a> {
     fn enum_layout_inner(
         &self,
         adt: AdtId,
-        stack: &mut Vec<AdtId>,
+        args: SubstsId,
+        stack: &mut Vec<(AdtId, SubstsId)>,
     ) -> Result<EnumLayout, LayoutError> {
         let definition = self.tcx.adt(adt);
         if !definition.is_enum() {
@@ -265,22 +304,24 @@ impl<'a> LayoutCtxt<'a> {
         if u32::try_from(definition.variants.len()).is_err() {
             return Err(LayoutError::TooManyVariants(adt));
         }
-        if stack.contains(&adt) {
+        let key = (adt, args);
+        if stack.contains(&key) {
             return Err(LayoutError::Recursive(adt));
         }
 
-        let ty = self.tcx.adt_ty(adt);
+        let ty = self.tcx.adt_ty_with(adt, args);
         let tag = tag_layout(definition.variants.len());
         let mut payload_align = 1;
         let mut payload_size = 0;
         let mut raw = Vec::with_capacity(definition.variants.len());
 
-        stack.push(adt);
+        stack.push(key);
         for variant in &definition.variants {
             let mut offset = 0;
             let mut fields = Vec::with_capacity(variant.fields.len());
             for field in &variant.fields {
-                let layout = self.layout_inner(field.ty, stack)?;
+                let field_ty = self.tcx.substitute(field.ty, args);
+                let layout = self.layout_inner(field_ty, stack)?;
                 offset = round_up(offset, layout.align);
                 fields.push(FieldLayout { offset, layout });
                 offset = offset
@@ -324,12 +365,14 @@ impl<'a> LayoutCtxt<'a> {
     fn aggregate_fields(
         &self,
         adt: AdtId,
-        stack: &mut Vec<AdtId>,
+        args: SubstsId,
+        stack: &mut Vec<(AdtId, SubstsId)>,
     ) -> Result<Vec<FieldLayout>, LayoutError> {
         let mut offset = 0;
         let mut fields = Vec::new();
         for field in self.tcx.adt(adt).fields {
-            let layout = self.layout_inner(field.ty, stack)?;
+            let field_ty = self.tcx.substitute(field.ty, args);
+            let layout = self.layout_inner(field_ty, stack)?;
             offset = round_up(offset, layout.align);
             fields.push(FieldLayout { offset, layout });
             offset += layout.size;
@@ -378,6 +421,32 @@ mod tests {
 
     fn def(index: u32) -> DefId {
         DefId::from_u32(index).expect("test definitions are small")
+    }
+
+    fn generic_pair(ctxt: &TyCtxt, interner: &Interner) -> (AdtId, seal_ty::TyId, seal_ty::TyId) {
+        let owner = def(0);
+        let adt = ctxt.push_adt(owner, interner.intern("Pair"), AdtKind::Struct);
+        ctxt.set_generic_count(adt, 2);
+        let first = ctxt.push_param(def(100), owner, 0, interner.intern("T"));
+        let second = ctxt.push_param(def(101), owner, 1, interner.intern("U"));
+        let first_ty = ctxt.param_ty(first);
+        let second_ty = ctxt.param_ty(second);
+        ctxt.fill_adt(
+            adt,
+            vec![
+                FieldDef {
+                    def: def(1),
+                    name: Some(interner.intern("first")),
+                    ty: first_ty,
+                },
+                FieldDef {
+                    def: def(2),
+                    name: Some(interner.intern("second")),
+                    ty: second_ty,
+                },
+            ],
+        );
+        (adt, first_ty, second_ty)
     }
 
     fn point(ctxt: &TyCtxt, interner: &Interner) -> AdtId {
@@ -852,6 +921,162 @@ mod tests {
         assert_eq!(tag_layout(257), Layout::new(2, 2));
         assert_eq!(tag_layout(65_536), Layout::new(2, 2));
         assert_eq!(tag_layout(65_537), Layout::new(4, 4));
+    }
+
+    #[test]
+    fn generic_struct_layouts_instantiate_fields_and_padding() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, _, _) = generic_pair(&ctxt, &interner);
+        let u8_ty = ctxt.uint_ty(seal_ty::UintTy::U8);
+        let int = ctxt.int_ty(IntTy::I32);
+
+        let pair_ui = ctxt.adt_ty_with(adt, ctxt.substs(&[u8_ty, int]));
+        let layouts = LayoutCtxt::new(&ctxt, 64)
+            .field_layouts_with(adt, ctxt.substs(&[u8_ty, int]))
+            .expect("the instantiation is sized");
+        assert_eq!(layouts[0].offset, 0);
+        assert_eq!(layouts[0].layout, Layout::new(1, 1));
+        assert_eq!(layouts[1].offset, 4);
+        assert_eq!(layouts[1].layout, Layout::new(4, 4));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(pair_ui),
+            Ok(Layout::new(8, 4))
+        );
+
+        let bool_ty = ctxt.bool_ty();
+        let pair_ib = ctxt.adt_ty_with(adt, ctxt.substs(&[int, bool_ty]));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(pair_ib),
+            Ok(Layout::new(8, 4))
+        );
+
+        let nested = ctxt.adt_ty_with(adt, ctxt.substs(&[pair_ib, u8_ty]));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(nested),
+            Ok(Layout::new(12, 4))
+        );
+    }
+
+    #[test]
+    fn generic_enum_layouts_instantiate_payload_fields() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let adt = ctxt.push_adt(owner, interner.intern("Choice"), AdtKind::Enum);
+        ctxt.set_generic_count(adt, 2);
+        let first = ctxt.push_param(def(100), owner, 0, interner.intern("T"));
+        let second = ctxt.push_param(def(101), owner, 1, interner.intern("U"));
+        ctxt.fill_variants(
+            adt,
+            vec![
+                variant(
+                    &interner,
+                    10,
+                    "First",
+                    vec![("value", ctxt.param_ty(first))],
+                ),
+                variant(
+                    &interner,
+                    20,
+                    "Second",
+                    vec![("value", ctxt.param_ty(second))],
+                ),
+            ],
+        );
+
+        let u8_ty = ctxt.uint_ty(seal_ty::UintTy::U8);
+        let int = ctxt.int_ty(IntTy::I32);
+        let args = ctxt.substs(&[u8_ty, int]);
+        let layout = LayoutCtxt::new(&ctxt, 64)
+            .enum_layout_with(adt, args)
+            .expect("the instantiation is sized");
+        assert_eq!(layout.tag, Layout::new(1, 1));
+        assert_eq!(layout.payload_offset, 4);
+        assert_eq!(layout.payload_size, 4);
+        assert_eq!(layout.layout, Layout::new(8, 4));
+        assert_eq!(layout.variants[0].fields[0].layout, Layout::new(1, 1));
+        assert_eq!(layout.variants[1].fields[0].layout, Layout::new(4, 4));
+
+        let ty = ctxt.adt_ty_with(adt, args);
+        assert_eq!(LayoutCtxt::new(&ctxt, 64).layout_of(ty), Ok(layout.layout));
+    }
+
+    #[test]
+    fn generic_by_value_recursion_uses_the_instantiation_as_its_key() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let adt = ctxt.push_adt(owner, interner.intern("Bad"), AdtKind::Struct);
+        ctxt.set_generic_count(adt, 2);
+        let first = ctxt.push_param(def(100), owner, 0, interner.intern("T"));
+        let second = ctxt.push_param(def(101), owner, 1, interner.intern("U"));
+        let first_ty = ctxt.param_ty(first);
+        let second_ty = ctxt.param_ty(second);
+        let swapped = ctxt.adt_ty_with(adt, ctxt.substs(&[second_ty, first_ty]));
+        ctxt.fill_adt(
+            adt,
+            vec![FieldDef {
+                def: def(1),
+                name: Some(interner.intern("next")),
+                ty: swapped,
+            }],
+        );
+
+        let int = ctxt.int_ty(IntTy::I32);
+        let bool_ty = ctxt.bool_ty();
+        let ty = ctxt.adt_ty_with(adt, ctxt.substs(&[int, bool_ty]));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(ty),
+            Err(LayoutError::Recursive(adt))
+        );
+    }
+
+    #[test]
+    fn generic_recursion_through_a_reference_is_accepted() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let adt = ctxt.push_adt(owner, interner.intern("Node"), AdtKind::Struct);
+        ctxt.set_generic_count(adt, 1);
+        let param = ctxt.push_param(def(100), owner, 0, interner.intern("T"));
+        let param_ty = ctxt.param_ty(param);
+        let args = ctxt.substs(&[param_ty]);
+        let node = ctxt.adt_ty_with(adt, args);
+        ctxt.fill_adt(
+            adt,
+            vec![
+                FieldDef {
+                    def: def(1),
+                    name: Some(interner.intern("value")),
+                    ty: param_ty,
+                },
+                FieldDef {
+                    def: def(2),
+                    name: Some(interner.intern("next")),
+                    ty: ctxt.ref_ty(node),
+                },
+            ],
+        );
+
+        let int = ctxt.int_ty(IntTy::I32);
+        let concrete = ctxt.adt_ty_with(adt, ctxt.substs(&[int]));
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(concrete),
+            Ok(Layout::new(16, 8))
+        );
+        assert!(ctxt.contains_reference(concrete));
+    }
+
+    #[test]
+    fn an_uninstantiated_parameter_has_no_layout() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let param = ctxt.push_param(def(100), def(0), 0, interner.intern("T"));
+        assert!(matches!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(ctxt.param_ty(param)),
+            Err(LayoutError::Parameter(found)) if found == param
+        ));
     }
 
     #[test]

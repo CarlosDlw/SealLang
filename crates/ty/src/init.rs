@@ -112,7 +112,7 @@ impl<K: Copy + Eq + Hash> InitPaths<K> {
                 let ty = place_type(tcx, root_ty, path).unwrap_or_else(|| tcx.error_ty());
                 if matches!(
                     tcx.kind(ty),
-                    TyKind::Adt(_) | TyKind::Array { .. } | TyKind::Tuple(_)
+                    TyKind::Adt { .. } | TyKind::Array { .. } | TyKind::Tuple(_)
                 ) && self.fully_initialized(root, path, tcx, ty, &mut FxHashSet::default())
                 {
                     InitState::Initialized
@@ -222,7 +222,7 @@ impl<K: Copy + Eq + Hash> InitPaths<K> {
         path: &[PathElem],
         tcx: &TyCtxt,
         ty: TyId,
-        visiting: &mut FxHashSet<AdtId>,
+        visiting: &mut FxHashSet<(AdtId, crate::SubstsId)>,
     ) -> bool {
         match self.nearest(root, path) {
             Some(Entry::Moved) => return false,
@@ -231,21 +231,23 @@ impl<K: Copy + Eq + Hash> InitPaths<K> {
         }
 
         match tcx.kind(ty) {
-            TyKind::Adt(adt) => {
-                if !visiting.insert(adt) {
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
                     return false;
                 }
                 let def = tcx.adt(adt);
                 if def.fields.is_empty() {
-                    visiting.remove(&adt);
+                    visiting.remove(&key);
                     return false;
                 }
                 let initialized = def.fields.iter().all(|field| {
                     let mut nested = path.to_vec();
                     nested.push(PathElem::Field(field.def));
-                    self.fully_initialized(root, &nested, tcx, field.ty, visiting)
+                    let field_ty = tcx.substitute(field.ty, args);
+                    self.fully_initialized(root, &nested, tcx, field_ty, visiting)
                 });
-                visiting.remove(&adt);
+                visiting.remove(&key);
                 initialized
             }
             TyKind::Array { element, length } => {
@@ -282,8 +284,8 @@ pub fn place_type(tcx: &TyCtxt, root_ty: TyId, path: &[PathElem]) -> Option<TyId
     let mut ty = root_ty;
     for element in path {
         match (tcx.kind(ty), element) {
-            (TyKind::Adt(adt), PathElem::Field(field)) => {
-                ty = tcx.field(adt, *field)?.ty;
+            (TyKind::Adt { adt, args }, PathElem::Field(field)) => {
+                ty = tcx.field_ty(adt, args, *field)?;
             }
             (TyKind::Tuple(tuple), PathElem::TupleField(index)) => {
                 ty = tcx.tuple_element(tuple, *index as usize)?;
@@ -477,6 +479,86 @@ mod tests {
         );
         assert_eq!(
             init.state(def(9), &[], &ctxt, array),
+            InitState::PartiallyMoved
+        );
+    }
+
+    #[test]
+    fn generic_fields_are_instantiated_in_place_types() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let adt = ctxt.push_adt(owner, interner.intern("Holder"), crate::AdtKind::Struct);
+        ctxt.set_generic_count(adt, 1);
+        let param = ctxt.push_param(def(10), owner, 0, interner.intern("T"));
+        let param_ty = ctxt.param_ty(param);
+        let int = ctxt.int_ty(IntTy::I32);
+        ctxt.fill_adt(
+            adt,
+            vec![
+                FieldDef {
+                    def: def(1),
+                    name: Some(interner.intern("value")),
+                    ty: param_ty,
+                },
+                FieldDef {
+                    def: def(2),
+                    name: Some(interner.intern("marker")),
+                    ty: int,
+                },
+                FieldDef {
+                    def: def(3),
+                    name: Some(interner.intern("values")),
+                    ty: ctxt.array_ty(param_ty, 2),
+                },
+                FieldDef {
+                    def: def(4),
+                    name: Some(interner.intern("packed")),
+                    ty: ctxt.tuple_ty(&[param_ty, int]),
+                },
+            ],
+        );
+        let uint = ctxt.uint_ty(crate::UintTy::U8);
+        let holder = ctxt.adt_ty_with(adt, ctxt.substs(&[uint]));
+
+        assert_eq!(
+            super::place_type(&ctxt, holder, &[PathElem::Field(def(1))]),
+            Some(uint)
+        );
+        assert_eq!(
+            super::place_type(&ctxt, holder, &[PathElem::Field(def(2))]),
+            Some(int)
+        );
+        assert_eq!(
+            super::place_type(
+                &ctxt,
+                holder,
+                &[PathElem::Field(def(3)), PathElem::Index(1)]
+            ),
+            Some(uint)
+        );
+        assert_eq!(
+            super::place_type(
+                &ctxt,
+                holder,
+                &[PathElem::Field(def(4)), PathElem::TupleField(0)]
+            ),
+            Some(uint)
+        );
+
+        let mut init: InitPaths<DefId> = InitPaths::new();
+        init.assign(def(9), &[]);
+        init.move_out(def(9), &[PathElem::Field(def(1))]);
+        assert_eq!(
+            init.state(def(9), &[PathElem::Field(def(1))], &ctxt, holder),
+            InitState::Moved
+        );
+        assert_eq!(
+            init.state(def(9), &[PathElem::Field(def(2))], &ctxt, holder),
+            InitState::Initialized
+        );
+        assert_eq!(
+            init.state(def(9), &[], &ctxt, holder),
             InitState::PartiallyMoved
         );
     }

@@ -64,11 +64,12 @@ fn describe(kind: TyKind) -> String {
         TyKind::Ref { kind, .. } => format!("{}T", kind.prefix()),
         TyKind::Array { .. } => "an array".to_owned(),
         TyKind::Tuple(_) => "a tuple".to_owned(),
-        TyKind::Adt(_) => "a struct".to_owned(),
+        TyKind::Adt { .. } => "a struct".to_owned(),
         TyKind::Unit => "()".to_owned(),
         TyKind::Never => "!".to_owned(),
         TyKind::Error => "an error type".to_owned(),
         TyKind::Infer(_) => "an inferred type".to_owned(),
+        TyKind::Param(_) => "a type parameter".to_owned(),
     }
 }
 

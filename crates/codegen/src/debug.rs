@@ -397,7 +397,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                     )
                     .as_type()
             }
-            TyKind::Adt(adt) => self.adt_type(adt)?,
+            TyKind::Adt { adt, .. } => self.adt_type(adt)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {
@@ -406,6 +406,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Infer(_) => {
                 return Err(CodegenError::internal(
                     "an unresolved inference type reached debug information",
+                ));
+            }
+            TyKind::Param(_) => {
+                return Err(CodegenError::internal(
+                    "an uninstantiated type parameter reached debug information",
                 ));
             }
         };

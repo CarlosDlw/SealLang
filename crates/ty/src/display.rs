@@ -59,10 +59,31 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Array { element, length } => {
                 write!(f, "[{}; {length}]", self.display(element))
             }
-            TyKind::Adt(adt) => match self.interner {
-                Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name)),
-                None => write!(f, "<struct#{}>", adt.index()),
-            },
+            TyKind::Adt { adt, args } => {
+                match self.interner {
+                    Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name))?,
+                    None => write!(f, "<struct#{}>", adt.index())?,
+                }
+                let arguments = self.ctxt.substs_args(args);
+                if !arguments.is_empty() {
+                    f.write_str("<")?;
+                    for (index, argument) in arguments.iter().enumerate() {
+                        if index > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{}", self.display(*argument))?;
+                    }
+                    f.write_str(">")?;
+                }
+                Ok(())
+            }
+            TyKind::Param(param) => {
+                let data = self.ctxt.param_data(param);
+                match self.interner {
+                    Some(interner) => f.write_str(interner.resolve(data.name)),
+                    None => write!(f, "?P{}", data.index),
+                }
+            }
             TyKind::Tuple(tuple) => {
                 let elements = self.ctxt.tuple_elements(tuple);
                 f.write_str("(")?;

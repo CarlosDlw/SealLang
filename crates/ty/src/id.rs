@@ -28,8 +28,26 @@ newtype_index! {
     ///
     /// The ID names the nominal definition, not the type: two fields with the
     /// same IDs denote the same aggregate even when their fields are written in
-    /// different places.
+    /// different places. A type argument list is stored separately by
+    /// [`TyKind::Adt`](crate::TyKind::Adt).
     pub struct AdtId;
+}
+
+newtype_index! {
+    /// Index of a declared type parameter in a [`TyCtxt`](crate::TyCtxt).
+    ///
+    /// A parameter ID is unique to its declaration. Two parameters named `T`
+    /// declared by different owners are distinct, even if their names and
+    /// positions happen to match.
+    pub struct ParamTyId;
+}
+
+newtype_index! {
+    /// Index of an interned ordered list of type arguments.
+    ///
+    /// Substitutions are structural: `[i32, bool]` and `[bool, i32]` are
+    /// different lists, while two requests for `[i32, bool]` share one ID.
+    pub struct SubstsId;
 }
 
 newtype_index! {

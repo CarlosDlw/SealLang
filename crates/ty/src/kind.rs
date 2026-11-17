@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::id::{AdtId, InferTyId, TupleId, TyId};
+use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
 
 /// A signed integer type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -236,8 +236,24 @@ pub enum TyKind {
         /// The number of elements.
         length: u64,
     },
-    /// A nominal aggregate type, such as a struct.
-    Adt(AdtId),
+    /// A nominal aggregate type with its type arguments, such as `Pair<i32, bool>`.
+    ///
+    /// The [`AdtId`] names the declaration, while `args` supplies one type for
+    /// each declared parameter. A non-generic aggregate uses the canonical empty
+    /// substitution. Two instantiations with different arguments are different
+    /// types and therefore have different `TyId`s.
+    Adt {
+        /// The aggregate declaration.
+        adt: AdtId,
+        /// The ordered type arguments, one per declared parameter.
+        args: SubstsId,
+    },
+    /// A declared type parameter used as a type, such as `T`.
+    ///
+    /// Parameters are rigid during checking of a generic body. They are replaced
+    /// by [`TyCtxt::substitute`](crate::TyCtxt::substitute) when a declaration is
+    /// instantiated.
+    Param(ParamTyId),
     /// A structural tuple type `(T, U, ...)`.
     ///
     /// The tuple's element types live in [`TyCtxt`](crate::TyCtxt)'s tuple

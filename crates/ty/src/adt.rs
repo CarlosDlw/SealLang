@@ -82,6 +82,11 @@ pub struct AdtDef {
     pub name: Symbol,
     /// What kind of aggregate this is.
     pub kind: AdtKind,
+    /// The number of type parameters the declaration takes.
+    ///
+    /// Every instantiation must supply exactly this many arguments. Lowering
+    /// sets it once, before any field type is instantiated.
+    pub generic_count: u32,
     /// Struct fields in declaration order (also the layout order).
     ///
     /// Always empty for an enum: its fields live on each [`VariantDef`].

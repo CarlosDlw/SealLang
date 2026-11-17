@@ -60,7 +60,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
 
     fn discriminant(&self, place: &seal_mir::Place) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let ty = self.place_type(place)?;
-        let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+        let TyKind::Adt { adt, .. } = self.tcx.kind(ty) else {
             return Err(CodegenError::internal(format!(
                 "cannot read a discriminant from `{ty:?}`"
             )));

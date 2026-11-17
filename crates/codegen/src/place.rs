@@ -49,7 +49,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = pointee;
                 }
                 Projection::Field(field) => {
-                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                    let TyKind::Adt { adt, args } = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
                             "cannot project a field from `{ty:?}` during code generation"
                         )));
@@ -70,7 +70,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             .build_struct_gep(struct_type, pointer, index as u32, "field"),
                         "field projection",
                     )?;
-                    ty = definition.fields[index].ty;
+                    ty = self.tcx.substitute(definition.fields[index].ty, args);
                 }
                 Projection::TupleField(index) => {
                     let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
@@ -95,7 +95,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = element;
                 }
                 Projection::VariantField { variant, field } => {
-                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                    let TyKind::Adt { adt, args: _ } = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
                             "cannot project an enum field from `{ty:?}` during code generation"
                         )));
@@ -242,7 +242,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     ty = pointee;
                 }
                 Projection::Field(field) => {
-                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                    let TyKind::Adt { adt, args } = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
                             "cannot project a field from `{ty:?}` during code generation"
                         )));
@@ -257,7 +257,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                                 "field {field:?} does not belong to aggregate {adt:?}"
                             ))
                         })?;
-                    ty = definition.fields[index].ty;
+                    ty = self.tcx.substitute(definition.fields[index].ty, args);
                 }
                 Projection::TupleField(index) => {
                     let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
@@ -275,7 +275,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                         })?;
                 }
                 Projection::VariantField { variant, field } => {
-                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                    let TyKind::Adt { adt, args } = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
                             "cannot project an enum field from `{ty:?}` during code generation"
                         )));
@@ -291,7 +291,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             "field {field:?} does not belong to variant {variant:?}"
                         ))
                     })?;
-                    ty = field.ty;
+                    ty = self.tcx.substitute(field.ty, args);
                 }
                 Projection::Index { .. } => {
                     ty = match self.tcx.kind(ty) {

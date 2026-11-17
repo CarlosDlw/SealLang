@@ -651,13 +651,13 @@ pub(super) fn scalar_domain(ty: TyId, tcx: &TyCtxt, pointer_width: u8) -> Option
 fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) -> Option<Vec<Ctor>> {
     match tcx.kind(ty) {
         TyKind::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
-        TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
+        TyKind::Adt { adt, .. } => Some(adt_constructors(tcx, adt)),
         TyKind::Tuple(tuple) => Some(vec![Ctor::Tuple { tuple: Some(tuple) }]),
         TyKind::Unit => Some(vec![Ctor::Tuple { tuple: None }]),
         TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
         TyKind::Ref { pointee, .. } => match tcx.kind(pointee) {
             TyKind::Slice { element } => Some(slice_constructors(element, covers)),
-            TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
+            TyKind::Adt { adt, .. } => Some(adt_constructors(tcx, adt)),
             TyKind::Ref { .. } | TyKind::Tuple(_) | TyKind::Unit => {
                 constructors(tcx, pointee, covers, pointer_width)
             }

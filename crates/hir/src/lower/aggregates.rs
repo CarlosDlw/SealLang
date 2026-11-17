@@ -64,7 +64,7 @@ impl Lowering<'_> {
         for (index, field) in fields.iter().enumerate() {
             let field_span = self.hir.definitions().get(field.def).span;
 
-            if let TyKind::Adt(inner) = self.hir.ty_ctxt().kind(field.ty) {
+            if let TyKind::Adt { adt: inner, .. } = self.hir.ty_ctxt().kind(field.ty) {
                 if visiting.contains(&inner) {
                     self.error(
                         codes::E3016,

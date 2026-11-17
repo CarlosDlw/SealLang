@@ -996,10 +996,10 @@ impl<'a> BodyLowering<'a> {
                     ty = pointee;
                 }
                 PlaceProjection::Field(field) => {
-                    if let TyKind::Adt(adt) = self.hir.ty_ctxt().kind(ty)
-                        && let Some(field) = self.hir.ty_ctxt().field(adt, *field)
+                    if let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(ty)
+                        && let Some(field_ty) = self.hir.ty_ctxt().field_ty(adt, args, *field)
                     {
-                        ty = field.ty;
+                        ty = field_ty;
                     }
                     slice_reference = None;
                     projections.push(Projection::Field(*field));

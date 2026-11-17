@@ -768,7 +768,7 @@ impl<'a> Lowering<'a> {
         let target = self.hir.ty_ctxt().adt_ty(adt);
         let receiver = self.lower_type(ty);
         match self.hir.ty_ctxt().kind(receiver) {
-            TyKind::Adt(found) if found == adt => Some(ReceiverKind::Value),
+            TyKind::Adt { adt: found, .. } if found == adt => Some(ReceiverKind::Value),
             TyKind::Ref {
                 kind: RefKind::Shared,
                 pointee,

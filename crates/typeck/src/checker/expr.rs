@@ -259,8 +259,11 @@ impl Checker<'_> {
         // whole place to be initialized: only the selected field is read.
         let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
         let (ty, field) = match self.hir.ty_ctxt().kind(base_ty) {
-            TyKind::Adt(adt) => match self.hir.ty_ctxt().field_by_name(adt, name) {
-                Some(field) => (field.ty, Some(field.def)),
+            TyKind::Adt { adt, args } => match self.hir.ty_ctxt().field_by_name(adt, name) {
+                Some(field) => (
+                    self.hir.ty_ctxt().substitute(field.ty, args),
+                    Some(field.def),
+                ),
                 None => {
                     self.error(
                         seal_error_codes::E2007,

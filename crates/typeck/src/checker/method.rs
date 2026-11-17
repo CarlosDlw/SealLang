@@ -183,7 +183,7 @@ impl Checker<'_> {
         while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(base) {
             base = pointee;
         }
-        let TyKind::Adt(adt) = self.hir.ty_ctxt().kind(base) else {
+        let TyKind::Adt { adt, .. } = self.hir.ty_ctxt().kind(base) else {
             return UserLookup::NotAStruct;
         };
         let type_def = self.hir.ty_ctxt().adt(adt).def;

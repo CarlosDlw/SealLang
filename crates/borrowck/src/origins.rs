@@ -526,17 +526,16 @@ pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
                 _ => ty,
             },
             Projection::Field(field) => match hir.ty_ctxt().kind(ty) {
-                TyKind::Adt(adt) => hir
-                    .ty_ctxt()
-                    .field(adt, *field)
-                    .map_or(ty, |field| field.ty),
+                TyKind::Adt { adt, args } => {
+                    hir.ty_ctxt().field_ty(adt, args, *field).unwrap_or(ty)
+                }
                 _ => ty,
             },
             Projection::VariantField { variant, field } => match hir.ty_ctxt().kind(ty) {
-                TyKind::Adt(adt) => hir
+                TyKind::Adt { adt, args } => hir
                     .ty_ctxt()
-                    .variant_field(adt, *variant, *field)
-                    .map_or(ty, |field| field.ty),
+                    .variant_field_ty(adt, args, *variant, *field)
+                    .unwrap_or(ty),
                 _ => ty,
             },
             Projection::TupleField(index) => match hir.ty_ctxt().kind(ty) {

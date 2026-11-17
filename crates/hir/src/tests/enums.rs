@@ -188,7 +188,10 @@ fn enum_kinds_are_available_to_type_annotations() {
     let adt = hir.adt(definition).expect("the enum has an aggregate");
     assert_eq!(
         hir.ty_ctxt().kind(hir.ty_ctxt().adt_ty(adt)),
-        TyKind::Adt(adt)
+        TyKind::Adt {
+            adt,
+            args: hir.ty_ctxt().empty_substs(),
+        }
     );
     assert!(hir.ty_ctxt().is_sized(hir.ty_ctxt().adt_ty(adt)));
 }

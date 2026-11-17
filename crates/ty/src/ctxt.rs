@@ -8,7 +8,8 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
-use crate::id::{AdtId, InferTyId, TupleId, TyId, VariantIdx};
+use crate::generics::{ParamEnv, ParamTy};
+use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
 /// Interns types and answers structural queries about them.
@@ -28,6 +29,10 @@ pub struct TyCtxt {
     adts: RefCell<IndexVec<AdtId, AdtDef>>,
     tuples: RefCell<IndexVec<TupleId, Vec<TyId>>>,
     tuple_interner: RefCell<FxHashMap<Vec<TyId>, TupleId>>,
+    params: RefCell<IndexVec<ParamTyId, ParamTy>>,
+    param_interner: RefCell<FxHashMap<ParamTy, ParamTyId>>,
+    substs_arena: RefCell<IndexVec<SubstsId, Vec<TyId>>>,
+    substs_interner: RefCell<FxHashMap<Vec<TyId>, SubstsId>>,
 }
 
 impl TyCtxt {
@@ -63,6 +68,93 @@ impl TyCtxt {
         self.interner.borrow().get(&kind).copied()
     }
 
+    /// Interns a declared type parameter and returns its canonical ID.
+    ///
+    /// The key includes the parameter's definition, owner, flattened index, and
+    /// name. Lowering must not create two different names for the same owner and
+    /// index; doing so is an internal invariant violation.
+    pub fn push_param(&self, def: DefId, owner: DefId, index: u32, name: Symbol) -> ParamTyId {
+        let data = ParamTy {
+            def,
+            owner,
+            index,
+            name,
+        };
+        if let Some(&id) = self.param_interner.borrow().get(&data) {
+            return id;
+        }
+        let id = self.params.borrow_mut().push(data);
+        self.param_interner.borrow_mut().insert(data, id);
+        id
+    }
+
+    /// Returns the declaration data of a type parameter.
+    pub fn param_data(&self, param: ParamTyId) -> ParamTy {
+        self.params.borrow()[param]
+    }
+
+    /// Returns the type standing for a declared parameter.
+    pub fn param_ty(&self, param: ParamTyId) -> TyId {
+        self.intern(TyKind::Param(param))
+    }
+
+    /// Returns the number of declared parameters interned so far.
+    pub fn param_len(&self) -> usize {
+        self.params.borrow().len()
+    }
+
+    /// Interns an ordered list of type arguments.
+    ///
+    /// The empty list is canonical and is shared by every non-generic use.
+    pub fn substs(&self, args: &[TyId]) -> SubstsId {
+        if let Some(&id) = self.substs_interner.borrow().get(args) {
+            return id;
+        }
+        let id = self.substs_arena.borrow_mut().push(args.to_vec());
+        self.substs_interner.borrow_mut().insert(args.to_vec(), id);
+        id
+    }
+
+    /// Returns the canonical empty substitution list.
+    pub fn empty_substs(&self) -> SubstsId {
+        self.substs(&[])
+    }
+
+    /// Returns the type arguments in `substs`, in declaration order.
+    pub fn substs_args(&self, substs: SubstsId) -> Vec<TyId> {
+        self.substs_arena.borrow()[substs].clone()
+    }
+
+    /// Returns the number of type arguments in `substs`.
+    pub fn substs_len(&self, substs: SubstsId) -> usize {
+        self.substs_arena.borrow()[substs].len()
+    }
+
+    /// Returns the number of interned substitution lists.
+    pub fn substs_len_total(&self) -> usize {
+        self.substs_arena.borrow().len()
+    }
+
+    /// Replaces every declared parameter in `ty` using `substs`.
+    ///
+    /// A parameter is replaced by the argument at its flattened index. The
+    /// substitution list must cover every parameter that occurs in `ty`; an
+    /// out-of-range index is an internal invariant violation, not user input.
+    pub fn substitute(&self, ty: TyId, substs: SubstsId) -> TyId {
+        crate::substs::substitute(self, ty, substs)
+    }
+
+    /// Returns the declared parameters that occur in `ty`, first occurrence
+    /// first. Duplicate occurrences are removed.
+    pub fn free_params(&self, ty: TyId) -> Vec<ParamTyId> {
+        crate::substs::free_params(self, ty)
+    }
+
+    /// Returns `true` if `ty` mentions a declared parameter.
+    pub fn contains_param(&self, ty: TyId) -> bool {
+        crate::substs::contains_param(self, ty)
+    }
+
     /// Reserves an aggregate slot for `def` and returns its ID.
     ///
     /// Fields and variants are filled later, because an aggregate may refer to
@@ -73,9 +165,23 @@ impl TyCtxt {
             def,
             name,
             kind,
+            generic_count: 0,
             fields: Vec::new(),
             variants: Vec::new(),
         })
+    }
+
+    /// Records how many type parameters an aggregate declaration takes.
+    ///
+    /// Lowering calls this once, when it finishes the declaration's generic
+    /// list. Every later [`TyCtxt::adt_ty_with`] must match this arity.
+    pub fn set_generic_count(&self, adt: AdtId, generic_count: u32) {
+        self.adts.borrow_mut()[adt].generic_count = generic_count;
+    }
+
+    /// Returns the number of type parameters an aggregate declaration takes.
+    pub fn adt_generic_count(&self, adt: AdtId) -> u32 {
+        self.adts.borrow()[adt].generic_count
     }
 
     /// Fills the fields of a reserved struct.
@@ -139,9 +245,26 @@ impl TyCtxt {
         }
     }
 
-    /// Returns the type naming `adt`.
+    /// Returns the type naming non-generic `adt`.
     pub fn adt_ty(&self, adt: AdtId) -> TyId {
-        self.intern(TyKind::Adt(adt))
+        self.adt_ty_with(adt, self.empty_substs())
+    }
+
+    /// Returns the type naming `adt` with `args`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `args` does not match the declaration's generic arity. This is
+    /// an internal invariant: HIR and type checking reject an arity mismatch
+    /// before any semantic type is built.
+    pub fn adt_ty_with(&self, adt: AdtId, args: SubstsId) -> TyId {
+        let expected = self.adt_generic_count(adt) as usize;
+        let found = self.substs_len(args);
+        assert_eq!(
+            found, expected,
+            "aggregate {adt:?} expects {expected} type arguments, but received {found}"
+        );
+        self.intern(TyKind::Adt { adt, args })
     }
 
     /// Returns the tuple type `(elements...)`.
@@ -191,17 +314,29 @@ impl TyCtxt {
         self.tuples.borrow().len()
     }
 
-    /// Returns the struct field with the given definition in `adt`.
+    /// Returns the struct field template with the given definition in `adt`.
     ///
     /// Enum fields live on their variant; use [`TyCtxt::variant_field`] for
-    /// those.
+    /// those. Use [`TyCtxt::field_ty`] when the instantiated type is needed.
     pub fn field(&self, adt: AdtId, def: DefId) -> Option<FieldDef> {
         self.adts.borrow()[adt].field(def).copied()
     }
 
-    /// Returns the struct field with the given name in `adt`.
+    /// Returns the struct field with the given name in `adt`, as a template.
     pub fn field_by_name(&self, adt: AdtId, name: Symbol) -> Option<FieldDef> {
         self.adts.borrow()[adt].field_by_name(name).copied()
+    }
+
+    /// Returns the instantiated type of a struct field.
+    pub fn field_ty(&self, adt: AdtId, args: SubstsId, def: DefId) -> Option<TyId> {
+        self.field(adt, def)
+            .map(|field| self.substitute(field.ty, args))
+    }
+
+    /// Returns the instantiated type of a struct field selected by name.
+    pub fn field_by_name_ty(&self, adt: AdtId, args: SubstsId, name: Symbol) -> Option<TyId> {
+        self.field_by_name(adt, name)
+            .map(|field| self.substitute(field.ty, args))
     }
 
     /// Returns the enum variant at `variant` in `adt`.
@@ -209,12 +344,24 @@ impl TyCtxt {
         self.adts.borrow()[adt].variant(variant).cloned()
     }
 
-    /// Returns the field with the given definition inside `variant`.
+    /// Returns the field template with the given definition inside `variant`.
     pub fn variant_field(&self, adt: AdtId, variant: VariantIdx, def: DefId) -> Option<FieldDef> {
         self.adts.borrow()[adt]
             .variant(variant)
             .and_then(|variant| variant.field(def))
             .copied()
+    }
+
+    /// Returns the instantiated type of an enum variant field.
+    pub fn variant_field_ty(
+        &self,
+        adt: AdtId,
+        args: SubstsId,
+        variant: VariantIdx,
+        def: DefId,
+    ) -> Option<TyId> {
+        self.variant_field(adt, variant, def)
+            .map(|field| self.substitute(field.ty, args))
     }
 
     /// Returns the number of interned types.
@@ -304,8 +451,18 @@ impl TyCtxt {
     ///
     /// This is decision D2 of the memory model. An unresolved inference variable
     /// reports `false`: whether it is `Copy` is not known yet, so a caller that
-    /// might move the value must resolve the type first.
+    /// might move the value must resolve the type first. A declared parameter is
+    /// not `Copy` without a `Copy` bound; use [`TyCtxt::is_copy_with`] when a
+    /// parameter environment is available.
     pub fn is_copy(&self, ty: TyId) -> bool {
+        self.is_copy_with(ty, &ParamEnv::new())
+    }
+
+    /// Returns `true` if values of `ty` are duplicated bitwise under `env`.
+    ///
+    /// Only a parameter's `Copy` classification depends on the environment;
+    /// concrete types use the same structural rules as [`TyCtxt::is_copy`].
+    pub fn is_copy_with(&self, ty: TyId, env: &ParamEnv) -> bool {
         match self.kind(ty) {
             TyKind::Bool
             | TyKind::Char
@@ -319,18 +476,19 @@ impl TyCtxt {
             // An array copies exactly when its element copies. Unlike a struct,
             // it gains nothing from an explicit opt-in: its elements already
             // decide whether a bitwise copy is safe.
-            TyKind::Array { element, .. } => self.is_copy(element),
+            TyKind::Array { element, .. } => self.is_copy_with(element, env),
             // A tuple is a structural product of independent values, so it is
             // `Copy` exactly when every element is. This mirrors arrays and is
             // what makes `(i32, bool)` usable in a loop without a move.
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
                 .iter()
-                .all(|element| self.is_copy(*element)),
+                .all(|element| self.is_copy_with(*element, env)),
+            TyKind::Param(param) => env.has_copy(param),
             // A user-defined aggregate owns its fields; it becomes `Copy` only
             // through an explicit opt-in, which the language does not have yet.
             // Its fields remain individually copyable.
-            TyKind::Adt(_) | TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
+            TyKind::Adt { .. } | TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
         }
     }
 
@@ -344,25 +502,32 @@ impl TyCtxt {
         self.is_sized_inner(ty, &mut FxHashSet::default())
     }
 
-    fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
+    fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<(AdtId, SubstsId)>) -> bool {
         match self.kind(ty) {
             TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
+            TyKind::Param(_) => true,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
                 .iter()
                 .all(|element| self.is_sized_inner(*element, visiting)),
-            TyKind::Adt(adt) => {
-                if !visiting.insert(adt) {
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
                     // A by-value cycle has no finite size; type checking reports
                     // it and stops before layout.
                     return false;
                 }
                 let def = self.adt(adt);
-                let sized = def
-                    .all_fields()
-                    .all(|field| self.is_sized_inner(field.ty, visiting));
-                visiting.remove(&adt);
+                let mut sized = true;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if !self.is_sized_inner(field_ty, visiting) {
+                        sized = false;
+                        break;
+                    }
+                }
+                visiting.remove(&key);
                 sized
             }
             _ => true,
@@ -380,22 +545,28 @@ impl TyCtxt {
         self.needs_drop_inner(ty, &mut FxHashSet::default())
     }
 
-    fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
+    fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<(AdtId, SubstsId)>) -> bool {
         match self.kind(ty) {
             TyKind::Array { element, .. } => self.needs_drop_inner(element, visiting),
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.needs_drop_inner(*element, visiting)),
-            TyKind::Adt(adt) => {
-                if !visiting.insert(adt) {
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
                     return false;
                 }
                 let def = self.adt(adt);
-                let needs_drop = def
-                    .all_fields()
-                    .any(|field| self.needs_drop_inner(field.ty, visiting));
-                visiting.remove(&adt);
+                let mut needs_drop = false;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if self.needs_drop_inner(field_ty, visiting) {
+                        needs_drop = true;
+                        break;
+                    }
+                }
+                visiting.remove(&key);
                 needs_drop
             }
             _ => false,
@@ -410,9 +581,13 @@ impl TyCtxt {
         self.contains_reference_inner(ty, &mut FxHashSet::default())
     }
 
-    fn contains_reference_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
+    fn contains_reference_inner(
+        &self,
+        ty: TyId,
+        visiting: &mut FxHashSet<(AdtId, SubstsId)>,
+    ) -> bool {
         match self.kind(ty) {
-            TyKind::Ref { .. } => true,
+            TyKind::Ref { .. } | TyKind::Param(_) => true,
             TyKind::Slice { element } | TyKind::Array { element, .. } => {
                 self.contains_reference_inner(element, visiting)
             }
@@ -420,15 +595,21 @@ impl TyCtxt {
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.contains_reference_inner(*element, visiting)),
-            TyKind::Adt(adt) => {
-                if !visiting.insert(adt) {
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
                     return false;
                 }
                 let def = self.adt(adt);
-                let contains = def
-                    .all_fields()
-                    .any(|field| self.contains_reference_inner(field.ty, visiting));
-                visiting.remove(&adt);
+                let mut contains = false;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if self.contains_reference_inner(field_ty, visiting) {
+                        contains = true;
+                        break;
+                    }
+                }
+                visiting.remove(&key);
                 contains
             }
             _ => false,
@@ -448,10 +629,11 @@ impl TyCtxt {
     fn contains_exclusive_reference_inner(
         &self,
         ty: TyId,
-        visiting: &mut FxHashSet<AdtId>,
+        visiting: &mut FxHashSet<(AdtId, SubstsId)>,
     ) -> bool {
         match self.kind(ty) {
             TyKind::Ref { kind, .. } => kind.is_exclusive(),
+            TyKind::Param(_) => true,
             TyKind::Slice { element } | TyKind::Array { element, .. } => {
                 self.contains_exclusive_reference_inner(element, visiting)
             }
@@ -459,15 +641,21 @@ impl TyCtxt {
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.contains_exclusive_reference_inner(*element, visiting)),
-            TyKind::Adt(adt) => {
-                if !visiting.insert(adt) {
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
                     return false;
                 }
                 let def = self.adt(adt);
-                let contains = def
-                    .all_fields()
-                    .any(|field| self.contains_exclusive_reference_inner(field.ty, visiting));
-                visiting.remove(&adt);
+                let mut contains = false;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if self.contains_exclusive_reference_inner(field_ty, visiting) {
+                        contains = true;
+                        break;
+                    }
+                }
+                visiting.remove(&key);
                 contains
             }
             _ => false,

@@ -150,7 +150,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 })?;
                 BasicTypeEnum::ArrayType(self.basic(element)?.array_type(length))
             }
-            TyKind::Adt(adt) => BasicTypeEnum::StructType(self.adt(adt)),
+            TyKind::Adt { adt, .. } => BasicTypeEnum::StructType(self.adt(adt)),
             TyKind::Tuple(tuple) => {
                 let cached = self.tuples.borrow().get(&tuple).copied();
                 let tuple_type = match cached {
@@ -176,6 +176,11 @@ impl<'ctx> TypeMapper<'ctx> {
             TyKind::Infer(_) => {
                 return Err(CodegenError::internal(
                     "an unresolved inference type reached code generation",
+                ));
+            }
+            TyKind::Param(_) => {
+                return Err(CodegenError::internal(
+                    "an uninstantiated type parameter reached code generation",
                 ));
             }
         };

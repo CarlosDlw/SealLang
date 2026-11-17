@@ -19,15 +19,21 @@
 mod adt;
 mod ctxt;
 mod display;
+mod generics;
 mod id;
 mod infer;
 mod init;
 mod kind;
+mod substs;
 
 pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 pub use ctxt::TyCtxt;
 pub use display::TyDisplay;
-pub use id::{AdtId, InferTyId, TupleId, TyId, VariantIdx};
+pub use generics::{
+    Bound, GenericParamDef, GenericSignature, Generics, Instance, ParamEnv, ParamTy, TraitDef,
+    TraitImplDef, TraitMethodDef, TraitRef,
+};
+pub use id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 pub use infer::{InferCtxt, UnifyError};
 pub use init::{InitPaths, InitState, PathElem, place_type};
 pub use kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
