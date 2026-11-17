@@ -3,7 +3,7 @@
 use seal_ast::PrimitiveType;
 use seal_hir::primitive_kind;
 use seal_layout::{LayoutCtxt, LayoutError};
-use seal_ty::{RefKind, TyId, TyKind};
+use seal_ty::{RefKind, SubstsId, TyId, TyKind};
 
 use super::Checker;
 
@@ -81,6 +81,45 @@ impl Checker<'_> {
         self.hir.ty_ctxt().ref_ty_with(kind, pointee)
     }
 
+    /// Follows inference bindings at the top level of `ty`.
+    pub(super) fn resolve(&mut self, ty: TyId) -> TyId {
+        self.infer.resolve_shallow(self.hir.ty_ctxt(), ty)
+    }
+
+    /// Replaces every bound inference variable inside `ty`.
+    pub(super) fn resolve_deep(&mut self, ty: TyId) -> TyId {
+        self.infer.resolve_deep(self.hir.ty_ctxt(), ty)
+    }
+
+    /// Returns `true` if `ty` still contains an unresolved variable.
+    pub(super) fn contains_infer(&self, ty: TyId) -> bool {
+        match self.hir.ty_ctxt().kind(ty) {
+            TyKind::Infer(_) => true,
+            TyKind::Ref { pointee, .. } => self.contains_infer(pointee),
+            TyKind::Array { element, .. } | TyKind::Slice { element } => {
+                self.contains_infer(element)
+            }
+            TyKind::Tuple(tuple) => self
+                .hir
+                .ty_ctxt()
+                .tuple_elements(tuple)
+                .into_iter()
+                .any(|element| self.contains_infer(element)),
+            TyKind::Adt { args, .. } => self
+                .hir
+                .ty_ctxt()
+                .substs_args(args)
+                .into_iter()
+                .any(|argument| self.contains_infer(argument)),
+            _ => false,
+        }
+    }
+
+    /// Substitutes flattened type arguments into `ty`.
+    pub(super) fn substitute(&self, ty: TyId, args: SubstsId) -> TyId {
+        self.hir.ty_ctxt().substitute(ty, args)
+    }
+
     pub(super) fn ty_text(&self, ty: TyId) -> String {
         self.hir
             .ty_ctxt()
@@ -131,7 +170,12 @@ impl Checker<'_> {
     }
 
     pub(super) fn is_copy(&self, ty: TyId) -> bool {
-        self.hir.ty_ctxt().is_copy(ty)
+        self.hir.ty_ctxt().is_copy_with(ty, &self.env)
+    }
+
+    /// Returns `true` if `ty` is `Copy` under `env`.
+    pub(super) fn is_copy_with(&self, ty: TyId, env: &seal_ty::ParamEnv) -> bool {
+        self.hir.ty_ctxt().is_copy_with(ty, env)
     }
 
     /// Returns the bit width of an integer type, resolving `isize`/`usize` from

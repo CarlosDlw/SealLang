@@ -4,7 +4,7 @@ use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_methods::MethodId;
-use seal_ty::{PathElem, RefKind, TyId};
+use seal_ty::{GenericParamDef, Instance, PathElem, RefKind, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -129,6 +129,18 @@ pub enum MethodKind {
         /// The trait that declares the method.
         trait_def: DefId,
     },
+    /// A method reached through a bound on a type parameter.
+    ///
+    /// The implementation is unknown until monomorphization, so no concrete
+    /// function exists yet. MIR records the symbolic target instead.
+    TraitBound {
+        /// The trait that declares the method.
+        trait_def: DefId,
+        /// The trait method declaration.
+        method: DefId,
+        /// How the trait method declares its receiver.
+        receiver: ReceiverKind,
+    },
 }
 
 impl MethodKind {
@@ -137,7 +149,7 @@ impl MethodKind {
     /// `None` means the call resolves to the intrinsic catalog instead.
     pub fn function(self) -> Option<DefId> {
         match self {
-            Self::Intrinsic(_) => None,
+            Self::Intrinsic(_) | Self::TraitBound { .. } => None,
             Self::User { function, .. } | Self::Trait { function, .. } => Some(function),
         }
     }
@@ -192,6 +204,8 @@ pub struct Signature {
     pub params: Vec<TyId>,
     /// The return type.
     pub ret: TyId,
+    /// Every generic parameter visible in the signature, outermost first.
+    pub generics: Vec<GenericParamDef>,
 }
 
 /// Type information for one file.
@@ -207,6 +221,7 @@ pub struct TypeckResults {
     signatures: FxHashMap<DefId, Signature>,
     places: FxHashMap<HirExprId, ResolvedPlace>,
     methods: FxHashMap<HirExprId, ResolvedMethod>,
+    instantiations: FxHashMap<HirExprId, Instance>,
 }
 
 impl TypeckResults {
@@ -235,6 +250,11 @@ impl TypeckResults {
         self.methods.get(&expr)
     }
 
+    /// Returns the complete instantiation of a call, literal, or method call.
+    pub fn instantiation(&self, expr: HirExprId) -> Option<Instance> {
+        self.instantiations.get(&expr).copied()
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -247,6 +267,7 @@ impl TypeckResults {
             signatures: FxHashMap::default(),
             places: FxHashMap::default(),
             methods: FxHashMap::default(),
+            instantiations: FxHashMap::default(),
         }
     }
 
@@ -268,5 +289,9 @@ impl TypeckResults {
 
     pub(crate) fn record_method(&mut self, expr: HirExprId, method: ResolvedMethod) {
         self.methods.insert(expr, method);
+    }
+
+    pub(crate) fn record_instantiation(&mut self, expr: HirExprId, instance: Instance) {
+        self.instantiations.insert(expr, instance);
     }
 }

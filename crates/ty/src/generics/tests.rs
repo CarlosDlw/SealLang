@@ -272,15 +272,15 @@ fn adt_queries_instantiate_every_field() {
 
 #[test]
 fn generic_unification_binds_arguments_and_nested_arguments() {
-    let mut ctxt = TyCtxt::new();
+    let ctxt = TyCtxt::new();
     let interner = Interner::new();
     let (pair, _, _) = pair(&ctxt, &interner);
     let int = ctxt.int_ty(crate::IntTy::I32);
     let bool_ty = ctxt.bool_ty();
 
     let mut infer = InferCtxt::new();
-    let first = infer.fresh_ty_var(&mut ctxt);
-    let second = infer.fresh_ty_var(&mut ctxt);
+    let first = infer.fresh_ty_var(&ctxt);
+    let second = infer.fresh_ty_var(&ctxt);
     let inferred = ctxt.adt_ty_with(pair, ctxt.substs(&[first, second]));
     let concrete = ctxt.adt_ty_with(pair, ctxt.substs(&[int, bool_ty]));
     infer
@@ -290,9 +290,9 @@ fn generic_unification_binds_arguments_and_nested_arguments() {
     assert_eq!(infer.resolve_shallow(&ctxt, second), bool_ty);
 
     let mut nested_infer = InferCtxt::new();
-    let inner_first = nested_infer.fresh_ty_var(&mut ctxt);
-    let inner_second = nested_infer.fresh_ty_var(&mut ctxt);
-    let outer = nested_infer.fresh_ty_var(&mut ctxt);
+    let inner_first = nested_infer.fresh_ty_var(&ctxt);
+    let inner_second = nested_infer.fresh_ty_var(&ctxt);
+    let outer = nested_infer.fresh_ty_var(&ctxt);
     let inner = ctxt.adt_ty_with(pair, ctxt.substs(&[inner_first, inner_second]));
     let inferred = ctxt.adt_ty_with(pair, ctxt.substs(&[inner, outer]));
     let concrete_inner = ctxt.adt_ty_with(pair, ctxt.substs(&[int, bool_ty]));
@@ -355,11 +355,11 @@ fn a_mismatched_outer_adt_does_not_unify() {
 
 #[test]
 fn occurs_check_descends_into_adt_arguments() {
-    let mut ctxt = TyCtxt::new();
+    let ctxt = TyCtxt::new();
     let interner = Interner::new();
     let (pair, _, _) = pair(&ctxt, &interner);
     let mut infer = InferCtxt::new();
-    let var = infer.fresh_ty_var(&mut ctxt);
+    let var = infer.fresh_ty_var(&ctxt);
     let int = ctxt.int_ty(crate::IntTy::I32);
     let recursive = ctxt.adt_ty_with(pair, ctxt.substs(&[var, int]));
 
@@ -377,7 +377,7 @@ fn occurs_check_descends_into_adt_arguments() {
 
 #[test]
 fn deep_resolution_rebuilds_adt_arguments_and_preserves_unchanged_identity() {
-    let mut ctxt = TyCtxt::new();
+    let ctxt = TyCtxt::new();
     let interner = Interner::new();
     let (pair, _, _) = pair(&ctxt, &interner);
     let int = ctxt.int_ty(crate::IntTy::I32);
@@ -385,12 +385,12 @@ fn deep_resolution_rebuilds_adt_arguments_and_preserves_unchanged_identity() {
 
     let concrete = ctxt.adt_ty_with(pair, ctxt.substs(&[int, bool_ty]));
     let mut infer = InferCtxt::new();
-    assert_eq!(infer.resolve_deep(&mut ctxt, concrete), concrete);
+    assert_eq!(infer.resolve_deep(&ctxt, concrete), concrete);
 
-    let var = infer.fresh_ty_var(&mut ctxt);
+    let var = infer.fresh_ty_var(&ctxt);
     let inferred = ctxt.adt_ty_with(pair, ctxt.substs(&[var, bool_ty]));
     infer.unify(&ctxt, var, int).expect("the argument binds");
-    assert_eq!(infer.resolve_deep(&mut ctxt, inferred), concrete);
+    assert_eq!(infer.resolve_deep(&ctxt, inferred), concrete);
 }
 
 #[test]

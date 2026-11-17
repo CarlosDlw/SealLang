@@ -7,7 +7,8 @@
 
 use seal_def::DefId;
 use seal_error_codes as codes;
-use seal_hir::{HirExprId, ReceiverKind, TraitMethodLookup};
+use seal_hash::FxHashMap;
+use seal_hir::{HirExprId, ReceiverKind};
 use seal_methods::{MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind};
 use seal_span::Span;
 use seal_symbol::Symbol;
@@ -16,6 +17,7 @@ use seal_ty::{RefKind, TyId, TyKind};
 use super::Checker;
 use super::PlaceMode;
 use super::flow::Flow;
+use super::trait_solver::match_type;
 use crate::results::{MethodKind, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace};
 
 const MAX_RECEIVER_DEREFS: usize = 16;
@@ -26,17 +28,24 @@ pub(super) struct MethodCall<'a> {
     pub(super) receiver: HirExprId,
     pub(super) name: Symbol,
     pub(super) name_span: Span,
+    pub(super) generic_args: Option<seal_ty::SubstsId>,
     pub(super) args: &'a [HirExprId],
     pub(super) span: Span,
 }
 
 impl Checker<'_> {
-    pub(super) fn check_method_call(&mut self, call: MethodCall<'_>, flow: &mut Flow) -> TyId {
+    pub(super) fn check_method_call(
+        &mut self,
+        call: MethodCall<'_>,
+        expected: Option<TyId>,
+        flow: &mut Flow,
+    ) -> TyId {
         let MethodCall {
             expr,
             receiver,
             name,
             name_span,
+            generic_args,
             args,
             span,
         } = call;
@@ -64,8 +73,10 @@ impl Checker<'_> {
                     receiver_place,
                     target,
                     name,
+                    generic_args,
                     args,
                     span,
+                    expected,
                 },
                 flow,
             );
@@ -173,28 +184,73 @@ impl Checker<'_> {
 
     /// Looks up a user method on a nominal receiver before intrinsic lookup.
     ///
-    /// An inherent function wins; otherwise the traits the type implements are
-    /// searched. The receiver is not a struct in [`UserLookup::NotAStruct`], so
-    /// the caller falls through to the intrinsic catalog. Every struct receiver
-    /// that fails stops here: the error is reported once and the call does not
-    /// also produce a catalog diagnostic.
-    fn user_method_target(&self, receiver_ty: TyId, name: Symbol, name_span: Span) -> UserLookup {
+    /// An inherent candidate wins; otherwise matching trait impls are searched.
+    /// A type parameter searches only its visible bounds. The receiver is not a
+    /// nominal type in [`UserLookup::NotAStruct`], so the caller falls through to
+    /// the intrinsic catalog.
+    fn user_method_target(
+        &mut self,
+        receiver_ty: TyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> UserLookup {
         let mut base = receiver_ty;
         while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(base) {
             base = pointee;
         }
-        let TyKind::Adt { adt, .. } = self.hir.ty_ctxt().kind(base) else {
-            return UserLookup::NotAStruct;
-        };
-        let type_def = self.hir.ty_ctxt().adt(adt).def;
+        match self.hir.ty_ctxt().kind(base) {
+            TyKind::Adt { .. } => self.adimpl_method_target(base, receiver_ty, name, name_span),
+            TyKind::Param(param) => {
+                self.bound_method_target(base, receiver_ty, param, name, name_span)
+            }
+            TyKind::Error => UserLookup::Rejected,
+            _ => UserLookup::NotAStruct,
+        }
+    }
 
-        if let Some(function) = self.hir.method(type_def, name) {
+    fn adimpl_method_target(
+        &mut self,
+        base: TyId,
+        receiver_ty: TyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> UserLookup {
+        let mut inherent = Vec::new();
+        for implementation in self.hir.inherent_impls() {
+            let Some(function) = implementation
+                .methods
+                .iter()
+                .find_map(|(candidate, def)| (*candidate == name).then_some(*def))
+            else {
+                continue;
+            };
+            let mut seed = FxHashMap::default();
+            if match_type(self.hir, implementation.self_ty, base, &mut seed) {
+                inherent.push((function, seed));
+            }
+        }
+        if inherent.len() > 1 {
+            self.error(
+                codes::E3045,
+                name_span,
+                format!(
+                    "more than one inherent impl declares `{}` for `{}`",
+                    self.interner.resolve(name),
+                    self.ty_text(base)
+                ),
+            )
+            .help("remove one of the overlapping inherent methods")
+            .emit();
+            return UserLookup::Rejected;
+        }
+        if let Some((function, seed)) = inherent.pop() {
             return match self.hir.receiver(function) {
-                Some(receiver) => UserLookup::Method(UserMethod {
-                    type_def,
+                Some(receiver) => UserLookup::Method(UserMethod::Concrete {
                     function,
                     receiver,
                     source: MethodSource::Inherent,
+                    self_ty: base,
+                    seed,
                 }),
                 None => {
                     self.report_associated_as_method(base, name, name_span);
@@ -203,30 +259,138 @@ impl Checker<'_> {
             };
         }
 
-        match self.hir.trait_method(type_def, name) {
-            TraitMethodLookup::Missing => {
+        let mut traits = Vec::new();
+        for implementation in self.hir.trait_impls() {
+            let Some(function) = implementation.method(name) else {
+                continue;
+            };
+            let mut seed = FxHashMap::default();
+            if !match_type(self.hir, implementation.trait_ref.self_ty, base, &mut seed) {
+                continue;
+            }
+            if let Some(receiver) = self.hir.receiver(function) {
+                traits.push((implementation.trait_ref.trait_def, function, receiver, seed));
+            }
+        }
+        match traits.len() {
+            0 => {
                 self.report_missing_method(receiver_ty, name, name_span);
                 UserLookup::Rejected
             }
-            TraitMethodLookup::Ambiguous(traits) => {
-                self.report_ambiguous_trait_method(base, name, name_span, &traits);
-                UserLookup::Rejected
-            }
-            TraitMethodLookup::Found {
-                trait_def,
-                function,
-            } => match self.hir.receiver(function) {
-                Some(receiver) => UserLookup::Method(UserMethod {
-                    type_def,
+            1 => {
+                let (trait_def, function, receiver, seed) = traits.pop().unwrap();
+                UserLookup::Method(UserMethod::Concrete {
                     function,
                     receiver,
                     source: MethodSource::Trait(trait_def),
-                }),
-                None => {
-                    self.report_associated_as_method(base, name, name_span);
-                    UserLookup::Rejected
-                }
-            },
+                    self_ty: base,
+                    seed,
+                })
+            }
+            _ => {
+                let traits: Vec<DefId> = traits.iter().map(|(trait_def, ..)| *trait_def).collect();
+                self.report_ambiguous_trait_method(base, name, name_span, &traits);
+                UserLookup::Rejected
+            }
+        }
+    }
+
+    fn bound_method_target(
+        &mut self,
+        base: TyId,
+        receiver_ty: TyId,
+        param: seal_ty::ParamTyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> UserLookup {
+        let mut candidates = Vec::new();
+        for trait_ref in self.visible_traits(param) {
+            let Some(definition) = self.hir.trait_definition(trait_ref.trait_def) else {
+                continue;
+            };
+            let Some(method) = definition.method(name) else {
+                continue;
+            };
+            if method.receiver.is_none() {
+                continue;
+            }
+            candidates.push(UserMethod::Bound {
+                trait_ref,
+                method: method.clone(),
+                self_ty: base,
+            });
+        }
+        match candidates.len() {
+            0 => {
+                self.report_missing_method(receiver_ty, name, name_span);
+                UserLookup::Rejected
+            }
+            1 => UserLookup::Method(candidates.pop().unwrap()),
+            _ => {
+                self.error(
+                    codes::E3040,
+                    name_span,
+                    format!(
+                        "the method `{}` on `{}` is provided by more than one bound",
+                        self.interner.resolve(name),
+                        self.ty_text(base)
+                    ),
+                )
+                .help("remove one of the bounds, or add an inherent method")
+                .emit();
+                UserLookup::Rejected
+            }
+        }
+    }
+
+    /// Returns every trait visible on `param`, including supertraits.
+    fn visible_traits(&self, param: seal_ty::ParamTyId) -> Vec<seal_ty::TraitRef> {
+        let mut traits = Vec::new();
+        for bound in self.env.bounds(param) {
+            let seal_ty::Bound::Trait(trait_ref) = bound else {
+                continue;
+            };
+            self.collect_visible_traits(*trait_ref, &mut traits);
+        }
+        traits
+    }
+
+    fn collect_visible_traits(
+        &self,
+        trait_ref: seal_ty::TraitRef,
+        traits: &mut Vec<seal_ty::TraitRef>,
+    ) {
+        if traits.contains(&trait_ref) {
+            return;
+        }
+        traits.push(trait_ref);
+        let Some(definition) = self.hir.trait_definition(trait_ref.trait_def) else {
+            return;
+        };
+        let mut arguments = Vec::with_capacity(definition.generics.params.len());
+        arguments.push(trait_ref.self_ty);
+        arguments.extend(self.hir.ty_ctxt().substs_args(trait_ref.args));
+        if arguments.len() != definition.generics.params.len() {
+            return;
+        }
+        let substs = self.hir.ty_ctxt().substs(&arguments);
+        for supertrait in &definition.supertraits {
+            let self_ty = self.hir.ty_ctxt().substitute(supertrait.self_ty, substs);
+            let args: Vec<TyId> = self
+                .hir
+                .ty_ctxt()
+                .substs_args(supertrait.args)
+                .into_iter()
+                .map(|argument| self.hir.ty_ctxt().substitute(argument, substs))
+                .collect();
+            self.collect_visible_traits(
+                seal_ty::TraitRef::new(
+                    supertrait.trait_def,
+                    self_ty,
+                    self.hir.ty_ctxt().substs(&args),
+                ),
+                traits,
+            );
         }
     }
 
@@ -288,90 +452,107 @@ impl Checker<'_> {
             receiver_place,
             target,
             name,
+            generic_args,
             args,
             span,
+            expected,
         } = call;
-        let type_def = target.type_def;
-        let function = target.function;
-        let receiver_kind = target.receiver;
+        match target {
+            UserMethod::Concrete {
+                function,
+                receiver: receiver_kind,
+                source,
+                self_ty,
+                seed,
+            } => self.check_concrete_method(
+                ConcreteCall {
+                    expr,
+                    receiver,
+                    receiver_ty,
+                    receiver_place,
+                    function,
+                    receiver_kind,
+                    source,
+                    self_ty,
+                    seed,
+                    name,
+                    generic_args,
+                    args,
+                    span,
+                    expected,
+                },
+                flow,
+            ),
+            UserMethod::Bound {
+                trait_ref,
+                method,
+                self_ty,
+            } => self.check_bound_method(
+                BoundCall {
+                    expr,
+                    receiver,
+                    receiver_ty,
+                    receiver_place,
+                    trait_ref,
+                    method,
+                    self_ty,
+                    name,
+                    generic_args,
+                    args,
+                    span,
+                    expected,
+                },
+                flow,
+            ),
+        }
+    }
 
-        let signature = self
-            .results
-            .signature(function)
-            .expect("every impl function has a signature")
-            .clone();
-        let adt = self
+    fn check_concrete_method(&mut self, call: ConcreteCall<'_>, flow: &mut Flow) -> TyId {
+        let ConcreteCall {
+            expr,
+            receiver,
+            receiver_ty,
+            receiver_place,
+            function,
+            receiver_kind,
+            source,
+            self_ty,
+            seed,
+            name,
+            generic_args,
+            args,
+            span,
+            expected,
+        } = call;
+        let own_count = self
             .hir
-            .adt(type_def)
-            .expect("every struct has a reserved aggregate");
-        let base_ty = self.hir.ty_ctxt().adt_ty(adt);
-        let expected = match receiver_kind {
-            ReceiverKind::Value => base_ty,
-            ReceiverKind::Shared => self.ref_ty(RefKind::Shared, base_ty),
-            ReceiverKind::Exclusive => self.ref_ty(RefKind::Exclusive, base_ty),
+            .generics(function)
+            .map(|generics| generics.params.len())
+            .unwrap_or(0);
+        let explicit = self.method_type_arguments(generic_args, own_count, span);
+        let instantiated =
+            self.instantiate_function(function, &seed, explicit.as_deref(), expected);
+        let Some(expected_receiver) = instantiated.params.first().copied() else {
+            self.report_missing_method(receiver_ty, name, self.hir.expr(receiver).span);
+            return self.error_ty();
         };
-
-        let adjust = if receiver_ty == expected {
-            ReceiverAdjust::None
-        } else if receiver_ty == base_ty {
-            match receiver_kind {
-                ReceiverKind::Value => ReceiverAdjust::None,
-                ReceiverKind::Shared => ReceiverAdjust::SharedBorrow,
-                ReceiverKind::Exclusive => ReceiverAdjust::ExclusiveBorrow,
-            }
-        } else if receiver_kind == ReceiverKind::Shared
-            && matches!(
-                self.hir.ty_ctxt().kind(receiver_ty),
-                TyKind::Ref {
-                    kind: RefKind::Exclusive,
-                    pointee,
-                } if pointee == base_ty
-            )
-        {
-            ReceiverAdjust::SharedReborrow
-        } else {
-            self.error(
-                codes::E3031,
-                self.hir.expr(receiver).span,
-                format!(
-                    "method `{}` expects `{}`, but the receiver has type `{}`",
-                    self.interner.resolve(name),
-                    self.ty_text(expected),
-                    self.ty_text(receiver_ty)
-                ),
-            )
-            .help(
-                "adjust the receiver to match the method signature; a `*mut T` receiver can be reborrowed as `*T` for a read-only method",
-            )
-            .emit();
-            ReceiverAdjust::None
-        };
-
-        if adjust == ReceiverAdjust::None
-            && receiver_place
-                .as_ref()
-                .is_some_and(|place| place.contains_deref())
-            && !self.is_copy(base_ty)
-        {
-            self.report_move_out_of_reference(base_ty, self.hir.expr(receiver).span);
-        }
-
-        if adjust == ReceiverAdjust::ExclusiveBorrow
-            && !self.receiver_place_is_writable(receiver_place.as_ref())
-        {
-            self.error(
-                codes::E3029,
-                self.hir.expr(receiver).span,
-                format!(
-                    "method `{}` needs to modify its receiver",
-                    self.interner.resolve(name)
-                ),
-            )
-            .help("declare the binding with `let mut`, or pass an exclusive reference")
-            .emit();
-        }
-
-        let expected_args = signature.params.len().saturating_sub(1);
+        let adjust = self.receiver_adjustment(
+            receiver,
+            receiver_ty,
+            self_ty,
+            expected_receiver,
+            receiver_kind,
+            name,
+        );
+        self.check_receiver(
+            receiver,
+            self_ty,
+            receiver_place.as_ref(),
+            adjust,
+            receiver_kind,
+            name,
+        );
+        let expected_args = instantiated.params.len().saturating_sub(1);
         if expected_args != args.len() {
             self.error(
                 codes::E3028,
@@ -386,23 +567,21 @@ impl Checker<'_> {
             .help("pass exactly one argument for each parameter after the receiver")
             .emit();
         }
-
-        let mut arg_tys = Vec::with_capacity(args.len());
         for (index, arg) in args.iter().enumerate() {
-            match signature.params.get(index + 1) {
-                Some(expected) => {
-                    self.check_expr(*arg, *expected, flow);
-                    arg_tys.push(*expected);
-                }
+            match instantiated.params.get(index + 1) {
+                Some(expected) => self.check_expr(*arg, *expected, flow),
                 None => {
                     self.infer_expr(*arg, None, flow);
                 }
             }
         }
-
-        let ret_ty = signature.ret;
+        let Some((params, ret_ty, _)) =
+            self.finish_function_instantiation(expr, function, instantiated, span)
+        else {
+            return self.error_ty();
+        };
         if !self.is_error(ret_ty) {
-            let kind = match target.source {
+            let kind = match source {
                 MethodSource::Inherent => MethodKind::User {
                     function,
                     receiver: receiver_kind,
@@ -418,16 +597,222 @@ impl Checker<'_> {
                 ResolvedMethod {
                     kind,
                     receiver_adjust: adjust,
-                    receiver_ty: base_ty,
+                    receiver_ty: self_ty,
                     receiver_form: ReceiverForm::Place,
                     receiver_derefs: 0,
                     array_to_slice: false,
-                    arg_tys,
+                    arg_tys: params.into_iter().skip(1).collect(),
                     ret_ty,
                 },
             );
         }
         ret_ty
+    }
+
+    fn check_bound_method(&mut self, call: BoundCall<'_>, flow: &mut Flow) -> TyId {
+        let BoundCall {
+            expr,
+            receiver,
+            receiver_ty,
+            receiver_place,
+            trait_ref,
+            method,
+            self_ty,
+            name,
+            generic_args,
+            args,
+            span,
+            expected,
+        } = call;
+        let receiver_kind =
+            trait_receiver_kind(method.receiver.expect("bound methods require a receiver"));
+        let own_count = method.generics.params.len();
+        let explicit = self.method_type_arguments(generic_args, own_count, span);
+        let Some(instantiated) =
+            self.instantiate_trait_method(trait_ref, &method, explicit.as_deref(), expected)
+        else {
+            return self.error_ty();
+        };
+        let expected_receiver = match receiver_kind {
+            ReceiverKind::Value => self_ty,
+            ReceiverKind::Shared => self.ref_ty(RefKind::Shared, self_ty),
+            ReceiverKind::Exclusive => self.ref_ty(RefKind::Exclusive, self_ty),
+        };
+        let adjust = self.receiver_adjustment(
+            receiver,
+            receiver_ty,
+            self_ty,
+            expected_receiver,
+            receiver_kind,
+            name,
+        );
+        self.check_receiver(
+            receiver,
+            self_ty,
+            receiver_place.as_ref(),
+            adjust,
+            receiver_kind,
+            name,
+        );
+        if instantiated.params.len() != args.len() {
+            self.error(
+                codes::E3028,
+                span,
+                format!(
+                    "method `{}` takes {} argument(s) but {} were supplied",
+                    self.interner.resolve(name),
+                    instantiated.params.len(),
+                    args.len()
+                ),
+            )
+            .help("pass exactly one argument for each parameter after the receiver")
+            .emit();
+        }
+        for (index, arg) in args.iter().enumerate() {
+            match instantiated.params.get(index) {
+                Some(expected) => self.check_expr(*arg, *expected, flow),
+                None => {
+                    self.infer_expr(*arg, None, flow);
+                }
+            }
+        }
+        let Some(args) = self.finish_arguments(&instantiated.generics, &instantiated.args, span)
+        else {
+            return self.error_ty();
+        };
+        let substs = self.hir.ty_ctxt().substs(&args);
+        let params: Vec<TyId> = method
+            .signature
+            .params
+            .iter()
+            .map(|parameter| self.substitute(*parameter, substs))
+            .collect();
+        let ret_ty = self.substitute(method.signature.ret, substs);
+        if !self.is_error(ret_ty) {
+            self.results.record_method(
+                expr,
+                ResolvedMethod {
+                    kind: MethodKind::TraitBound {
+                        trait_def: trait_ref.trait_def,
+                        method: method.def,
+                        receiver: receiver_kind,
+                    },
+                    receiver_adjust: adjust,
+                    receiver_ty: self_ty,
+                    receiver_form: ReceiverForm::Place,
+                    receiver_derefs: 0,
+                    array_to_slice: false,
+                    arg_tys: params,
+                    ret_ty,
+                },
+            );
+        }
+        ret_ty
+    }
+
+    fn method_type_arguments(
+        &mut self,
+        generic_args: Option<seal_ty::SubstsId>,
+        expected: usize,
+        span: Span,
+    ) -> Option<Vec<TyId>> {
+        let generic_args = generic_args?;
+        let arguments = self.hir.ty_ctxt().substs_args(generic_args);
+        if arguments.len() == expected {
+            Some(arguments)
+        } else {
+            self.error(
+                codes::E3044,
+                span,
+                format!(
+                    "this method takes {expected} type argument(s), but {} were supplied",
+                    arguments.len()
+                ),
+            )
+            .help("supply exactly one type argument per method parameter, or omit the list")
+            .emit();
+            None
+        }
+    }
+
+    fn receiver_adjustment(
+        &mut self,
+        receiver: HirExprId,
+        receiver_ty: TyId,
+        base_ty: TyId,
+        expected: TyId,
+        receiver_kind: ReceiverKind,
+        name: Symbol,
+    ) -> ReceiverAdjust {
+        if receiver_ty == expected {
+            return ReceiverAdjust::None;
+        }
+        if receiver_ty == base_ty {
+            return match receiver_kind {
+                ReceiverKind::Value => ReceiverAdjust::None,
+                ReceiverKind::Shared => ReceiverAdjust::SharedBorrow,
+                ReceiverKind::Exclusive => ReceiverAdjust::ExclusiveBorrow,
+            };
+        }
+        if receiver_kind == ReceiverKind::Shared
+            && matches!(
+                self.hir.ty_ctxt().kind(receiver_ty),
+                TyKind::Ref {
+                    kind: RefKind::Exclusive,
+                    pointee,
+                } if pointee == base_ty
+            )
+            && expected == self.ref_ty(RefKind::Shared, base_ty)
+        {
+            return ReceiverAdjust::SharedReborrow;
+        }
+        self.error(
+            codes::E3031,
+            self.hir.expr(receiver).span,
+            format!(
+                "method `{}` expects `{}`, but the receiver has type `{}`",
+                self.interner.resolve(name),
+                self.ty_text(expected),
+                self.ty_text(receiver_ty)
+            ),
+        )
+        .help(
+            "adjust the receiver to match the method signature; a `*mut T` receiver can be reborrowed as `*T` for a read-only method",
+        )
+        .emit();
+        ReceiverAdjust::None
+    }
+
+    fn check_receiver(
+        &mut self,
+        receiver: HirExprId,
+        base_ty: TyId,
+        receiver_place: Option<&ResolvedPlace>,
+        adjust: ReceiverAdjust,
+        receiver_kind: ReceiverKind,
+        name: Symbol,
+    ) {
+        if receiver_kind == ReceiverKind::Value
+            && adjust == ReceiverAdjust::None
+            && receiver_place.is_some_and(|place| place.contains_deref())
+            && !self.is_copy(base_ty)
+        {
+            self.report_move_out_of_reference(base_ty, self.hir.expr(receiver).span);
+        }
+        if adjust == ReceiverAdjust::ExclusiveBorrow
+            && !self.receiver_place_is_writable(receiver_place)
+        {
+            self.error(
+                codes::E3029,
+                self.hir.expr(receiver).span,
+                format!(
+                    "method `{}` needs to modify its receiver",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help("declare the binding with `let mut`, or pass an exclusive reference")
+            .emit();
+        }
     }
 
     fn receiver_place_is_writable(&self, place: Option<&ResolvedPlace>) -> bool {
@@ -632,11 +1017,21 @@ impl Checker<'_> {
 }
 
 /// The user-defined resolution chosen for a method call.
-struct UserMethod {
-    type_def: DefId,
-    function: DefId,
-    receiver: ReceiverKind,
-    source: MethodSource,
+enum UserMethod {
+    /// A method reached through an impl block.
+    Concrete {
+        function: DefId,
+        receiver: ReceiverKind,
+        source: MethodSource,
+        self_ty: TyId,
+        seed: FxHashMap<seal_ty::ParamTyId, TyId>,
+    },
+    /// A method reached through a bound on a type parameter.
+    Bound {
+        trait_ref: seal_ty::TraitRef,
+        method: seal_ty::TraitMethodDef,
+        self_ty: TyId,
+    },
 }
 
 /// Where a user method was declared.
@@ -666,8 +1061,52 @@ struct UserCall<'a> {
     receiver_place: Option<ResolvedPlace>,
     target: UserMethod,
     name: Symbol,
+    generic_args: Option<seal_ty::SubstsId>,
     args: &'a [HirExprId],
     span: Span,
+    expected: Option<TyId>,
+}
+
+/// One concrete impl method call.
+struct ConcreteCall<'a> {
+    expr: HirExprId,
+    receiver: HirExprId,
+    receiver_ty: TyId,
+    receiver_place: Option<ResolvedPlace>,
+    function: DefId,
+    receiver_kind: ReceiverKind,
+    source: MethodSource,
+    self_ty: TyId,
+    seed: FxHashMap<seal_ty::ParamTyId, TyId>,
+    name: Symbol,
+    generic_args: Option<seal_ty::SubstsId>,
+    args: &'a [HirExprId],
+    span: Span,
+    expected: Option<TyId>,
+}
+
+/// One trait-bound method call.
+struct BoundCall<'a> {
+    expr: HirExprId,
+    receiver: HirExprId,
+    receiver_ty: TyId,
+    receiver_place: Option<ResolvedPlace>,
+    trait_ref: seal_ty::TraitRef,
+    method: seal_ty::TraitMethodDef,
+    self_ty: TyId,
+    name: Symbol,
+    generic_args: Option<seal_ty::SubstsId>,
+    args: &'a [HirExprId],
+    span: Span,
+    expected: Option<TyId>,
+}
+
+fn trait_receiver_kind(receiver: seal_ty::TraitMethodReceiver) -> ReceiverKind {
+    match receiver.reference {
+        None => ReceiverKind::Value,
+        Some(RefKind::Shared) => ReceiverKind::Shared,
+        Some(RefKind::Exclusive) => ReceiverKind::Exclusive,
+    }
 }
 
 struct Resolution {

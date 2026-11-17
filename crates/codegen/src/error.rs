@@ -21,6 +21,8 @@ pub enum EntryPointError {
     Parameters(usize),
     /// `main` returns a type other than `i32` or `()`.
     ReturnType(String),
+    /// `main` declares generic parameters.
+    Generic(usize),
 }
 
 impl fmt::Display for EntryPointError {
@@ -42,6 +44,10 @@ impl fmt::Display for EntryPointError {
             Self::ReturnType(found) => write!(
                 f,
                 "the entry point must return `i32` or `()`, but `main` returns `{found}`"
+            ),
+            Self::Generic(count) => write!(
+                f,
+                "the entry point cannot be generic, but `main` declares {count} type parameter(s)"
             ),
         }
     }

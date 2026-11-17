@@ -17,6 +17,27 @@ struct FieldAccess {
     name_span: Span,
 }
 
+/// One struct literal under construction.
+struct StructLiteral<'a> {
+    expr: HirExprId,
+    definition: seal_def::DefId,
+    explicit: Option<seal_ty::SubstsId>,
+    fields: &'a [(seal_def::DefId, HirExprId)],
+    expected: Option<TyId>,
+    span: Span,
+}
+
+/// One enum variant literal under construction.
+struct VariantLiteral<'a> {
+    expr: HirExprId,
+    definition: seal_def::DefId,
+    variant: seal_ty::VariantIdx,
+    explicit: Option<seal_ty::SubstsId>,
+    fields: &'a [(seal_def::DefId, HirExprId)],
+    expected: Option<TyId>,
+    span: Span,
+}
+
 impl Checker<'_> {
     /// Checks `expr` against `expected`, reporting a mismatch at the expression.
     pub(super) fn check_expr(&mut self, expr: HirExprId, expected: TyId, flow: &mut Flow) {
@@ -69,6 +90,10 @@ impl Checker<'_> {
             let expr = self.hir.expr(expr);
             (expr.span, expr.kind.clone())
         };
+        // A parameter may already have been bound by an expected return type;
+        // passing the resolved type lets literals adopt it instead of falling
+        // back to their default and then failing unification.
+        let expected = expected.map(|expected| self.resolve(expected));
 
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
@@ -109,15 +134,34 @@ impl Checker<'_> {
                 index_span,
             } => self.check_tuple_field(expr, base, index, index_span, flow, mode),
             ExprKind::Tuple { elements } => self.check_tuple(&elements, expected, flow),
-            ExprKind::Struct { adt, fields, .. } => {
-                self.check_struct_literal(adt, &fields, flow, span)
-            }
+            ExprKind::Struct { adt, args, fields } => self.check_struct_literal(
+                StructLiteral {
+                    expr,
+                    definition: adt,
+                    explicit: args,
+                    fields: &fields,
+                    expected,
+                    span,
+                },
+                flow,
+            ),
             ExprKind::Variant {
                 adt,
                 variant,
+                args,
                 fields,
-                ..
-            } => self.check_variant_literal(adt, variant, &fields, flow, span),
+            } => self.check_variant_literal(
+                VariantLiteral {
+                    expr,
+                    definition: adt,
+                    variant,
+                    explicit: args,
+                    fields: &fields,
+                    expected,
+                    span,
+                },
+                flow,
+            ),
             ExprKind::Array { elements } => self.check_array(&elements, expected, flow, span),
             ExprKind::ArrayRepeat { value, length } => {
                 self.check_array_repeat(value, length, expected, flow, span)
@@ -145,22 +189,26 @@ impl Checker<'_> {
                 target,
                 postfix: _,
             } => self.check_update(op, target, flow, span),
-            ExprKind::Call { callee, args } => self.check_call(callee, &args, flow, span),
+            ExprKind::Call { callee, args } => {
+                self.check_call(expr, callee, &args, expected, flow, span)
+            }
             ExprKind::MethodCall {
                 receiver,
                 name,
                 name_span,
+                generic_args,
                 args,
-                ..
             } => self.check_method_call(
                 super::method::MethodCall {
                     expr,
                     receiver,
                     name,
                     name_span,
+                    generic_args,
                     args: &args,
                     span,
                 },
+                expected,
                 flow,
             ),
             ExprKind::Match { scrutinee, arms } => {
@@ -192,6 +240,7 @@ impl Checker<'_> {
             ExprKind::Error => self.error_ty(),
         };
 
+        let ty = self.resolve_deep(ty);
         self.results.record_expr(expr, ty);
         ty
     }
@@ -642,20 +691,24 @@ impl Checker<'_> {
         }
     }
 
-    fn check_struct_literal(
-        &mut self,
-        definition: seal_def::DefId,
-        fields: &[(seal_def::DefId, HirExprId)],
-        flow: &mut Flow,
-        span: Span,
-    ) -> TyId {
+    fn check_struct_literal(&mut self, literal: StructLiteral<'_>, flow: &mut Flow) -> TyId {
+        let StructLiteral {
+            expr,
+            definition,
+            explicit,
+            fields,
+            expected,
+            span,
+        } = literal;
         let Some(adt) = self.hir.adt(definition) else {
             return self.error_ty();
         };
-        let ty = self.hir.ty_ctxt().adt_ty(adt);
+        let generics = self.aggregate_generics(definition);
+        let args = self.aggregate_arguments(adt, &generics, explicit, expected);
+        let substs = self.hir.ty_ctxt().substs(&args);
         for (field, value) in fields {
             let field_ty = match self.hir.ty_ctxt().field(adt, *field) {
-                Some(field) => field.ty,
+                Some(field) => self.substitute(field.ty, substs),
                 None => {
                     self.error(
                         seal_error_codes::E2007,
@@ -668,18 +721,31 @@ impl Checker<'_> {
             };
             self.check_expr(*value, field_ty, flow);
         }
-        ty
+        let ty = self.hir.ty_ctxt().adt_ty_with(adt, substs);
+        if let Some(expected) = expected {
+            self.mismatch(span, expected, ty);
+        }
+        let Some(args) =
+            self.finish_aggregate_instantiation(expr, definition, &generics, &args, span)
+        else {
+            return self.error_ty();
+        };
+        self.hir
+            .ty_ctxt()
+            .adt_ty_with(adt, self.hir.ty_ctxt().substs(&args))
     }
 
     /// Checks a constructed enum variant against its declared fields.
-    fn check_variant_literal(
-        &mut self,
-        definition: seal_def::DefId,
-        variant: seal_ty::VariantIdx,
-        fields: &[(seal_def::DefId, HirExprId)],
-        flow: &mut Flow,
-        span: Span,
-    ) -> TyId {
+    fn check_variant_literal(&mut self, literal: VariantLiteral<'_>, flow: &mut Flow) -> TyId {
+        let VariantLiteral {
+            expr,
+            definition,
+            variant,
+            explicit,
+            fields,
+            expected,
+            span,
+        } = literal;
         let Some(adt) = self.hir.adt(definition) else {
             return self.error_ty();
         };
@@ -692,9 +758,12 @@ impl Checker<'_> {
             .emit();
             return self.error_ty();
         };
+        let generics = self.aggregate_generics(definition);
+        let args = self.aggregate_arguments(adt, &generics, explicit, expected);
+        let substs = self.hir.ty_ctxt().substs(&args);
         for (field, value) in fields {
             let field_ty = match variant_def.field(*field) {
-                Some(field) => field.ty,
+                Some(field) => self.substitute(field.ty, substs),
                 None => {
                     self.error(
                         seal_error_codes::E2007,
@@ -707,7 +776,18 @@ impl Checker<'_> {
             };
             self.check_expr(*value, field_ty, flow);
         }
-        self.hir.ty_ctxt().adt_ty(adt)
+        let ty = self.hir.ty_ctxt().adt_ty_with(adt, substs);
+        if let Some(expected) = expected {
+            self.mismatch(span, expected, ty);
+        }
+        let Some(args) =
+            self.finish_aggregate_instantiation(expr, definition, &generics, &args, span)
+        else {
+            return self.error_ty();
+        };
+        self.hir
+            .ty_ctxt()
+            .adt_ty_with(adt, self.hir.ty_ctxt().substs(&args))
     }
 
     /// Checks that `condition` has type `bool`.

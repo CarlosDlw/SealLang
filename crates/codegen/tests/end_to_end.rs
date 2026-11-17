@@ -342,6 +342,19 @@ fn entry_point_errors_are_reported() {
         returns,
         CodegenError::EntryPoint(EntryPointError::ReturnType(_))
     ));
+
+    let generic = compile(
+        "func main<T>() -> i32 { 0 }",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect_err("main cannot be generic");
+    assert!(matches!(
+        generic,
+        CodegenError::EntryPoint(EntryPointError::Generic(1))
+    ));
 }
 
 #[test]

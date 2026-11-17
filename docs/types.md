@@ -882,7 +882,7 @@ progress.
 Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
 and its interning key before it can appear in a signature. Slices reuse the
 element stride and add a runtime length; enum variants reuse the field, query,
-and layout rules per variant; generics will instantiate the same rules per
+and layout rules per variant; generic instantiations apply the same rules per
 concrete argument; owning heap types will add field-derived destructors. None of these requires changing the identity, layout, or ownership
 model above: `TyId` equality, declaration-order layout, and the move/borrow
 rules stay the same.

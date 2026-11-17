@@ -31,7 +31,7 @@ pub use ctxt::TyCtxt;
 pub use display::TyDisplay;
 pub use generics::{
     Bound, GenericParamDef, GenericSignature, Generics, Instance, ParamEnv, ParamTy, TraitDef,
-    TraitImplDef, TraitMethodDef, TraitRef,
+    TraitImplDef, TraitMethodDef, TraitMethodReceiver, TraitRef,
 };
 pub use id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 pub use infer::{InferCtxt, UnifyError};

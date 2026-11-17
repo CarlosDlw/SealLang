@@ -31,7 +31,7 @@ impl InferCtxt {
 
     /// Creates a fresh, unbound type variable and returns the type standing for
     /// it.
-    pub fn fresh_ty_var(&mut self, ctxt: &mut TyCtxt) -> TyId {
+    pub fn fresh_ty_var(&mut self, ctxt: &TyCtxt) -> TyId {
         let var = self.vars.push(None);
         ctxt.infer_ty(var)
     }
@@ -164,7 +164,7 @@ impl InferCtxt {
     ///
     /// Unbound variables stay as they are, so callers can report them as
     /// ambiguous.
-    pub fn resolve_deep(&mut self, ctxt: &mut TyCtxt, ty: TyId) -> TyId {
+    pub fn resolve_deep(&mut self, ctxt: &TyCtxt, ty: TyId) -> TyId {
         let shallow = self.resolve_shallow(ctxt, ty);
         match ctxt.kind(shallow) {
             TyKind::Ref { kind, pointee } => {
@@ -309,10 +309,10 @@ mod tests {
 
     #[test]
     fn fresh_variables_are_distinct() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let first = infer.fresh_ty_var(&mut ctxt);
-        let second = infer.fresh_ty_var(&mut ctxt);
+        let first = infer.fresh_ty_var(&ctxt);
+        let second = infer.fresh_ty_var(&ctxt);
         assert_ne!(first, second);
         assert_eq!(infer.len(), 2);
         assert!(!infer.is_empty());
@@ -321,21 +321,21 @@ mod tests {
 
     #[test]
     fn a_variable_unifies_with_a_concrete_type() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let int = ctxt.int_ty(IntTy::I32);
         infer.unify(&ctxt, var, int).expect("variable unifies");
         assert_eq!(infer.resolve_shallow(&ctxt, var), int);
-        assert_eq!(infer.resolve_deep(&mut ctxt, var), int);
+        assert_eq!(infer.resolve_deep(&ctxt, var), int);
     }
 
     #[test]
     fn two_variables_unify_and_share_the_binding() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let first = infer.fresh_ty_var(&mut ctxt);
-        let second = infer.fresh_ty_var(&mut ctxt);
+        let first = infer.fresh_ty_var(&ctxt);
+        let second = infer.fresh_ty_var(&ctxt);
         let uint = ctxt.uint_ty(UintTy::U64);
 
         infer.unify(&ctxt, first, second).expect("variables unify");
@@ -372,9 +372,9 @@ mod tests {
 
     #[test]
     fn references_unify_structurally() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let pointee = ctxt.int_ty(IntTy::I32);
         let pointer = ctxt.ref_ty(var);
         let expected = ctxt.ref_ty(pointee);
@@ -414,9 +414,9 @@ mod tests {
 
     #[test]
     fn a_variable_cannot_contain_itself() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let pointer = ctxt.ref_ty(var);
         let error = infer
             .unify(&ctxt, var, pointer)
@@ -433,9 +433,9 @@ mod tests {
 
     #[test]
     fn the_occurs_check_looks_through_nested_references() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let nested = ctxt.ref_ty(var);
         let inner = ctxt.ref_ty(nested);
         assert!(matches!(
@@ -459,34 +459,34 @@ mod tests {
 
     #[test]
     fn deep_resolution_rebuilds_pointer_types() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let pointer = ctxt.ref_ty(var);
         let pointee = ctxt.char_ty();
         infer.unify(&ctxt, var, pointee).expect("variable binds");
 
-        let resolved = infer.resolve_deep(&mut ctxt, pointer);
+        let resolved = infer.resolve_deep(&ctxt, pointer);
         let expected = ctxt.ref_ty(pointee);
         assert_eq!(resolved, expected);
-        assert_eq!(infer.resolve_deep(&mut ctxt, expected), expected);
+        assert_eq!(infer.resolve_deep(&ctxt, expected), expected);
     }
 
     #[test]
     fn deep_resolution_leaves_unbound_variables_alone() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let pointer = ctxt.ref_ty(var);
-        assert_eq!(infer.resolve_deep(&mut ctxt, pointer), pointer);
+        assert_eq!(infer.resolve_deep(&ctxt, pointer), pointer);
     }
 
     #[test]
     fn resolution_compresses_chains() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let first = infer.fresh_ty_var(&mut ctxt);
-        let second = infer.fresh_ty_var(&mut ctxt);
+        let first = infer.fresh_ty_var(&ctxt);
+        let second = infer.fresh_ty_var(&ctxt);
         let int = ctxt.int_ty(IntTy::I32);
 
         infer.unify(&ctxt, first, second).expect("variables unify");
@@ -510,9 +510,9 @@ mod tests {
 
     #[test]
     fn tuples_unify_element_wise_and_keep_their_arity() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let int = ctxt.int_ty(IntTy::I32);
         infer
             .unify(
@@ -531,9 +531,9 @@ mod tests {
 
     #[test]
     fn the_occurs_check_looks_through_tuples() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let tuple = ctxt.tuple_ty(&[ctxt.bool_ty(), var]);
         assert!(matches!(
             infer.unify(&ctxt, var, tuple),
@@ -543,23 +543,23 @@ mod tests {
 
     #[test]
     fn deep_resolution_rebuilds_tuple_types() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let tuple = ctxt.tuple_ty(&[var, ctxt.bool_ty()]);
         let int = ctxt.int_ty(IntTy::I32);
         infer.unify(&ctxt, var, int).expect("variable binds");
         assert_eq!(
-            infer.resolve_deep(&mut ctxt, tuple),
+            infer.resolve_deep(&ctxt, tuple),
             ctxt.tuple_ty(&[int, ctxt.bool_ty()])
         );
     }
 
     #[test]
     fn arrays_unify_element_wise_and_keep_their_length() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let int = ctxt.int_ty(IntTy::I32);
         infer
             .unify(&ctxt, ctxt.array_ty(var, 3), ctxt.array_ty(int, 3))
@@ -574,9 +574,9 @@ mod tests {
 
     #[test]
     fn the_occurs_check_looks_through_arrays() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let array = ctxt.array_ty(var, 1);
         assert!(matches!(
             infer.unify(&ctxt, var, array),
@@ -586,12 +586,12 @@ mod tests {
 
     #[test]
     fn deep_resolution_rebuilds_array_types() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let var = infer.fresh_ty_var(&ctxt);
         let array = ctxt.array_ty(var, 2);
         let int = ctxt.int_ty(IntTy::I32);
         infer.unify(&ctxt, var, int).expect("variable binds");
-        assert_eq!(infer.resolve_deep(&mut ctxt, array), ctxt.array_ty(int, 2));
+        assert_eq!(infer.resolve_deep(&ctxt, array), ctxt.array_ty(int, 2));
     }
 }

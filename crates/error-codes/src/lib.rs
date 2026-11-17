@@ -1760,6 +1760,90 @@ struct pattern, a tuple has no field names and no `..` shorthand: omitting an
 element would leave its value unaccounted for.\n\nWrite one pattern per tuple element, using `_` for elements the arm ignores.",
 };
 
+/// A generic argument could not be inferred.
+pub const E3038: ErrorCode = ErrorCode {
+    code: "E3038",
+    title: "cannot infer a generic type argument",
+    explanation: "\
+A generic parameter has no value and nothing in the call determines it. Seal
+does not guess defaults for type parameters, because guessing would make the
+meaning of a program depend on an implementation detail.\n\nAnnotate the binding, pass the type argument explicitly, or pass an argument
+whose type determines the parameter.",
+};
+
+/// A trait bound is not satisfied.
+pub const E3039: ErrorCode = ErrorCode {
+    code: "E3039",
+    title: "trait bound is not satisfied",
+    explanation: "\
+A generic argument must implement every bound declared by its parameter. The
+solver looked at explicit impls and at the bounds visible on type parameters,
+and found no implementation for this argument.\n\nImplement the trait for the argument, or pass a different type.",
+};
+
+/// A trait goal has more than one candidate.
+pub const E3040: ErrorCode = ErrorCode {
+    code: "E3040",
+    title: "ambiguous trait bound or method",
+    explanation: "\
+More than one bound or implementation can satisfy this request, so the compiler
+cannot choose without guessing. Coherence should reject most overlapping impls
+before they reach this point.\n\nRemove one candidate, or make the request more specific.",
+};
+
+/// An operation needs a capability a type parameter does not declare.
+pub const E3041: ErrorCode = ErrorCode {
+    code: "E3041",
+    title: "operation is not available for a type parameter",
+    explanation: "\
+A type parameter is opaque inside a generic body: it is only known to implement
+the bounds written on it. Arithmetic, comparison, field access, and indexing
+need a concrete representation, so they cannot be applied to an unconstrained
+`T`.\n\nUse an operation provided by a bound, or make the function concrete.",
+};
+
+/// Trait proof search exceeded its recursion limit.
+pub const E3042: ErrorCode = ErrorCode {
+    code: "E3042",
+    title: "trait proof recursion limit exceeded",
+    explanation: "\
+Conditional implementations may depend on other bounds. The solver follows
+those dependencies with a depth limit and an active-goal stack, so a cycle is
+reported instead of overflowing the compiler stack.\n\nBreak the cycle between the conditional implementations.",
+};
+
+/// An argument does not satisfy a `Copy` bound.
+pub const E3043: ErrorCode = ErrorCode {
+    code: "E3043",
+    title: "type argument does not satisfy `Copy`",
+    explanation: "\
+A parameter declared with `T: Copy` accepts only types that can be duplicated
+bitwise. User-defined aggregates are not `Copy` unless the language provides an
+explicit opt-in.\n\nPass a scalar, reference, array, or tuple of `Copy` values.",
+};
+
+/// A generic method call has the wrong number of type arguments.
+pub const E3044: ErrorCode = ErrorCode {
+    code: "E3044",
+    title: "wrong number of method type arguments",
+    explanation: "\
+A method declares its own type parameters after the parameters of its impl.
+Explicit `.method::<...>()` arguments must match exactly the method's own
+parameters.\n\nSupply one type argument per method parameter, or omit the list.",
+};
+
+/// No unique inherent impl matches a method receiver or type arguments.
+pub const E3045: ErrorCode = ErrorCode {
+    code: "E3045",
+    title: "no unique inherent implementation",
+    explanation: "\
+Selecting an inherent method requires exactly one impl whose self type matches
+the receiver or the type arguments written on the aggregate. Two overlapping
+impl blocks, or type arguments that match no impl of the aggregate, leave the
+call without a unique target.\n\nRemove one of the overlapping methods, or use type arguments that match the
+impl self type.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -1771,8 +1855,9 @@ pub static ALL: &[ErrorCode] = &[
     E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E3001, E3002, E3003, E3004, E3005,
     E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018,
     E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031,
-    E3032, E3033, E3034, E3035, E3036, E3037, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
-    E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044,
+    E3045, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002,
+    E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1907,7 +1992,7 @@ mod tests {
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
-                "E3037",
+                "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
             ]
         );
     }

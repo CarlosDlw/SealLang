@@ -7,6 +7,7 @@ mod enums;
 mod examples;
 mod flow;
 mod for_loop;
+mod generics;
 mod if_let;
 mod init;
 mod literals;

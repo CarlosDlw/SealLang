@@ -216,6 +216,22 @@ impl Checker<'_> {
     }
 
     fn check_update_numeric(&self, op: UpdateOp, ty: TyId, span: Span) {
+        if let seal_ty::TyKind::Param(param) = self.hir.ty_ctxt().kind(ty) {
+            let name = self
+                .interner
+                .resolve(self.hir.ty_ctxt().param_data(param).name);
+            self.error(
+                codes::E3041,
+                span,
+                format!(
+                    "operator `{}` is not available for the type parameter `{name}`",
+                    op.as_str()
+                ),
+            )
+            .help("add a bound that provides the operation, or make the function concrete")
+            .emit();
+            return;
+        }
         if !self.is_numeric(ty) && !self.is_error(ty) {
             self.error(
                 codes::E3002,

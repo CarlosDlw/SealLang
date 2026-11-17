@@ -875,8 +875,8 @@ mod tests {
     #[test]
     fn inference_variables_report_unknown_classification() {
         let mut infer = crate::InferCtxt::new();
-        let mut ctxt = TyCtxt::new();
-        let var = infer.fresh_ty_var(&mut ctxt);
+        let ctxt = TyCtxt::new();
+        let var = infer.fresh_ty_var(&ctxt);
         assert!(!ctxt.is_copy(var));
         assert!(!ctxt.is_sized(var));
         assert!(!ctxt.needs_drop(var));

@@ -303,11 +303,19 @@ impl Lowering<'_> {
                     .hir
                     .generics(raw.def)
                     .unwrap_or_else(|| Generics::new(raw.def, Some(trait_def), Vec::new()));
+                let receiver = raw.receiver.map(|receiver| seal_ty::TraitMethodReceiver {
+                    reference: match receiver {
+                        crate::ReceiverKind::Value => None,
+                        crate::ReceiverKind::Shared => Some(seal_ty::RefKind::Shared),
+                        crate::ReceiverKind::Exclusive => Some(seal_ty::RefKind::Exclusive),
+                    },
+                });
                 methods.push(seal_ty::TraitMethodDef::new(
                     raw.def,
                     raw.name,
                     seal_ty::GenericSignature::new(params, ret),
                     method_generics,
+                    receiver,
                 ));
             }
 

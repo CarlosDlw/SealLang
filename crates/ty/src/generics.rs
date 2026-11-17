@@ -14,6 +14,7 @@ use seal_def::DefId;
 use seal_symbol::Symbol;
 
 use crate::id::{ParamTyId, SubstsId, TyId};
+use crate::kind::RefKind;
 
 /// The identity and display data of one declared type parameter.
 ///
@@ -224,16 +225,32 @@ pub struct TraitMethodDef {
     pub signature: GenericSignature,
     /// The method's own generic parameters, with the trait as parent.
     pub generics: Generics,
+    /// How the method takes its receiver, or `None` for an associated function.
+    pub receiver: Option<TraitMethodReceiver>,
+}
+
+/// The receiver declared by a trait method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraitMethodReceiver {
+    /// The reference kind used around `Self`, or `None` for a by-value receiver.
+    pub reference: Option<RefKind>,
 }
 
 impl TraitMethodDef {
     /// Creates a trait method declaration.
-    pub fn new(def: DefId, name: Symbol, signature: GenericSignature, generics: Generics) -> Self {
+    pub fn new(
+        def: DefId,
+        name: Symbol,
+        signature: GenericSignature,
+        generics: Generics,
+        receiver: Option<TraitMethodReceiver>,
+    ) -> Self {
         Self {
             def,
             name,
             signature,
             generics,
+            receiver,
         }
     }
 }

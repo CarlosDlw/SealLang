@@ -95,6 +95,9 @@ impl Checker<'_> {
             }
             BinaryOp::Eq | BinaryOp::Ne => {
                 let lhs_ty = self.infer_expr(lhs, None, flow);
+                if let seal_ty::TyKind::Param(param) = self.hir.ty_ctxt().kind(lhs_ty) {
+                    self.report_parameter_operation(op.as_str(), param, self.hir.expr(lhs).span);
+                }
                 self.check_expr(rhs, lhs_ty, flow);
                 self.bool_ty()
             }
@@ -189,6 +192,10 @@ impl Checker<'_> {
     }
 
     fn report_operand(&self, op: &str, ty: TyId, span: Span, requirement: &str) {
+        if let seal_ty::TyKind::Param(param) = self.hir.ty_ctxt().kind(ty) {
+            self.report_parameter_operation(op, param, span);
+            return;
+        }
         self.error(
             seal_error_codes::E3002,
             span,
@@ -200,6 +207,19 @@ impl Checker<'_> {
         .help(format!(
             "{requirement} operands are required for this operator"
         ))
+        .emit();
+    }
+
+    fn report_parameter_operation(&self, op: &str, param: seal_ty::ParamTyId, span: Span) {
+        let name = self
+            .interner
+            .resolve(self.hir.ty_ctxt().param_data(param).name);
+        self.error(
+            seal_error_codes::E3041,
+            span,
+            format!("operator `{op}` is not available for the type parameter `{name}`"),
+        )
+        .help("add a bound that provides the operation, or make the function concrete")
         .emit();
     }
 
@@ -219,6 +239,22 @@ impl Checker<'_> {
     pub(super) fn check_assign_op(&self, op: AssignOp, ty: TyId, span: Span) -> bool {
         if self.is_error(ty) {
             return true;
+        }
+        if let seal_ty::TyKind::Param(param) = self.hir.ty_ctxt().kind(ty) {
+            let name = self
+                .interner
+                .resolve(self.hir.ty_ctxt().param_data(param).name);
+            self.error(
+                seal_error_codes::E3041,
+                span,
+                format!(
+                    "compound assignment `{}` is not available for the type parameter `{name}`",
+                    op.as_str()
+                ),
+            )
+            .help("add a bound that provides the operation, or make the function concrete")
+            .emit();
+            return false;
         }
         let (valid, requirement) = match op {
             AssignOp::Assign => return true,

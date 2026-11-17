@@ -164,10 +164,10 @@ mod tests {
 
     #[test]
     fn an_unresolved_variable_shows_its_index() {
-        let mut ctxt = TyCtxt::new();
+        let ctxt = TyCtxt::new();
         let mut infer = InferCtxt::new();
-        let first = infer.fresh_ty_var(&mut ctxt);
-        let second = infer.fresh_ty_var(&mut ctxt);
+        let first = infer.fresh_ty_var(&ctxt);
+        let second = infer.fresh_ty_var(&ctxt);
         assert_eq!(ctxt.display(first).to_string(), "?T0");
         assert_eq!(ctxt.display(second).to_string(), "?T1");
     }

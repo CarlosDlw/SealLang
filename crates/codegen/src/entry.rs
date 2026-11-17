@@ -38,6 +38,10 @@ pub(crate) fn validate(hir: &Hir, mir: &Mir) -> Result<DefId, CodegenError> {
     let body = mir.body_of(definition).ok_or_else(|| {
         CodegenError::internal("the entry point has no MIR body; lowering is incomplete")
     })?;
+    let generics = hir.flattened_generics(definition).len();
+    if generics != 0 {
+        return Err(CodegenError::EntryPoint(EntryPointError::Generic(generics)));
+    }
     if body.arg_count != 0 {
         return Err(CodegenError::EntryPoint(EntryPointError::Parameters(
             body.arg_count,

@@ -124,7 +124,20 @@ impl Checker<'_> {
                     return;
                 };
                 let (expected, through_reference) = self.deref_pattern_expected(expected);
-                let pattern_ty = self.hir.ty_ctxt().adt_ty(adt_id);
+                let args = match self.hir.ty_ctxt().kind(expected) {
+                    TyKind::Adt {
+                        adt: expected_adt,
+                        args,
+                    } if expected_adt == adt_id => Some(args),
+                    _ => None,
+                };
+                let pattern_ty = match args {
+                    Some(args) => self.hir.ty_ctxt().adt_ty_with(adt_id, args),
+                    None if self.hir.ty_ctxt().adt_generic_count(adt_id) == 0 => {
+                        self.hir.ty_ctxt().adt_ty(adt_id)
+                    }
+                    None => self.error_ty(),
+                };
                 if !self.is_compatible(expected, pattern_ty) {
                     self.mismatch(span, expected, pattern_ty);
                 }
@@ -135,7 +148,10 @@ impl Checker<'_> {
                     let Some(field) = definition.field(field) else {
                         continue;
                     };
-                    let field_ty = field.ty;
+                    let field_ty = match args {
+                        Some(args) => self.hir.ty_ctxt().substitute(field.ty, args),
+                        None => self.error_ty(),
+                    };
                     self.check_pattern(field_pattern, field_ty, flow);
                 }
                 if through_reference {
@@ -147,7 +163,20 @@ impl Checker<'_> {
                     return;
                 };
                 let (expected, through_reference) = self.deref_pattern_expected(expected);
-                let pattern_ty = self.hir.ty_ctxt().adt_ty(adt_id);
+                let args = match self.hir.ty_ctxt().kind(expected) {
+                    TyKind::Adt {
+                        adt: expected_adt,
+                        args,
+                    } if expected_adt == adt_id => Some(args),
+                    _ => None,
+                };
+                let pattern_ty = match args {
+                    Some(args) => self.hir.ty_ctxt().adt_ty_with(adt_id, args),
+                    None if self.hir.ty_ctxt().adt_generic_count(adt_id) == 0 => {
+                        self.hir.ty_ctxt().adt_ty(adt_id)
+                    }
+                    None => self.error_ty(),
+                };
                 if !self.is_compatible(expected, pattern_ty) {
                     self.mismatch(span, expected, pattern_ty);
                 }
@@ -156,7 +185,10 @@ impl Checker<'_> {
                     let Some(field) = definition.field(field) else {
                         continue;
                     };
-                    let field_ty = field.ty;
+                    let field_ty = match args {
+                        Some(args) => self.hir.ty_ctxt().substitute(field.ty, args),
+                        None => self.error_ty(),
+                    };
                     self.check_pattern(field_pattern, field_ty, flow);
                 }
                 if through_reference {
