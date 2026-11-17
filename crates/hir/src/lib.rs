@@ -53,10 +53,11 @@ use seal_def::{DefData, DefId, Definitions};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
+use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{
     AdtId, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef, TraitImplDef,
-    TyCtxt, TyKind, VariantIdx,
+    TyCtxt, TyId, TyKind, VariantIdx,
 };
 
 /// How an instance method takes its receiver.
@@ -68,6 +69,18 @@ pub enum ReceiverKind {
     Shared,
     /// `self: *mut Type` borrows the receiver for writing.
     Exclusive,
+}
+
+/// One source-level use of a `dyn Trait` type.
+///
+/// The type is recorded during lowering, but object safety can only be checked
+/// once every trait definition exists, so validation runs as a final pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DynTypeUse {
+    /// The lowered trait-object type.
+    pub ty: TyId,
+    /// The source span of the complete `dyn ...` type.
+    pub span: Span,
 }
 
 /// The lowered representation of one file.
@@ -93,6 +106,7 @@ pub struct Hir {
     methods: FxHashMap<(DefId, Symbol), Vec<DefId>>,
     receivers: FxHashMap<DefId, ReceiverKind>,
     inherent_impls: Vec<InherentImpl>,
+    dyn_types: Vec<DynTypeUse>,
 }
 
 impl Hir {
@@ -276,6 +290,11 @@ impl Hir {
         self.ty_ctxt.trait_impls()
     }
 
+    /// Returns every `dyn Trait` use recorded during lowering.
+    pub fn dyn_types(&self) -> &[DynTypeUse] {
+        &self.dyn_types
+    }
+
     /// Returns every inherent implementation in declaration order.
     pub fn inherent_impls(&self) -> &[InherentImpl] {
         &self.inherent_impls
@@ -363,6 +382,10 @@ impl Hir {
         self.receivers.insert(function, receiver);
     }
 
+    pub(crate) fn insert_dyn_type(&mut self, usage: DynTypeUse) {
+        self.dyn_types.push(usage);
+    }
+
     /// Returns all blocks, indexable by [`HirBlockId`].
     pub fn block_arena(&self) -> &IndexVec<HirBlockId, Block> {
         &self.blocks
@@ -396,6 +419,7 @@ impl Hir {
             methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
+            dyn_types: Vec::new(),
         }
     }
 

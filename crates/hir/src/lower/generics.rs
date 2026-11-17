@@ -251,7 +251,10 @@ impl Lowering<'_> {
         Some(Bound::Trait(TraitRef::new(trait_def, target, args)))
     }
 
-    fn lower_bound_trait_path(&mut self, path: &TraitPath) -> Option<(DefId, seal_ty::SubstsId)> {
+    pub(super) fn lower_bound_trait_path(
+        &mut self,
+        path: &TraitPath,
+    ) -> Option<(DefId, seal_ty::SubstsId)> {
         let Some(trait_def) = self.traits.get(&path.name).copied() else {
             let name = self.interner.resolve(path.name);
             if self.types.contains_key(&path.name) || self.globals.contains_key(&path.name) {

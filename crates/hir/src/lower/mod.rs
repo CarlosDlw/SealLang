@@ -23,6 +23,7 @@ mod coherence;
 mod enums;
 mod expr;
 mod generics;
+mod object_safety;
 mod paths;
 mod patterns;
 mod scope;
@@ -92,6 +93,8 @@ struct TraitMethodSig {
     name: Symbol,
     name_span: Span,
     receiver: Option<ReceiverKind>,
+    /// Whether the declaration had a `self` parameter, even if it was invalid.
+    has_self_parameter: bool,
     /// Parameter types after the receiver, in declaration order.
     params: Vec<(AstTypeId, Span)>,
     /// The declared return type, or `None` for unit.
@@ -152,6 +155,7 @@ impl<'a> Lowering<'a> {
         self.validate_coherence();
         self.validate_trait_impls();
         self.lower_bodies();
+        self.validate_dyn_types();
         self.hir
     }
 
@@ -313,6 +317,7 @@ impl<'a> Lowering<'a> {
         self.queue_bounds(definition, &generics_decl, &[], &where_clause, None);
         self.trait_method_items.push((item_id, definition));
 
+        let has_self_parameter = params.iter().any(|param| self.is_self_parameter(*param));
         let (receiver, parameters) = self.trait_signature(trait_def, &params);
         self.trait_methods.insert(
             (trait_def, name),
@@ -321,6 +326,7 @@ impl<'a> Lowering<'a> {
                 name,
                 name_span,
                 receiver,
+                has_self_parameter,
                 params: parameters,
                 ret,
             },
@@ -411,6 +417,18 @@ impl<'a> Lowering<'a> {
     /// Lowers the self type of an impl block with the impl parameters in scope.
     fn lower_impl_self_type(&mut self, declaration: &ImplDecl, impl_def: DefId) -> TyId {
         let levels = self.push_generic_scope(impl_def);
+        if matches!(self.ast.ty(declaration.self_ty).kind, TypeKind::Dyn(_)) {
+            let span = self.ast.ty(declaration.self_ty).span;
+            self.error(
+                codes::E2056,
+                span,
+                "a trait object cannot be an impl target",
+            )
+            .help("implement the trait for the concrete type instead")
+            .emit();
+            self.pop_generic_scope(levels);
+            return self.hir.ty_ctxt().error_ty();
+        }
         let path = match &self.ast.ty(declaration.self_ty).kind {
             TypeKind::Path(path) => Some((path.name, path.name_span)),
             _ => None,
