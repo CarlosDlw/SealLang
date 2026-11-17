@@ -209,7 +209,7 @@ fn a_for_loop_iterates_a_generic_array() {
     assert_runs(
         "generic-for",
         r#"
-func count<T: Copy>(values: [T; 2]) -> usize {
+func count<T>(values: [T; 2]) -> usize {
   let mut total: usize = 0;
   for value in values { total = total + 1; }
   total
@@ -217,6 +217,38 @@ func count<T: Copy>(values: [T; 2]) -> usize {
 
 func main() -> i32 {
   if count([40, 2]) == 2 { 42 } else { 0 }
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn a_for_loop_moves_non_copy_elements_one_by_one() {
+    assert_runs(
+        "for-non-copy",
+        r#"
+struct Point { x: i32, y: i32 }
+
+func main() -> i32 {
+  let points = [Point { x: 40, y: 1 }, Point { x: 0, y: 1 }];
+  let mut total = 0;
+  for point in points { total = total + point.x + point.y; }
+  total
+}
+"#,
+        42,
+    );
+}
+
+#[test]
+fn a_slice_of_an_array_literal_runs() {
+    assert_runs(
+        "slice-temporary",
+        r#"
+func main() -> i32 {
+  let slice = &[40, 2][0..2];
+  slice[0] + slice[1]
 }
 "#,
         42,

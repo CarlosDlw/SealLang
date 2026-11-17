@@ -6,9 +6,11 @@
 //! source; `break` targets the exit.
 //!
 //! The iterable is evaluated once before the loop. An array is moved into a
-//! temporary and its elements are read by index; a reference to an array or a
-//! slice is kept in a temporary and each element is reborrowed with the same
-//! shared or exclusive kind as the source.
+//! temporary and indexed through an exclusive borrow of that temporary, so a
+//! non-`Copy` element can be moved out without the initialization analysis
+//! treating the whole array as moved on every iteration. A reference to an
+//! array or a slice is kept in a temporary and each element is reborrowed with
+//! the same shared or exclusive kind as the source.
 
 use seal_hir::{ForSource, HirBlockId, HirExprId, HirPatternId};
 use seal_span::Span;
@@ -26,6 +28,8 @@ struct SequenceSource {
     subject: TyId,
     /// The reference kind used to borrow each element, if any.
     reference: Option<RefKind>,
+    /// The array or slice place that the index is applied to.
+    base: Place,
     /// The loop length: a constant for arrays, a temporary for slices.
     length: Operand,
 }
@@ -201,12 +205,7 @@ impl BodyLowering<'_> {
 
         self.current = Some(bind);
         let index_local = index.local;
-        let element_place = if source.reference.is_some() {
-            collection.clone().deref()
-        } else {
-            collection.clone()
-        }
-        .index(index_local, None);
+        let element_place = source.base.clone().index(index_local, None);
         let subject = match source.reference {
             Some(kind) => {
                 let reference = self.new_temp(source.subject, span);
@@ -262,15 +261,33 @@ impl BodyLowering<'_> {
     /// Classifies an array or reference and produces its length operand.
     fn sequence_source(&mut self, ty: TyId, collection: Place, span: Span) -> SequenceSource {
         match self.hir.ty_ctxt().kind(ty) {
-            TyKind::Array { element, length } => SequenceSource {
-                subject: element,
-                reference: None,
-                length: self.constant_length(length),
-            },
+            TyKind::Array { element, length } => {
+                // Move elements out through an exclusive borrow of the
+                // temporary. A direct index move is dynamic, and the
+                // initialization analysis would mark the whole array moved on
+                // the first iteration, rejecting the second.
+                let pointer_ty = self.hir.ty_ctxt().ref_ty_with(RefKind::Exclusive, ty);
+                let pointer = self.new_temp(pointer_ty, span);
+                self.assign_rvalue(
+                    pointer.clone(),
+                    Rvalue::Ref {
+                        place: collection,
+                        kind: RefKind::Exclusive,
+                    },
+                    span,
+                );
+                SequenceSource {
+                    subject: element,
+                    reference: None,
+                    base: pointer.deref(),
+                    length: self.constant_length(length),
+                }
+            }
             TyKind::Ref { kind, pointee } => match self.hir.ty_ctxt().kind(pointee) {
                 TyKind::Array { element, length } => SequenceSource {
                     subject: self.hir.ty_ctxt().ref_ty_with(kind, element),
                     reference: Some(kind),
+                    base: collection.deref(),
                     length: self.constant_length(length),
                 },
                 TyKind::Slice { element } => {
@@ -278,13 +295,14 @@ impl BodyLowering<'_> {
                     self.assign_rvalue(
                         length.clone(),
                         Rvalue::Len {
-                            slice: Operand::Copy(collection),
+                            slice: Operand::Copy(collection.clone()),
                         },
                         span,
                     );
                     SequenceSource {
                         subject: self.hir.ty_ctxt().ref_ty_with(kind, element),
                         reference: Some(kind),
+                        base: collection.deref(),
                         length: Operand::Copy(length),
                     }
                 }

@@ -11,6 +11,19 @@ fn mutating_a_sequence_while_iterating_a_shared_loan_is_rejected() {
 }
 
 #[test]
+fn consuming_a_non_copy_array_by_value_is_accepted() {
+    let _ = check_clean(
+        "struct Point { x: i32 } \
+         func main() -> i32 { \
+           let points = [Point { x: 40 }, Point { x: 2 }]; \
+           let mut total = 0; \
+           for point in points { total += point.x; } \
+           total \
+         }",
+    );
+}
+
+#[test]
 fn moving_a_non_copy_array_into_a_loop_ends_its_use() {
     let fixture = check_errors(
         "struct Point { x: i32 } \

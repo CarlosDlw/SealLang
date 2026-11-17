@@ -1085,6 +1085,10 @@ impl<'a> BodyLowering<'a> {
     /// local to start from, because the reference itself is a temporary.
     /// Lowering stores that reference in a temporary and reads through it, so
     /// the expression still denotes storage and still copies on read.
+    ///
+    /// Any other value expression that type checking accepted as a slice base,
+    /// such as the array literal in `&[1, 2][0..1]`, is materialized the same
+    /// way. The temporary owns the value for the rest of the frame.
     fn place_of_expr(&mut self, expr: HirExprId) -> Place {
         if let Some(place) = self.typeck.place(expr).cloned() {
             return self.resolved_place(&place);
@@ -1092,13 +1096,17 @@ impl<'a> BodyLowering<'a> {
 
         let kind = self.hir.expr(expr).kind.clone();
         let span = self.hir.expr(expr).span;
-        let ExprKind::Deref { operand } = kind else {
-            panic!("expression {expr:?} is not a place; this is a compiler bug");
-        };
-        let reference_ty = self.expr_ty(operand);
-        let reference = self.new_temp(reference_ty, span);
-        self.lower_expr_into(operand, Some(reference.clone()));
-        reference.deref()
+        if let ExprKind::Deref { operand } = kind {
+            let reference_ty = self.expr_ty(operand);
+            let reference = self.new_temp(reference_ty, span);
+            self.lower_expr_into(operand, Some(reference.clone()));
+            return reference.deref();
+        }
+
+        let ty = self.expr_ty(expr);
+        let temporary = self.new_temp(ty, span);
+        self.lower_expr_into(expr, Some(temporary.clone()));
+        temporary
     }
 
     /// Converts a place resolved by type checking into a MIR place.
