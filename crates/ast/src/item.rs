@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{BlockId, FieldDeclId, ParamId, TypeId};
+use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TypeId};
 
 /// A top-level item.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,8 @@ pub enum ItemKind {
     Func(FnDecl),
     /// A struct declaration.
     Struct(StructDecl),
+    /// An inherent implementation block for a nominal struct.
+    Impl(ImplDecl),
     /// Syntax the parser could not turn into an item.
     Error,
 }
@@ -47,6 +49,21 @@ pub struct FieldDecl {
     pub ty: TypeId,
     /// The span from the name through the type.
     pub span: Span,
+}
+
+/// An inherent implementation block.
+///
+/// Seal has no traits yet, so an implementation only attaches functions to one
+/// nominal struct. A function whose first parameter is named `self` is an
+/// instance method; every other function is an associated function.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImplDecl {
+    /// The struct receiving the functions.
+    pub type_name: Symbol,
+    /// The span of the type name, for diagnostics.
+    pub type_span: Span,
+    /// The functions declared in source order.
+    pub functions: Vec<ItemId>,
 }
 
 /// A function declaration.

@@ -13,3 +13,4 @@ mod sized;
 mod slices;
 mod structs;
 mod support;
+mod user_methods;

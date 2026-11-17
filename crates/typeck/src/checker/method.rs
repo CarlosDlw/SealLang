@@ -6,7 +6,7 @@
 //! receiver reaches MIR, so later phases never repeat inference.
 
 use seal_error_codes as codes;
-use seal_hir::HirExprId;
+use seal_hir::{HirExprId, ReceiverKind};
 use seal_methods::{MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind};
 use seal_span::Span;
 use seal_symbol::Symbol;
@@ -14,7 +14,7 @@ use seal_ty::{RefKind, TyId, TyKind};
 
 use super::Checker;
 use super::flow::Flow;
-use crate::results::{ReceiverForm, ResolvedMethod};
+use crate::results::{MethodKind, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace};
 
 const MAX_RECEIVER_DEREFS: usize = 16;
 
@@ -40,6 +40,24 @@ impl Checker<'_> {
         } = call;
         let receiver_ty = self.infer_expr(receiver, None, flow);
         let receiver_place = self.results.place(receiver).cloned();
+
+        if let Some((type_def, receiver_kind)) =
+            self.user_method_target(receiver_ty, name, name_span)
+        {
+            return self.check_user_method(
+                expr,
+                receiver,
+                receiver_ty,
+                receiver_place.as_ref(),
+                type_def,
+                receiver_kind,
+                name,
+                args,
+                span,
+                flow,
+            );
+        }
+
         let resolution = self.resolve_method(
             receiver,
             receiver_ty,
@@ -117,7 +135,8 @@ impl Checker<'_> {
             self.results.record_method(
                 expr,
                 ResolvedMethod {
-                    method: resolution.id,
+                    kind: MethodKind::Intrinsic(resolution.id),
+                    receiver_adjust: ReceiverAdjust::None,
                     receiver_ty: resolution.receiver_ty,
                     receiver_form: resolution.form,
                     receiver_derefs: resolution.derefs,
@@ -128,6 +147,193 @@ impl Checker<'_> {
             );
         }
         ret_ty
+    }
+
+    /// Looks up a user method on a nominal receiver before intrinsic lookup.
+    ///
+    /// Returns `None` when the receiver is not a struct. A struct with no such
+    /// method reports the error here and returns `Some` so the caller stops
+    /// rather than falling through to the intrinsic catalog.
+    fn user_method_target(
+        &self,
+        receiver_ty: TyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> Option<(seal_def::DefId, ReceiverKind)> {
+        let mut base = receiver_ty;
+        while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(base) {
+            base = pointee;
+        }
+        let TyKind::Adt(adt) = self.hir.ty_ctxt().kind(base) else {
+            return None;
+        };
+        let type_def = self.hir.ty_ctxt().adt(adt).def;
+        let Some(function) = self.hir.method(type_def, name) else {
+            self.report_missing_method(receiver_ty, name, name_span);
+            return Some((type_def, ReceiverKind::Value));
+        };
+        let Some(kind) = self.hir.receiver(function) else {
+            self.error(
+                codes::E2019,
+                name_span,
+                format!(
+                    "`{}` is an associated function, not a method",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help(format!(
+                "call it as `{}::{}()`, or give it a `self` receiver",
+                self.ty_text(base),
+                self.interner.resolve(name)
+            ))
+            .emit();
+            return Some((type_def, ReceiverKind::Value));
+        };
+        Some((type_def, kind))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_user_method(
+        &mut self,
+        expr: HirExprId,
+        receiver: HirExprId,
+        receiver_ty: TyId,
+        receiver_place: Option<&ResolvedPlace>,
+        type_def: seal_def::DefId,
+        receiver_kind: ReceiverKind,
+        name: Symbol,
+        args: &[HirExprId],
+        span: Span,
+        flow: &mut Flow,
+    ) -> TyId {
+        let Some(function) = self.hir.method(type_def, name) else {
+            for arg in args {
+                self.infer_expr(*arg, None, flow);
+            }
+            return self.error_ty();
+        };
+        let Some(declared) = self.hir.receiver(function) else {
+            for arg in args {
+                self.infer_expr(*arg, None, flow);
+            }
+            return self.error_ty();
+        };
+        debug_assert_eq!(declared, receiver_kind);
+
+        let signature = self
+            .results
+            .signature(function)
+            .expect("every impl function has a signature")
+            .clone();
+        let adt = self
+            .hir
+            .adt(type_def)
+            .expect("every struct has a reserved aggregate");
+        let base_ty = self.hir.ty_ctxt().adt_ty(adt);
+        let expected = match receiver_kind {
+            ReceiverKind::Value => base_ty,
+            ReceiverKind::Shared => self.ref_ty(RefKind::Shared, base_ty),
+            ReceiverKind::Exclusive => self.ref_ty(RefKind::Exclusive, base_ty),
+        };
+
+        let adjust = if receiver_ty == expected {
+            ReceiverAdjust::None
+        } else if receiver_ty == base_ty {
+            match receiver_kind {
+                ReceiverKind::Value => ReceiverAdjust::None,
+                ReceiverKind::Shared => ReceiverAdjust::SharedBorrow,
+                ReceiverKind::Exclusive => ReceiverAdjust::ExclusiveBorrow,
+            }
+        } else {
+            self.error(
+                codes::E3031,
+                self.hir.expr(receiver).span,
+                format!(
+                    "method `{}` expects `{}`, but the receiver has type `{}`",
+                    self.interner.resolve(name),
+                    self.ty_text(expected),
+                    self.ty_text(receiver_ty)
+                ),
+            )
+            .help("adjust the receiver to match the method signature")
+            .emit();
+            ReceiverAdjust::None
+        };
+
+        if adjust == ReceiverAdjust::ExclusiveBorrow
+            && !self.receiver_place_is_writable(receiver_place)
+        {
+            self.error(
+                codes::E3029,
+                self.hir.expr(receiver).span,
+                format!(
+                    "method `{}` needs to modify its receiver",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help("declare the binding with `let mut`, or pass an exclusive reference")
+            .emit();
+        }
+
+        let expected_args = signature.params.len().saturating_sub(1);
+        if expected_args != args.len() {
+            self.error(
+                codes::E3028,
+                span,
+                format!(
+                    "method `{}` takes {} argument(s) but {} were supplied",
+                    self.interner.resolve(name),
+                    expected_args,
+                    args.len()
+                ),
+            )
+            .help("pass exactly one argument for each parameter after the receiver")
+            .emit();
+        }
+
+        let mut arg_tys = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            match signature.params.get(index + 1) {
+                Some(expected) => {
+                    self.check_expr(*arg, *expected, flow);
+                    arg_tys.push(*expected);
+                }
+                None => {
+                    self.infer_expr(*arg, None, flow);
+                }
+            }
+        }
+
+        let ret_ty = signature.ret;
+        if !self.is_error(ret_ty) {
+            self.results.record_method(
+                expr,
+                ResolvedMethod {
+                    kind: MethodKind::User {
+                        function,
+                        receiver: receiver_kind,
+                    },
+                    receiver_adjust: adjust,
+                    receiver_ty: base_ty,
+                    receiver_form: ReceiverForm::Place,
+                    receiver_derefs: 0,
+                    array_to_slice: false,
+                    arg_tys,
+                    ret_ty,
+                },
+            );
+        }
+        ret_ty
+    }
+
+    fn receiver_place_is_writable(&self, place: Option<&ResolvedPlace>) -> bool {
+        match place {
+            Some(place) => {
+                self.hir.definitions().get(place.local).mutable
+                    || place.deref == Some(RefKind::Exclusive)
+            }
+            None => true,
+        }
     }
 
     fn resolve_method(

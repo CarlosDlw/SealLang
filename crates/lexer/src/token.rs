@@ -166,6 +166,8 @@ pub enum TokenKind {
     Func,
     /// `struct`
     Struct,
+    /// `impl`
+    Impl,
     /// `if`
     If,
     /// `else`
@@ -206,6 +208,8 @@ pub enum TokenKind {
     Semicolon,
     /// `:`
     Colon,
+    /// `::`
+    ColonColon,
     /// `.`
     Dot,
     /// `..`

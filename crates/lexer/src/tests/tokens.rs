@@ -56,6 +56,7 @@ fn every_operator_has_a_token() {
         (",", TokenKind::Comma),
         (";", TokenKind::Semicolon),
         (":", TokenKind::Colon),
+        ("::", TokenKind::ColonColon),
         (".", TokenKind::Dot),
         ("..", TokenKind::DotDot),
     ];
@@ -110,7 +111,7 @@ fn ambiguous_runs_split_by_maximal_munch() {
 #[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
-        "func funcx struct structx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
+        "func funcx struct structx impl implx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
     );
     let lexed = fixture.lex();
     fixture.assert_clean();
@@ -121,6 +122,8 @@ fn keywords_are_not_identifiers() {
             TokenKind::Ident(fixture.interner.intern("funcx")),
             TokenKind::Struct,
             TokenKind::Ident(fixture.interner.intern("structx")),
+            TokenKind::Impl,
+            TokenKind::Ident(fixture.interner.intern("implx")),
             TokenKind::If,
             TokenKind::Ident(fixture.interner.intern("iffy")),
             TokenKind::Else,

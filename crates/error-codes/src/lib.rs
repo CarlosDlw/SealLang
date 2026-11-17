@@ -536,6 +536,61 @@ Pass one slice reference, as in `len(values)`, or remove the extra arguments.
 A user function named `len` shadows the built-in and is called normally.",
 };
 
+/// An `impl` block names a type that cannot receive inherent methods.
+pub const E2015: ErrorCode = ErrorCode {
+    code: "E2015",
+    title: "invalid impl target",
+    explanation: "\
+An inherent implementation attaches methods to one nominal struct declared in
+the same module. The name after `impl` must be that struct, not a primitive, a
+reference, a function, or an undeclared name. Seal has no traits yet, so there
+is no `impl Trait for Type` form.\n\nDeclare the struct with `struct`, then write `impl StructName { ... }`.",
+};
+
+/// A method receiver has an invalid declaration.
+pub const E2016: ErrorCode = ErrorCode {
+    code: "E2016",
+    title: "invalid method receiver",
+    explanation: "\
+A method is an impl function whose first parameter is named `self`. The receiver
+must be written with its type: `self: Point` takes the value, `self: *Point`
+borrows it for reading, and `self: *mut Point` borrows it for writing. The type
+must be the struct named by the impl block. `self` cannot appear in any other
+position.\n\nWrite the receiver as the first parameter, or remove `self` to make the
+function associated.",
+};
+
+/// One impl block declares the same function name twice.
+pub const E2017: ErrorCode = ErrorCode {
+    code: "E2017",
+    title: "associated function is defined twice",
+    explanation: "\
+Methods and associated functions share one namespace per type. Two functions
+with the same name in an impl block, or across several impl blocks for the same
+type, are ambiguous: a call could not choose one.\n\nRename one of the functions, or remove it.",
+};
+
+/// A qualified path names a function the type does not define.
+pub const E2018: ErrorCode = ErrorCode {
+    code: "E2018",
+    title: "no such associated function",
+    explanation: "\
+A qualified path such as `Point::new` names an associated function declared in
+an impl block for `Point`. The name must be a function in that type's impl
+blocks, and it must not take a `self` receiver.\n\nCheck the name and the impl block, or call an instance method on a value.",
+};
+
+/// A qualified path names an instance method and omits its receiver.
+pub const E2019: ErrorCode = ErrorCode {
+    code: "E2019",
+    title: "method called as an associated function",
+    explanation: "\
+The function named by this qualified path is an instance method, because its
+first parameter is `self`. It needs a receiver value and is called with `.`, as
+in `point.sum()`.\n\nCall the method on a value, or make the function associated by removing its
+`self` parameter.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -893,7 +948,7 @@ pub const E3027: ErrorCode = ErrorCode {
     code: "E3027",
     title: "no such method",
     explanation: "\
-Seal methods are compiler-owned and are selected from the receiver's scalar,\narray, or slice family. A name the catalog does not define for that family\ncannot be called, and there are no user-defined methods yet.\n\nCheck the spelling, or dereference the receiver until it reaches the type that\ndefines the method. The catalog documents every available name.",
+A struct method comes from an `impl` block for that struct; an intrinsic method\ncomes from the compiler-owned scalar, array, or slice catalog. A name that\nneither source defines for the receiver's type cannot be called.\n\nCheck the spelling and the impl block, or dereference the receiver until it\nreaches the type that defines the method. The intrinsic catalog documents every\ncompiler-owned name.",
 };
 
 /// A method call supplies the wrong number of arguments.
@@ -901,7 +956,7 @@ pub const E3028: ErrorCode = ErrorCode {
     code: "E3028",
     title: "wrong number of method arguments",
     explanation: "\
-Intrinsic methods have fixed signatures, like functions. A call must supply one\nargument for each parameter after the receiver; there are no defaults or\noverloads.\n\nPass exactly the documented number of arguments. Collecting arguments into an\narray is not needed for methods that take one value.",
+Methods have fixed signatures. A call must supply one argument for each\nparameter after the receiver; there are no defaults or overloads. An associated\nfunction has no receiver, so all of its parameters are call arguments.\n\nPass exactly the number of arguments in the selected declaration or intrinsic\nsignature.",
 };
 
 /// A modifying method has a receiver that cannot be written.
@@ -909,7 +964,7 @@ pub const E3029: ErrorCode = ErrorCode {
     code: "E3029",
     title: "method receiver is not writable",
     explanation: "\
-Methods such as `reverse`, `fill`, and `toggle` modify their receiver. They\nrequire a mutable binding, or a place reached through a `*mut T` reference. A\nshared reference and an immutable binding do not permit the write.\n\nDeclare the binding with `let mut`, or call the method through a mutable\nreference.",
+A method with an exclusive receiver, and an intrinsic such as `reverse`, `fill`,\nor `toggle`, modifies its receiver. It requires a mutable binding, or a place\nreached through a `*mut T` reference. A shared reference and an immutable\nbinding do not permit the write.\n\nDeclare the binding with `let mut`, or call the method through a mutable\nreference.",
 };
 
 /// `fill` is called on a sequence whose element type is not `Copy`.
@@ -918,6 +973,20 @@ pub const E3030: ErrorCode = ErrorCode {
     title: "`fill` requires a `Copy` element",
     explanation: "\
 `fill(value)` writes the same value into every element. Writing a non-`Copy`\nvalue into several elements would duplicate ownership, which Seal forbids.\n\nUse a `Copy` element type, or assign each element separately. `swap` and\n`reverse` move elements between positions and do not require `Copy`.",
+};
+
+/// A method receiver does not have the type or adjustment the method expects.
+pub const E3031: ErrorCode = ErrorCode {
+    code: "E3031",
+    title: "method receiver has an incompatible type",
+    explanation: "\
+A user method declares exactly how it takes its receiver. `self: Point` takes
+the value, `self: *Point` takes a shared reference, and `self: *mut Point` takes
+an exclusive reference. The receiver expression must already have that type, or
+be a `Point` place that Seal can borrow automatically for a reference receiver.
+\nAn exclusive method also requires a writable place. A shared reference cannot
+be passed to an exclusive receiver, and a reference receiver cannot consume a
+value. Adjust the receiver or the method signature.",
 };
 
 /// A place is assigned while a shared reference to it is live.
@@ -1137,11 +1206,11 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
-    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E3001, E3002, E3003,
-    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
-    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
-    E3030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002,
-    E6003, E9001, E9002,
+    E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016, E2017,
+    E2018, E2019, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011,
+    E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024,
+    E3025, E3026, E3027, E3028, E3029, E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006,
+    E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1251,7 +1320,8 @@ mod tests {
             codes,
             [
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
-                "E2010", "E2011", "E2012", "E2013", "E2014",
+                "E2010", "E2011", "E2012", "E2013", "E2014", "E2015", "E2016", "E2017", "E2018",
+                "E2019",
             ]
         );
     }
@@ -1269,7 +1339,7 @@ mod tests {
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
-                "E3028", "E3029", "E3030",
+                "E3028", "E3029", "E3030", "E3031",
             ]
         );
     }

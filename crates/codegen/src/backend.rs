@@ -150,11 +150,13 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         let function = functions[&body.owner];
         let scope = match &debug {
             Some(debug) => {
-                let linkage = names::function(
+                let definition = input.hir.definitions().get(body.owner);
+                let parent = definition.parent.map(|parent| {
                     input
                         .interner
-                        .resolve(input.hir.definitions().get(body.owner).name),
-                );
+                        .resolve(input.hir.definitions().get(parent).name)
+                });
+                let linkage = names::function(input.interner.resolve(definition.name), parent);
                 let scope = debug.subprogram(body, &linkage)?;
                 function.set_subprogram(scope);
                 Some(scope)
@@ -311,7 +313,10 @@ pub(crate) fn declare_functions<'ctx>(
     let mut functions = FxHashMap::default();
     for body in mir.bodies().iter() {
         let definition = hir.definitions().get(body.owner);
-        let name = names::function(interner.resolve(definition.name));
+        let parent = definition
+            .parent
+            .map(|parent| interner.resolve(hir.definitions().get(parent).name));
+        let name = names::function(interner.resolve(definition.name), parent);
         let parameters: Vec<TyId> = body.args().map(|parameter| parameter.ty).collect();
         let returns = body.local(Body::return_local()).ty;
         let function_type = mapper.function_type(&parameters, returns)?;

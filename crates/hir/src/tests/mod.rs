@@ -4,6 +4,7 @@ mod arrays;
 mod borrows;
 mod control_flow;
 mod examples;
+mod methods;
 mod resolve;
 mod slices;
 mod structs;

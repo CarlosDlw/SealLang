@@ -700,10 +700,15 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         func: DefId,
         arguments: &[seal_mir::Operand],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let definition = self.definitions().get(func);
+        let parent = definition
+            .parent
+            .map(|parent| self.interner.resolve(self.definitions().get(parent).name));
         let function = self
             .module
             .get_function(&crate::names::function(
-                self.interner.resolve(self.definitions().get(func).name),
+                self.interner.resolve(definition.name),
+                parent,
             ))
             .ok_or_else(|| {
                 CodegenError::internal(format!("call target {func:?} was not declared"))

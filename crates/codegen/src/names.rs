@@ -8,8 +8,14 @@
 pub(crate) const ENTRY_POINT: &str = "main";
 
 /// Returns the linker symbol for the Seal function `name`.
-pub(crate) fn function(name: &str) -> String {
-    format!("seal.{name}")
+///
+/// An impl function includes its parent type, so `Point::new` and `Line::new`
+/// receive distinct symbols while free functions keep the short form.
+pub(crate) fn function(name: &str, parent: Option<&str>) -> String {
+    match parent {
+        Some(parent) => format!("seal.{parent}.{name}"),
+        None => format!("seal.{name}"),
+    }
 }
 
 /// Returns a unique IR name for a local slot.

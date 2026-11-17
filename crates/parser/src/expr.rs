@@ -191,7 +191,19 @@ impl Parser<'_> {
             }
             TokenKind::Ident(symbol) => {
                 self.bump();
-                if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                if self.eat(TokenKind::ColonColon) {
+                    let (name, name_span) = self.expect_ident("an associated name after `::`");
+                    let span = token.span.cover(name_span);
+                    self.builder.push_expr(
+                        ExprKind::PathQualified {
+                            type_name: symbol,
+                            type_span: token.span,
+                            name,
+                            name_span,
+                        },
+                        span,
+                    )
+                } else if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
                     self.parse_struct_literal(symbol, token.span)
                 } else {
                     self.builder.push_expr(ExprKind::Path(symbol), token.span)

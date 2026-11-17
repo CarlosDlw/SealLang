@@ -47,8 +47,19 @@ use seal_def::{DefData, DefId, Definitions};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
-use seal_symbol::Interner;
+use seal_symbol::{Interner, Symbol};
 use seal_ty::{AdtId, TyCtxt};
+
+/// How an instance method takes its receiver.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverKind {
+    /// `self: Type` takes the value, moving or copying it.
+    Value,
+    /// `self: *Type` borrows the receiver for reading.
+    Shared,
+    /// `self: *mut Type` borrows the receiver for writing.
+    Exclusive,
+}
 
 /// The lowered representation of one file.
 #[derive(Debug)]
@@ -61,6 +72,8 @@ pub struct Hir {
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
     structs: FxHashMap<DefId, AdtId>,
+    methods: FxHashMap<(DefId, Symbol), DefId>,
+    receivers: FxHashMap<DefId, ReceiverKind>,
 }
 
 impl Hir {
@@ -155,8 +168,29 @@ impl Hir {
         self.structs.get(&def).copied()
     }
 
+    /// Returns the impl function named `name` attached to `type_def`.
+    ///
+    /// The lookup covers methods and associated functions. Use
+    /// [`Hir::receiver`] to distinguish them.
+    pub fn method(&self, type_def: DefId, name: Symbol) -> Option<DefId> {
+        self.methods.get(&(type_def, name)).copied()
+    }
+
+    /// Returns the receiver kind of `function`, or `None` when it is associated.
+    pub fn receiver(&self, function: DefId) -> Option<ReceiverKind> {
+        self.receivers.get(&function).copied()
+    }
+
     pub(crate) fn insert_struct(&mut self, def: DefId, adt: AdtId) {
         self.structs.insert(def, adt);
+    }
+
+    pub(crate) fn insert_method(&mut self, type_def: DefId, name: Symbol, function: DefId) {
+        self.methods.insert((type_def, name), function);
+    }
+
+    pub(crate) fn insert_receiver(&mut self, function: DefId, receiver: ReceiverKind) {
+        self.receivers.insert(function, receiver);
     }
 
     /// Returns all blocks, indexable by [`HirBlockId`].
@@ -185,6 +219,8 @@ impl Hir {
             ty_ctxt,
             body_of: FxHashMap::default(),
             structs: FxHashMap::default(),
+            methods: FxHashMap::default(),
+            receivers: FxHashMap::default(),
         }
     }
 

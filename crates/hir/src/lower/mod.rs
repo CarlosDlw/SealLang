@@ -1,6 +1,6 @@
 //! AST lowering and name resolution.
 
-use seal_ast::{Ast, BlockId as AstBlockId, ItemId, ItemKind};
+use seal_ast::{Ast, BlockId as AstBlockId, ImplDecl, ItemId, ItemKind, ParamId};
 use seal_def::{DefData, DefId, DefKind};
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -8,11 +8,11 @@ use seal_error_codes::ErrorCode;
 use seal_hash::FxHashMap;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::TyCtxt;
+use seal_ty::{RefKind, TyCtxt, TyKind};
 
 use crate::body::{Body, ParamData};
 use crate::res::Res;
-use crate::{Block, Hir, HirBlockId};
+use crate::{Block, Hir, HirBlockId, ReceiverKind};
 
 mod expr;
 mod scope;
@@ -36,6 +36,7 @@ pub(crate) struct Lowering<'a> {
     globals: FxHashMap<Symbol, DefId>,
     types: FxHashMap<Symbol, DefId>,
     function_defs: FxHashMap<ItemId, DefId>,
+    function_items: Vec<ItemId>,
     struct_items: Vec<(ItemId, DefId)>,
     function: Option<DefId>,
     loop_depth: usize,
@@ -52,6 +53,7 @@ impl<'a> Lowering<'a> {
             globals: FxHashMap::default(),
             types: FxHashMap::default(),
             function_defs: FxHashMap::default(),
+            function_items: Vec::new(),
             struct_items: Vec::new(),
             function: None,
             loop_depth: 0,
@@ -68,28 +70,172 @@ impl<'a> Lowering<'a> {
 
     /// Creates a definition for every item before any body is lowered, so calls
     /// and type annotations work regardless of declaration order.
+    ///
+    /// Collection runs in dependency order: structs first, then free functions,
+    /// then impls. An impl needs its target struct to exist, and a body that
+    /// calls `Point::new` needs the impl registry to be complete, so bodies are
+    /// lowered only after all three passes.
     fn collect_items(&mut self) {
         let items: Vec<ItemId> = self.ast.program().items().to_vec();
-        for item_id in items {
-            let (name, name_span, span) = {
-                let item = self.ast.item(item_id);
-                match &item.kind {
-                    ItemKind::Func(declaration) => {
-                        (declaration.name, declaration.name_span, item.span)
-                    }
-                    ItemKind::Struct(declaration) => {
-                        (declaration.name, declaration.name_span, item.span)
-                    }
-                    ItemKind::Error => continue,
-                }
+
+        for &item_id in &items {
+            let ItemKind::Struct(declaration) = &self.ast.item(item_id).kind else {
+                continue;
             };
-            let is_struct = matches!(self.ast.item(item_id).kind, ItemKind::Struct(_));
-            if is_struct {
-                self.collect_struct(item_id, name, name_span, span);
+            let span = self.ast.item(item_id).span;
+            self.collect_struct(item_id, declaration.name, declaration.name_span, span);
+        }
+
+        for &item_id in &items {
+            let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
+                continue;
+            };
+            let span = self.ast.item(item_id).span;
+            self.collect_function(item_id, declaration.name, declaration.name_span, span);
+        }
+
+        for &item_id in &items {
+            let ItemKind::Impl(declaration) = &self.ast.item(item_id).kind else {
+                continue;
+            };
+            let declaration = declaration.clone();
+            self.collect_impl(&declaration);
+        }
+    }
+
+    /// Registers every function in one impl block under its target type.
+    fn collect_impl(&mut self, declaration: &ImplDecl) {
+        let Some(&type_def) = self.types.get(&declaration.type_name) else {
+            let name = self.interner.resolve(declaration.type_name);
+            if self.globals.contains_key(&declaration.type_name) {
+                self.error(
+                    codes::E2015,
+                    declaration.type_span,
+                    format!("`{name}` is a value, not a type"),
+                )
+                .help("an impl block attaches methods to a struct")
+                .emit();
             } else {
-                self.collect_function(item_id, name, name_span, span);
+                self.error(
+                    codes::E2015,
+                    declaration.type_span,
+                    format!("cannot find struct `{name}` for this impl"),
+                )
+                .help("declare the struct with `struct`, then implement it")
+                .emit();
+            }
+            return;
+        };
+
+        for &item_id in &declaration.functions {
+            self.collect_impl_function(item_id, type_def);
+        }
+    }
+
+    fn collect_impl_function(&mut self, item_id: ItemId, type_def: DefId) {
+        let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
+            return;
+        };
+        let (name, name_span) = (declaration.name, declaration.name_span);
+        let span = self.ast.item(item_id).span;
+        let definition = self.define(DefData {
+            kind: DefKind::Function,
+            name,
+            name_span,
+            span,
+            parent: Some(type_def),
+            mutable: false,
+        });
+        self.function_defs.insert(item_id, definition);
+        self.function_items.push(item_id);
+
+        if let Some(first) = self.hir.method(type_def, name) {
+            let first_span = self.hir.definitions().get(first).name_span;
+            self.error(
+                codes::E2017,
+                name_span,
+                format!(
+                    "the associated function `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+            )
+            .secondary(first_span, "first defined here")
+            .help("give each impl function a distinct name")
+            .emit();
+        } else {
+            self.hir.insert_method(type_def, name, definition);
+        }
+
+        let params = declaration.params.clone();
+        let Some(receiver_param) = params.first().copied() else {
+            return;
+        };
+        if self.is_self_parameter(receiver_param) {
+            let receiver_ty = self.ast.param(receiver_param).ty;
+            match self.receiver_kind(receiver_ty, type_def) {
+                Some(ReceiverKind::Value) => {
+                    self.hir.insert_receiver(definition, ReceiverKind::Value);
+                }
+                Some(ReceiverKind::Shared) => {
+                    self.hir.insert_receiver(definition, ReceiverKind::Shared);
+                }
+                Some(ReceiverKind::Exclusive) => {
+                    self.hir
+                        .insert_receiver(definition, ReceiverKind::Exclusive);
+                }
+                None => self.receiver_error(receiver_param, type_def),
+            }
+        } else {
+            for &param in params.iter().skip(1) {
+                if self.is_self_parameter(param) {
+                    self.error(
+                        codes::E2016,
+                        self.ast.param(param).name_span,
+                        "`self` must be the first parameter",
+                    )
+                    .help("move `self` to the first position, or rename the parameter")
+                    .emit();
+                }
             }
         }
+    }
+
+    fn is_self_parameter(&self, param: ParamId) -> bool {
+        self.interner.resolve(self.ast.param(param).name) == "self"
+    }
+
+    fn receiver_kind(&mut self, ty: seal_ast::TypeId, type_def: DefId) -> Option<ReceiverKind> {
+        let adt = self.hir.adt(type_def)?;
+        let target = self.hir.ty_ctxt().adt_ty(adt);
+        let receiver = self.lower_type(ty);
+        match self.hir.ty_ctxt().kind(receiver) {
+            TyKind::Adt(found) if found == adt => Some(ReceiverKind::Value),
+            TyKind::Ref {
+                kind: RefKind::Shared,
+                pointee,
+            } if pointee == target => Some(ReceiverKind::Shared),
+            TyKind::Ref {
+                kind: RefKind::Exclusive,
+                pointee,
+            } if pointee == target => Some(ReceiverKind::Exclusive),
+            _ => None,
+        }
+    }
+
+    fn receiver_error(&mut self, param: ParamId, type_def: DefId) {
+        let name = self
+            .interner
+            .resolve(self.hir.definitions().get(type_def).name);
+        let span = self.ast.param(param).span;
+        self.error(
+            codes::E2016,
+            span,
+            format!("this is not a valid receiver for `{name}`"),
+        )
+        .help(format!(
+            "write `self: {name}`, `self: *{name}`, or `self: *mut {name}`"
+        ))
+        .emit();
     }
 
     fn collect_function(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
@@ -102,6 +248,7 @@ impl<'a> Lowering<'a> {
             mutable: false,
         });
         self.function_defs.insert(item_id, definition);
+        self.function_items.push(item_id);
 
         if let Some(first) = self.globals.get(&name).copied() {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -153,7 +300,7 @@ impl<'a> Lowering<'a> {
     }
 
     fn lower_bodies(&mut self) {
-        let items: Vec<ItemId> = self.ast.program().items().to_vec();
+        let items = self.function_items.clone();
         for item_id in items {
             let Some(&function) = self.function_defs.get(&item_id) else {
                 continue;

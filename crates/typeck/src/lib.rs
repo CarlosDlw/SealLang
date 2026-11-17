@@ -43,7 +43,8 @@ mod results;
 mod tests;
 
 pub use results::{
-    PlaceProjection, ReceiverForm, ResolvedMethod, ResolvedPlace, Signature, TypeckResults,
+    MethodKind, PlaceProjection, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace,
+    Signature, TypeckResults,
 };
 
 use seal_diagnostics::DiagCtxt;

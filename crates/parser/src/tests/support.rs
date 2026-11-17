@@ -5,8 +5,8 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::{
-    Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemKind, ParamId, StmtId,
-    StmtKind, TypeId, TypeKind,
+    Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemId, ItemKind, ParamId,
+    StmtId, StmtKind, TypeId, TypeKind,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -163,6 +163,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         fields: BTreeSet::new(),
         types: BTreeSet::new(),
         params: BTreeSet::new(),
+        items: BTreeSet::new(),
     };
     reachability.run();
 }
@@ -177,39 +178,20 @@ struct Reachability<'a> {
     fields: BTreeSet<FieldDeclId>,
     types: BTreeSet<TypeId>,
     params: BTreeSet<ParamId>,
+    items: BTreeSet<ItemId>,
 }
 
 impl Reachability<'_> {
     fn run(&mut self) {
-        assert_eq!(
-            self.ast.item_arena().len(),
-            self.ast.program().len(),
-            "every item must be reachable from the program"
-        );
-
         for item_id in self.ast.program().items() {
-            let item = self.ast.item(*item_id);
-            self.assert_span(item.span);
-            match &item.kind {
-                ItemKind::Func(declaration) => {
-                    self.assert_span(declaration.name_span);
-                    if let Some(ret) = declaration.ret {
-                        self.check_type(ret);
-                    }
-                    for param_id in &declaration.params {
-                        self.check_param(*param_id);
-                    }
-                    self.check_block(declaration.body);
-                }
-                ItemKind::Struct(declaration) => {
-                    self.assert_span(declaration.name_span);
-                    for field in &declaration.fields {
-                        self.check_field(*field);
-                    }
-                }
-                ItemKind::Error => {}
-            }
+            self.check_item(*item_id);
         }
+
+        assert_eq!(
+            self.items.len(),
+            self.ast.item_arena().len(),
+            "unreachable item nodes"
+        );
 
         assert_eq!(
             self.exprs.len(),
@@ -241,6 +223,41 @@ impl Reachability<'_> {
             self.ast.param_arena().len(),
             "unreachable parameter nodes"
         );
+    }
+
+    fn check_item(&mut self, id: ItemId) {
+        assert!(self.items.insert(id), "item {id:?} visited twice");
+        let item = self.ast.item(id);
+        let span = item.span;
+        let kind = item.kind.clone();
+        self.assert_span(span);
+        match kind {
+            ItemKind::Func(declaration) => self.check_function(&declaration),
+            ItemKind::Struct(declaration) => {
+                self.assert_span(declaration.name_span);
+                for field in &declaration.fields {
+                    self.check_field(*field);
+                }
+            }
+            ItemKind::Impl(declaration) => {
+                self.assert_span(declaration.type_span);
+                for function in &declaration.functions {
+                    self.check_item(*function);
+                }
+            }
+            ItemKind::Error => {}
+        }
+    }
+
+    fn check_function(&mut self, declaration: &FnDecl) {
+        self.assert_span(declaration.name_span);
+        if let Some(ret) = declaration.ret {
+            self.check_type(ret);
+        }
+        for param_id in &declaration.params {
+            self.check_param(*param_id);
+        }
+        self.check_block(declaration.body);
     }
 
     fn assert_span(&self, span: Span) {
@@ -412,6 +429,14 @@ impl Reachability<'_> {
                 if let Some(else_branch) = else_branch {
                     self.check_block(else_branch);
                 }
+            }
+            ExprKind::PathQualified {
+                type_span,
+                name_span,
+                ..
+            } => {
+                self.assert_span(type_span);
+                self.assert_span(name_span);
             }
             ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
         }

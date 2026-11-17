@@ -23,7 +23,11 @@ pub(crate) fn validate(hir: &Hir, mir: &Mir) -> Result<DefId, CodegenError> {
     let candidates: Vec<DefId> = hir
         .definitions()
         .iter_enumerated()
-        .filter(|(_, definition)| definition.kind == DefKind::Function && definition.name == main)
+        .filter(|(_, definition)| {
+            definition.kind == DefKind::Function
+                && definition.parent.is_none()
+                && definition.name == main
+        })
         .map(|(id, _)| id)
         .collect();
     let definition = match candidates.len() {

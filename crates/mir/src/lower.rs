@@ -7,7 +7,7 @@ use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId,
 use seal_index::IndexVec;
 use seal_span::Span;
 use seal_ty::{TyId, TyKind};
-use seal_typeck::{PlaceProjection, ResolvedPlace, TypeckResults};
+use seal_typeck::{MethodKind, PlaceProjection, ReceiverAdjust, ResolvedPlace, TypeckResults};
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -692,6 +692,44 @@ impl<'a> BodyLowering<'a> {
         let resolved = self.typeck.method(expr).cloned().unwrap_or_else(|| {
             panic!("method call at {name_span:?} was not resolved; this is a compiler bug")
         });
+
+        // A user method is an ordinary function whose first parameter is the
+        // receiver, so it lowers to a direct call. The receiver adjustment is
+        // explicit in the argument expression, and the borrow checker sees the
+        // same `Rvalue::Ref` it would see for a written borrow.
+        if let MethodKind::User { function, .. } = resolved.kind {
+            let receiver_argument = match resolved.receiver_adjust {
+                ReceiverAdjust::None => self.lower_operand(receiver),
+                ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
+                    self.lower_borrowed_receiver(receiver, &resolved)
+                }
+            };
+            let mut call_args = Vec::with_capacity(args.len() + 1);
+            call_args.push(receiver_argument);
+            call_args.extend(args.iter().map(|arg| self.lower_operand(*arg)));
+            let mut arg_spans = Vec::with_capacity(args.len() + 1);
+            arg_spans.push(self.hir.expr(receiver).span);
+            arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
+
+            // A method call always runs, even when its value is discarded. A
+            // modifying method has its whole effect in the call, so dropping it
+            // because the statement has no value would remove the mutation.
+            let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
+            self.assign_rvalue(
+                dest,
+                Rvalue::Call {
+                    func: function,
+                    args: call_args,
+                    arg_spans,
+                },
+                span,
+            );
+            return;
+        }
+
+        let MethodKind::Intrinsic(method) = resolved.kind else {
+            unreachable!("the user branch returned")
+        };
         let receiver = match resolved.receiver_form {
             seal_typeck::ReceiverForm::Value => {
                 IntrinsicReceiver::Value(self.lower_operand(receiver))
@@ -713,21 +751,49 @@ impl<'a> BodyLowering<'a> {
             }
         };
         let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
-        // A method call always runs, even when its result is discarded. A
-        // modifying method such as `fill` or `toggle` has its whole effect in
-        // the intrinsic, so dropping it because the statement has no value
-        // would silently remove the mutation.
         let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
         self.assign_rvalue(
             dest,
             Rvalue::Intrinsic {
-                method: resolved.method,
+                method,
                 receiver,
                 args,
                 span,
             },
             span,
         );
+    }
+
+    /// Materializes the automatic borrow of a user method receiver.
+    fn lower_borrowed_receiver(
+        &mut self,
+        receiver: HirExprId,
+        resolved: &seal_typeck::ResolvedMethod,
+    ) -> Operand {
+        let place = if let Some(place) = self.typeck.place(receiver) {
+            let place = place.clone();
+            self.resolved_place(&place)
+        } else {
+            let ty = self.expr_ty(receiver);
+            let temp = self.new_temp(ty, self.hir.expr(receiver).span);
+            self.lower_expr_into(receiver, Some(temp.clone()));
+            temp
+        };
+        let kind = match resolved.receiver_adjust {
+            ReceiverAdjust::ExclusiveBorrow => seal_ty::RefKind::Exclusive,
+            ReceiverAdjust::SharedBorrow => seal_ty::RefKind::Shared,
+            ReceiverAdjust::None => {
+                unreachable!("only borrowed receivers need materialization")
+            }
+        };
+        let reference_ty = self.hir.ty_ctxt().ref_ty_with(kind, resolved.receiver_ty);
+        let reference = self.new_temp(reference_ty, self.hir.expr(receiver).span);
+        self.assign_rvalue(
+            reference.clone(),
+            Rvalue::Ref { place, kind },
+            self.hir.expr(receiver).span,
+        );
+        Operand::Copy(reference)
     }
 
     fn lower_operand(&mut self, expr: HirExprId) -> Operand {

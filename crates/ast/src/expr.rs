@@ -219,6 +219,17 @@ pub enum ExprKind {
     Lit(Literal),
     /// A variable reference.
     Path(Symbol),
+    /// A qualified path, written `Type::name`, used for associated functions.
+    PathQualified {
+        /// The type or namespace name.
+        type_name: Symbol,
+        /// The span of the type name.
+        type_span: Span,
+        /// The associated name.
+        name: Symbol,
+        /// The span of the associated name.
+        name_span: Span,
+    },
     /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {
         /// The place being borrowed.

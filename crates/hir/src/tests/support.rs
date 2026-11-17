@@ -130,7 +130,11 @@ pub(crate) fn function<'a>(fixture: &Fixture, hir: &'a Hir, name: &str) -> (DefI
     let definition = hir
         .definitions()
         .iter_enumerated()
-        .find(|(_, data)| data.kind == DefKind::Function && fixture.symbol(data.name) == name)
+        .find(|(_, data)| {
+            data.kind == DefKind::Function
+                && data.parent.is_none()
+                && fixture.symbol(data.name) == name
+        })
         .map(|(id, _)| id)
         .unwrap_or_else(|| panic!("no function named `{name}`"));
     let body = hir

@@ -2,7 +2,7 @@
 
 use seal_def::DefId;
 use seal_hash::FxHashMap;
-use seal_hir::HirExprId;
+use seal_hir::{HirExprId, ReceiverKind};
 use seal_methods::MethodId;
 use seal_ty::{PathElem, RefKind, TyId};
 
@@ -102,13 +102,40 @@ pub enum ReceiverForm {
     Value,
 }
 
+/// What defines a resolved method call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodKind {
+    /// A method from the compiler-owned intrinsic catalog.
+    Intrinsic(MethodId),
+    /// A user-defined instance method from an inherent impl block.
+    User {
+        /// The impl function to call.
+        function: DefId,
+        /// How the method declares its receiver.
+        receiver: ReceiverKind,
+    },
+}
+
+/// How MIR must adjust the receiver expression before a call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverAdjust {
+    /// Pass the receiver as written.
+    None,
+    /// Borrow the receiver as `*T` for a shared user method.
+    SharedBorrow,
+    /// Borrow the receiver as `*mut T` for an exclusive user method.
+    ExclusiveBorrow,
+}
+
 /// A method call resolved by type checking.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedMethod {
-    /// The catalog entry that defines the call.
-    pub method: MethodId,
+    /// Whether the call reaches an intrinsic or an impl function.
+    pub kind: MethodKind,
+    /// How the receiver expression must be adjusted before the call.
+    pub receiver_adjust: ReceiverAdjust,
     /// The receiver type after any reference dereferences, capped at the owned
-    /// family: scalar, array, or the slice reference itself.
+    /// family: scalar, array, the slice reference itself, or the user struct.
     pub receiver_ty: TyId,
     /// How the receiver reaches MIR.
     pub receiver_form: ReceiverForm,

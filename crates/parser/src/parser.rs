@@ -1,6 +1,8 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
-use seal_ast::{Ast, AstBuilder, ExprId, FnDecl, ItemId, ItemKind, ParamId, StructDecl, TypeId};
+use seal_ast::{
+    Ast, AstBuilder, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl, TypeId,
+};
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
@@ -60,6 +62,9 @@ impl<'a> Parser<'a> {
             } else if self.at(TokenKind::Struct) {
                 let item = self.parse_struct();
                 self.items.push(item);
+            } else if self.at(TokenKind::Impl) {
+                let item = self.parse_impl();
+                self.items.push(item);
             } else {
                 let start = self.current_span();
                 let found = self.describe(self.current_kind());
@@ -68,9 +73,13 @@ impl<'a> Parser<'a> {
                     start,
                     format!("expected an item, found {found}"),
                 )
-                .help("top-level items start with `func` or `struct`")
+                .help("top-level items start with `func`, `struct`, or `impl`")
                 .emit();
-                while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::Struct) {
+                while !self.is_eof()
+                    && !self.at(TokenKind::Func)
+                    && !self.at(TokenKind::Struct)
+                    && !self.at(TokenKind::Impl)
+                {
                     self.bump();
                 }
                 let span = start.cover(self.previous_span());
@@ -158,6 +167,50 @@ impl<'a> Parser<'a> {
                 params,
                 ret,
                 body,
+            }),
+            span,
+        )
+    }
+
+    /// Parses `impl Type { func ... }`.
+    ///
+    /// Seal has no traits yet, so the target is always a single nominal type
+    /// name. Functions are parsed by the regular function parser and kept in
+    /// the item arena; the implementation item references them, keeping the
+    /// whole tree reachable without a second declaration grammar.
+    fn parse_impl(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (type_name, type_span) = self.expect_ident("a type name after `impl`");
+        let _ = self.expect(TokenKind::LBrace, "`{` after the impl type");
+
+        let mut functions = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            if self.at(TokenKind::Func) {
+                functions.push(self.parse_function());
+            } else {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    format!("expected `func` in the impl block, found {found}"),
+                )
+                .help("an inherent impl only contains function declarations")
+                .emit();
+                while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::RBrace) {
+                    self.bump();
+                }
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the impl block");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::Impl(ImplDecl {
+                type_name,
+                type_span,
+                functions,
             }),
             span,
         )
@@ -426,6 +479,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
     Some(match kind {
         TokenKind::Func => "func",
         TokenKind::Struct => "struct",
+        TokenKind::Impl => "impl",
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::Let => "let",
@@ -445,6 +499,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Comma => ",",
         TokenKind::Semicolon => ";",
         TokenKind::Colon => ":",
+        TokenKind::ColonColon => "::",
         TokenKind::Dot => ".",
         TokenKind::Arrow => "->",
         TokenKind::Plus => "+",

@@ -4,6 +4,7 @@ mod arrays;
 mod errors;
 mod examples;
 mod exprs;
+mod impls;
 mod items;
 mod methods;
 mod recovery;

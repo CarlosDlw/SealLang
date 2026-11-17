@@ -23,6 +23,12 @@ impl Lowering<'_> {
                 Some(res) => ExprKind::Path(res),
                 None => ExprKind::Error,
             },
+            AstExprKind::PathQualified {
+                type_name,
+                type_span,
+                name,
+                name_span,
+            } => self.lower_qualified_path(type_name, type_span, name, name_span),
             AstExprKind::Unary { op, operand } => ExprKind::Unary {
                 op,
                 operand: self.lower_expr(operand),
@@ -183,6 +189,72 @@ impl Lowering<'_> {
         };
 
         self.hir.push_expr(Expr { kind, span })
+    }
+
+    /// Resolves `Type::name` to an associated function declared in an impl.
+    ///
+    /// The resulting node is a normal function path, so calls, arguments, and
+    /// code generation need no additional case. Instance methods are rejected
+    /// here: they require a receiver and are only reachable through `.`.
+    fn lower_qualified_path(
+        &mut self,
+        type_name: seal_symbol::Symbol,
+        type_span: seal_span::Span,
+        name: seal_symbol::Symbol,
+        name_span: seal_span::Span,
+    ) -> ExprKind {
+        let Some(&type_def) = self.types.get(&type_name) else {
+            let name = self.interner.resolve(type_name);
+            if self.globals.contains_key(&type_name) {
+                self.error(
+                    codes::E2015,
+                    type_span,
+                    format!("`{name}` is a value, not a type"),
+                )
+                .help("a qualified path starts with a struct name")
+                .emit();
+            } else {
+                self.error(
+                    codes::E2002,
+                    type_span,
+                    format!("cannot find type `{name}` in this scope"),
+                )
+                .help("declare it with `struct`, or check the spelling")
+                .emit();
+            }
+            return ExprKind::Error;
+        };
+
+        let Some(function) = self.hir.method(type_def, name) else {
+            self.error(
+                codes::E2018,
+                name_span,
+                format!(
+                    "the type `{}` has no associated function `{}`",
+                    self.interner.resolve(type_name),
+                    self.interner.resolve(name)
+                ),
+            )
+            .help("declare it in an `impl` block for the type")
+            .emit();
+            return ExprKind::Error;
+        };
+
+        if self.hir.receiver(function).is_some() {
+            let function_name = self.interner.resolve(name);
+            self.error(
+                codes::E2019,
+                name_span,
+                format!("`{function_name}` is a method, not an associated function"),
+            )
+            .help(format!(
+                "call it on a value, as in `value.{function_name}()`"
+            ))
+            .emit();
+            return ExprKind::Error;
+        }
+
+        ExprKind::Path(crate::Res::Function(function))
     }
 
     /// Returns `true` when `callee` is the built-in `len` rather than a user item.
