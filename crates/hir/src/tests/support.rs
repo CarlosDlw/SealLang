@@ -154,7 +154,7 @@ pub(crate) fn tail(hir: &Hir, body: &Body) -> HirExprId {
 
 pub(crate) fn path_res(hir: &Hir, expr: HirExprId) -> Res {
     match hir.expr(expr).kind.clone() {
-        ExprKind::Path(res) => res,
+        ExprKind::Path { res, .. } => res,
         other => panic!("expected a path, got {other:?}"),
     }
 }
@@ -251,7 +251,39 @@ impl Reachability<'_> {
     fn check_type(&mut self, ty: TyId) {
         // Resolving the kind panics on an ID from another type context, which is
         // the invariant this check protects.
-        let _ = self.hir.ty_ctxt().kind(ty);
+        match self.hir.ty_ctxt().kind(ty) {
+            seal_ty::TyKind::Param(param) => {
+                let data = self.hir.ty_ctxt().param_data(param);
+                assert_eq!(
+                    self.hir.definitions().get(data.def).kind,
+                    DefKind::GenericParam,
+                    "a type parameter must name a declaration"
+                );
+            }
+            seal_ty::TyKind::Adt { args, .. } => self.check_substs(args),
+            seal_ty::TyKind::Array { element, .. } | seal_ty::TyKind::Slice { element } => {
+                self.check_type(element)
+            }
+            seal_ty::TyKind::Tuple(tuple) => {
+                for element in self.hir.ty_ctxt().tuple_elements(tuple) {
+                    self.check_type(element);
+                }
+            }
+            seal_ty::TyKind::Ref { pointee, .. } => self.check_type(pointee),
+            _ => {}
+        }
+    }
+
+    fn check_substs(&mut self, substs: seal_ty::SubstsId) {
+        for argument in self.hir.ty_ctxt().substs_args(substs) {
+            self.check_type(argument);
+        }
+    }
+
+    fn check_optional_substs(&mut self, substs: Option<seal_ty::SubstsId>) {
+        if let Some(substs) = substs {
+            self.check_substs(substs);
+        }
     }
 
     fn check_block(&mut self, id: HirBlockId) {
@@ -392,10 +424,11 @@ impl Reachability<'_> {
                 }
             }
             ExprKind::Len { operand } => self.check_expr(operand),
-            ExprKind::Struct { adt, fields } => {
+            ExprKind::Struct { adt, args, fields } => {
                 let data = self.hir.definitions().get(adt);
                 assert_eq!(data.kind, DefKind::Struct);
                 self.assert_span(data.span);
+                self.check_optional_substs(args);
                 for (field, value) in fields {
                     let field_data = self.hir.definitions().get(field);
                     assert_eq!(field_data.kind, DefKind::Field);
@@ -406,10 +439,12 @@ impl Reachability<'_> {
             ExprKind::Variant {
                 adt,
                 variant,
+                args,
                 fields,
             } => {
                 let data = self.hir.definitions().get(adt);
                 assert_eq!(data.kind, DefKind::Enum);
+                self.check_optional_substs(args);
                 let aggregate = self.hir.adt(adt).expect("an enum reserves an aggregate");
                 let variant_def = self
                     .hir
@@ -445,10 +480,12 @@ impl Reachability<'_> {
             ExprKind::MethodCall {
                 receiver,
                 name_span,
+                generic_args,
                 args,
                 ..
             } => {
                 self.assert_span(name_span);
+                self.check_optional_substs(generic_args);
                 self.check_expr(receiver);
                 for arg in args {
                     self.check_expr(arg);
@@ -489,7 +526,8 @@ impl Reachability<'_> {
                     self.check_block(else_branch);
                 }
             }
-            ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
+            ExprKind::Path { args, .. } => self.check_optional_substs(args),
+            ExprKind::Lit(_) | ExprKind::Error => {}
         }
     }
 

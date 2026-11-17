@@ -959,6 +959,124 @@ greater than the end (or equal, for an exclusive `..` range), no value can match
 so the arm is dead code.\n\nSwap the endpoints, or remove the arm.",
 };
 
+/// A generic parameter is declared twice in one scope.
+pub const E2051: ErrorCode = ErrorCode {
+    code: "E2051",
+    title: "duplicate generic parameter",
+    explanation: "\
+A generic parameter name must be unique in the scope where it is visible. A
+method's parameters are flattened after its impl's parameters, so a method may
+not redeclare an impl parameter with the same name.\n\nRename one of the parameters, or remove the duplicate declaration.",
+};
+
+/// A generic argument list has the wrong number of arguments.
+pub const E2052: ErrorCode = ErrorCode {
+    code: "E2052",
+    title: "wrong number of generic arguments",
+    explanation: "\
+A generic declaration fixes how many type arguments every use must supply. The
+diagnostic points at the argument list, not at the declaration.\n\nSupply exactly one argument per declared parameter, or remove the argument list
+when the declaration is not generic.",
+};
+
+/// Generic arguments were written on a non-generic declaration.
+pub const E2053: ErrorCode = ErrorCode {
+    code: "E2053",
+    title: "generic arguments on a non-generic declaration",
+    explanation: "\
+Only declarations with type parameters accept type arguments. Writing `::<T>`
+on a function, method, type, or literal that declares no parameters has no
+meaning.\n\nRemove the type arguments, or add the parameters to the declaration.",
+};
+
+/// A generic argument is not a known type parameter.
+pub const E2054: ErrorCode = ErrorCode {
+    code: "E2054",
+    title: "unknown type parameter",
+    explanation: "\
+A bound or type argument referred to a name that is not a declared type
+parameter and not a known type. Type parameters are only visible in the item
+that declares them and in its nested methods.\n\nDeclare the parameter, or use a concrete type instead.",
+};
+
+/// A type parameter is used outside the scope that declares it.
+pub const E2055: ErrorCode = ErrorCode {
+    code: "E2055",
+    title: "type parameter used outside its scope",
+    explanation: "\
+A type parameter belongs to one declaration. A parameter declared by a struct,
+enum, trait, impl, function, or method is visible only inside that declaration
+and, for an impl or trait, its methods.\n\nUse a parameter declared by the current item, or pass the type through a\ngeneric argument.",
+};
+
+/// An impl block has an invalid target type.
+pub const E2056: ErrorCode = ErrorCode {
+    code: "E2056",
+    title: "invalid impl target",
+    explanation: "\
+An impl block must target a type that can receive methods. Inherent impls may
+target a struct or enum declared in this file. Trait impls may also target a
+sized primitive, array, tuple, or reference.\n\nUse a valid target type, or declare the type with `struct` or `enum`.",
+};
+
+/// A bound or impl names an invalid trait path.
+pub const E2057: ErrorCode = ErrorCode {
+    code: "E2057",
+    title: "invalid trait path",
+    explanation: "\
+A trait path must name a trait declared in this file. A struct or enum in a
+bound position is not a trait, and a trait with missing or extra type arguments
+cannot be used as a bound.\n\nName the trait, and supply exactly its declared type arguments.",
+};
+
+/// Two impls overlap or a trait is implemented twice.
+pub const E2058: ErrorCode = ErrorCode {
+    code: "E2058",
+    title: "overlapping implementations",
+    explanation: "\
+Each trait implementation must be distinct. Two impl blocks that provide the
+same trait for the same self type overlap, so a call could have more than one
+candidate.\n\nRemove one implementation, or change its self type or trait arguments.",
+};
+
+/// `Self` appears where no self type exists.
+pub const E2059: ErrorCode = ErrorCode {
+    code: "E2059",
+    title: "`Self` outside a trait or impl",
+    explanation: "\
+`Self` names the implementing type of a trait or impl. It has no meaning in a
+free function or in a declaration that is not inside a trait or impl.\n\nWrite the concrete type instead, or move the declaration into an impl.",
+};
+
+/// A bound target is not a trait.
+pub const E2060: ErrorCode = ErrorCode {
+    code: "E2060",
+    title: "bound target is not a trait",
+    explanation: "\
+A bound states that a type implements a trait. A struct, enum, primitive, or
+other non-trait name cannot appear in bound position.\n\nDeclare the requirement as a trait, then implement it for the type.",
+};
+
+/// A generic parameter shadows an incompatible namespace.
+pub const E2061: ErrorCode = ErrorCode {
+    code: "E2061",
+    title: "generic parameter shadows a built-in type",
+    explanation: "\
+A generic parameter lives in the type namespace. A parameter cannot reuse the
+spelling of a built-in type such as `i32`, `bool`, or `str`, because every use
+of that spelling would resolve to the built-in type instead of the parameter.\n\nRename the parameter.",
+};
+
+/// A where-clause predicate targets something other than a type parameter.
+pub const E2062: ErrorCode = ErrorCode {
+    code: "E2062",
+    title: "where-clause target is not a type parameter",
+    explanation: "\
+The generic phase records where-clause bounds on type parameters. A predicate
+whose target is a concrete type cannot be stored in the parameter environment
+and is rejected here until the trait solver can prove it.\n\nMove the bound to a type parameter, or remove the predicate.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1649,11 +1767,12 @@ pub static ALL: &[ErrorCode] = &[
     E2003, E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015,
     E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
     E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
-    E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E3001, E3002, E3003, E3004,
-    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
-    E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
-    E3031, E3032, E3033, E3034, E3035, E3036, E3037, E5001, E5002, E5003, E5004, E5005, E5006,
-    E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051, E2052, E2053, E2054,
+    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E3001, E3002, E3003, E3004, E3005,
+    E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018,
+    E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031,
+    E3032, E3033, E3034, E3035, E3036, E3037, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
+    E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1768,7 +1887,8 @@ mod tests {
                 "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
                 "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035", "E2036",
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
-                "E2046", "E2047", "E2048", "E2049", "E2050",
+                "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
+                "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062",
             ]
         );
     }

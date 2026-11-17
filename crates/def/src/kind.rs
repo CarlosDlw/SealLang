@@ -13,6 +13,12 @@ pub enum DefKind {
     Variant,
     /// A trait item.
     Trait,
+    /// A method signature declared by a trait.
+    TraitMethod,
+    /// An implementation block.
+    Impl,
+    /// A generic type parameter declaration.
+    GenericParam,
     /// A struct field declaration.
     Field,
     /// A function parameter.
@@ -37,6 +43,9 @@ impl DefKind {
             Self::Enum => "enum",
             Self::Variant => "variant",
             Self::Trait => "trait",
+            Self::TraitMethod => "trait method",
+            Self::Impl => "implementation",
+            Self::GenericParam => "type parameter",
             Self::Field => "field",
             Self::Param => "parameter",
             Self::Binding => "binding",
@@ -66,6 +75,9 @@ mod tests {
             DefKind::Enum.description(),
             DefKind::Variant.description(),
             DefKind::Trait.description(),
+            DefKind::TraitMethod.description(),
+            DefKind::Impl.description(),
+            DefKind::GenericParam.description(),
             DefKind::Field.description(),
             DefKind::Param.description(),
             DefKind::Binding.description(),

@@ -353,7 +353,10 @@ impl<'a> BodyLowering<'a> {
                     self.assign_constant(dest, constant, span);
                 }
             }
-            ExprKind::Path(Res::Local(local)) => {
+            ExprKind::Path {
+                res: Res::Local(local),
+                ..
+            } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_local(local);
                     let ty = self.expr_ty(expr);
@@ -361,7 +364,11 @@ impl<'a> BodyLowering<'a> {
                     self.assign_operand(dest, operand, span);
                 }
             }
-            ExprKind::Path(Res::Function(_)) | ExprKind::Error => {
+            ExprKind::Path {
+                res: Res::Function(_),
+                ..
+            }
+            | ExprKind::Error => {
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
@@ -453,7 +460,7 @@ impl<'a> BodyLowering<'a> {
                     );
                 }
             }
-            ExprKind::Struct { adt, fields } => {
+            ExprKind::Struct { adt, fields, .. } => {
                 if let Some(dest) = dest {
                     let fields = fields
                         .iter()
@@ -473,6 +480,7 @@ impl<'a> BodyLowering<'a> {
                 adt,
                 variant,
                 fields,
+                ..
             } => {
                 if let Some(dest) = dest {
                     let fields = fields
@@ -710,7 +718,10 @@ impl<'a> BodyLowering<'a> {
         span: Span,
     ) {
         let function = match self.hir.expr(callee).kind.clone() {
-            ExprKind::Path(Res::Function(definition)) => Some(definition),
+            ExprKind::Path {
+                res: Res::Function(definition),
+                ..
+            } => Some(definition),
             _ => None,
         };
         let arg_spans: Vec<Span> = args.iter().map(|arg| self.hir.expr(*arg).span).collect();
@@ -900,11 +911,18 @@ impl<'a> BodyLowering<'a> {
 
         match kind {
             ExprKind::Lit(literal) => Operand::Constant(self.constant(literal, ty)),
-            ExprKind::Path(Res::Local(local)) => {
+            ExprKind::Path {
+                res: Res::Local(local),
+                ..
+            } => {
                 let place = self.place_of_local(local);
                 self.place_operand(place, ty)
             }
-            ExprKind::Path(Res::Function(_)) | ExprKind::Error => Operand::Constant(Constant::Unit),
+            ExprKind::Path {
+                res: Res::Function(_),
+                ..
+            }
+            | ExprKind::Error => Operand::Constant(Constant::Unit),
             ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)

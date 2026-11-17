@@ -72,7 +72,7 @@ impl Checker<'_> {
 
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
-            ExprKind::Path(res) => self.check_path(expr, res, span, flow, mode),
+            ExprKind::Path { res, .. } => self.check_path(expr, res, span, flow, mode),
             ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, expected, flow),
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
@@ -109,11 +109,14 @@ impl Checker<'_> {
                 index_span,
             } => self.check_tuple_field(expr, base, index, index_span, flow, mode),
             ExprKind::Tuple { elements } => self.check_tuple(&elements, expected, flow),
-            ExprKind::Struct { adt, fields } => self.check_struct_literal(adt, &fields, flow, span),
+            ExprKind::Struct { adt, fields, .. } => {
+                self.check_struct_literal(adt, &fields, flow, span)
+            }
             ExprKind::Variant {
                 adt,
                 variant,
                 fields,
+                ..
             } => self.check_variant_literal(adt, variant, &fields, flow, span),
             ExprKind::Array { elements } => self.check_array(&elements, expected, flow, span),
             ExprKind::ArrayRepeat { value, length } => {
@@ -148,6 +151,7 @@ impl Checker<'_> {
                 name,
                 name_span,
                 args,
+                ..
             } => self.check_method_call(
                 super::method::MethodCall {
                     expr,

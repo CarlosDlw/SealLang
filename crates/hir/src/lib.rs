@@ -28,6 +28,7 @@
 
 mod body;
 mod expr;
+mod generics;
 mod id;
 mod lower;
 mod pattern;
@@ -40,6 +41,7 @@ mod tests;
 
 pub use body::{Block, Body, ForSource, ParamData, Stmt, StmtKind};
 pub use expr::{Expr, ExprKind, Place, Projection};
+pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
@@ -53,7 +55,10 @@ use seal_hash::FxHashMap;
 use seal_index::IndexVec;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::{AdtId, TyCtxt, VariantIdx};
+use seal_ty::{
+    AdtId, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef, TraitImplDef,
+    TyCtxt, TyKind, VariantIdx,
+};
 
 /// How an instance method takes its receiver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +88,7 @@ pub struct Hir {
     trait_impls: traits::TraitImpls,
     methods: FxHashMap<(DefId, Symbol), DefId>,
     receivers: FxHashMap<DefId, ReceiverKind>,
+    inherent_impls: Vec<InherentImpl>,
 }
 
 impl Hir {
@@ -178,7 +184,10 @@ impl Hir {
     /// target is assignable without matching on the tree.
     pub fn place(&self, expr: HirExprId) -> Option<Place> {
         match self.exprs[expr].kind {
-            ExprKind::Path(Res::Local(def)) => Some(Place::local(def)),
+            ExprKind::Path {
+                res: Res::Local(def),
+                ..
+            } => Some(Place::local(def)),
             ExprKind::Deref { operand } => self.place(operand).map(Place::deref),
             ExprKind::Field { base, name, .. } => self.place(base).map(|place| place.field(name)),
             ExprKind::TupleField { base, index, .. } => self
@@ -221,6 +230,81 @@ impl Hir {
     /// Returns the trait declared with `name`, if any.
     pub fn trait_def(&self, name: Symbol) -> Option<DefId> {
         self.traits.get(&name).copied()
+    }
+
+    /// Returns the semantic declaration of a trait.
+    pub fn trait_definition(&self, def: DefId) -> Option<TraitDef> {
+        self.ty_ctxt.trait_def(def)
+    }
+
+    /// Returns the generic parameters declared by `owner`.
+    ///
+    /// An impl method reports the impl as its parent; use
+    /// [`Hir::flattened_generics`] for every parameter visible from its body.
+    pub fn generics(&self, owner: DefId) -> Option<Generics> {
+        self.ty_ctxt.generics(owner)
+    }
+
+    /// Returns every parameter visible from `owner`, outermost first.
+    pub fn flattened_generics(&self, owner: DefId) -> Vec<GenericParamDef> {
+        self.ty_ctxt.flattened_generics(owner)
+    }
+
+    /// Returns the bounds visible while checking `owner`.
+    pub fn param_env(&self, owner: DefId) -> ParamEnv {
+        self.ty_ctxt.param_env(owner)
+    }
+
+    /// Returns every trait implementation in declaration order.
+    pub fn trait_impls(&self) -> Vec<TraitImplDef> {
+        self.ty_ctxt.trait_impls()
+    }
+
+    /// Returns every inherent implementation in declaration order.
+    pub fn inherent_impls(&self) -> &[InherentImpl] {
+        &self.inherent_impls
+    }
+
+    /// Returns the impl blocks whose self type is the nominal type `type_def`.
+    ///
+    /// Both inherent and trait implementations are included, in declaration
+    /// order. Generic impls match their nominal head, not a particular
+    /// instantiation.
+    pub fn impls_for(&self, type_def: DefId) -> Vec<DefId> {
+        let matches = |ty: seal_ty::TyId| match self.ty_ctxt.kind(ty) {
+            TyKind::Adt { adt, .. } => self.ty_ctxt.adt(adt).def == type_def,
+            _ => false,
+        };
+        let mut impls: Vec<DefId> = self
+            .inherent_impls
+            .iter()
+            .filter(|implementation| matches(implementation.self_ty))
+            .map(|implementation| implementation.def)
+            .collect();
+        impls.extend(
+            self.ty_ctxt
+                .trait_impls()
+                .into_iter()
+                .filter(|implementation| matches(implementation.trait_ref.self_ty))
+                .map(|implementation| implementation.def),
+        );
+        impls.sort_unstable();
+        impls
+    }
+
+    /// Returns the resolved type arguments attached to `expr`, if written.
+    pub fn expr_args(&self, expr: HirExprId) -> Option<SubstsId> {
+        match self.expr(expr).kind {
+            ExprKind::Path { args, .. }
+            | ExprKind::Struct { args, .. }
+            | ExprKind::Variant { args, .. } => args,
+            ExprKind::MethodCall { generic_args, .. } => generic_args,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn insert_inherent_impl(&mut self, implementation: InherentImpl) {
+        self.inherent_impls.push(implementation);
     }
 
     /// Returns the trait method `name` implemented by `type_def`.
@@ -299,6 +383,7 @@ impl Hir {
             trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
+            inherent_impls: Vec::new(),
         }
     }
 
@@ -332,6 +417,11 @@ impl Hir {
 
     pub(crate) fn ty_ctxt_mut(&mut self) -> &mut TyCtxt {
         &mut self.ty_ctxt
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn generic_param_owner(&self, param: ParamTyId) -> DefId {
+        self.ty_ctxt.param_data(param).owner
     }
 }
 

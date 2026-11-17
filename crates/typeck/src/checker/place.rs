@@ -256,7 +256,10 @@ impl Checker<'_> {
     fn is_function_target(&self, target: HirExprId) -> bool {
         matches!(
             self.hir.expr(target).kind,
-            seal_hir::ExprKind::Path(seal_hir::Res::Function(_))
+            seal_hir::ExprKind::Path {
+                res: seal_hir::Res::Function(_),
+                ..
+            }
         )
     }
 

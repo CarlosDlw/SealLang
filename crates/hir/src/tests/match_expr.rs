@@ -73,7 +73,11 @@ fn bindings_become_definitions_with_their_names() {
     assert_eq!(hir.definitions().get(*def).kind, DefKind::Binding);
     assert_eq!(hir.definitions().get(*def).parent, Some(owner));
 
-    let ExprKind::Path(Res::Local(resolved)) = &hir.expr(arms[0].body).kind else {
+    let ExprKind::Path {
+        res: Res::Local(resolved),
+        ..
+    } = &hir.expr(arms[0].body).kind
+    else {
         panic!("expected the arm body to resolve to the binding");
     };
     assert_eq!(resolved, def);

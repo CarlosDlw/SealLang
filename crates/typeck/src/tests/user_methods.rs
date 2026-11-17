@@ -85,7 +85,10 @@ fn associated_functions_are_called_through_the_type_namespace() {
         panic!("expected an associated call");
     };
     let definition = match hir.expr(callee).kind {
-        ExprKind::Path(seal_hir::Res::Function(definition)) => definition,
+        ExprKind::Path {
+            res: seal_hir::Res::Function(definition),
+            ..
+        } => definition,
         ref other => panic!("expected a function path, got {other:?}"),
     };
     let signature = results

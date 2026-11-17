@@ -88,7 +88,7 @@ fn a_trait_is_not_a_value() {
 fn self_is_rejected_outside_a_trait_declaration() {
     let fixture = Fixture::new("func clone(value: Self) {}");
     let _ = fixture.lower();
-    fixture.expect("E2025", "only allowed in a trait method signature");
+    fixture.expect("E2059", "only allowed in a trait or impl context");
 }
 
 #[test]

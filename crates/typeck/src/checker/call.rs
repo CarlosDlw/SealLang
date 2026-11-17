@@ -16,7 +16,10 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         let function = match self.hir.expr(callee).kind.clone() {
-            ExprKind::Path(Res::Function(definition)) => Some(definition),
+            ExprKind::Path {
+                res: Res::Function(definition),
+                ..
+            } => Some(definition),
             _ => {
                 let ty = self.infer_expr(callee, None, flow);
                 if !self.is_error(ty) {

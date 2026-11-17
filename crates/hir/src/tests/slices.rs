@@ -52,7 +52,10 @@ fn a_user_function_named_len_shadows_the_builtin() {
     };
     assert!(matches!(
         hir.expr(*callee).kind,
-        ExprKind::Path(Res::Function(_))
+        ExprKind::Path {
+            res: Res::Function(_),
+            ..
+        }
     ));
     assert_eq!(args.len(), 1);
 }

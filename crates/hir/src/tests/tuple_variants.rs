@@ -53,6 +53,7 @@ fn a_positional_variant_call_lowers_in_argument_order() {
         adt,
         variant,
         fields,
+        ..
     } = hir.expr(tail(&hir, body)).kind.clone()
     else {
         panic!("expected a variant value");

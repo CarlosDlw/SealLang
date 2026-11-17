@@ -224,7 +224,13 @@ pub(crate) fn assert_invariants(fixture: &Fixture, hir: &Hir, results: &TypeckRe
     let mut callees = BTreeSet::new();
     for expr in hir.expr_arena().iter() {
         if let ExprKind::Call { callee, .. } = &expr.kind
-            && matches!(&hir.expr(*callee).kind, ExprKind::Path(Res::Function(_)))
+            && matches!(
+                &hir.expr(*callee).kind,
+                ExprKind::Path {
+                    res: Res::Function(_),
+                    ..
+                }
+            )
         {
             callees.insert(*callee);
         }

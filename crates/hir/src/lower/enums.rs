@@ -28,6 +28,7 @@ impl Lowering<'_> {
                 (declaration.clone(), item.span)
             };
 
+            let levels = self.push_generic_scope(definition);
             let mut variants = Vec::with_capacity(declaration.variants.len());
             let mut names = FxHashSet::default();
             for variant_id in &declaration.variants {
@@ -137,6 +138,7 @@ impl Lowering<'_> {
                 self.hir.insert_variant(definition, name, index);
             }
 
+            self.pop_generic_scope(levels);
             let adt = self
                 .hir
                 .adt(definition)

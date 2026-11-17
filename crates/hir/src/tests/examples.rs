@@ -204,7 +204,7 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
                 collect_block(hir, *else_branch, stmts, exprs);
             }
         }
-        ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
+        ExprKind::Lit(_) | ExprKind::Path { .. } | ExprKind::Error => {}
     }
     exprs.push(kind);
 }
@@ -241,7 +241,7 @@ fn conditionals_example_lowers_if_expressions() {
             matches!(
                 kind,
                 ExprKind::Call { callee, .. }
-                    if matches!(&hir.expr(*callee).kind, ExprKind::Path(_))
+                    if matches!(&hir.expr(*callee).kind, ExprKind::Path { .. })
             )
         }),
         "expected a call with a resolved callee"

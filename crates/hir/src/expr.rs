@@ -4,6 +4,7 @@ use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::DefId;
 use seal_span::Span;
 use seal_symbol::Symbol;
+use seal_ty::SubstsId;
 
 use crate::id::{HirBlockId, HirExprId, HirPatternId};
 use crate::pattern::MatchArm;
@@ -110,8 +111,13 @@ pub struct Expr {
 pub enum ExprKind {
     /// A literal.
     Lit(Literal),
-    /// A resolved name used as a value.
-    Path(Res),
+    /// A resolved name used as a value, with optional type arguments.
+    Path {
+        /// The resolved function or local.
+        res: Res,
+        /// Explicit type arguments written with turbofish, or `None`.
+        args: Option<SubstsId>,
+    },
     /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {
         /// The place being borrowed.
@@ -151,6 +157,8 @@ pub enum ExprKind {
     Struct {
         /// The struct definition named by the literal.
         adt: DefId,
+        /// Explicit type arguments, or `None` for inference.
+        args: Option<SubstsId>,
         /// Initializers in source order, one per valid source field.
         fields: Vec<(DefId, HirExprId)>,
     },
@@ -163,6 +171,8 @@ pub enum ExprKind {
         adt: DefId,
         /// The variant's position in declaration order.
         variant: seal_ty::VariantIdx,
+        /// Explicit type arguments, or `None` for inference.
+        args: Option<SubstsId>,
         /// Initializers in source order, one per valid variant field.
         fields: Vec<(DefId, HirExprId)>,
     },
@@ -266,6 +276,8 @@ pub enum ExprKind {
         name: Symbol,
         /// The span of the method name.
         name_span: Span,
+        /// Explicit method type arguments, or `None`.
+        generic_args: Option<SubstsId>,
         /// Arguments in source order, excluding the receiver.
         args: Vec<HirExprId>,
     },

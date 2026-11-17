@@ -8,7 +8,7 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
-use crate::generics::{ParamEnv, ParamTy};
+use crate::generics::{GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef};
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
@@ -33,6 +33,10 @@ pub struct TyCtxt {
     param_interner: RefCell<FxHashMap<ParamTy, ParamTyId>>,
     substs_arena: RefCell<IndexVec<SubstsId, Vec<TyId>>>,
     substs_interner: RefCell<FxHashMap<Vec<TyId>, SubstsId>>,
+    generics: RefCell<FxHashMap<DefId, Generics>>,
+    param_envs: RefCell<FxHashMap<DefId, ParamEnv>>,
+    trait_defs: RefCell<FxHashMap<DefId, TraitDef>>,
+    trait_impls: RefCell<Vec<TraitImplDef>>,
 }
 
 impl TyCtxt {
@@ -133,6 +137,79 @@ impl TyCtxt {
     /// Returns the number of interned substitution lists.
     pub fn substs_len_total(&self) -> usize {
         self.substs_arena.borrow().len()
+    }
+
+    /// Records the generic parameters declared by `generics.owner`.
+    ///
+    /// Lowering registers every owner before any type in its declaration is
+    /// lowered, so a type path can resolve a parameter by name while the
+    /// declaration is still being processed.
+    pub fn insert_generics(&self, generics: Generics) {
+        self.generics.borrow_mut().insert(generics.owner, generics);
+    }
+
+    /// Returns the generic parameters declared by `owner`.
+    pub fn generics(&self, owner: DefId) -> Option<Generics> {
+        self.generics.borrow().get(&owner).cloned()
+    }
+
+    /// Returns the flattened parameters visible from `owner`, outermost first.
+    ///
+    /// The returned list follows the parent chain, so a method inside an impl
+    /// sees the impl's parameters before its own. A trait's implicit `Self`
+    /// parameter is included because it is part of the trait's parameter list.
+    pub fn flattened_generics(&self, owner: DefId) -> Vec<GenericParamDef> {
+        let mut chain = Vec::new();
+        let mut current = Some(owner);
+        while let Some(def) = current {
+            let Some(generics) = self.generics(def) else {
+                break;
+            };
+            current = generics.parent;
+            chain.push(generics);
+        }
+        chain.reverse();
+        let mut params = Vec::new();
+        for generics in chain {
+            params.extend(generics.params);
+        }
+        params
+    }
+
+    /// Records the bounds visible while checking `owner`.
+    pub fn set_param_env(&self, owner: DefId, env: ParamEnv) {
+        self.param_envs.borrow_mut().insert(owner, env);
+    }
+
+    /// Returns the bounds visible while checking `owner`.
+    pub fn param_env(&self, owner: DefId) -> ParamEnv {
+        self.param_envs
+            .borrow()
+            .get(&owner)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Records a semantic trait declaration.
+    pub fn insert_trait_def(&self, definition: TraitDef) {
+        self.trait_defs
+            .borrow_mut()
+            .insert(definition.def, definition);
+    }
+
+    /// Returns a semantic trait declaration.
+    pub fn trait_def(&self, def: DefId) -> Option<TraitDef> {
+        self.trait_defs.borrow().get(&def).cloned()
+    }
+
+    /// Records one trait implementation in declaration order.
+    pub fn push_trait_impl(&self, implementation: TraitImplDef) {
+        self.trait_impls.borrow_mut().push(implementation);
+    }
+
+    /// Returns every trait implementation in declaration order.
+    pub fn trait_impls(&self) -> Vec<TraitImplDef> {
+        self.trait_impls.borrow().clone()
     }
 
     /// Replaces every declared parameter in `ty` using `substs`.

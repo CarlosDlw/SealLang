@@ -21,6 +21,7 @@ impl Lowering<'_> {
                 (declaration.clone(), item.span)
             };
 
+            let levels = self.push_generic_scope(definition);
             let mut fields = Vec::with_capacity(declaration.fields.len());
             let mut names = FxHashSet::default();
             for field_id in &declaration.fields {
@@ -58,6 +59,7 @@ impl Lowering<'_> {
                 });
             }
 
+            self.pop_generic_scope(levels);
             let adt = self
                 .hir
                 .adt(definition)

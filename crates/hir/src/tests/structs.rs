@@ -43,7 +43,7 @@ fn struct_literals_resolve_fields_in_source_order() {
         lower_clean("struct Point { x: i32, y: i32 } func main() { Point { y: 1, x: 2 } }");
     let (_, body) = function(&fixture, &hir, "main");
     let expr = tail(&hir, body);
-    let ExprKind::Struct { adt, fields } = hir.expr(expr).kind.clone() else {
+    let ExprKind::Struct { adt, fields, .. } = hir.expr(expr).kind.clone() else {
         panic!("expected a struct literal");
     };
     assert_eq!(fixture.symbol(hir.definitions().name(adt)), "Point");

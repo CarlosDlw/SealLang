@@ -34,7 +34,11 @@ fn a_trait_associated_function_has_a_signature() {
     let ExprKind::Call { callee, .. } = hir.expr(tail(&hir, body)).kind.clone() else {
         panic!("expected a call");
     };
-    let ExprKind::Path(seal_hir::Res::Function(function)) = hir.expr(callee).kind else {
+    let ExprKind::Path {
+        res: seal_hir::Res::Function(function),
+        ..
+    } = hir.expr(callee).kind
+    else {
         panic!("expected a function path");
     };
     let signature = results
@@ -139,7 +143,11 @@ func main() -> i32 { Circle::unit() }";
     let ExprKind::Call { callee, .. } = hir.expr(tail(&hir, body)).kind.clone() else {
         panic!("expected a call");
     };
-    let ExprKind::Path(seal_hir::Res::Function(function)) = hir.expr(callee).kind else {
+    let ExprKind::Path {
+        res: seal_hir::Res::Function(function),
+        ..
+    } = hir.expr(callee).kind
+    else {
         panic!("expected a function path");
     };
     assert_eq!(

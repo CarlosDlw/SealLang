@@ -74,6 +74,7 @@ fn unit_and_payload_variants_lower_to_variant_nodes() {
         adt,
         variant,
         fields,
+        ..
     } = hir.expr(tail(&hir, body)).kind.clone()
     else {
         panic!("expected a payload variant value");
@@ -100,7 +101,10 @@ fn inherent_functions_on_enums_resolve() {
     };
     assert!(matches!(
         hir.expr(callee).kind,
-        ExprKind::Path(Res::Function(_))
+        ExprKind::Path {
+            res: Res::Function(_),
+            ..
+        }
     ));
 }
 

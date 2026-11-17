@@ -1,7 +1,8 @@
 //! AST lowering and name resolution.
 
 use seal_ast::{
-    Ast, BlockId as AstBlockId, ImplDecl, ItemId, ItemKind, ParamId, TypeId as AstTypeId, TypeKind,
+    Ast, BlockId as AstBlockId, GenericParams, ImplDecl, ItemId, ItemKind, ParamId,
+    TypeId as AstTypeId, TypeKind, WhereClause,
 };
 use seal_def::{DefData, DefId, DefKind};
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
@@ -10,15 +11,18 @@ use seal_error_codes::ErrorCode;
 use seal_hash::FxHashMap;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::{AdtKind, RefKind, TyCtxt, TyId, TyKind};
+use seal_ty::{AdtKind, GenericSignature, RefKind, TraitRef, TyCtxt, TyId, TyKind};
 
 use crate::body::{Body, ParamData};
+use crate::generics::{GenericScopes, InherentImpl};
 use crate::res::Res;
 use crate::{Block, Hir, HirBlockId, ReceiverKind};
 
 mod aggregates;
 mod enums;
 mod expr;
+mod generics;
+mod paths;
 mod patterns;
 mod scope;
 mod stmt;
@@ -48,13 +52,30 @@ pub(crate) struct Lowering<'a> {
     traits: FxHashMap<Symbol, DefId>,
     trait_methods: FxHashMap<(DefId, Symbol), TraitMethodSig>,
     trait_method_order: FxHashMap<DefId, Vec<Symbol>>,
+    trait_items: Vec<(ItemId, DefId)>,
+    trait_method_items: Vec<(ItemId, DefId)>,
+    impl_items: Vec<(ItemId, DefId)>,
+    impl_self_tys: FxHashMap<DefId, TyId>,
+    impl_self_ty_of_function: FxHashMap<DefId, TyId>,
     pending_trait_impls: Vec<PendingTraitImpl>,
+    pending_bounds: Vec<PendingBounds>,
+    /// Every declared parameter name, including owners no longer in scope.
+    generic_param_names: FxHashMap<Symbol, Span>,
+    generic_scopes: GenericScopes,
     /// The interned `Self` symbol, compared by identity in type syntax.
     self_symbol: Symbol,
-    /// The implementing type while a trait signature is lowered.
+    /// The concrete self type while an impl member is lowered.
     self_ty: Option<TyId>,
     function: Option<DefId>,
     loop_depth: usize,
+}
+
+/// One owner's bounds waiting for every type definition to be collected.
+struct PendingBounds {
+    owner: DefId,
+    params: GenericParams,
+    where_clause: WhereClause,
+    self_ty: Option<TyId>,
 }
 
 /// One method signature declared by a trait.
@@ -64,6 +85,7 @@ pub(crate) struct Lowering<'a> {
 /// them with the concrete type bound to [`Lowering::self_ty`].
 #[derive(Clone, Debug)]
 struct TraitMethodSig {
+    def: DefId,
     name: Symbol,
     name_span: Span,
     receiver: Option<ReceiverKind>,
@@ -75,8 +97,9 @@ struct TraitMethodSig {
 
 /// One `impl Trait for Type` block waiting for signature validation.
 struct PendingTraitImpl {
-    trait_def: DefId,
-    type_def: DefId,
+    impl_def: DefId,
+    trait_ref: TraitRef,
+    self_ty: TyId,
     span: Span,
     /// The functions in source order, as `(definition, name)`.
     functions: Vec<(DefId, Symbol)>,
@@ -100,7 +123,15 @@ impl<'a> Lowering<'a> {
             traits: FxHashMap::default(),
             trait_methods: FxHashMap::default(),
             trait_method_order: FxHashMap::default(),
+            trait_items: Vec::new(),
+            trait_method_items: Vec::new(),
+            impl_items: Vec::new(),
+            impl_self_tys: FxHashMap::default(),
+            impl_self_ty_of_function: FxHashMap::default(),
             pending_trait_impls: Vec::new(),
+            pending_bounds: Vec::new(),
+            generic_param_names: FxHashMap::default(),
+            generic_scopes: GenericScopes::default(),
             self_symbol: interner.intern("Self"),
             self_ty: None,
             function: None,
@@ -110,10 +141,12 @@ impl<'a> Lowering<'a> {
 
     fn run(mut self) -> Hir {
         self.collect_items();
-        self.validate_trait_impls();
+        self.lower_pending_bounds();
         self.lower_structs();
         self.lower_enums();
         self.validate_aggregates();
+        self.build_trait_definitions();
+        self.validate_trait_impls();
         self.lower_bodies();
         self.hir
     }
@@ -168,9 +201,9 @@ impl<'a> Lowering<'a> {
             let span = self.ast.item(item_id).span;
             let declaration = declaration.clone();
             if declaration.trait_ref.is_some() {
-                self.collect_trait_impl(&declaration, span);
+                self.collect_trait_impl(item_id, &declaration, span);
             } else {
-                self.collect_inherent_impl(&declaration);
+                self.collect_inherent_impl(item_id, &declaration, span);
             }
         }
     }
@@ -185,6 +218,19 @@ impl<'a> Lowering<'a> {
             parent: None,
             mutable: false,
         });
+        let (generics, where_clause, methods) = {
+            let ItemKind::Trait(declaration) = &self.ast.item(item_id).kind else {
+                return;
+            };
+            (
+                declaration.generics.clone(),
+                declaration.where_clause.clone(),
+                declaration.methods.clone(),
+            )
+        };
+        self.register_generics(definition, &generics, None, true);
+        self.queue_bounds(definition, &generics, &where_clause, None);
+        self.trait_items.push((item_id, definition));
 
         let existing = self
             .types
@@ -209,10 +255,6 @@ impl<'a> Lowering<'a> {
             self.hir.insert_trait_name(name, definition);
         }
 
-        let methods = match &self.ast.item(item_id).kind {
-            ItemKind::Trait(declaration) => declaration.methods.clone(),
-            _ => Vec::new(),
-        };
         let mut order = Vec::with_capacity(methods.len());
         let mut seen: FxHashMap<Symbol, Span> = FxHashMap::default();
         for method in methods {
@@ -235,6 +277,8 @@ impl<'a> Lowering<'a> {
         let (name, name_span) = (declaration.name, declaration.name_span);
         let params = declaration.params.clone();
         let ret = declaration.ret;
+        let generics_decl = declaration.generics.clone();
+        let where_clause = declaration.where_clause.clone();
 
         if let Some(first_span) = seen.get(&name).copied() {
             self.error(
@@ -252,10 +296,23 @@ impl<'a> Lowering<'a> {
         }
         seen.insert(name, name_span);
 
+        let definition = self.define(DefData {
+            kind: DefKind::TraitMethod,
+            name,
+            name_span,
+            span: self.ast.item(item_id).span,
+            parent: Some(trait_def),
+            mutable: false,
+        });
+        self.register_generics(definition, &generics_decl, Some(trait_def), false);
+        self.queue_bounds(definition, &generics_decl, &where_clause, None);
+        self.trait_method_items.push((item_id, definition));
+
         let (receiver, parameters) = self.trait_signature(trait_def, &params);
         self.trait_methods.insert(
             (trait_def, name),
             TraitMethodSig {
+                def: definition,
                 name,
                 name_span,
                 receiver,
@@ -332,119 +389,190 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Registers every function in one inherent impl block under its type.
-    fn collect_inherent_impl(&mut self, declaration: &ImplDecl) {
-        let Some(type_def) = self.impl_target(declaration) else {
-            return;
+    /// Creates the definition and generic parameter list for one impl block.
+    fn begin_impl(&mut self, declaration: &ImplDecl, span: Span) -> DefId {
+        let definition = self.define(DefData {
+            kind: DefKind::Impl,
+            name: self.self_symbol,
+            name_span: span,
+            span,
+            parent: None,
+            mutable: false,
+        });
+        self.register_generics(definition, &declaration.generics, None, false);
+        definition
+    }
+
+    /// Lowers the self type of an impl block with the impl parameters in scope.
+    fn lower_impl_self_type(&mut self, declaration: &ImplDecl, impl_def: DefId) -> TyId {
+        let levels = self.push_generic_scope(impl_def);
+        let path = match &self.ast.ty(declaration.self_ty).kind {
+            TypeKind::Path(path) => Some((path.name, path.name_span)),
+            _ => None,
         };
-        for &item_id in &declaration.functions {
-            self.collect_inherent_function(item_id, type_def);
+        if let Some((name, name_span)) = path {
+            if !self.types.contains_key(&name)
+                && !self.traits.contains_key(&name)
+                && self.generic_scope_param(name).is_none()
+            {
+                let display = self.interner.resolve(name);
+                let message = if self.globals.contains_key(&name) {
+                    format!("`{display}` is a value, not a type")
+                } else {
+                    format!("cannot find type `{display}` for this impl")
+                };
+                self.error(codes::E2015, name_span, message)
+                    .help("declare it with `struct` or `enum`, then implement it")
+                    .emit();
+                self.pop_generic_scope(levels);
+                return self.hir.ty_ctxt().error_ty();
+            }
+        }
+        let saved = self.self_ty.take();
+        let ty = self.lower_type(declaration.self_ty);
+        self.self_ty = saved;
+        self.pop_generic_scope(levels);
+        ty
+    }
+
+    /// Returns the nominal head of an impl target, when it has one.
+    fn nominal_impl_target(&self, self_ty: TyId) -> Option<DefId> {
+        match self.hir.ty_ctxt().kind(self_ty) {
+            TyKind::Adt { adt, .. } => Some(self.hir.ty_ctxt().adt(adt).def),
+            _ => None,
         }
     }
 
-    /// Resolves the nominal type an impl block targets.
-    fn impl_target(&mut self, declaration: &ImplDecl) -> Option<DefId> {
-        let (type_name, type_span) = self.impl_self_name(declaration)?;
-        let Some(&type_def) = self.types.get(&type_name) else {
-            let name = self.interner.resolve(type_name);
-            if self.traits.contains_key(&type_name) {
-                self.error(
-                    codes::E2027,
-                    type_span,
-                    format!("`{name}` is a trait, not a type"),
-                )
-                .help("write `impl TraitName for TypeName` to implement a trait")
-                .emit();
-            } else if self.globals.contains_key(&type_name) {
-                self.error(
-                    codes::E2015,
-                    type_span,
-                    format!("`{name}` is a value, not a type"),
-                )
-                .help("an impl block attaches methods to a struct or enum")
-                .emit();
-            } else {
-                self.error(
-                    codes::E2015,
-                    type_span,
-                    format!("cannot find type `{name}` for this impl"),
-                )
-                .help("declare it with `struct` or `enum`, then implement it")
-                .emit();
-            }
-            return None;
-        };
-        Some(type_def)
-    }
+    /// Registers every function in one inherent impl block under its type.
+    fn collect_inherent_impl(&mut self, item_id: ItemId, declaration: &ImplDecl, span: Span) {
+        let impl_def = self.begin_impl(declaration, span);
+        self.impl_items.push((item_id, impl_def));
+        let self_ty = self.lower_impl_self_type(declaration, impl_def);
+        self.queue_bounds(
+            impl_def,
+            &declaration.generics,
+            &declaration.where_clause,
+            Some(self_ty),
+        );
 
-    fn impl_self_name(&mut self, declaration: &ImplDecl) -> Option<(Symbol, Span)> {
-        match self.ast.ty(declaration.self_ty).kind.clone() {
-            TypeKind::Path(path) => Some((path.name, path.name_span)),
-            _ => {
-                let span = self.ast.ty(declaration.self_ty).span;
-                self.error(codes::E2015, span, "this is not a valid impl target")
-                    .help("an impl block targets a struct or enum declared in this file")
-                    .emit();
-                None
+        let nominal = self.nominal_impl_target(self_ty);
+        if nominal.is_none() && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error) {
+            let display = self.display_ty(self_ty);
+            let ty_span = self.ast.ty(declaration.self_ty).span;
+            self.error(
+                codes::E2056,
+                ty_span,
+                format!("the inherent impl target `{display}` is not a nominal type"),
+            )
+            .help("inherent impls attach methods to a struct or enum declared in this file")
+            .emit();
+        }
+        if !self.hir.ty_ctxt().is_sized(self_ty)
+            && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error)
+        {
+            let display = self.display_ty(self_ty);
+            let ty_span = self.ast.ty(declaration.self_ty).span;
+            self.error(
+                codes::E2056,
+                ty_span,
+                format!("the impl target `{display}` has no known size"),
+            )
+            .help("implement the trait for a sized type instead")
+            .emit();
+        }
+
+        self.impl_self_tys.insert(impl_def, self_ty);
+        let mut methods = Vec::new();
+        for &item_id in &declaration.functions {
+            if let Some((name, definition)) =
+                self.collect_inherent_function(item_id, impl_def, nominal, self_ty)
+            {
+                methods.push((name, definition));
             }
+        }
+        if let Some(generics) = self.hir.generics(impl_def) {
+            self.hir.insert_inherent_impl(InherentImpl {
+                def: impl_def,
+                self_ty,
+                generics,
+                methods,
+            });
         }
     }
 
     /// Registers every function in one trait impl block.
-    fn collect_trait_impl(&mut self, declaration: &ImplDecl, span: Span) {
-        let Some(trait_ref) = declaration.trait_ref.as_ref() else {
-            return;
-        };
-        let trait_name = trait_ref.name;
-        let trait_span = trait_ref.name_span;
-        let Some(&trait_def) = self.traits.get(&trait_name) else {
-            let name = self.interner.resolve(trait_name);
-            if self.types.contains_key(&trait_name) {
-                self.error(
-                    codes::E2020,
-                    trait_span,
-                    format!("`{name}` is a type, not a trait"),
-                )
-                .help("write `impl Type { ... }` for an inherent implementation")
-                .emit();
-            } else {
-                self.error(
-                    codes::E2020,
-                    trait_span,
-                    format!("cannot find trait `{name}` for this impl"),
-                )
-                .help("declare the trait with `trait`, then implement it")
-                .emit();
-            }
-            return;
-        };
-        let Some(type_def) = self.impl_target(declaration) else {
-            return;
-        };
-        let self_name = self.impl_self_name(declaration).map_or_else(
-            || "<unknown>".to_owned(),
-            |(name, _)| self.interner.resolve(name).to_owned(),
+    fn collect_trait_impl(&mut self, item_id: ItemId, declaration: &ImplDecl, span: Span) {
+        let impl_def = self.begin_impl(declaration, span);
+        self.impl_items.push((item_id, impl_def));
+        let self_ty = self.lower_impl_self_type(declaration, impl_def);
+        self.queue_bounds(
+            impl_def,
+            &declaration.generics,
+            &declaration.where_clause,
+            Some(self_ty),
         );
+        self.impl_self_tys.insert(impl_def, self_ty);
 
-        if let Some(first) = self.hir.trait_impl_span(trait_def, type_def) {
+        if !self.hir.ty_ctxt().is_sized(self_ty)
+            && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error)
+        {
+            let display = self.display_ty(self_ty);
+            let ty_span = self.ast.ty(declaration.self_ty).span;
             self.error(
-                codes::E2021,
-                span,
-                format!(
-                    "the trait `{}` is already implemented for `{}`",
-                    self.interner.resolve(trait_name),
-                    self_name
-                ),
+                codes::E2056,
+                ty_span,
+                format!("the impl target `{display}` has no known size"),
             )
-            .secondary(first, "first implemented here")
-            .help("remove this block, or merge its functions into the first one")
+            .help("implement the trait for a sized type instead")
             .emit();
+        }
+
+        let levels = self.push_generic_scope(impl_def);
+        let saved = self.self_ty.replace(self_ty);
+        let trait_ref = declaration
+            .trait_ref
+            .as_ref()
+            .and_then(|path| self.lower_impl_trait_ref(path, self_ty));
+        self.self_ty = saved;
+        self.pop_generic_scope(levels);
+        let nominal = self.nominal_impl_target(self_ty);
+
+        if let Some(trait_ref) = trait_ref {
+            let trait_def = trait_ref.trait_def;
+            if let Some(type_def) = nominal {
+                let concrete = !self.hir.ty_ctxt().contains_param(self_ty)
+                    && self
+                        .hir
+                        .ty_ctxt()
+                        .substs_args(trait_ref.args)
+                        .into_iter()
+                        .all(|argument| !self.hir.ty_ctxt().contains_param(argument));
+                if concrete {
+                    if let Some(first) = self.hir.trait_impl_span(trait_def, type_def) {
+                        self.error(
+                            codes::E2021,
+                            span,
+                            format!(
+                                "the trait `{}` is already implemented for `{}`",
+                                self.interner
+                                    .resolve(self.hir.definitions().name(trait_def)),
+                                self.display_ty(self_ty)
+                            ),
+                        )
+                        .secondary(first, "first implemented here")
+                        .help("remove this block, or merge its functions into the first one")
+                        .emit();
+                    }
+                }
+            }
         }
 
         let mut functions: Vec<(Symbol, DefId)> = Vec::new();
         let mut pending = Vec::with_capacity(declaration.functions.len());
-        for &item_id in &declaration.functions {
-            let Some((name, definition)) = self.define_impl_function(item_id, type_def) else {
+        for &function_item in &declaration.functions {
+            let Some((name, definition)) =
+                self.define_impl_function(function_item, impl_def, nominal, self_ty)
+            else {
                 continue;
             };
             if let Some((_, first)) = functions.iter().find(|(existing, _)| *existing == name) {
@@ -467,13 +595,27 @@ impl<'a> Lowering<'a> {
             pending.push((definition, name));
         }
 
-        if self.hir.trait_impl_span(trait_def, type_def).is_none() {
-            let map: FxHashMap<Symbol, DefId> = functions.iter().copied().collect();
-            self.hir.insert_trait_impl(trait_def, type_def, map, span);
+        let Some(trait_ref) = trait_ref else {
+            return;
+        };
+        let trait_def = trait_ref.trait_def;
+        if let Some(type_def) = nominal {
+            if self.hir.trait_impl_span(trait_def, type_def).is_none() {
+                let map: FxHashMap<Symbol, DefId> = functions.iter().copied().collect();
+                self.hir.insert_trait_impl(trait_def, type_def, map, span);
+            }
+        }
+        if let Some(generics) = self.hir.generics(impl_def) {
+            self.hir
+                .ty_ctxt_mut()
+                .push_trait_impl(seal_ty::TraitImplDef::new(
+                    impl_def, trait_ref, generics, functions,
+                ));
         }
         self.pending_trait_impls.push(PendingTraitImpl {
-            trait_def,
-            type_def,
+            impl_def,
+            trait_ref,
+            self_ty,
             span,
             functions: pending,
         });
@@ -487,7 +629,9 @@ impl<'a> Lowering<'a> {
     fn define_impl_function(
         &mut self,
         item_id: ItemId,
-        type_def: DefId,
+        impl_def: DefId,
+        type_def: Option<DefId>,
+        self_ty: TyId,
     ) -> Option<(Symbol, DefId)> {
         let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
             return None;
@@ -495,36 +639,37 @@ impl<'a> Lowering<'a> {
         let (name, name_span) = (declaration.name, declaration.name_span);
         let span = self.ast.item(item_id).span;
         let params = declaration.params.clone();
+        let generics = declaration.generics.clone();
+        let where_clause = declaration.where_clause.clone();
 
         let definition = self.define(DefData {
             kind: DefKind::Function,
             name,
             name_span,
             span,
-            parent: Some(type_def),
+            parent: Some(type_def.unwrap_or(impl_def)),
             mutable: false,
         });
         self.function_defs.insert(item_id, definition);
         self.function_item_of.insert(definition, item_id);
         self.function_items.push(item_id);
+        self.impl_self_ty_of_function.insert(definition, self_ty);
+        self.register_generics(definition, &generics, Some(impl_def), false);
+        self.queue_bounds(definition, &generics, &where_clause, Some(self_ty));
 
         let Some(receiver_param) = params.first().copied() else {
             return Some((name, definition));
         };
         if self.is_self_parameter(receiver_param) {
+            let levels = self.push_generic_scope(definition);
+            let saved = self.self_ty.replace(self_ty);
             let receiver_ty = self.ast.param(receiver_param).ty;
-            match self.receiver_kind(receiver_ty, type_def) {
-                Some(ReceiverKind::Value) => {
-                    self.hir.insert_receiver(definition, ReceiverKind::Value);
-                }
-                Some(ReceiverKind::Shared) => {
-                    self.hir.insert_receiver(definition, ReceiverKind::Shared);
-                }
-                Some(ReceiverKind::Exclusive) => {
-                    self.hir
-                        .insert_receiver(definition, ReceiverKind::Exclusive);
-                }
-                None => self.receiver_error(receiver_param, type_def),
+            let receiver = self.receiver_kind(receiver_ty, self_ty);
+            self.self_ty = saved;
+            self.pop_generic_scope(levels);
+            match receiver {
+                Some(kind) => self.hir.insert_receiver(definition, kind),
+                None => self.receiver_error(receiver_param, self_ty),
             }
         } else {
             for &param in params.iter().skip(1) {
@@ -540,9 +685,16 @@ impl<'a> Lowering<'a> {
     }
 
     /// Registers one inherent impl function under its type.
-    fn collect_inherent_function(&mut self, item_id: ItemId, type_def: DefId) {
-        let Some((name, definition)) = self.define_impl_function(item_id, type_def) else {
-            return;
+    fn collect_inherent_function(
+        &mut self,
+        item_id: ItemId,
+        impl_def: DefId,
+        type_def: Option<DefId>,
+        self_ty: TyId,
+    ) -> Option<(Symbol, DefId)> {
+        let (name, definition) = self.define_impl_function(item_id, impl_def, type_def, self_ty)?;
+        let Some(type_def) = type_def else {
+            return Some((name, definition));
         };
         if let Some(first) = self.hir.method(type_def, name) {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -561,6 +713,7 @@ impl<'a> Lowering<'a> {
         } else {
             self.hir.insert_method(type_def, name, definition);
         }
+        Some((name, definition))
     }
 
     /// Validates every trait implementation against its declaration.
@@ -572,24 +725,17 @@ impl<'a> Lowering<'a> {
     fn validate_trait_impls(&mut self) {
         let pending = std::mem::take(&mut self.pending_trait_impls);
         for implementation in pending {
-            let Some(order) = self
-                .trait_method_order
-                .get(&implementation.trait_def)
-                .cloned()
-            else {
+            let trait_def = implementation.trait_ref.trait_def;
+            let Some(order) = self.trait_method_order.get(&trait_def).cloned() else {
                 continue;
             };
-            let Some(adt) = self.hir.adt(implementation.type_def) else {
+            let Some(declaration) = self.hir.trait_definition(trait_def) else {
                 continue;
             };
-            let self_ty = self.hir.ty_ctxt().adt_ty(adt);
-            let type_name = self
-                .interner
-                .resolve(self.hir.definitions().name(implementation.type_def))
-                .to_owned();
+            let type_name = self.display_ty(implementation.self_ty);
             let trait_name = self
                 .interner
-                .resolve(self.hir.definitions().name(implementation.trait_def))
+                .resolve(self.hir.definitions().name(trait_def))
                 .to_owned();
 
             let mut implemented: FxHashMap<Symbol, DefId> = FxHashMap::default();
@@ -598,11 +744,10 @@ impl<'a> Lowering<'a> {
             }
 
             for name in &order {
-                let Some(signature) = self
-                    .trait_methods
-                    .get(&(implementation.trait_def, *name))
-                    .cloned()
-                else {
+                let Some(raw) = self.trait_methods.get(&(trait_def, *name)).cloned() else {
+                    continue;
+                };
+                let Some(method) = declaration.method(*name) else {
                     continue;
                 };
                 match implemented.get(name) {
@@ -623,11 +768,12 @@ impl<'a> Lowering<'a> {
                     }
                     Some(&function) => {
                         self.check_trait_method(
-                            &signature,
+                            &raw,
+                            method,
                             function,
-                            self_ty,
-                            &trait_name,
-                            &type_name,
+                            implementation.impl_def,
+                            implementation.self_ty,
+                            (&trait_name, &type_name),
                         );
                     }
                 }
@@ -655,12 +801,14 @@ impl<'a> Lowering<'a> {
     /// Compares one implementation function with its trait method.
     fn check_trait_method(
         &mut self,
-        signature: &TraitMethodSig,
+        raw: &TraitMethodSig,
+        declared: &seal_ty::TraitMethodDef,
         function: DefId,
+        impl_def: DefId,
         self_ty: TyId,
-        trait_name: &str,
-        type_name: &str,
+        names: (&str, &str),
     ) {
+        let (trait_name, type_name) = names;
         let Some(&item_id) = self.function_item_of.get(&function) else {
             return;
         };
@@ -675,32 +823,45 @@ impl<'a> Lowering<'a> {
             )
         };
 
-        let receiver = self.hir.receiver(function);
+        let levels = self.push_generic_scope(function);
+        let saved = self.self_ty.replace(self_ty);
         let mut implemented = Vec::with_capacity(params.len());
         for &param in &params {
             if self.is_self_parameter(param) {
                 continue;
             }
             let data = self.ast.param(param);
-            implemented.push((data.ty, data.span));
+            implemented.push(self.lower_type(data.ty));
         }
+        let found_ret = match ret {
+            Some(ty) => self.lower_type(ty),
+            None => self.hir.ty_ctxt().unit_ty(),
+        };
+        self.self_ty = saved;
+        self.pop_generic_scope(levels);
 
-        let saved = self.self_ty.replace(self_ty);
-        let mut difference = if signature.receiver != receiver {
+        let receiver = self.hir.receiver(function);
+        let mut difference = if raw.receiver != receiver {
             Some("the receiver does not match the trait declaration".to_owned())
-        } else if signature.params.len() != implemented.len() {
+        } else if declared.signature.params.len() != implemented.len() {
             Some(format!(
                 "the trait declares {} parameter(s), but this function has {}",
-                signature.params.len(),
+                declared.signature.params.len(),
                 implemented.len()
             ))
         } else {
-            self.compare_parameter_types(&signature.params, &implemented)
+            match self.instantiate_trait_signature(declared, impl_def, function, self_ty) {
+                Err(difference) => Some(difference),
+                Ok(expected) => self.compare_parameter_types(&expected.params, &implemented),
+            }
         };
         if difference.is_none() {
-            difference = self.compare_return_type(signature.ret, ret);
+            if let Ok(expected) =
+                self.instantiate_trait_signature(declared, impl_def, function, self_ty)
+            {
+                difference = self.compare_return_type(expected.ret, found_ret);
+            }
         }
-        self.self_ty = saved;
 
         let Some(difference) = difference else {
             return;
@@ -710,51 +871,91 @@ impl<'a> Lowering<'a> {
             name_span,
             format!(
                 "`{}` does not match its declaration in the trait `{trait_name}`: {difference}",
-                self.interner.resolve(signature.name)
+                self.interner.resolve(raw.name)
             ),
         )
-        .secondary(signature.name_span, "declared here")
+        .secondary(raw.name_span, "declared here")
         .help(format!(
             "align the receiver, parameters, and return type; `{type_name}` plays the role of `Self`"
         ))
         .emit();
     }
 
-    fn compare_parameter_types(
-        &mut self,
-        declared: &[(AstTypeId, Span)],
-        implemented: &[(AstTypeId, Span)],
-    ) -> Option<String> {
-        for (index, ((declared_ty, _), (implemented_ty, _))) in
-            declared.iter().zip(implemented).enumerate()
-        {
-            let expected = self.lower_type(*declared_ty);
-            let found = self.lower_type(*implemented_ty);
-            if !self.trait_types_compatible(expected, found) {
+    /// Replaces the trait method's `Self`, trait, and method parameters with the
+    /// implementation's self type and corresponding parameters.
+    fn instantiate_trait_signature(
+        &self,
+        method: &seal_ty::TraitMethodDef,
+        impl_def: DefId,
+        function: DefId,
+        self_ty: TyId,
+    ) -> Result<GenericSignature, String> {
+        let parameters = self.hir.ty_ctxt().flattened_generics(method.def);
+        let impl_params = self.hir.flattened_generics(impl_def);
+        let method_params = self
+            .hir
+            .generics(function)
+            .map(|generics| generics.params)
+            .unwrap_or_default();
+        if method_params.len() != method.generics.params.len() {
+            return Err(format!(
+                "the implementation declares {} generic parameter(s), but the trait declares {}",
+                method_params.len(),
+                method.generics.params.len()
+            ));
+        }
+        let mut args = vec![self.hir.ty_ctxt().error_ty(); parameters.len()];
+        for parameter in &parameters {
+            if parameter.is_self {
+                args[parameter.index as usize] = self_ty;
+                continue;
+            }
+            let declared_by_parent = method.generics.parent.is_some_and(|parent| {
+                self.hir.definitions().get(parameter.def).parent == Some(parent)
+            });
+            let source = if declared_by_parent {
+                impl_params
+                    .iter()
+                    .find(|candidate| candidate.name == parameter.name)
+            } else {
+                method_params
+                    .iter()
+                    .find(|candidate| candidate.name == parameter.name)
+            };
+            let Some(source) = source else {
+                return Err(format!(
+                    "the implementation does not declare the generic parameter `{}`",
+                    self.interner.resolve(parameter.name)
+                ));
+            };
+            args[parameter.index as usize] = self.hir.ty_ctxt().param_ty(source.param);
+        }
+        let substs = self.hir.ty_ctxt().substs(&args);
+        let params = method
+            .signature
+            .params
+            .iter()
+            .map(|ty| self.hir.ty_ctxt().substitute(*ty, substs))
+            .collect();
+        let ret = self.hir.ty_ctxt().substitute(method.signature.ret, substs);
+        Ok(GenericSignature::new(params, ret))
+    }
+
+    fn compare_parameter_types(&self, expected: &[TyId], found: &[TyId]) -> Option<String> {
+        for (index, (expected, found)) in expected.iter().zip(found).enumerate() {
+            if !self.trait_types_compatible(*expected, *found) {
                 return Some(format!(
                     "parameter {} has type `{}`, but the trait declares `{}`",
                     index + 1,
-                    self.display_ty(found),
-                    self.display_ty(expected)
+                    self.display_ty(*found),
+                    self.display_ty(*expected)
                 ));
             }
         }
         None
     }
 
-    fn compare_return_type(
-        &mut self,
-        declared: Option<AstTypeId>,
-        implemented: Option<AstTypeId>,
-    ) -> Option<String> {
-        let expected = match declared {
-            Some(ty) => self.lower_type(ty),
-            None => self.hir.ty_ctxt().unit_ty(),
-        };
-        let found = match implemented {
-            Some(ty) => self.lower_type(ty),
-            None => self.hir.ty_ctxt().unit_ty(),
-        };
+    fn compare_return_type(&self, expected: TyId, found: TyId) -> Option<String> {
         if self.trait_types_compatible(expected, found) {
             None
         } else {
@@ -783,28 +984,26 @@ impl<'a> Lowering<'a> {
         self.interner.resolve(self.ast.param(param).name) == "self"
     }
 
-    fn receiver_kind(&mut self, ty: seal_ast::TypeId, type_def: DefId) -> Option<ReceiverKind> {
-        let adt = self.hir.adt(type_def)?;
-        let target = self.hir.ty_ctxt().adt_ty(adt);
+    fn receiver_kind(&mut self, ty: seal_ast::TypeId, self_ty: TyId) -> Option<ReceiverKind> {
         let receiver = self.lower_type(ty);
+        if receiver == self_ty {
+            return Some(ReceiverKind::Value);
+        }
         match self.hir.ty_ctxt().kind(receiver) {
-            TyKind::Adt { adt: found, .. } if found == adt => Some(ReceiverKind::Value),
             TyKind::Ref {
                 kind: RefKind::Shared,
                 pointee,
-            } if pointee == target => Some(ReceiverKind::Shared),
+            } if pointee == self_ty => Some(ReceiverKind::Shared),
             TyKind::Ref {
                 kind: RefKind::Exclusive,
                 pointee,
-            } if pointee == target => Some(ReceiverKind::Exclusive),
+            } if pointee == self_ty => Some(ReceiverKind::Exclusive),
             _ => None,
         }
     }
 
-    fn receiver_error(&mut self, param: ParamId, type_def: DefId) {
-        let name = self
-            .interner
-            .resolve(self.hir.definitions().get(type_def).name);
+    fn receiver_error(&mut self, param: ParamId, self_ty: TyId) {
+        let name = self.display_ty(self_ty);
         let span = self.ast.param(param).span;
         self.error(
             codes::E2016,
@@ -828,6 +1027,15 @@ impl<'a> Lowering<'a> {
         });
         self.function_defs.insert(item_id, definition);
         self.function_items.push(item_id);
+        let (generics, where_clause) = match &self.ast.item(item_id).kind {
+            ItemKind::Func(declaration) => (
+                declaration.generics.clone(),
+                declaration.where_clause.clone(),
+            ),
+            _ => (GenericParams::empty(span), WhereClause::empty(span)),
+        };
+        self.register_generics(definition, &generics, None, false);
+        self.queue_bounds(definition, &generics, &where_clause, None);
 
         if let Some(first) = self.globals.get(&name).copied() {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -862,6 +1070,17 @@ impl<'a> Lowering<'a> {
             .push_adt(definition, name, AdtKind::Struct);
         self.hir.insert_adt(definition, adt);
         self.struct_items.push((item_id, definition));
+        if let ItemKind::Struct(declaration) = &self.ast.item(item_id).kind {
+            self.register_generics(definition, &declaration.generics, None, false);
+            let count = self.own_generic_count(definition) as u32;
+            self.hir.ty_ctxt().set_generic_count(adt, count);
+            self.queue_bounds(
+                definition,
+                &declaration.generics,
+                &declaration.where_clause,
+                None,
+            );
+        }
 
         if let Some(first) = self.types.get(&name).copied() {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -893,6 +1112,17 @@ impl<'a> Lowering<'a> {
         let adt = self.hir.ty_ctxt().push_adt(definition, name, AdtKind::Enum);
         self.hir.insert_adt(definition, adt);
         self.enum_items.push((item_id, definition));
+        if let ItemKind::Enum(declaration) = &self.ast.item(item_id).kind {
+            self.register_generics(definition, &declaration.generics, None, false);
+            let count = self.own_generic_count(definition) as u32;
+            self.hir.ty_ctxt().set_generic_count(adt, count);
+            self.queue_bounds(
+                definition,
+                &declaration.generics,
+                &declaration.where_clause,
+                None,
+            );
+        }
 
         if let Some(first) = self.types.get(&name).copied() {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -932,6 +1162,9 @@ impl<'a> Lowering<'a> {
 
             self.function = Some(function);
             self.loop_depth = 0;
+            let generic_levels = self.push_generic_scope(function);
+            let saved_self = self.self_ty;
+            self.self_ty = self.impl_self_ty_of_function.get(&function).copied();
             self.scopes.push();
             let ret = ret.map(|ty| self.lower_type(ty));
             let params = params
@@ -940,6 +1173,8 @@ impl<'a> Lowering<'a> {
                 .collect();
             let root = self.lower_block(body);
             self.scopes.pop();
+            self.self_ty = saved_self;
+            self.pop_generic_scope(generic_levels);
 
             let body = self.hir.push_body(Body {
                 owner: function,
@@ -1005,6 +1240,19 @@ impl<'a> Lowering<'a> {
                 format!("`{}` is a type, not a value", self.interner.resolve(name)),
             )
             .help("construct it with a struct literal, such as `Name { field: value }`")
+            .emit();
+            return None;
+        }
+        if self.generic_scope_param(name).is_some() {
+            self.error(
+                codes::E2010,
+                span,
+                format!(
+                    "`{}` is a type parameter, not a value",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help("type parameters name types; a value must be supplied by the caller")
             .emit();
             return None;
         }

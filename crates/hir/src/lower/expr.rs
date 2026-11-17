@@ -24,17 +24,30 @@ impl Lowering<'_> {
 
         let kind = match kind {
             AstExprKind::Lit(literal) => ExprKind::Lit(literal),
-            AstExprKind::Path { name, .. } => match self.resolve(name, span) {
-                Some(res) => ExprKind::Path(res),
+            AstExprKind::Path {
+                name,
+                name_span: _,
+                args,
+            } => match self.resolve(name, span) {
+                Some(res) => {
+                    let expected = match res {
+                        crate::Res::Function(function) => self.own_generic_count(function),
+                        crate::Res::Local(_) => 0,
+                    };
+                    let args = self.lower_expr_arguments(args.as_ref(), expected);
+                    ExprKind::Path { res, args }
+                }
                 None => ExprKind::Error,
             },
             AstExprKind::PathQualified {
                 type_name,
                 type_span,
+                type_args,
                 name,
                 name_span,
-                ..
-            } => self.lower_qualified_path(type_name, type_span, name, name_span),
+            } => {
+                self.lower_qualified_path(type_name, type_span, type_args.as_ref(), name, name_span)
+            }
             AstExprKind::Unary { op, operand } => ExprKind::Unary {
                 op,
                 operand: self.lower_expr(operand),
@@ -110,17 +123,24 @@ impl Lowering<'_> {
             AstExprKind::Struct {
                 name,
                 name_span,
+                type_args,
                 fields,
-                ..
-            } => self.lower_struct_literal(name, name_span, &fields),
+            } => self.lower_struct_literal(name, name_span, type_args.as_ref(), &fields),
             AstExprKind::Variant {
                 type_name,
                 type_span,
+                type_args,
                 name,
                 name_span,
                 fields,
-                ..
-            } => self.lower_variant_literal(type_name, type_span, name, name_span, &fields),
+            } => self.lower_variant_literal(
+                type_name,
+                type_span,
+                type_args.as_ref(),
+                name,
+                name_span,
+                &fields,
+            ),
             AstExprKind::Array { elements } => ExprKind::Array {
                 elements: elements
                     .iter()
@@ -212,14 +232,19 @@ impl Lowering<'_> {
                 receiver,
                 name,
                 name_span,
+                generic_args,
                 args,
-                ..
-            } => ExprKind::MethodCall {
-                receiver: self.lower_expr(receiver),
-                name,
-                name_span,
-                args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
-            },
+            } => {
+                let count = generic_args.as_ref().map_or(0, |args| args.args.len());
+                let generic_args = self.lower_expr_arguments(generic_args.as_ref(), count);
+                ExprKind::MethodCall {
+                    receiver: self.lower_expr(receiver),
+                    name,
+                    name_span,
+                    generic_args,
+                    args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
+                }
+            }
             AstExprKind::Match { scrutinee, arms } => {
                 let scrutinee = self.lower_expr(scrutinee);
                 let arms = arms
@@ -287,6 +312,7 @@ impl Lowering<'_> {
         &mut self,
         type_name: Symbol,
         type_span: Span,
+        type_args: Option<&seal_ast::GenericArgs>,
         name: Symbol,
         name_span: Span,
     ) -> ExprKind {
@@ -319,6 +345,7 @@ impl Lowering<'_> {
             }
             return ExprKind::Error;
         };
+        let type_args = self.lower_nominal_arguments(type_def, type_args);
 
         if let Some(variant) = self.hir.variant(type_def, name) {
             let adt = self
@@ -349,17 +376,18 @@ impl Lowering<'_> {
             return ExprKind::Variant {
                 adt: type_def,
                 variant,
+                args: type_args,
                 fields: Vec::new(),
             };
         }
 
         if let Some(function) = self.hir.method(type_def, name) {
-            return self.qualified_function(function, name, name_span);
+            return self.qualified_function(function, name, name_span, type_args);
         }
 
         match self.hir.trait_method(type_def, name) {
             TraitMethodLookup::Found { function, .. } => {
-                self.qualified_function(function, name, name_span)
+                self.qualified_function(function, name, name_span, type_args)
             }
             TraitMethodLookup::Ambiguous(traits) => {
                 let traits = traits
@@ -417,6 +445,7 @@ impl Lowering<'_> {
     fn lower_variant_call(&mut self, callee: AstExprId, args: &[AstExprId]) -> Option<ExprKind> {
         let AstExprKind::PathQualified {
             type_name,
+            type_args,
             name,
             name_span,
             ..
@@ -432,6 +461,7 @@ impl Lowering<'_> {
         }
         let variant = self.hir.variant(definition, name)?;
         let variant_def = adt_def.variant(variant)?.clone();
+        let type_args = self.lower_nominal_arguments(definition, type_args.as_ref());
         let enum_name = self.interner.resolve(type_name).to_owned();
         let variant_name = self.interner.resolve(name).to_owned();
         let path = format!("{enum_name}::{variant_name}");
@@ -501,12 +531,19 @@ impl Lowering<'_> {
         Some(ExprKind::Variant {
             adt: definition,
             variant,
+            args: type_args,
             fields,
         })
     }
 
     /// Turns a resolved associated function into a callable path.
-    fn qualified_function(&mut self, function: DefId, name: Symbol, name_span: Span) -> ExprKind {
+    fn qualified_function(
+        &mut self,
+        function: DefId,
+        name: Symbol,
+        name_span: Span,
+        args: Option<seal_ty::SubstsId>,
+    ) -> ExprKind {
         if self.hir.receiver(function).is_some() {
             let function_name = self.interner.resolve(name);
             self.error(
@@ -521,7 +558,24 @@ impl Lowering<'_> {
             return ExprKind::Error;
         }
 
-        ExprKind::Path(crate::Res::Function(function))
+        ExprKind::Path {
+            res: crate::Res::Function(function),
+            args,
+        }
+    }
+
+    /// Lowers the explicit type arguments written before an associated name.
+    fn lower_nominal_arguments(
+        &mut self,
+        definition: DefId,
+        args: Option<&seal_ast::GenericArgs>,
+    ) -> Option<seal_ty::SubstsId> {
+        let adt = self
+            .hir
+            .adt(definition)
+            .expect("every type definition reserves an aggregate");
+        let expected = self.hir.ty_ctxt().adt_generic_count(adt) as usize;
+        self.lower_expr_arguments(args, expected)
     }
 
     /// Returns `true` when `callee` is the built-in `len` rather than a user item.
@@ -541,6 +595,7 @@ impl Lowering<'_> {
         &mut self,
         name: seal_symbol::Symbol,
         name_span: seal_span::Span,
+        type_args: Option<&seal_ast::GenericArgs>,
         fields: &[seal_ast::FieldInit],
     ) -> ExprKind {
         let initializers = self.lower_initializers(fields);
@@ -577,6 +632,7 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
+        let type_args = self.lower_nominal_arguments(definition, type_args);
         let adt = self
             .hir
             .adt(definition)
@@ -607,6 +663,7 @@ impl Lowering<'_> {
 
         ExprKind::Struct {
             adt: definition,
+            args: type_args,
             fields: resolved,
         }
     }
@@ -631,6 +688,7 @@ impl Lowering<'_> {
         &mut self,
         type_name: Symbol,
         type_span: Span,
+        type_args: Option<&seal_ast::GenericArgs>,
         name: Symbol,
         name_span: Span,
         fields: &[seal_ast::FieldInit],
@@ -667,6 +725,7 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
+        let type_args = self.lower_nominal_arguments(definition, type_args);
         let adt = self
             .hir
             .adt(definition)
@@ -731,6 +790,7 @@ impl Lowering<'_> {
                 return ExprKind::Variant {
                     adt: definition,
                     variant,
+                    args: type_args,
                     fields: Vec::new(),
                 };
             }
@@ -763,6 +823,7 @@ impl Lowering<'_> {
         ExprKind::Variant {
             adt: definition,
             variant,
+            args: type_args,
             fields: resolved,
         }
     }

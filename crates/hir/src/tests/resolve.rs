@@ -167,7 +167,10 @@ fn assigning_to_a_function_is_left_to_the_type_checker() {
     };
     assert!(matches!(
         hir.expr(target).kind.clone(),
-        ExprKind::Path(Res::Function(_))
+        ExprKind::Path {
+            res: Res::Function(_),
+            ..
+        }
     ));
     assert!(hir.place(target).is_none());
 }
