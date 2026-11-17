@@ -70,8 +70,9 @@ the linker's stderr.
 The ABI is defined by the language, not by a C header:
 
 - A free Seal function has external visibility and the symbol `seal.<name>`;
-  an impl function uses `seal.<Type>.<name>`. The C `main` wrapper is the only
-  symbol named `main`, and only a free function can be the language entry point.
+  an impl function, inherent or from a trait implementation, uses
+  `seal.<Type>.<name>`. The C `main` wrapper is the only symbol named `main`,
+  and only a free function can be the language entry point.
 - A user `main` must take no parameters and return `i32` or `()`. The wrapper
   always returns `i32`, using the returned value or zero for unit. A missing or
   invalid entry point is `E6001`.
@@ -103,7 +104,9 @@ The ABI is defined by the language, not by a C header:
   An automatic shared or exclusive receiver borrow is an explicit
   `Rvalue::Ref` in MIR, so code generation emits the ordinary address and load
   for the call. Associated functions are ordinary calls reached through a
-  resolved function path.
+  resolved function path. Trait methods take the same path because dispatch is
+  static, and a `*mut T` receiver passed to a shared method becomes a shared
+  `Rvalue::Ref` of the pointee.
 - Intrinsic methods lower from `Rvalue::Intrinsic`. Scalar methods use LLVM
   instructions and target intrinsics: `llvm.abs`, `llvm.ctpop`, `llvm.ctlz`,
   `llvm.cttz`, `llvm.fshl`/`llvm.fshr`, `llvm.bswap`, `llvm.fabs`,
@@ -287,5 +290,8 @@ exclusive references, saturating `i128`, NaN-aware float selection, integer
 clamp contracts, and `swap` bounds panics. User-method tests cover associated
 constructors, shared, exclusive, and value receivers, automatic borrowing,
 method/associated-function namespaces, symbol uniqueness across types, and
-receiver borrow conflicts. The driver tests export the embedded archive with
+receiver borrow conflicts. Trait tests cover static dispatch across two impls,
+trait associated functions, `Self` substitution and contract errors, ambiguity,
+shared reborrow from a mutable receiver, and the rule that no method named
+`main` becomes the entry point. The driver tests export the embedded archive with
 `--emit-runtime` and reuse it with `--runtime-archive` to link that example.

@@ -329,7 +329,15 @@ allowed to depend only on crates below it in the list.
     `Rvalue::Ref` when the receiver is borrowed automatically; an intrinsic
     lowers to `Rvalue::Intrinsic`. Code generation consumes the recorded form
     and never re-infers ownership or the receiver shape. The two lookups are
-    ordered, so a struct method shadows an intrinsic with the same name.
+    ordered, so a struct method shadows an intrinsic with the same name. Trait
+    methods add one layer to the nominal lookup: the inherent registry wins,
+    then the functions bound by the type's `impl Trait` blocks, and a name two
+    implemented traits declare is ambiguous (`E2028`). Each implementation is
+    validated as a contract (`E2021`–`E2026`) with `Self` substituted by the
+    implementing type, and it lives beside the inherent registry rather than in
+    it, so an inherent method and a trait method may share a name. A `*mut T`
+    receiver passed to a shared method is reborrowed as `*T`, lowering to a
+    shared `Rvalue::Ref` of the pointee.
 
 ## Extension points
 
@@ -372,6 +380,13 @@ allowed to depend only on crates below it in the list.
   case is needed because the call is an ordinary `Rvalue::Call`, but the
   per-type symbol name must stay unique. Add parser, HIR, typeck, MIR, borrowck,
   and end-to-end coverage.
+- **New trait or lookup rule.** Traits are declarations plus implementations,
+  not a new type kind. Parse the declaration in `seal-parser`, register the trait
+  and its `Self`-relative signatures in `seal-hir`, validate each impl as a
+  contract, and resolve calls through the same static lookup that serves
+  inherent methods. A trait call must stay a direct `Rvalue::Call`; a new rule
+  changes the registry order and its ambiguity check, never the MIR shape. Add
+  parser, HIR, typeck, MIR, borrowck, and end-to-end coverage.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is

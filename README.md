@@ -94,6 +94,7 @@ usage error, and `101` after an internal compiler error or a runtime panic.
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls, no vtable |
+| Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch: each call binds to the concrete implementation of the receiver's type |
 
 There are no implicit numeric conversions: every arithmetic and comparison
 operand must already have the expected type, and an unsuffixed integer literal
@@ -117,11 +118,15 @@ The current language surface is functions, nominal structs, fixed-size arrays,
 slices, shared and exclusive references, `let` bindings with definite
 initialization, `if`, `while`, `break`, `continue`, `return`, the usual
 arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
-methods on integers, floats, `bool`, `char`, arrays, and slices, and inherent
-`impl` methods and associated functions on nominal structs. Every call resolves
-statically: there is no vtable, dynamic dispatch, or hidden allocation, and
-modifying methods borrow the receiver exclusively. User methods declare their
-receiver explicitly as `self: S`, `self: *S`, or `self: *mut S`; the compiler
-borrows a value receiver automatically when the method expects a reference.
-Traits, generics, enums, and an `unsafe` layer are not part of the surface yet;
-the memory model records how they fit without redesigning the type system.
+methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`
+methods and associated functions on nominal structs, and traits with static
+dispatch. Every call resolves statically: there is no vtable, dynamic dispatch,
+or hidden allocation, and modifying methods borrow the receiver exclusively.
+User methods declare their receiver explicitly as `self: S`, `self: *S`, or
+`self: *mut S`; the compiler borrows a value receiver automatically when the
+method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
+read-only method. A trait writes `Self` for the implementing type and every
+`impl Trait for S` binds one concrete function per method, so a trait call is an
+ordinary direct call. Generics, enums, trait objects, and an `unsafe` layer are
+not part of the surface yet; the memory model records how they fit without
+redesigning the type system.

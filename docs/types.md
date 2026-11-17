@@ -297,7 +297,8 @@ tried first; on scalars, sequences, and references to them, lookup uses the
 closed compiler-owned intrinsic catalog. Every reference layer is followed
 before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
 scalar method, and a `*Point` can call a `Point` method written for `*Point`.
-There is no vtable, dynamic dispatch, method value, trait, or generic method.
+There is no vtable, dynamic dispatch, method value, or generic method. A trait
+method resolved on a nominal type is a static call to the implementing function.
 An unknown name is `E3027`, an associated function written as a method is
 `E2019`, and a method written as `Type::name` is `E2019` as well.
 
@@ -369,6 +370,61 @@ receiver's type selects the impl, and the generated symbol includes the type.
 `self` must be the first parameter (`E2016`), and the impl target must be a
 struct (`E2015`). The ordinary borrow checker sees the automatic receiver borrow
 as a real loan, so a live conflicting loan is `E5008`.
+
+### Traits and static dispatch
+
+A trait declares a set of method signatures. `Self` in a signature stands for
+the implementing struct, including in the receiver, so one declaration describes
+every implementor. `impl Trait for Struct` supplies one function per signature.
+
+```seal
+struct Circle {
+  radius: i32,
+}
+
+trait Shape {
+  func area(self: *Self) -> i32;
+  func unit() -> i32;
+}
+
+impl Shape for Circle {
+  func area(self: *Circle) -> i32 {
+    (*self).radius * (*self).radius
+  }
+
+  func unit() -> i32 {
+    1
+  }
+}
+
+func main() -> i32 {
+  let circle = Circle { radius: 3 };
+  circle.area() + Circle::unit()
+}
+```
+
+Lookup is ordered: an inherent method on the struct wins, then the trait methods
+the struct implements. Every candidate is the concrete function of one impl, so
+a trait call is a direct call with no vtable, trait object, or dynamic dispatch.
+When two implemented traits declare the same method name and the type has no
+inherent method with that name, the call is ambiguous (`E2028`). Seal has no
+syntax for naming the trait at a call, so the fix is to rename one of the
+methods; an inherent method with the name resolves the call instead.
+
+Implementing a trait is checked as a complete contract. Every declared method
+must be present (`E2022`), nothing else may appear in the block (`E2023`), and
+the receiver, parameter types, and return type must match the declaration after
+`Self` is replaced with the struct (`E2024`). A trait receiver uses one of the
+three `Self` forms (`E2016`), while an impl writes the concrete type. A type
+implements a trait once (`E2021`), a trait name is neither a type nor a value
+(`E2027`), and `Self` outside a trait signature is `E2025`.
+
+A method that declares `self: *Struct` can also be called through a
+`*mut Struct` receiver: the compiler reborrows it as `*Struct`, a shared loan of
+the pointee, so the borrow checker sees the same access a written `&*reference`
+would create. The conversion is one-way; a `*Struct` never reaches an exclusive
+receiver (`E3031`). A trait may declare an associated function with no receiver,
+which is called as `Struct::name()` like an inherent one.
 
 ### Signed and unsigned integers
 

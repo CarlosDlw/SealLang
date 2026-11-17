@@ -250,15 +250,27 @@ followed. There is no vtable, dynamic dispatch, or method value: a user method
 lowers to a direct `Rvalue::Call` with the receiver as its first argument, and
 an intrinsic lowers to a semantic `Rvalue::Intrinsic` whose operation the
 backend chooses. This keeps the memory model independent of implementation
-details and leaves traits as an additive lookup layer rather than a redesign.
+details.
+
+Traits use the same path. A trait declaration contributes signatures written
+against `Self`, and `impl Trait for Type` binds each one to a concrete function.
+Type checking tries the inherent registry first and then the trait
+implementations of the receiver's type, recording the call as a direct
+`Rvalue::Call` to that function. Two implemented traits declaring one method
+name make the call ambiguous (`E2028`), while an inherent method always wins.
+There is still no vtable, trait object, or dynamic dispatch, so the ownership
+model is unchanged: a trait call owns and borrows exactly what the concrete
+function declares.
 
 A user method declares its receiver explicitly. `self: T` moves or copies the
 receiver, `self: *T` borrows it shared, and `self: *mut T` borrows it exclusive.
 When the receiver expression is a `T` place and the method expects a reference,
 the compiler creates the same loan a written `&receiver` or `&mut receiver`
-would create; the borrow checker therefore sees no special case. An exclusive
-automatic borrow still requires a writable place, and an unrelated receiver type
-is rejected before MIR. Associated functions have no receiver and are called as
+would create; the borrow checker therefore sees no special case. A `*mut T`
+receiver passed to a method that declares `self: *T` is reborrowed as `*T`, a
+shared loan of the pointee, so a read-only method cannot observe a write while
+its loan is live. An exclusive automatic borrow still requires a writable place,
+and an unrelated receiver type is rejected before MIR. Associated functions have no receiver and are called as
 `T::name(...)`, which resolves to an ordinary function item.
 
 A scalar method receives a copy. A sequence method borrows its receiver: `len`
