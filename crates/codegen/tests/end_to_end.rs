@@ -18,6 +18,9 @@ const EXCLUSIVE: &str = include_str!("../../../examples/008_exclusive_references
 const ARRAYS: &str = include_str!("../../../examples/009_arrays.sl");
 const SLICES: &str = include_str!("../../../examples/010_slices.sl");
 const METHODS: &str = include_str!("../../../examples/011_methods.sl");
+const USER_METHODS: &str = include_str!("../../../examples/012_user_methods.sl");
+const METHOD_BORROWS: &str = include_str!("../../../examples/013_method_borrows.sl");
+const METHOD_NAMESPACES: &str = include_str!("../../../examples/014_method_namespaces.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -643,6 +646,57 @@ fn methods_produce_the_language_result_in_debug_and_release() {
             "wrong result for {suffix}"
         );
     }
+}
+
+#[test]
+fn user_methods_produce_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "user-methods-debug"),
+        (OptLevel::O2, false, "user-methods-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            USER_METHODS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the user method example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(47),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn method_receiver_borrows_follow_the_borrow_checker() {
+    let output = TempOutput::new("method-borrows");
+    compile(
+        METHOD_BORROWS,
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the method borrow example compiles");
+    assert_eq!(run(output.path()).code(), Some(52));
+}
+
+#[test]
+fn same_named_methods_on_different_types_get_distinct_symbols() {
+    let output = TempOutput::new("method-namespaces");
+    compile(
+        METHOD_NAMESPACES,
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("same-named methods on different types compile");
+    assert_eq!(run(output.path()).code(), Some(16));
 }
 
 #[test]

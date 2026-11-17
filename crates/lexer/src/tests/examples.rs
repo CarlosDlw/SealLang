@@ -25,14 +25,19 @@ fn all_examples_lex_cleanly() {
         "008_exclusive_references.sl",
         "010_slices.sl",
         "011_methods.sl",
+        "012_user_methods.sl",
+        "013_method_borrows.sl",
+        "014_method_namespaces.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);
         let lexed = fixture.lex();
         fixture.assert_clean();
-        assert_eq!(
-            lexed.tokens.first().map(|token| token.kind),
-            Some(TokenKind::Func),
+        assert!(
+            matches!(
+                lexed.tokens.first().map(|token| token.kind),
+                Some(TokenKind::Func | TokenKind::Struct)
+            ),
             "first token of {name}"
         );
         assert_eq!(

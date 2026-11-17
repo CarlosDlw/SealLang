@@ -26,6 +26,9 @@ fn all_examples_parse_without_diagnostics() {
         ("008_exclusive_references.sl", 2),
         ("010_slices.sl", 3),
         ("011_methods.sl", 1),
+        ("012_user_methods.sl", 3),
+        ("013_method_borrows.sl", 3),
+        ("014_method_namespaces.sl", 5),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);
