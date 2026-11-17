@@ -248,6 +248,25 @@ fn a_shared_pointee_read_is_allowed() {
 }
 
 #[test]
+fn a_stored_shared_trait_receiver_conflicts_with_a_later_exclusive_borrow() {
+    // `p.view()` receives `p` through a shared reborrow of the pointee. The
+    // returned reference keeps that loan alive, so a later exclusive borrow of
+    // the same storage must be rejected like any other overlapping loan.
+    let fixture = check_errors(
+        "struct Counter { value: i32 }\n\
+         trait View { func view(self: *Self) -> *Self; }\n\
+         impl View for Counter { func view(self: *Counter) -> *Counter { self } }\n\
+         func f(p: *mut Counter) -> i32 {\n\
+           let shared = p.view();\n\
+           let exclusive = &mut *p;\n\
+           (*exclusive).value = 1;\n\
+           (*shared).value\n\
+         }\n",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
 fn a_conflict_labels_the_last_use_of_the_live_borrow() {
     let fixture =
         check_errors("func f() -> i32 {\n  let mut x = 1;\n  let r = &mut x;\n  x = 2;\n  *r\n}\n");

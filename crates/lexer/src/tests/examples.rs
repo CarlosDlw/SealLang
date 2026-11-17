@@ -28,6 +28,8 @@ fn all_examples_lex_cleanly() {
         "012_user_methods.sl",
         "013_method_borrows.sl",
         "014_method_namespaces.sl",
+        "015_traits.sl",
+        "016_trait_receivers.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

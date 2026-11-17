@@ -9,4 +9,5 @@ mod resolve;
 mod slices;
 mod structs;
 mod support;
+mod traits;
 mod types;

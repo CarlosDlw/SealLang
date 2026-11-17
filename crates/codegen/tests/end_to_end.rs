@@ -21,6 +21,8 @@ const METHODS: &str = include_str!("../../../examples/011_methods.sl");
 const USER_METHODS: &str = include_str!("../../../examples/012_user_methods.sl");
 const METHOD_BORROWS: &str = include_str!("../../../examples/013_method_borrows.sl");
 const METHOD_NAMESPACES: &str = include_str!("../../../examples/014_method_namespaces.sl");
+const TRAITS: &str = include_str!("../../../examples/015_traits.sl");
+const TRAIT_RECEIVERS: &str = include_str!("../../../examples/016_trait_receivers.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -697,6 +699,92 @@ fn same_named_methods_on_different_types_get_distinct_symbols() {
     )
     .expect("same-named methods on different types compile");
     assert_eq!(run(output.path()).code(), Some(16));
+}
+
+#[test]
+fn traits_dispatch_statically_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "traits-debug"),
+        (OptLevel::O2, false, "traits-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            TRAITS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the trait example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(52),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn a_mutable_receiver_reborrows_shared_for_trait_methods() {
+    let output = TempOutput::new("trait-receivers");
+    compile(
+        TRAIT_RECEIVERS,
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the trait receiver example compiles");
+    assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
+fn a_method_named_main_is_not_the_entry_point() {
+    let output = TempOutput::new("method-main-missing");
+    let inherent = compile(
+        "struct App { value: i32 }\n\
+         impl App { func main(self: *App) -> i32 { (*self).value } }\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect_err("an inherent method is not an entry point");
+    assert!(matches!(
+        inherent,
+        CodegenError::EntryPoint(EntryPointError::Missing)
+    ));
+
+    let trait_method = compile(
+        "struct App { value: i32 }\n\
+         trait Run { func main(self: *Self) -> i32; }\n\
+         impl Run for App { func main(self: *App) -> i32 { (*self).value } }\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+    )
+    .expect_err("a trait method is not an entry point");
+    assert!(matches!(
+        trait_method,
+        CodegenError::EntryPoint(EntryPointError::Missing)
+    ));
+}
+
+#[test]
+fn a_free_main_takes_precedence_over_a_method_named_main() {
+    let output = TempOutput::new("method-main-free");
+    compile(
+        "struct App { value: i32 }\n\
+         impl App { func main(self: *App) -> i32 { (*self).value } }\n\
+         func main() -> i32 { let app = App { value: 7 }; app.main() + 35 }\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the free function is the entry point");
+    assert_eq!(run(output.path()).code(), Some(42));
 }
 
 #[test]

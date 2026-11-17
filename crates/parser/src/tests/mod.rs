@@ -12,3 +12,4 @@ mod slices;
 mod stmts;
 mod structs;
 mod support;
+mod traits;
