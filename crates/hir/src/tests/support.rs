@@ -433,6 +433,7 @@ impl Reachability<'_> {
                     self.check_expr(arm.body);
                 }
             }
+            ExprKind::Block(block) => self.check_block(block),
             ExprKind::If {
                 condition,
                 then_branch,
@@ -455,14 +456,32 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
         match kind {
-            PatternKind::Binding { def, .. } => {
+            PatternKind::Binding { def, pattern, .. } => {
                 let data = self.hir.definitions().get(def);
                 assert!(data.kind.is_local(), "a pattern binding names a local");
                 assert_eq!(data.parent, self.owner);
+                if let Some(pattern) = pattern {
+                    self.check_pattern(pattern);
+                }
             }
             PatternKind::Variant { fields, .. } => {
                 for (_, field) in fields {
                     self.check_pattern(field);
+                }
+            }
+            PatternKind::Struct { adt, fields } => {
+                let data = self.hir.definitions().get(adt);
+                assert_eq!(data.kind, DefKind::Struct);
+                for (field, pattern) in fields {
+                    let field_data = self.hir.definitions().get(field);
+                    assert_eq!(field_data.kind, DefKind::Field);
+                    assert_eq!(field_data.parent, Some(adt));
+                    self.check_pattern(pattern);
+                }
+            }
+            PatternKind::Array { prefix, suffix, .. } => {
+                for element in prefix.iter().chain(suffix.iter()) {
+                    self.check_pattern(*element);
                 }
             }
             PatternKind::Or(alternatives) => {
@@ -470,7 +489,10 @@ impl Reachability<'_> {
                     self.check_pattern(alternative);
                 }
             }
-            PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Error => {}
+            PatternKind::Wildcard
+            | PatternKind::Literal(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Error => {}
         }
     }
 }

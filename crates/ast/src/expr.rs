@@ -372,6 +372,11 @@ pub enum ExprKind {
         /// The arms in source order; the parser rejects an empty list.
         arms: Vec<MatchArm>,
     },
+    /// A block expression, written `{ statements; tail }`.
+    ///
+    /// The value of the block is its tail expression, or `()` when the block
+    /// has statements but no tail. The block owns its own scope.
+    Block(BlockId),
     /// A conditional expression.
     ///
     /// The value of the expression is the value of the branch that runs. An

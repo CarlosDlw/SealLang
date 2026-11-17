@@ -1,8 +1,8 @@
 //! Lowered patterns and match arms.
 //!
-//! By the time a pattern reaches this representation, every enum, variant, and
-//! field is resolved and every binding has a definition. Later phases only walk
-//! the tree; they never look a name up again.
+//! By the time a pattern reaches this representation, every enum, variant,
+//! struct, and field is resolved and every binding has a definition. Later
+//! phases only walk the tree; they never look a name up again.
 
 use seal_ast::PatternLiteral;
 use seal_def::DefId;
@@ -26,15 +26,26 @@ pub struct Pattern {
 pub enum PatternKind {
     /// `_`, which matches anything and binds nothing.
     Wildcard,
-    /// A name that binds the matched value.
+    /// A name that binds the matched value, optionally constrained by `@`.
     Binding {
         /// The bound name.
         name: Symbol,
         /// The binding's definition, which carries its scope and mutability.
         def: DefId,
+        /// The subpattern after `@`, if any.
+        pattern: Option<HirPatternId>,
     },
     /// A scalar literal compared by value.
     Literal(PatternLiteral),
+    /// A scalar range such as `0..=9`, `'a'..='z'`, or `0..10`.
+    Range {
+        /// The first value of the range.
+        start: PatternLiteral,
+        /// The exclusive or inclusive end value.
+        end: PatternLiteral,
+        /// `true` for `..=`, `false` for `..`.
+        inclusive: bool,
+    },
     /// An enum variant with its fields in declaration order.
     ///
     /// A named pattern may be written in any order; lowering reorders it here so
@@ -46,6 +57,22 @@ pub enum PatternKind {
         variant: VariantIdx,
         /// One entry per declared field: the field definition and its pattern.
         fields: Vec<(DefId, HirPatternId)>,
+    },
+    /// A struct with its fields in declaration order.
+    Struct {
+        /// The struct definition.
+        adt: DefId,
+        /// One entry per declared field: the field definition and its pattern.
+        fields: Vec<(DefId, HirPatternId)>,
+    },
+    /// A fixed-size array pattern.
+    Array {
+        /// Patterns for the first elements, in index order.
+        prefix: Vec<HirPatternId>,
+        /// Whether the pattern skips the elements between `prefix` and `suffix`.
+        has_rest: bool,
+        /// Patterns for the last elements, in index order.
+        suffix: Vec<HirPatternId>,
     },
     /// Alternatives that bind the same names.
     Or(Vec<HirPatternId>),

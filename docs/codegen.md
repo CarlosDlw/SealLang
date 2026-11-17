@@ -99,11 +99,15 @@ The ABI is defined by the language, not by a C header:
 - `match` lowers to control flow. The scrutinee is moved into a temporary,
   `Rvalue::Discriminant` reads the tag into a `u32`, and a chain of `SwitchInt`
   tests selects the arm; a literal pattern compares with `Rvalue::Binary`
-  `Eq` and switches on the boolean result. An or-pattern becomes one such chain
-  per alternative. Bindings are stores from the variant field places, emitted
-  after the whole pattern matched, and a guard is another `SwitchInt` on its
-  boolean result. Falling past the last arm enters an `Unreachable` block, which
-  exhaustiveness checking already made impossible.
+  `Eq` and switches on the boolean result, a range pattern compares twice (`Ge`
+  on the start and `Le` or `Lt` on the end), a struct pattern projects each
+  field with `Projection::Field`, and an array pattern projects each fixed
+  element with `Projection::Index` at a constant position; the patterns after
+  `..` use positions measured from the array length. An or-pattern becomes one
+  such chain per alternative. Bindings are stores from the field or element
+  places, emitted after the whole pattern matched, and a guard is another
+  `SwitchInt` on its boolean result. Falling past the last arm enters an
+  `Unreachable` block, which exhaustiveness checking already made impossible.
 - Array indexing evaluates the index once, checks it against the length, and
   then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
   unsafe operation and every compiler crate except the debug bridge forbids

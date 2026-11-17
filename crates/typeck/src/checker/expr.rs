@@ -156,6 +156,11 @@ impl Checker<'_> {
             ExprKind::Match { scrutinee, arms } => {
                 self.check_match(scrutinee, &arms, expected, flow, span)
             }
+            ExprKind::Block(block) => {
+                let outcome = self.check_block(block, expected, flow.clone());
+                *flow = outcome.flow;
+                outcome.ty
+            }
             ExprKind::If {
                 condition,
                 then_branch,

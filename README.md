@@ -59,14 +59,19 @@ two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
 
-`match` is an expression over enum variants and scalar values. Patterns nest:
-they match unit, positional, and named variants, bind fields, compare integer,
-float, character, and boolean literals, and combine alternatives with `|`. An arm
-may carry an `if` guard, which sees only `Copy` bindings because a failed guard
-must leave the scrutinee available for the next arm. Coverage is proved by the
-usefulness algorithm: an enum or `bool` match is exhaustive once every
-constructor is covered, an integer, float, or character match needs a catch-all,
-and an arm that no value can reach is `E3033`.
+`match` is an expression over enum variants, structs, arrays, and scalar values.
+A braced block is an ordinary expression, so an arm body can run statements and
+produce a value. Patterns nest: they match unit, positional, and named variants,
+destructure structs, match every element of a fixed-size array, bind fields,
+compare integer, float, character, and boolean literals, range over integers and
+characters (`0..=9`, `'a'..='z'`), bind a whole value while narrowing it
+(`name @ 0..=9`), and combine alternatives with `|`. An arm may carry an `if`
+guard, which sees only `Copy` bindings because a failed guard must leave the
+scrutinee available for the next arm. Coverage is proved by the usefulness
+algorithm: enums and `bool` are exhaustive once every constructor is covered,
+integer and character ranges partition their domain so adjacent ranges can be
+exhaustive, floats need a catch-all, and an arm that no value can reach is
+`E3033`.
 
 ## Command line
 

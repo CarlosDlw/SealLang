@@ -2,13 +2,14 @@
 
 use seal_ast::{Literal, PatternLiteral};
 use seal_def::DefId;
+use seal_error_codes as codes;
+use seal_hash::FxHashSet;
 use seal_hir::{HirExprId, HirPatternId, MatchArm, PatternKind};
 use seal_span::Span;
-use seal_ty::TyId;
+use seal_ty::{TyId, TyKind};
 
 use super::Checker;
 use super::flow::Flow;
-use seal_hash::FxHashSet;
 
 impl Checker<'_> {
     /// Checks a `match` expression.
@@ -101,11 +102,19 @@ impl Checker<'_> {
 
         match kind {
             PatternKind::Wildcard | PatternKind::Error => {}
-            PatternKind::Binding { def, .. } => {
+            PatternKind::Binding { def, pattern, .. } => {
                 self.results.record_local(def, expected);
                 flow.assign(def, &[]);
+                if let Some(pattern) = pattern {
+                    self.check_pattern(pattern, expected, flow);
+                }
             }
             PatternKind::Literal(literal) => self.check_pattern_literal(literal, expected, span),
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.check_pattern_range(start, end, inclusive, expected, span),
             PatternKind::Variant {
                 adt,
                 variant,
@@ -127,6 +136,73 @@ impl Checker<'_> {
                     };
                     let field_ty = field.ty;
                     self.check_pattern(field_pattern, field_ty, flow);
+                }
+            }
+            PatternKind::Struct { adt, fields } => {
+                let Some(adt_id) = self.hir.adt(adt) else {
+                    return;
+                };
+                let pattern_ty = self.hir.ty_ctxt().adt_ty(adt_id);
+                if !self.is_compatible(expected, pattern_ty) {
+                    self.mismatch(span, expected, pattern_ty);
+                }
+                let definition = self.hir.ty_ctxt().adt(adt_id);
+                for (field, field_pattern) in fields {
+                    let Some(field) = definition.field(field) else {
+                        continue;
+                    };
+                    let field_ty = field.ty;
+                    self.check_pattern(field_pattern, field_ty, flow);
+                }
+            }
+            PatternKind::Array {
+                prefix,
+                has_rest,
+                suffix,
+            } => {
+                let (element_ty, length) = match self.hir.ty_ctxt().kind(expected) {
+                    TyKind::Array { element, length } => (element, length),
+                    TyKind::Error => return,
+                    _ => {
+                        if !self.is_error(expected) {
+                            self.error(
+                                codes::E2049,
+                                span,
+                                format!(
+                                    "an array pattern needs an array, found `{}`",
+                                    self.ty_text(expected)
+                                ),
+                            )
+                            .help("match an array value, or use `_`")
+                            .emit();
+                        }
+                        return;
+                    }
+                };
+                let fixed = prefix.len() + suffix.len();
+                if has_rest {
+                    if fixed as u64 > length {
+                        self.error(
+                            codes::E2049,
+                            span,
+                            format!(
+                                "this pattern needs at least {fixed} element(s), but the array has {length}"
+                            ),
+                        )
+                        .help("remove patterns until they fit, or use `..` for the middle")
+                        .emit();
+                    }
+                } else if fixed as u64 != length {
+                    self.error(
+                        codes::E2049,
+                        span,
+                        format!("this pattern has {fixed} element(s), but the array has {length}"),
+                    )
+                    .help("write one pattern per element, or `..` for a run you ignore")
+                    .emit();
+                }
+                for element in prefix.iter().chain(suffix.iter()) {
+                    self.check_pattern(*element, element_ty, flow);
                 }
             }
             PatternKind::Or(alternatives) => {
@@ -159,18 +235,121 @@ impl Checker<'_> {
         self.mismatch(span, expected, ty);
     }
 
+    /// Checks both endpoints of a range and rejects empty or non-scalar ranges.
+    fn check_pattern_range(
+        &mut self,
+        start: PatternLiteral,
+        end: PatternLiteral,
+        inclusive: bool,
+        expected: TyId,
+        span: Span,
+    ) {
+        let kind = self.hir.ty_ctxt().kind(expected);
+        let integer = matches!(kind, TyKind::Int(_) | TyKind::Uint(_));
+        let character = matches!(kind, TyKind::Char);
+        if !integer && !character {
+            if !self.is_error(expected) {
+                self.error(
+                    codes::E1011,
+                    span,
+                    format!("a range pattern cannot match `{}`", self.ty_text(expected)),
+                )
+                .help("range patterns need an integer or `char` value")
+                .emit();
+            }
+            return;
+        }
+
+        self.check_range_bound(start, expected, span);
+        self.check_range_bound(end, expected, span);
+
+        let empty = match (start, end) {
+            (
+                PatternLiteral::Int {
+                    value: start_value,
+                    negative: start_negative,
+                    ..
+                },
+                PatternLiteral::Int {
+                    value: end_value,
+                    negative: end_negative,
+                    ..
+                },
+            ) => match kind {
+                TyKind::Int(_) => {
+                    let start = signed_value(start_negative, start_value);
+                    let end = signed_value(end_negative, end_value);
+                    if inclusive { start > end } else { start >= end }
+                }
+                TyKind::Uint(_) => {
+                    if start_negative || end_negative {
+                        false
+                    } else if inclusive {
+                        start_value > end_value
+                    } else {
+                        start_value >= end_value
+                    }
+                }
+                _ => false,
+            },
+            (PatternLiteral::Char(start), PatternLiteral::Char(end)) => {
+                if inclusive {
+                    start > end
+                } else {
+                    start >= end
+                }
+            }
+            _ => false,
+        };
+        if empty {
+            self.error(codes::E2050, span, "this range pattern is empty")
+                .help("swap the endpoints, or remove the arm")
+                .emit();
+        }
+    }
+
+    fn check_range_bound(&mut self, literal: PatternLiteral, expected: TyId, span: Span) {
+        let (literal, allow_signed_min) = match literal {
+            PatternLiteral::Int {
+                value,
+                negative,
+                suffix,
+            } => (
+                Literal::Int {
+                    value,
+                    base: 10,
+                    suffix,
+                },
+                negative,
+            ),
+            PatternLiteral::Float { value, suffix } => (Literal::Float { value, suffix }, false),
+            PatternLiteral::Char(value) => (Literal::Char(value), false),
+            PatternLiteral::Bool(value) => (Literal::Bool(value), false),
+        };
+        let ty = self.literal_ty(literal, Some(expected), span, allow_signed_min);
+        self.mismatch(span, expected, ty);
+    }
+
     /// Collects the non-`Copy` bindings of a pattern, for guard checking.
     fn collect_noncopy_bindings(&self, pattern: HirPatternId, out: &mut FxHashSet<DefId>) {
         match &self.hir.pattern(pattern).kind {
-            PatternKind::Binding { def, .. } => {
+            PatternKind::Binding { def, pattern, .. } => {
                 let ty = self.local_type(*def);
                 if !self.is_copy(ty) {
                     out.insert(*def);
                 }
+                if let Some(pattern) = pattern {
+                    self.collect_noncopy_bindings(*pattern, out);
+                }
             }
-            PatternKind::Variant { fields, .. } => {
+            PatternKind::Variant { fields, .. } | PatternKind::Struct { fields, .. } => {
                 for (_, field) in fields {
                     self.collect_noncopy_bindings(*field, out);
+                }
+            }
+            PatternKind::Array { prefix, suffix, .. } => {
+                for element in prefix.iter().chain(suffix.iter()) {
+                    self.collect_noncopy_bindings(*element, out);
                 }
             }
             PatternKind::Or(alternatives) => {
@@ -178,7 +357,15 @@ impl Checker<'_> {
                     self.collect_noncopy_bindings(*alternative, out);
                 }
             }
-            PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Error => {}
+            PatternKind::Wildcard
+            | PatternKind::Literal(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Error => {}
         }
     }
+}
+
+fn signed_value(negative: bool, magnitude: u128) -> i128 {
+    let magnitude = magnitude.min(i128::MAX as u128) as i128;
+    if negative { -magnitude } else { magnitude }
 }

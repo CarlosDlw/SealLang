@@ -53,10 +53,24 @@ pub enum PatternLiteral {
 pub enum PatternKind {
     /// `_`, which matches anything without binding it.
     Wildcard,
-    /// A binding such as `value`, which matches anything and names it.
-    Binding(Symbol),
+    /// A binding such as `value`, optionally constrained by `name @ pattern`.
+    Binding {
+        /// The bound name.
+        name: Symbol,
+        /// The subpattern after `@`, if any.
+        pattern: Option<PatternId>,
+    },
     /// A scalar literal such as `0`, `-1`, `'x'`, or `true`.
     Literal(PatternLiteral),
+    /// An inclusive or exclusive scalar range such as `0..=9` or `'a'..'z'`.
+    Range {
+        /// The first value of the range.
+        start: PatternLiteral,
+        /// The exclusive or inclusive end value.
+        end: PatternLiteral,
+        /// `true` for `..=`, `false` for `..`.
+        inclusive: bool,
+    },
     /// A qualified enum variant such as `Option::Some(value)`.
     Variant {
         /// The enum name.
@@ -69,6 +83,24 @@ pub enum PatternKind {
         name_span: Span,
         /// The fields matched by the pattern.
         fields: VariantPatternFields,
+    },
+    /// A struct destructuring pattern such as `Point { x, y: 0 }`.
+    Struct {
+        /// The struct name.
+        name: Symbol,
+        /// The span of the struct name.
+        name_span: Span,
+        /// The fields matched by the pattern, in source order.
+        fields: Vec<NamedPatternField>,
+    },
+    /// A fixed-size array pattern such as `[first, second]` or `[first, .., last]`.
+    Array {
+        /// Patterns before the `..`, if any.
+        prefix: Vec<PatternId>,
+        /// Whether the pattern contains `..`.
+        has_rest: bool,
+        /// Patterns after the `..`, if any.
+        suffix: Vec<PatternId>,
     },
     /// A list of alternatives, written `left | right`.
     Or(Vec<PatternId>),
@@ -87,7 +119,7 @@ pub enum VariantPatternFields {
     Named(Vec<NamedPatternField>),
 }
 
-/// One named field in a variant pattern.
+/// One named field in a variant or struct pattern.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NamedPatternField {
     /// The field name.

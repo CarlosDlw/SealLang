@@ -17,6 +17,12 @@ impl Parser<'_> {
             return self.builder.push_block(span, Vec::new(), None);
         }
 
+        // A block owns its braces, so its statements and tail may use struct
+        // literals and nested block expressions even when the block sits inside
+        // an `if` condition that suppresses them.
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = true;
+
         let mut statements: Vec<StmtId> = Vec::new();
         let mut tail = None;
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
@@ -90,6 +96,7 @@ impl Parser<'_> {
             .emit();
             self.current_span()
         };
+        self.struct_literal_allowed = allowed;
         let span = open.cover(close);
         self.builder.push_block(span, statements, tail)
     }

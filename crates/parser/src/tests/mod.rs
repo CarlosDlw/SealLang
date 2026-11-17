@@ -7,6 +7,7 @@ mod examples;
 mod exprs;
 mod impls;
 mod items;
+mod match_advanced;
 mod match_expr;
 mod methods;
 mod recovery;

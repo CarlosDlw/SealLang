@@ -518,6 +518,7 @@ impl Reachability<'_> {
                     self.check_expr(arm.body);
                 }
             }
+            ExprKind::Block(block) => self.check_block(block),
             ExprKind::If {
                 condition,
                 then_branch,
@@ -572,14 +573,34 @@ impl Reachability<'_> {
                     }
                 }
             }
+            PatternKind::Struct {
+                name_span, fields, ..
+            } => {
+                self.assert_span(name_span);
+                for field in fields {
+                    self.assert_span(field.name_span);
+                    self.assert_span(field.span);
+                    self.check_pattern(field.pattern);
+                }
+            }
+            PatternKind::Binding { pattern, .. } => {
+                if let Some(pattern) = pattern {
+                    self.check_pattern(pattern);
+                }
+            }
             PatternKind::Or(alternatives) => {
                 for alternative in alternatives {
                     self.check_pattern(alternative);
                 }
             }
+            PatternKind::Array { prefix, suffix, .. } => {
+                for element in prefix.iter().chain(suffix.iter()) {
+                    self.check_pattern(*element);
+                }
+            }
             PatternKind::Wildcard
-            | PatternKind::Binding(_)
             | PatternKind::Literal(_)
+            | PatternKind::Range { .. }
             | PatternKind::Error => {}
         }
     }

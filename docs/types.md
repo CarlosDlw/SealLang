@@ -285,6 +285,10 @@ func classify(command: Command) -> i32 {
 | `Enum::Variant` | a unit variant |
 | `Enum::Variant(p, q)` | a positional variant, one pattern per field |
 | `Enum::Variant { field: p, other }` | a named variant; a bare name is shorthand for `other: other` |
+| `Struct { field: p, other }` | a struct; a bare name is shorthand for `other: other` |
+| `a..=b`, `a..b` | an integer or `char` value inside the range |
+| `name @ p` | any value matching `p`, also bound as `name` |
+| `[p, q]`, `[first, .., last]` | a fixed-size array; `..` skips the elements between the fixed patterns |
 | `p \| q` | either alternative |
 
 A pattern name is always a binding: an enum variant is written with its enum
@@ -292,11 +296,19 @@ A pattern name is always a binding: an enum variant is written with its enum
 borrowed text would need a runtime operation the language does not define. A
 name may be bound once per pattern (`E2040`), and every alternative of `|` must
 bind the same names, because the arm body runs once for all of them (`E2041`). A
-pattern mirrors the variant declaration: fields cannot be written on a unit
+pattern mirrors the declaration: fields cannot be written on a unit
 variant (`E2042`), a positional variant needs exactly one pattern per field
 (`E2043`), and a named pattern must use declared field names, written in any
-order (`E2044`). Lowering reorders named fields into declaration order, so every
-later phase sees one canonical shape.
+order (`E2044`). A struct pattern has the same rules with its own codes: an
+unknown field is `E2046`, a field written twice is `E2047`, and an omitted field
+is `E2048`. An array pattern writes one pattern per element, or uses a single
+`..` to skip the elements between its fixed patterns; a pattern with more fixed
+elements than the array has is `E2049`. A range whose start is past its end
+matches nothing (`E2050`). Lowering reorders
+named fields into declaration order, so every later phase sees one canonical
+shape. An `@` binding is a binding with a subpattern: the subpattern must match
+before the name is stored, and the name is available in the arm body and guard
+under the same rules as any other binding.
 
 A guard is an `if` expression after the pattern. It must have type `bool`
 (`E3003`) and may read only bindings whose type is `Copy` (`E2045`): a failed
@@ -307,10 +319,14 @@ bindings are assigned before the guard and the rest after it succeeds.
 Coverage uses the usefulness algorithm from the pattern literature: an arm is
 reachable when some value matches it and no earlier unguarded arm, and a match is
 exhaustive when no value escapes every arm. `bool` and enums have finitely many
-constructors, so covering every variant is enough; integer, float, and character
-types are infinite and need `_` or a binding. A guard never contributes coverage.
-A missing value is `E3032` and names a witness such as `Mode::Off`; an arm that no
-value can reach is `E3033`.
+constructors, so covering every variant is enough; a struct or array is a single
+constructor, so its fields decide coverage. Integer and character ranges
+partition the value domain at every observed endpoint, which makes adjacent
+ranges exhaustive without a catch-all and reports an uncovered gap as a concrete
+range such as `10..=19`. Floats have no usable constructor order, so a float
+match needs `_` or a binding. A guard never contributes coverage. A missing
+value is `E3032` and names a witness such as `Mode::Off`; an arm that no value
+can reach is `E3033`.
 
 Matching moves the scrutinee into the temporary. Binding a field of a variant
 moves that field when its type is not `Copy`, which is the one way to move part

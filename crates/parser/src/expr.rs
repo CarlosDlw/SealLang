@@ -297,6 +297,15 @@ impl Parser<'_> {
             TokenKind::LBracket => self.parse_array_literal(token.span),
             TokenKind::If => self.parse_if_expr(token.span),
             TokenKind::Match => self.parse_match_expr(token.span),
+            // A `{` starts a block expression unless a surrounding construct
+            // owns the braces: `if`/`while` conditions and a match scrutinee
+            // share the struct-literal flag, because `{` there starts the body
+            // or the arm list.
+            TokenKind::LBrace if self.struct_literal_allowed => {
+                let block = self.parse_block();
+                let span = token.span.cover(self.previous_span());
+                self.builder.push_expr(ExprKind::Block(block), span)
+            }
             TokenKind::Error => {
                 self.bump();
                 self.builder.push_expr(ExprKind::Error, token.span)

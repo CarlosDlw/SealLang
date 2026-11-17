@@ -66,7 +66,7 @@ fn bindings_become_definitions_with_their_names() {
     };
     let (field, pattern) = fields[0];
     assert_eq!(fixture.symbol(hir.definitions().name(field)), "#0");
-    let PatternKind::Binding { name, def } = &hir.pattern(pattern).kind else {
+    let PatternKind::Binding { name, def, .. } = &hir.pattern(pattern).kind else {
         panic!("expected a binding pattern");
     };
     assert_eq!(fixture.symbol(*name), "step");

@@ -26,6 +26,7 @@ const TRAIT_RECEIVERS: &str = include_str!("../../../examples/016_trait_receiver
 const ENUMS: &str = include_str!("../../../examples/017_enums.sl");
 const TUPLE_VARIANTS: &str = include_str!("../../../examples/018_tuple_variants.sl");
 const MATCH: &str = include_str!("../../../examples/019_match.sl");
+const ADVANCED_MATCH: &str = include_str!("../../../examples/020_match_advanced.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -802,6 +803,29 @@ fn match_produces_the_language_result_in_debug_and_release() {
             debug_info,
         )
         .expect("the match example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn advanced_match_produces_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "advanced-match-debug"),
+        (OptLevel::O2, false, "advanced-match-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            ADVANCED_MATCH,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the advanced match example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

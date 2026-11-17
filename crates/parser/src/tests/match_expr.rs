@@ -63,7 +63,7 @@ fn a_match_expression_parses_patterns_fields_and_bodies() {
     assert_eq!(patterns.len(), 1);
     assert!(matches!(
         &ast.pattern(patterns[0]).kind,
-        PatternKind::Binding(_)
+        PatternKind::Binding { .. }
     ));
 
     let PatternKind::Variant { name, fields, .. } = &ast.pattern(arms[2].pattern).kind else {
@@ -77,7 +77,7 @@ fn a_match_expression_parses_patterns_fields_and_bodies() {
     assert_eq!(fixture.symbol(named[0].name), "code");
     assert!(matches!(
         &ast.pattern(named[0].pattern).kind,
-        PatternKind::Binding(_)
+        PatternKind::Binding { .. }
     ));
 }
 
@@ -151,7 +151,7 @@ fn a_plain_name_is_a_binding() {
     assert_invariants(&fixture, &ast);
 
     let arms = match_arms(&ast, 0);
-    let PatternKind::Binding(symbol) = &ast.pattern(arms[0].pattern).kind else {
+    let PatternKind::Binding { name: symbol, .. } = &ast.pattern(arms[0].pattern).kind else {
         panic!("expected a binding pattern");
     };
     assert_eq!(fixture.symbol(*symbol), "value");

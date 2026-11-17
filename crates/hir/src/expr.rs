@@ -253,6 +253,8 @@ pub enum ExprKind {
         /// Arms in source order; the parser guarantees at least one.
         arms: Vec<MatchArm>,
     },
+    /// A block expression, written `{ statements; tail }`.
+    Block(HirBlockId),
     /// A conditional expression.
     If {
         /// The condition, which must have type `bool`.

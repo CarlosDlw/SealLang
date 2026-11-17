@@ -354,11 +354,15 @@ allowed to depend only on crates below it in the list.
 64. **`match` evaluates its scrutinee once and tests it structurally.** Lowering
     moves the scrutinee into a temporary, reads the tag with
     `Rvalue::Discriminant`, and dispatches with `SwitchInt`; a literal pattern
-    compares with `BinOp::Eq`. Or-patterns expand into one test chain per
+    compares with `BinOp::Eq`, a range pattern compares with `Ge` and `Le`/`Lt`,
+    and struct and array patterns project fields and constant indices without
+    testing anything else. Or-patterns expand into one test chain per
     alternative, bindings are stored only after the whole pattern matched, and
     `Copy` bindings are stored before a guard while non-`Copy` ones follow it
     (`E2045`). Coverage and reachability come from the usefulness algorithm
-    (`E3032`, `E3033`), and a guard never contributes coverage.
+    (`E3032`, `E3033`), and a guard never contributes coverage. Scalar ranges
+    are constructors over domain partitions, so adjacent integer or character
+    ranges are exhaustive and gaps have concrete witnesses.
 
 ## Extension points
 

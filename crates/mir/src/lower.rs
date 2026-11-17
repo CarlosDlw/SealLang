@@ -517,6 +517,7 @@ impl<'a> BodyLowering<'a> {
                 ..
             } => self.lower_method(expr, receiver, name_span, &args, dest, span),
             ExprKind::Match { scrutinee, arms } => self.lower_match(scrutinee, &arms, dest, span),
+            ExprKind::Block(block) => self.lower_block(block, dest),
             ExprKind::If {
                 condition,
                 then_branch,

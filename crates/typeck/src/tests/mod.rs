@@ -8,6 +8,7 @@ mod examples;
 mod flow;
 mod init;
 mod literals;
+mod match_advanced;
 mod match_expr;
 mod methods;
 mod operators;

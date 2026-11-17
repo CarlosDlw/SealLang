@@ -7,7 +7,8 @@
 //! public, fully resolved pattern tree built.
 
 use seal_ast::{
-    PatternId as AstPatternId, PatternKind as AstPatternKind, PatternLiteral, VariantPatternFields,
+    NamedPatternField, PatternId as AstPatternId, PatternKind as AstPatternKind, PatternLiteral,
+    VariantPatternFields,
 };
 use seal_def::{DefData, DefId, DefKind};
 use seal_error_codes as codes;
@@ -32,12 +33,27 @@ enum RawPatternKind {
     Binding {
         name: Symbol,
         span: Span,
+        pattern: Option<Box<RawPattern>>,
     },
     Literal(PatternLiteral),
+    Range {
+        start: PatternLiteral,
+        end: PatternLiteral,
+        inclusive: bool,
+    },
     Variant {
         adt: DefId,
         variant: VariantIdx,
         fields: Vec<(DefId, RawPattern)>,
+    },
+    Struct {
+        adt: DefId,
+        fields: Vec<(DefId, RawPattern)>,
+    },
+    Array {
+        prefix: Vec<RawPattern>,
+        has_rest: bool,
+        suffix: Vec<RawPattern>,
     },
     Or(Vec<RawPattern>),
     Error,
@@ -87,8 +103,21 @@ impl Lowering<'_> {
         };
         let kind = match kind {
             AstPatternKind::Wildcard => RawPatternKind::Wildcard,
-            AstPatternKind::Binding(name) => RawPatternKind::Binding { name, span },
+            AstPatternKind::Binding { name, pattern } => RawPatternKind::Binding {
+                name,
+                span,
+                pattern: pattern.map(|pattern| Box::new(self.build_raw_pattern(pattern))),
+            },
             AstPatternKind::Literal(literal) => RawPatternKind::Literal(literal),
+            AstPatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => RawPatternKind::Range {
+                start,
+                end,
+                inclusive,
+            },
             AstPatternKind::Variant {
                 type_name,
                 type_span,
@@ -96,6 +125,26 @@ impl Lowering<'_> {
                 name_span,
                 fields,
             } => self.build_raw_variant(type_name, type_span, name, name_span, fields),
+            AstPatternKind::Struct {
+                name,
+                name_span,
+                fields,
+            } => self.build_raw_struct(name, name_span, &fields),
+            AstPatternKind::Array {
+                prefix,
+                has_rest,
+                suffix,
+            } => RawPatternKind::Array {
+                prefix: prefix
+                    .into_iter()
+                    .map(|element| self.build_raw_pattern(element))
+                    .collect(),
+                has_rest,
+                suffix: suffix
+                    .into_iter()
+                    .map(|element| self.build_raw_pattern(element))
+                    .collect(),
+            },
             AstPatternKind::Or(alternatives) => RawPatternKind::Or(
                 alternatives
                     .into_iter()
@@ -116,32 +165,7 @@ impl Lowering<'_> {
         fields: VariantPatternFields,
     ) -> RawPatternKind {
         let Some(definition) = self.types.get(&type_name).copied() else {
-            let missing = self.interner.resolve(type_name);
-            if self.traits.contains_key(&type_name) {
-                self.error(
-                    codes::E2027,
-                    type_span,
-                    format!("`{missing}` is a trait, not an enum"),
-                )
-                .help("match a value of an enum type")
-                .emit();
-            } else if self.globals.contains_key(&type_name) {
-                self.error(
-                    codes::E2015,
-                    type_span,
-                    format!("`{missing}` is a value, not a type"),
-                )
-                .help("a variant pattern starts with an enum name")
-                .emit();
-            } else {
-                self.error(
-                    codes::E2002,
-                    type_span,
-                    format!("cannot find type `{missing}` in this scope"),
-                )
-                .help("declare it with `enum`, or check the spelling")
-                .emit();
-            }
+            self.report_missing_pattern_type(type_name, type_span);
             self.discard_variant_fields(fields);
             return RawPatternKind::Error;
         };
@@ -160,7 +184,7 @@ impl Lowering<'_> {
                     self.interner.resolve(type_name)
                 ),
             )
-            .help("a struct is matched by binding it, with `_`, or by a literal")
+            .help("a struct is matched with `Name { field }`")
             .emit();
             self.discard_variant_fields(fields);
             return RawPatternKind::Error;
@@ -411,6 +435,146 @@ impl Lowering<'_> {
         }
     }
 
+    /// Resolves a struct pattern's fields against the declaration.
+    fn build_raw_struct(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        fields: &[NamedPatternField],
+    ) -> RawPatternKind {
+        let Some(definition) = self.types.get(&name).copied() else {
+            self.report_missing_pattern_type(name, name_span);
+            for field in fields {
+                self.build_raw_pattern(field.pattern);
+            }
+            return RawPatternKind::Error;
+        };
+
+        let adt = self
+            .hir
+            .adt(definition)
+            .expect("every type definition reserves an aggregate");
+        let adt_def = self.hir.ty_ctxt().adt(adt).clone();
+        if adt_def.is_enum() {
+            self.error(
+                codes::E2042,
+                name_span,
+                format!("`{}` is an enum, not a struct", self.interner.resolve(name)),
+            )
+            .help("match a variant with `Enum::Variant { ... }`")
+            .emit();
+            for field in fields {
+                self.build_raw_pattern(field.pattern);
+            }
+            return RawPatternKind::Error;
+        }
+
+        let mut matched: FxHashMap<DefId, RawPattern> = FxHashMap::default();
+        for field in fields {
+            let pattern = self.build_raw_pattern(field.pattern);
+            match adt_def
+                .fields
+                .iter()
+                .find(|declared| declared.name == Some(field.name))
+            {
+                Some(declared) => {
+                    if matched.insert(declared.def, pattern).is_some() {
+                        self.error(
+                            codes::E2047,
+                            field.name_span,
+                            format!(
+                                "the field `{}` is matched twice",
+                                self.interner.resolve(field.name)
+                            ),
+                        )
+                        .help("write each field exactly once")
+                        .emit();
+                    }
+                }
+                None => {
+                    self.error(
+                        codes::E2046,
+                        field.name_span,
+                        format!(
+                            "the struct `{}` has no field `{}`",
+                            self.interner.resolve(name),
+                            self.interner.resolve(field.name)
+                        ),
+                    )
+                    .help("check the field name against the declaration")
+                    .emit();
+                }
+            }
+        }
+
+        let missing: Vec<String> = adt_def
+            .fields
+            .iter()
+            .filter(|field| !matched.contains_key(&field.def))
+            .filter_map(|field| {
+                field
+                    .name
+                    .map(|name| format!("`{}`", self.interner.resolve(name)))
+            })
+            .collect();
+        if !missing.is_empty() {
+            self.error(
+                codes::E2048,
+                name_span,
+                format!(
+                    "the pattern for `{}` is missing {}",
+                    self.interner.resolve(name),
+                    missing.join(", ")
+                ),
+            )
+            .help("write every field, or use `_` for the ones the arm ignores")
+            .emit();
+        }
+
+        let fields = adt_def
+            .fields
+            .iter()
+            .filter_map(|field| {
+                matched
+                    .remove(&field.def)
+                    .map(|pattern| (field.def, pattern))
+            })
+            .collect();
+        RawPatternKind::Struct {
+            adt: definition,
+            fields,
+        }
+    }
+
+    fn report_missing_pattern_type(&mut self, type_name: Symbol, type_span: Span) {
+        let missing = self.interner.resolve(type_name);
+        if self.traits.contains_key(&type_name) {
+            self.error(
+                codes::E2027,
+                type_span,
+                format!("`{missing}` is a trait, not a type"),
+            )
+            .help("match a value of an enum or struct type")
+            .emit();
+        } else if self.globals.contains_key(&type_name) {
+            self.error(
+                codes::E2015,
+                type_span,
+                format!("`{missing}` is a value, not a type"),
+            )
+            .help("a pattern starts with an enum or struct name")
+            .emit();
+        } else {
+            self.error(
+                codes::E2002,
+                type_span,
+                format!("cannot find type `{missing}` in this scope"),
+            )
+            .help("declare it with `enum` or `struct`, or check the spelling")
+            .emit();
+        }
+    }
+
     /// Lowers child patterns of a variant that could not be resolved, so their
     /// own diagnostics still appear, and discards the result.
     fn discard_variant_fields(&mut self, fields: VariantPatternFields) {
@@ -439,7 +603,12 @@ impl Lowering<'_> {
     ) {
         match &pattern.kind {
             RawPatternKind::Wildcard | RawPatternKind::Literal(_) | RawPatternKind::Error => {}
-            RawPatternKind::Binding { name, span } => {
+            RawPatternKind::Range { .. } => {}
+            RawPatternKind::Binding {
+                name,
+                span,
+                pattern,
+            } => {
                 if seen.insert(*name) {
                     out.push((*name, *span));
                 } else {
@@ -454,10 +623,18 @@ impl Lowering<'_> {
                     .help("rename one binding, or replace it with `_`")
                     .emit();
                 }
+                if let Some(pattern) = pattern {
+                    self.collect_pattern_bindings(pattern, out, seen);
+                }
             }
-            RawPatternKind::Variant { fields, .. } => {
+            RawPatternKind::Variant { fields, .. } | RawPatternKind::Struct { fields, .. } => {
                 for (_, field) in fields {
                     self.collect_pattern_bindings(field, out, seen);
+                }
+            }
+            RawPatternKind::Array { prefix, suffix, .. } => {
+                for element in prefix.iter().chain(suffix) {
+                    self.collect_pattern_bindings(element, out, seen);
                 }
             }
             RawPatternKind::Or(alternatives) => {
@@ -516,11 +693,27 @@ impl Lowering<'_> {
     ) -> HirPatternId {
         let kind = match &pattern.kind {
             RawPatternKind::Wildcard => PatternKind::Wildcard,
-            RawPatternKind::Binding { name, span } => PatternKind::Binding {
+            RawPatternKind::Binding {
+                name,
+                span,
+                pattern: subpattern,
+            } => PatternKind::Binding {
                 name: *name,
                 def: self.binding_def(*name, *span, bindings),
+                pattern: subpattern
+                    .as_deref()
+                    .map(|pattern| self.instantiate_pattern(pattern, bindings)),
             },
             RawPatternKind::Literal(literal) => PatternKind::Literal(*literal),
+            RawPatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => PatternKind::Range {
+                start: *start,
+                end: *end,
+                inclusive: *inclusive,
+            },
             RawPatternKind::Variant {
                 adt,
                 variant,
@@ -531,6 +724,28 @@ impl Lowering<'_> {
                 fields: fields
                     .iter()
                     .map(|(field, pattern)| (*field, self.instantiate_pattern(pattern, bindings)))
+                    .collect(),
+            },
+            RawPatternKind::Struct { adt, fields } => PatternKind::Struct {
+                adt: *adt,
+                fields: fields
+                    .iter()
+                    .map(|(field, pattern)| (*field, self.instantiate_pattern(pattern, bindings)))
+                    .collect(),
+            },
+            RawPatternKind::Array {
+                prefix,
+                has_rest,
+                suffix,
+            } => PatternKind::Array {
+                prefix: prefix
+                    .iter()
+                    .map(|element| self.instantiate_pattern(element, bindings))
+                    .collect(),
+                has_rest: *has_rest,
+                suffix: suffix
+                    .iter()
+                    .map(|element| self.instantiate_pattern(element, bindings))
                     .collect(),
             },
             RawPatternKind::Or(alternatives) => PatternKind::Or(

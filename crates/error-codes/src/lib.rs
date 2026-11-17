@@ -905,6 +905,59 @@ guard expression of an arm.\n\nMove the check into the arm body with an `if`, ma
 without a guard, or use a `Copy` field.",
 };
 
+/// A struct pattern names a field the struct does not declare.
+///
+/// A struct pattern mirrors the declaration: every field it names must exist.
+/// A misspelled field is rejected instead of silently ignored.
+pub const E2046: ErrorCode = ErrorCode {
+    code: "E2046",
+    title: "no such field in struct pattern",
+    explanation: "\
+A struct pattern names fields of a known struct type. A name the struct does
+not declare cannot select storage and is usually a typo.\n\nCheck the spelling against the struct declaration, or use `_` for a field the
+arm ignores.",
+};
+
+/// A struct pattern names the same field twice.
+pub const E2047: ErrorCode = ErrorCode {
+    code: "E2047",
+    title: "field is matched twice in a struct pattern",
+    explanation: "\
+A struct pattern selects each field exactly once. Matching a field twice would
+make the arm depend on which pattern wins, so the compiler rejects it.\n\nRemove one of the patterns.",
+};
+
+/// A struct pattern omits a declared field.
+pub const E2048: ErrorCode = ErrorCode {
+    code: "E2048",
+    title: "missing field in struct pattern",
+    explanation: "\
+A struct pattern matches a whole struct value, so it must account for every
+field. Write the field pattern, or use `_` to ignore the field without binding
+it.\n\nThis rule matches struct literals: a `let` binding cannot read a field, only a
+pattern decides what a field does.",
+};
+
+/// An array pattern does not match the array length.
+pub const E2049: ErrorCode = ErrorCode {
+    code: "E2049",
+    title: "array pattern has the wrong length",
+    explanation: "\
+A fixed-size array has a length that is part of its type, so an array pattern
+must write exactly one pattern per element. A pattern with a different number of
+elements cannot match any value of the array.\n\nWrite one pattern per element, using `_` for the elements the arm ignores.",
+};
+
+/// A range pattern is empty.
+pub const E2050: ErrorCode = ErrorCode {
+    code: "E2050",
+    title: "empty range pattern",
+    explanation: "\
+A range pattern matches the values between its endpoints. When the start is
+greater than the end (or equal, for an exclusive `..` range), no value can match,
+so the arm is dead code.\n\nSwap the endpoints, or remove the arm.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1550,10 +1603,11 @@ pub static ALL: &[ErrorCode] = &[
     E2003, E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015,
     E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
     E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
-    E2042, E2043, E2044, E2045, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009,
-    E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022,
-    E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E5001, E5002,
-    E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E3001, E3002, E3003, E3004,
+    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
+    E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
+    E3031, E3032, E3033, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1668,6 +1722,7 @@ mod tests {
                 "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
                 "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035", "E2036",
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
+                "E2046", "E2047", "E2048", "E2049", "E2050",
             ]
         );
     }

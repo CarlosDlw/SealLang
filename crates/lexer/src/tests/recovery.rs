@@ -6,7 +6,7 @@ use crate::{TokenKind, lex};
 #[test]
 fn unknown_characters_are_diagnosed_and_skipped() {
     let cases = [
-        ("@", "E0004", "not valid Seal source"),
+        ("?", "E0004", "not valid Seal source"),
         ("$", "E0004", "not valid Seal source"),
         ("#", "E0004", "not valid Seal source"),
         ("`", "E0004", "not valid Seal source"),
@@ -56,11 +56,11 @@ fn bidi_controls_report_e0012() {
 
 #[test]
 fn errors_do_not_stop_later_tokens() {
-    let fixture = Fixture::new("@ let x = 1; #");
+    let fixture = Fixture::new("? let x = 1; #");
     let lexed = fixture.lex();
     assert_eq!(fixture.codes(), ["E0004", "E0004"]);
     let texts = fixture.token_texts(&lexed);
-    assert_eq!(texts, ["@", "let", "x", "=", "1", ";", "#"]);
+    assert_eq!(texts, ["?", "let", "x", "=", "1", ";", "#"]);
     assert_eq!(lexed.tokens.last().expect("eof").kind, TokenKind::Eof);
 }
 

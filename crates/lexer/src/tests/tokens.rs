@@ -59,6 +59,8 @@ fn every_operator_has_a_token() {
         ("::", TokenKind::ColonColon),
         (".", TokenKind::Dot),
         ("..", TokenKind::DotDot),
+        ("..=", TokenKind::DotDotEq),
+        ("@", TokenKind::At),
     ];
     for (source, expected) in cases {
         let kinds = kinds(source);

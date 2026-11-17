@@ -222,6 +222,10 @@ pub enum TokenKind {
     Dot,
     /// `..`
     DotDot,
+    /// `..=`
+    DotDotEq,
+    /// `@`
+    At,
     /// `->`
     Arrow,
     /// `=>`

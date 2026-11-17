@@ -4,6 +4,10 @@
 //! pattern can match a value that no earlier unguarded pattern matches. The same
 //! machinery, asked about a wildcard, produces a witness for a non-exhaustive
 //! match. Guards never contribute coverage, because a guard can fail.
+//!
+//! Scalar ranges are handled by partitioning the value domain at every range
+//! endpoint. Each resulting interval is a constructor, so two adjacent ranges
+//! cover their type and an uncovered gap is reported with a concrete value.
 
 use seal_ast::PatternLiteral;
 use seal_error_codes as codes;
@@ -14,27 +18,36 @@ use seal_ty::{AdtId, FloatTy, TyCtxt, TyId, TyKind, VariantIdx};
 use super::Checker;
 
 /// Upper bound on the cartesian product of nested or-patterns.
-///
-/// A pattern is a finite tree, but or-patterns in several nested fields multiply.
-/// Normal programs are far below this bound; the check exists so hostile input
-/// cannot exhaust memory. Exceeding it is reported as a diagnostic, never as a
-/// silent wrong answer.
 const MAX_ALTERNATIVES: usize = 65_536;
+
+const SIGN_BIT: u128 = 1 << 127;
+const CHAR_MAX: u128 = 0x10FFFF;
 
 /// A pattern shape used by the usefulness algorithm.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Cover {
     Wildcard,
     Bool(bool),
-    Int {
-        negative: bool,
-        value: u128,
+    IntRange {
+        ty: TyId,
+        start: u128,
+        end: u128,
     },
-    Char(char),
+    CharRange {
+        start: u32,
+        end: u32,
+    },
     Float(u64),
     Variant {
         adt: AdtId,
         variant: VariantIdx,
+        fields: Vec<Cover>,
+    },
+    Struct {
+        adt: AdtId,
+        fields: Vec<Cover>,
+    },
+    Array {
         fields: Vec<Cover>,
     },
 }
@@ -43,10 +56,12 @@ enum Cover {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ctor {
     Bool(bool),
-    Int { negative: bool, value: u128 },
-    Char(char),
+    IntRange { start: u128, end: u128 },
+    CharRange { start: u32, end: u32 },
     Float(u64),
     Variant { adt: AdtId, variant: VariantIdx },
+    Struct { adt: AdtId },
+    Array { element: TyId, length: u64 },
 }
 
 /// Tracks the or-pattern expansion budget.
@@ -71,7 +86,7 @@ impl Checker<'_> {
                 remaining: MAX_ALTERNATIVES,
                 exhausted: false,
             };
-            let alternatives = self.cover_pattern(arm.pattern, &mut budget);
+            let alternatives = self.cover_pattern(arm.pattern, scrutinee_ty, &mut budget);
             if budget.exhausted {
                 self.error(
                     codes::E3032,
@@ -92,6 +107,7 @@ impl Checker<'_> {
                     std::slice::from_ref(alternative),
                     &[scrutinee_ty],
                     self.hir.ty_ctxt(),
+                    self.pointer_width,
                 )
             });
             if !reachable {
@@ -108,7 +124,7 @@ impl Checker<'_> {
         }
 
         let tcx = self.hir.ty_ctxt();
-        let Some(witness) = witness(&covered, &[scrutinee_ty], tcx) else {
+        let Some(witness) = witness(&covered, &[scrutinee_ty], tcx, self.pointer_width) else {
             return true;
         };
         if witness.is_empty() {
@@ -130,7 +146,7 @@ impl Checker<'_> {
     }
 
     /// Expands a pattern into constructor shapes, distributing or-patterns.
-    fn cover_pattern(&self, pattern: HirPatternId, budget: &mut Budget) -> Vec<Cover> {
+    fn cover_pattern(&self, pattern: HirPatternId, ty: TyId, budget: &mut Budget) -> Vec<Cover> {
         if budget.remaining == 0 {
             budget.exhausted = true;
             return Vec::new();
@@ -138,17 +154,20 @@ impl Checker<'_> {
         budget.remaining -= 1;
 
         match &self.hir.pattern(pattern).kind {
-            PatternKind::Wildcard | PatternKind::Binding { .. } | PatternKind::Error => {
-                vec![Cover::Wildcard]
-            }
-            PatternKind::Literal(literal) => vec![match *literal {
-                PatternLiteral::Int {
-                    value, negative, ..
-                } => Cover::Int { negative, value },
-                PatternLiteral::Float { value, .. } => Cover::Float(value.to_bits()),
-                PatternLiteral::Char(value) => Cover::Char(value),
-                PatternLiteral::Bool(value) => Cover::Bool(value),
-            }],
+            PatternKind::Wildcard | PatternKind::Error => vec![Cover::Wildcard],
+            PatternKind::Binding { pattern, .. } => match pattern {
+                Some(pattern) => self.cover_pattern(*pattern, ty, budget),
+                None => vec![Cover::Wildcard],
+            },
+            PatternKind::Literal(literal) => self.cover_literal(*literal, ty).into_iter().collect(),
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self
+                .cover_range(*start, *end, *inclusive, ty)
+                .into_iter()
+                .collect(),
             PatternKind::Variant {
                 adt,
                 variant,
@@ -157,26 +176,22 @@ impl Checker<'_> {
                 let Some(adt_id) = self.hir.adt(*adt) else {
                     return vec![Cover::Wildcard];
                 };
+                let definition = self.hir.ty_ctxt().adt(adt_id);
+                let Some(variant_def) = definition.variant(*variant) else {
+                    return vec![Cover::Wildcard];
+                };
+                let field_types: Vec<TyId> =
+                    variant_def.fields.iter().map(|field| field.ty).collect();
                 let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
-                for (_, field) in fields {
-                    let options = self.cover_pattern(*field, budget);
+                for (field, field_ty) in fields.iter().zip(&field_types) {
+                    let options = self.cover_pattern(field.1, *field_ty, budget);
                     if budget.exhausted || options.is_empty() {
                         return Vec::new();
                     }
-                    let mut next = Vec::new();
-                    for prefix in &combinations {
-                        for option in &options {
-                            if budget.remaining == 0 {
-                                budget.exhausted = true;
-                                return Vec::new();
-                            }
-                            budget.remaining -= 1;
-                            let mut combination = prefix.clone();
-                            combination.push(option.clone());
-                            next.push(combination);
-                        }
+                    combinations = combine(combinations, options, budget);
+                    if budget.exhausted {
+                        return Vec::new();
                     }
-                    combinations = next;
                 }
                 combinations
                     .into_iter()
@@ -187,10 +202,76 @@ impl Checker<'_> {
                     })
                     .collect()
             }
+            PatternKind::Struct { adt, fields } => {
+                let Some(adt_id) = self.hir.adt(*adt) else {
+                    return vec![Cover::Wildcard];
+                };
+                let definition = self.hir.ty_ctxt().adt(adt_id);
+                let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
+                for (field, field_pattern) in fields {
+                    let Some(field_def) = definition.field(*field) else {
+                        return vec![Cover::Wildcard];
+                    };
+                    let options = self.cover_pattern(*field_pattern, field_def.ty, budget);
+                    if budget.exhausted || options.is_empty() {
+                        return Vec::new();
+                    }
+                    combinations = combine(combinations, options, budget);
+                    if budget.exhausted {
+                        return Vec::new();
+                    }
+                }
+                combinations
+                    .into_iter()
+                    .map(|fields| Cover::Struct {
+                        adt: adt_id,
+                        fields,
+                    })
+                    .collect()
+            }
+            PatternKind::Array {
+                prefix,
+                has_rest,
+                suffix,
+            } => {
+                let TyKind::Array { element, length } = self.hir.ty_ctxt().kind(ty) else {
+                    return vec![Cover::Wildcard];
+                };
+                let fixed = prefix.len() + suffix.len();
+                if fixed as u64 > length || (!*has_rest && fixed as u64 != length) {
+                    // Type checking already reported the length mismatch; a
+                    // guessed arity would make the usefulness check unsound.
+                    return vec![Cover::Wildcard];
+                }
+                let rest = if *has_rest { length - fixed as u64 } else { 0 };
+                let mut slots: Vec<Option<HirPatternId>> =
+                    prefix.iter().copied().map(Some).collect();
+                slots.extend((0..rest).map(|_| None));
+                slots.extend(suffix.iter().copied().map(Some));
+
+                let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
+                for slot in slots {
+                    let options = match slot {
+                        Some(pattern) => self.cover_pattern(pattern, element, budget),
+                        None => vec![Cover::Wildcard],
+                    };
+                    if budget.exhausted || options.is_empty() {
+                        return Vec::new();
+                    }
+                    combinations = combine(combinations, options, budget);
+                    if budget.exhausted {
+                        return Vec::new();
+                    }
+                }
+                combinations
+                    .into_iter()
+                    .map(|fields| Cover::Array { fields })
+                    .collect()
+            }
             PatternKind::Or(alternatives) => {
                 let mut covers = Vec::new();
                 for alternative in alternatives {
-                    covers.extend(self.cover_pattern(*alternative, budget));
+                    covers.extend(self.cover_pattern(*alternative, ty, budget));
                     if budget.exhausted {
                         return Vec::new();
                     }
@@ -200,19 +281,98 @@ impl Checker<'_> {
         }
     }
 
+    fn cover_literal(&self, literal: PatternLiteral, ty: TyId) -> Option<Cover> {
+        match literal {
+            PatternLiteral::Int {
+                value, negative, ..
+            } => {
+                let key = int_key(ty, negative, value, self.hir.ty_ctxt())?;
+                Some(Cover::IntRange {
+                    ty,
+                    start: key,
+                    end: key,
+                })
+            }
+            PatternLiteral::Char(value) => Some(Cover::CharRange {
+                start: value as u32,
+                end: value as u32,
+            }),
+            PatternLiteral::Bool(value) => Some(Cover::Bool(value)),
+            PatternLiteral::Float { value, .. } => Some(Cover::Float(value.to_bits())),
+        }
+    }
+
+    fn cover_range(
+        &self,
+        start: PatternLiteral,
+        end: PatternLiteral,
+        inclusive: bool,
+        ty: TyId,
+    ) -> Option<Cover> {
+        match (start, end) {
+            (
+                PatternLiteral::Int {
+                    value: start_value,
+                    negative: start_negative,
+                    ..
+                },
+                PatternLiteral::Int {
+                    value: end_value,
+                    negative: end_negative,
+                    ..
+                },
+            ) => {
+                let mut start = int_key(ty, start_negative, start_value, self.hir.ty_ctxt())?;
+                let mut end = int_key(ty, end_negative, end_value, self.hir.ty_ctxt())?;
+                let (low, high) = scalar_domain(ty, self.hir.ty_ctxt(), self.pointer_width)?;
+                if !inclusive {
+                    end = end.checked_sub(1)?;
+                }
+                start = start.max(low);
+                end = end.min(high);
+                (start <= end).then_some(Cover::IntRange { ty, start, end })
+            }
+            (PatternLiteral::Char(start), PatternLiteral::Char(end)) => {
+                let start = start as u32;
+                let mut end = end as u32;
+                if !inclusive {
+                    end = end.checked_sub(1)?;
+                }
+                let low = 0u32;
+                let high = (CHAR_MAX as u32).min(0x10FFFF);
+                let start = start.max(low);
+                let end = end.min(high);
+                (start <= end).then_some(Cover::CharRange { start, end })
+            }
+            _ => None,
+        }
+    }
+
     /// Renders one witness value for the diagnostic.
     fn cover_text(&self, cover: &Cover) -> String {
         match cover {
             Cover::Wildcard => "_".to_owned(),
             Cover::Bool(value) => value.to_string(),
-            Cover::Int { negative, value } => {
-                if *negative {
-                    format!("-{value}")
+            Cover::IntRange { ty, start, end } => {
+                if start == end {
+                    render_int(*ty, *start, self.hir.ty_ctxt())
                 } else {
-                    value.to_string()
+                    format!(
+                        "{}..={}",
+                        render_int(*ty, *start, self.hir.ty_ctxt()),
+                        render_int(*ty, *end, self.hir.ty_ctxt())
+                    )
                 }
             }
-            Cover::Char(value) => format!("{value:?}"),
+            Cover::CharRange { start, end } => {
+                let start = char::from_u32(*start).unwrap_or('\u{FFFD}');
+                if start as u32 == *end {
+                    format!("{start:?}")
+                } else {
+                    let end = char::from_u32(*end).unwrap_or('\u{FFFD}');
+                    format!("{start:?}..={end:?}")
+                }
+            }
             Cover::Float(bits) => format!("{}", f64::from_bits(*bits)),
             Cover::Variant {
                 adt,
@@ -248,13 +408,111 @@ impl Checker<'_> {
                     format!("{enum_name}::{variant_name} {{ {} }}", fields.join(", "))
                 }
             }
+            Cover::Struct { adt, fields } => {
+                let definition = self.hir.ty_ctxt().adt(*adt);
+                let name = self.interner.resolve(definition.name);
+                let fields: Vec<String> = definition
+                    .fields
+                    .iter()
+                    .zip(fields)
+                    .map(|(field, value)| {
+                        let field_name = field
+                            .name
+                            .map(|name| self.interner.resolve(name))
+                            .unwrap_or("_");
+                        format!("{field_name}: {}", self.cover_text(value))
+                    })
+                    .collect();
+                format!("{name} {{ {} }}", fields.join(", "))
+            }
+            Cover::Array { fields } => {
+                let rendered: Vec<String> =
+                    fields.iter().map(|field| self.cover_text(field)).collect();
+                format!("[{}]", rendered.join(", "))
+            }
         }
     }
 }
 
-/// Returns every constructor of a type, or `None` when the type has an infinite
-/// constructor space and therefore needs a wildcard to be exhaustive.
-fn constructors(tcx: &TyCtxt, ty: TyId) -> Option<Vec<Ctor>> {
+fn combine(prefixes: Vec<Vec<Cover>>, options: Vec<Cover>, budget: &mut Budget) -> Vec<Vec<Cover>> {
+    let mut next = Vec::new();
+    for prefix in &prefixes {
+        for option in &options {
+            if budget.remaining == 0 {
+                budget.exhausted = true;
+                return Vec::new();
+            }
+            budget.remaining -= 1;
+            let mut combination = prefix.clone();
+            combination.push(option.clone());
+            next.push(combination);
+        }
+    }
+    next
+}
+
+/// Converts an integer pattern literal into its ordering key.
+fn int_key(ty: TyId, negative: bool, magnitude: u128, tcx: &TyCtxt) -> Option<u128> {
+    match tcx.kind(ty) {
+        TyKind::Int(_) => Some(signed_key(signed_value(negative, magnitude))),
+        TyKind::Uint(_) if !negative => Some(magnitude),
+        _ => None,
+    }
+}
+
+fn signed_value(negative: bool, magnitude: u128) -> i128 {
+    let magnitude = magnitude.min(i128::MAX as u128) as i128;
+    if negative { -magnitude } else { magnitude }
+}
+
+fn signed_key(value: i128) -> u128 {
+    (value as u128) ^ SIGN_BIT
+}
+
+fn render_int(ty: TyId, key: u128, tcx: &TyCtxt) -> String {
+    match tcx.kind(ty) {
+        TyKind::Int(_) => ((key ^ SIGN_BIT) as i128).to_string(),
+        TyKind::Uint(_) => key.to_string(),
+        _ => key.to_string(),
+    }
+}
+
+/// Returns the closed key range of a scalar type.
+fn scalar_domain(ty: TyId, tcx: &TyCtxt, pointer_width: u8) -> Option<(u128, u128)> {
+    match tcx.kind(ty) {
+        TyKind::Int(kind) => {
+            let bits = kind
+                .bits()
+                .map(u32::from)
+                .unwrap_or(u32::from(pointer_width));
+            if bits >= 128 {
+                Some((0, u128::MAX))
+            } else {
+                let max = (1i128 << (bits - 1)) - 1;
+                let min = -(1i128 << (bits - 1));
+                Some((signed_key(min), signed_key(max)))
+            }
+        }
+        TyKind::Uint(kind) => {
+            let bits = kind
+                .bits()
+                .map(u32::from)
+                .unwrap_or(u32::from(pointer_width));
+            let max = if bits >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bits) - 1
+            };
+            Some((0, max))
+        }
+        TyKind::Char => Some((0, CHAR_MAX)),
+        _ => None,
+    }
+}
+
+/// Returns every constructor of a type, or `None` when the type needs a
+/// wildcard to be exhaustive.
+fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) -> Option<Vec<Ctor>> {
     match tcx.kind(ty) {
         TyKind::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
         TyKind::Adt(adt) => {
@@ -275,22 +533,92 @@ fn constructors(tcx: &TyCtxt, ty: TyId) -> Option<Vec<Ctor>> {
                         .collect(),
                 )
             } else {
-                None
+                Some(vec![Ctor::Struct { adt }])
             }
         }
+        TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
+        TyKind::Int(_) | TyKind::Uint(_) => Some(interval_ctors(ty, covers, tcx, pointer_width)),
+        TyKind::Char => Some(char_ctors(covers)),
         TyKind::Never | TyKind::Error => Some(Vec::new()),
         _ => None,
     }
 }
 
+/// Partitions a scalar domain at the endpoints of every observed range.
+fn interval_ctors(ty: TyId, covers: &[&Cover], tcx: &TyCtxt, pointer_width: u8) -> Vec<Ctor> {
+    let Some((low, high)) = scalar_domain(ty, tcx, pointer_width) else {
+        return Vec::new();
+    };
+    let mut starts = vec![low];
+    for cover in covers {
+        if let Cover::IntRange {
+            ty: cover_ty,
+            start,
+            end,
+        } = cover
+            && *cover_ty == ty
+        {
+            let start = (*start).max(low);
+            let end = (*end).min(high);
+            if start <= end {
+                starts.push(start);
+                if end < high {
+                    starts.push(end + 1);
+                }
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    let mut ctors = Vec::with_capacity(starts.len());
+    for (index, start) in starts.iter().enumerate() {
+        let end = starts.get(index + 1).map(|next| next - 1).unwrap_or(high);
+        if *start <= end {
+            ctors.push(Ctor::IntRange { start: *start, end });
+        }
+    }
+    ctors
+}
+
+fn char_ctors(covers: &[&Cover]) -> Vec<Ctor> {
+    let high = CHAR_MAX as u32;
+    let mut starts = vec![0u32];
+    for cover in covers {
+        if let Cover::CharRange { start, end } = cover {
+            let start = *start;
+            let end = (*end).min(high);
+            if start <= end {
+                starts.push(start);
+                if end < high {
+                    starts.push(end + 1);
+                }
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    let mut ctors = Vec::with_capacity(starts.len());
+    for (index, start) in starts.iter().enumerate() {
+        let end = starts.get(index + 1).map(|next| next - 1).unwrap_or(high);
+        if *start <= end {
+            ctors.push(Ctor::CharRange { start: *start, end });
+        }
+    }
+    ctors
+}
+
 fn ctor_fields(tcx: &TyCtxt, ctor: Ctor) -> Vec<TyId> {
     match ctor {
-        Ctor::Bool(_) | Ctor::Int { .. } | Ctor::Char(_) | Ctor::Float(_) => Vec::new(),
+        Ctor::Bool(_) | Ctor::IntRange { .. } | Ctor::CharRange { .. } | Ctor::Float(_) => {
+            Vec::new()
+        }
         Ctor::Variant { adt, variant } => tcx
             .adt(adt)
             .variant(variant)
             .map(|variant| variant.fields.iter().map(|field| field.ty).collect())
             .unwrap_or_default(),
+        Ctor::Struct { adt } => tcx.adt(adt).fields.iter().map(|field| field.ty).collect(),
+        Ctor::Array { element, length } => vec![element; length as usize],
     }
 }
 
@@ -298,16 +626,20 @@ fn ctor_matches(cover: &Cover, ctor: Ctor) -> bool {
     match (cover, ctor) {
         (Cover::Bool(left), Ctor::Bool(right)) => *left == right,
         (
-            Cover::Int {
-                negative: left_negative,
-                value: left_value,
+            Cover::IntRange {
+                start: left_start,
+                end: left_end,
+                ..
             },
-            Ctor::Int {
-                negative: right_negative,
-                value: right_value,
+            Ctor::IntRange { start, end },
+        ) => *left_start <= start && end <= *left_end,
+        (
+            Cover::CharRange {
+                start: left_start,
+                end: left_end,
             },
-        ) => *left_negative == right_negative && *left_value == right_value,
-        (Cover::Char(left), Ctor::Char(right)) => *left == right,
+            Ctor::CharRange { start, end },
+        ) => *left_start <= start && end <= *left_end,
         (Cover::Float(left), Ctor::Float(right)) => *left == right,
         (
             Cover::Variant {
@@ -320,28 +652,38 @@ fn ctor_matches(cover: &Cover, ctor: Ctor) -> bool {
                 variant: right_variant,
             },
         ) => *left_adt == right_adt && *left_variant == right_variant,
+        (Cover::Struct { adt: left, .. }, Ctor::Struct { adt: right }) => *left == right,
+        (Cover::Array { .. }, Ctor::Array { .. }) => true,
         _ => false,
     }
 }
 
 fn cover_fields(cover: &Cover) -> &[Cover] {
     match cover {
-        Cover::Variant { fields, .. } => fields,
+        Cover::Variant { fields, .. } | Cover::Struct { fields, .. } | Cover::Array { fields } => {
+            fields
+        }
         _ => &[],
     }
 }
 
-fn cover_from_ctor(ctor: Ctor, fields: Vec<Cover>) -> Cover {
+fn cover_from_ctor(ctor: Ctor, fields: Vec<Cover>, ty: Option<TyId>) -> Cover {
     match ctor {
         Ctor::Bool(value) => Cover::Bool(value),
-        Ctor::Int { negative, value } => Cover::Int { negative, value },
-        Ctor::Char(value) => Cover::Char(value),
+        Ctor::IntRange { start, end } => Cover::IntRange {
+            ty: ty.expect("a scalar constructor carries its type"),
+            start,
+            end,
+        },
+        Ctor::CharRange { start, end } => Cover::CharRange { start, end },
         Ctor::Float(value) => Cover::Float(value),
         Ctor::Variant { adt, variant } => Cover::Variant {
             adt,
             variant,
             fields,
         },
+        Ctor::Struct { adt } => Cover::Struct { adt, fields },
+        Ctor::Array { .. } => Cover::Array { fields },
     }
 }
 
@@ -375,7 +717,13 @@ fn default_matrix(matrix: &[Vec<Cover>]) -> Vec<Vec<Cover>> {
 }
 
 /// Returns `true` when `candidate` matches a value that no matrix row matches.
-fn is_useful(matrix: &[Vec<Cover>], candidate: &[Cover], types: &[TyId], tcx: &TyCtxt) -> bool {
+fn is_useful(
+    matrix: &[Vec<Cover>],
+    candidate: &[Cover],
+    types: &[TyId],
+    tcx: &TyCtxt,
+    pointer_width: u8,
+) -> bool {
     let Some(first) = candidate.first() else {
         return matrix.is_empty();
     };
@@ -383,9 +731,17 @@ fn is_useful(matrix: &[Vec<Cover>], candidate: &[Cover], types: &[TyId], tcx: &T
         return false;
     };
 
-    let Some(constructors) = constructors(tcx, ty) else {
+    let mut covers: Vec<&Cover> = matrix.iter().filter_map(|row| row.first()).collect();
+    covers.push(first);
+    let Some(constructors) = constructors(tcx, ty, &covers, pointer_width) else {
         let specialized = default_matrix(matrix);
-        return is_useful(&specialized, &candidate[1..], &types[1..], tcx);
+        return is_useful(
+            &specialized,
+            &candidate[1..],
+            &types[1..],
+            tcx,
+            pointer_width,
+        );
     };
 
     if matches!(first, Cover::Wildcard) {
@@ -396,14 +752,14 @@ fn is_useful(matrix: &[Vec<Cover>], candidate: &[Cover], types: &[TyId], tcx: &T
             nested.extend_from_slice(&candidate[1..]);
             let mut nested_types = fields;
             nested_types.extend_from_slice(&types[1..]);
-            if is_useful(&specialized, &nested, &nested_types, tcx) {
+            if is_useful(&specialized, &nested, &nested_types, tcx, pointer_width) {
                 return true;
             }
         }
         return false;
     }
 
-    let Some(first_ctor) = cover_ctor(first) else {
+    let Some(first_ctor) = cover_ctor(first, ty, tcx) else {
         return false;
     };
     let fields = ctor_fields(tcx, first_ctor);
@@ -412,42 +768,56 @@ fn is_useful(matrix: &[Vec<Cover>], candidate: &[Cover], types: &[TyId], tcx: &T
     nested.extend_from_slice(&candidate[1..]);
     let mut nested_types = fields;
     nested_types.extend_from_slice(&types[1..]);
-    is_useful(&specialized, &nested, &nested_types, tcx)
+    is_useful(&specialized, &nested, &nested_types, tcx, pointer_width)
 }
 
-fn cover_ctor(cover: &Cover) -> Option<Ctor> {
+fn cover_ctor(cover: &Cover, ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
     match cover {
         Cover::Bool(value) => Some(Ctor::Bool(*value)),
-        Cover::Int { negative, value } => Some(Ctor::Int {
-            negative: *negative,
-            value: *value,
+        Cover::IntRange { start, end, .. } => Some(Ctor::IntRange {
+            start: *start,
+            end: *end,
         }),
-        Cover::Char(value) => Some(Ctor::Char(*value)),
+        Cover::CharRange { start, end } => Some(Ctor::CharRange {
+            start: *start,
+            end: *end,
+        }),
         Cover::Float(value) => Some(Ctor::Float(*value)),
         Cover::Variant { adt, variant, .. } => Some(Ctor::Variant {
             adt: *adt,
             variant: *variant,
         }),
+        Cover::Struct { adt, .. } => Some(Ctor::Struct { adt: *adt }),
+        Cover::Array { .. } => match tcx.kind(ty) {
+            TyKind::Array { element, length } => Some(Ctor::Array { element, length }),
+            _ => None,
+        },
         Cover::Wildcard => None,
     }
 }
 
 /// Returns a value that the matrix does not cover, or `None` when it covers
 /// every value of `types`.
-fn witness(matrix: &[Vec<Cover>], types: &[TyId], tcx: &TyCtxt) -> Option<Vec<Cover>> {
+fn witness(
+    matrix: &[Vec<Cover>],
+    types: &[TyId],
+    tcx: &TyCtxt,
+    pointer_width: u8,
+) -> Option<Vec<Cover>> {
     let Some(ty) = types.first().copied() else {
         return matrix.is_empty().then(Vec::new);
     };
 
-    if let Some(constructors) = constructors(tcx, ty) {
+    let covers: Vec<&Cover> = matrix.iter().filter_map(|row| row.first()).collect();
+    if let Some(constructors) = constructors(tcx, ty, &covers, pointer_width) {
         for ctor in constructors {
             let fields = ctor_fields(tcx, ctor);
             let specialized = specialize(matrix, ctor, fields.len());
             let mut nested_types = fields.clone();
             nested_types.extend_from_slice(&types[1..]);
-            if let Some(nested) = witness(&specialized, &nested_types, tcx) {
+            if let Some(nested) = witness(&specialized, &nested_types, tcx, pointer_width) {
                 let (field_witnesses, rest) = nested.split_at(fields.len());
-                let mut result = vec![cover_from_ctor(ctor, field_witnesses.to_vec())];
+                let mut result = vec![cover_from_ctor(ctor, field_witnesses.to_vec(), Some(ty))];
                 result.extend_from_slice(rest);
                 return Some(result);
             }
@@ -456,49 +826,15 @@ fn witness(matrix: &[Vec<Cover>], types: &[TyId], tcx: &TyCtxt) -> Option<Vec<Co
     }
 
     let specialized = default_matrix(matrix);
-    let nested = witness(&specialized, &types[1..], tcx)?;
+    let nested = witness(&specialized, &types[1..], tcx, pointer_width)?;
     let mut result = vec![fresh_cover(tcx, ty, matrix)];
     result.extend(nested);
     Some(result)
 }
 
-/// Chooses a representative value for an infinite scalar type.
+/// Chooses a representative value for a type without a finite constructor set.
 fn fresh_cover(tcx: &TyCtxt, ty: TyId, matrix: &[Vec<Cover>]) -> Cover {
     match tcx.kind(ty) {
-        TyKind::Int(_) | TyKind::Uint(_) => {
-            let mut value = 0u128;
-            while matrix.iter().any(|row| {
-                matches!(
-                    row.first(),
-                    Some(Cover::Int {
-                        negative: false,
-                        value: used,
-                    }) if *used == value
-                )
-            }) {
-                value += 1;
-            }
-            Cover::Int {
-                negative: false,
-                value,
-            }
-        }
-        TyKind::Char => {
-            let mut code = 0u32;
-            loop {
-                let Some(candidate) = char::from_u32(code) else {
-                    code += 1;
-                    continue;
-                };
-                let used = matrix.iter().any(
-                    |row| matches!(row.first(), Some(Cover::Char(value)) if *value == candidate),
-                );
-                if !used {
-                    return Cover::Char(candidate);
-                }
-                code += 1;
-            }
-        }
         TyKind::Float(kind) => {
             let candidates: [f64; 4] = [0.0, 1.0, -1.0, 2.0];
             for candidate in candidates {

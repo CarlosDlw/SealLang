@@ -243,12 +243,17 @@ impl<'a> Scanner<'a> {
             }
             b'.' => {
                 if self.cursor.eat_byte(b'.') {
-                    TokenKind::DotDot
+                    if self.cursor.eat_byte(b'=') {
+                        TokenKind::DotDotEq
+                    } else {
+                        TokenKind::DotDot
+                    }
                 } else {
                     TokenKind::Dot
                 }
             }
             b'~' => TokenKind::Tilde,
+            b'@' => TokenKind::At,
             b'+' => {
                 if self.cursor.eat_byte(b'+') {
                     TokenKind::PlusPlus
@@ -425,6 +430,7 @@ fn is_punctuation(character: char) -> bool {
     matches!(
         character,
         '(' | ')'
+            | '@'
             | '{'
             | '}'
             | '['

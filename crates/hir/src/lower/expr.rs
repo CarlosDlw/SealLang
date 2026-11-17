@@ -218,6 +218,7 @@ impl Lowering<'_> {
                 then_branch: self.lower_block(then_branch),
                 else_branch: else_branch.map(|branch| self.lower_block(branch)),
             },
+            AstExprKind::Block(block) => ExprKind::Block(self.lower_block(block)),
             AstExprKind::Paren(inner) => return self.lower_expr(inner),
             AstExprKind::Error => ExprKind::Error,
         };

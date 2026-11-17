@@ -25,7 +25,7 @@ use crate::place::Place;
 use crate::rvalue::{BinOp, Rvalue};
 use crate::terminator::{SwitchTarget, TerminatorKind};
 
-/// A pattern with or-patterns expanded and every enum resolved.
+/// A pattern with or-patterns expanded and every enum and struct resolved.
 #[derive(Clone, Debug)]
 struct FlatPattern {
     kind: FlatPatternKind,
@@ -35,12 +35,28 @@ struct FlatPattern {
 #[derive(Clone, Debug)]
 enum FlatPatternKind {
     Wildcard,
-    Binding(DefId),
+    Binding {
+        def: DefId,
+        pattern: Option<Box<FlatPattern>>,
+    },
     Literal(PatternLiteral),
+    Range {
+        start: PatternLiteral,
+        end: PatternLiteral,
+        inclusive: bool,
+    },
     Variant {
         adt: AdtId,
         variant: VariantIdx,
         fields: Vec<(DefId, FlatPattern)>,
+    },
+    Struct {
+        adt: AdtId,
+        fields: Vec<(DefId, FlatPattern)>,
+    },
+    Array {
+        prefix: Vec<FlatPattern>,
+        suffix: Vec<FlatPattern>,
     },
 }
 
@@ -197,10 +213,20 @@ impl BodyLowering<'_> {
 
     fn collect_binding_defs(&self, pattern: HirPatternId, out: &mut Vec<DefId>) {
         match &self.hir.pattern(pattern).kind {
-            PatternKind::Binding { def, .. } => out.push(*def),
-            PatternKind::Variant { fields, .. } => {
+            PatternKind::Binding { def, pattern, .. } => {
+                out.push(*def);
+                if let Some(pattern) = pattern {
+                    self.collect_binding_defs(*pattern, out);
+                }
+            }
+            PatternKind::Variant { fields, .. } | PatternKind::Struct { fields, .. } => {
                 for (_, field) in fields {
                     self.collect_binding_defs(*field, out);
+                }
+            }
+            PatternKind::Array { prefix, suffix, .. } => {
+                for element in prefix.iter().chain(suffix) {
+                    self.collect_binding_defs(*element, out);
                 }
             }
             PatternKind::Or(alternatives) => {
@@ -208,7 +234,10 @@ impl BodyLowering<'_> {
                     self.collect_binding_defs(*alternative, out);
                 }
             }
-            PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Error => {}
+            PatternKind::Wildcard
+            | PatternKind::Literal(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Error => {}
         }
     }
 
@@ -220,14 +249,84 @@ impl BodyLowering<'_> {
                 kind: FlatPatternKind::Wildcard,
                 span,
             }],
-            PatternKind::Binding { def, .. } => vec![FlatPattern {
-                kind: FlatPatternKind::Binding(*def),
+            PatternKind::Binding { def, pattern, .. } => vec![FlatPattern {
+                kind: FlatPatternKind::Binding {
+                    def: *def,
+                    pattern: pattern.map(|pattern| {
+                        Box::new(self.expand_pattern(pattern).into_iter().next().unwrap_or(
+                            FlatPattern {
+                                kind: FlatPatternKind::Wildcard,
+                                span,
+                            },
+                        ))
+                    }),
+                },
                 span,
             }],
             PatternKind::Literal(literal) => vec![FlatPattern {
                 kind: FlatPatternKind::Literal(*literal),
                 span,
             }],
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => vec![FlatPattern {
+                kind: FlatPatternKind::Range {
+                    start: *start,
+                    end: *end,
+                    inclusive: *inclusive,
+                },
+                span,
+            }],
+            PatternKind::Struct { adt, fields } => {
+                let Some(adt_id) = self.hir.adt(*adt) else {
+                    return vec![FlatPattern {
+                        kind: FlatPatternKind::Wildcard,
+                        span,
+                    }];
+                };
+                let mut combinations: Vec<Vec<(DefId, FlatPattern)>> = vec![Vec::new()];
+                for (field, child) in fields {
+                    let options = self.expand_pattern(*child);
+                    let mut next = Vec::new();
+                    for prefix in &combinations {
+                        for option in &options {
+                            let mut combination = prefix.clone();
+                            combination.push((*field, option.clone()));
+                            next.push(combination);
+                        }
+                    }
+                    combinations = next;
+                }
+                combinations
+                    .into_iter()
+                    .map(|fields| FlatPattern {
+                        kind: FlatPatternKind::Struct {
+                            adt: adt_id,
+                            fields,
+                        },
+                        span,
+                    })
+                    .collect()
+            }
+            PatternKind::Array { prefix, suffix, .. } => {
+                let prefixes = self.expand_sequence(prefix);
+                let suffixes = self.expand_sequence(suffix);
+                let mut combinations = Vec::new();
+                for prefix in &prefixes {
+                    for suffix in &suffixes {
+                        combinations.push((prefix.clone(), suffix.clone()));
+                    }
+                }
+                combinations
+                    .into_iter()
+                    .map(|(prefix, suffix)| FlatPattern {
+                        kind: FlatPatternKind::Array { prefix, suffix },
+                        span,
+                    })
+                    .collect()
+            }
             PatternKind::Variant {
                 adt,
                 variant,
@@ -271,6 +370,24 @@ impl BodyLowering<'_> {
         }
     }
 
+    /// Expands a sequence of patterns into every alternative combination.
+    fn expand_sequence(&self, patterns: &[HirPatternId]) -> Vec<Vec<FlatPattern>> {
+        let mut combinations: Vec<Vec<FlatPattern>> = vec![Vec::new()];
+        for pattern in patterns {
+            let options = self.expand_pattern(*pattern);
+            let mut next = Vec::new();
+            for prefix in &combinations {
+                for option in &options {
+                    let mut combination = prefix.clone();
+                    combination.push(option.clone());
+                    next.push(combination);
+                }
+            }
+            combinations = next;
+        }
+        combinations
+    }
+
     /// Emits the tests for one flat alternative.
     ///
     /// On success the current block is open and every binding path has been
@@ -285,39 +402,23 @@ impl BodyLowering<'_> {
     ) {
         match &pattern.kind {
             FlatPatternKind::Wildcard => {}
-            FlatPatternKind::Binding(def) => bindings.push((*def, place)),
+            FlatPatternKind::Binding { def, pattern } => {
+                bindings.push((*def, place.clone()));
+                if let Some(pattern) = pattern {
+                    self.lower_flat_pattern(pattern, place, ty, fail, bindings);
+                }
+            }
             FlatPatternKind::Literal(literal) => {
-                let lhs = self.place_operand(place, ty);
-                let rhs = Operand::Constant(self.pattern_constant(*literal, ty));
-                let bool_ty = self
-                    .hir
-                    .ty_ctxt()
-                    .lookup(TyKind::Bool)
-                    .expect("HIR lowering interns every primitive type");
-                let matched = self.new_temp(bool_ty, pattern.span);
-                self.assign_rvalue(
-                    matched.clone(),
-                    Rvalue::Binary {
-                        op: BinOp::Eq,
-                        lhs,
-                        rhs,
-                        span: pattern.span,
-                    },
-                    pattern.span,
-                );
-                let success = self.new_block();
-                self.terminate(
-                    TerminatorKind::SwitchInt {
-                        discriminant: Operand::Copy(matched),
-                        targets: vec![SwitchTarget {
-                            value: 1,
-                            target: success,
-                        }],
-                        otherwise: fail,
-                    },
-                    pattern.span,
-                );
-                self.current = Some(success);
+                self.emit_comparison(place, BinOp::Eq, *literal, ty, fail, pattern.span);
+            }
+            FlatPatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.emit_comparison(place.clone(), BinOp::Ge, *start, ty, fail, pattern.span);
+                let op = if *inclusive { BinOp::Le } else { BinOp::Lt };
+                self.emit_comparison(place, op, *end, ty, fail, pattern.span);
             }
             FlatPatternKind::Variant {
                 adt,
@@ -363,7 +464,110 @@ impl BodyLowering<'_> {
                     self.lower_flat_pattern(child, field_place, field_ty, fail, bindings);
                 }
             }
+            FlatPatternKind::Struct { adt, fields } => {
+                let definition = self.hir.ty_ctxt().adt(*adt);
+                for (field, child) in fields {
+                    let Some(field_def) = definition.field(*field) else {
+                        self.current = Some(fail);
+                        return;
+                    };
+                    let field_ty = field_def.ty;
+                    let field_place = place.clone().field(*field);
+                    self.lower_flat_pattern(child, field_place, field_ty, fail, bindings);
+                }
+            }
+            FlatPatternKind::Array { prefix, suffix } => {
+                let TyKind::Array { element, length } = self.hir.ty_ctxt().kind(ty) else {
+                    self.current = Some(fail);
+                    return;
+                };
+                for (index, child) in prefix.iter().enumerate() {
+                    self.lower_array_element(
+                        child,
+                        place.clone(),
+                        element,
+                        index as u64,
+                        fail,
+                        bindings,
+                    );
+                }
+                let offset = length.saturating_sub(suffix.len() as u64);
+                for (position, child) in suffix.iter().enumerate() {
+                    self.lower_array_element(
+                        child,
+                        place.clone(),
+                        element,
+                        offset + position as u64,
+                        fail,
+                        bindings,
+                    );
+                }
+            }
         }
+    }
+
+    /// Projects one fixed element of an array pattern and lowers its pattern.
+    fn lower_array_element(
+        &mut self,
+        child: &FlatPattern,
+        place: Place,
+        element: TyId,
+        index: u64,
+        fail: BasicBlockId,
+        bindings: &mut Vec<(DefId, Place)>,
+    ) {
+        let span = child.span;
+        let usize_ty = self
+            .hir
+            .ty_ctxt()
+            .lookup(TyKind::Uint(seal_ty::UintTy::Usize))
+            .expect("HIR lowering interns every primitive type");
+        let index_place = self.new_temp(usize_ty, span);
+        self.assign_rvalue(
+            index_place.clone(),
+            Rvalue::Use(Operand::Constant(Constant::Int {
+                value: index as u128,
+                ty: usize_ty,
+            })),
+            span,
+        );
+        let element_place = place.index(index_place.local, Some(index));
+        self.lower_flat_pattern(child, element_place, element, fail, bindings);
+    }
+
+    /// Compares the value at `place` with a pattern literal and continues only
+    /// when the comparison holds.
+    fn emit_comparison(
+        &mut self,
+        place: Place,
+        op: BinOp,
+        literal: PatternLiteral,
+        ty: TyId,
+        fail: BasicBlockId,
+        span: Span,
+    ) {
+        let lhs = self.place_operand(place, ty);
+        let rhs = Operand::Constant(self.pattern_constant(literal, ty));
+        let bool_ty = self
+            .hir
+            .ty_ctxt()
+            .lookup(TyKind::Bool)
+            .expect("HIR lowering interns every primitive type");
+        let matched = self.new_temp(bool_ty, span);
+        self.assign_rvalue(matched.clone(), Rvalue::Binary { op, lhs, rhs, span }, span);
+        let success = self.new_block();
+        self.terminate(
+            TerminatorKind::SwitchInt {
+                discriminant: Operand::Copy(matched),
+                targets: vec![SwitchTarget {
+                    value: 1,
+                    target: success,
+                }],
+                otherwise: fail,
+            },
+            span,
+        );
+        self.current = Some(success);
     }
 
     fn pattern_constant(&self, literal: PatternLiteral, ty: TyId) -> Constant {
