@@ -4,7 +4,7 @@ use seal_def::DefKind;
 
 use crate::{ExprKind, ReceiverKind, Res, TraitMethodLookup};
 
-use super::support::{Fixture, function, lower_clean, path_res, tail};
+use super::support::{Fixture, assert_invariants, function, lower_clean, path_res, tail};
 
 const SHAPE: &str = "\
 struct Circle { radius: i32 } \
@@ -200,6 +200,103 @@ fn a_trait_receiver_must_name_self() {
     let fixture = Fixture::new("trait Shape { func area(self: i32) -> i32; }");
     let _ = fixture.lower();
     fixture.expect("E2016", "not a valid receiver for the trait `Shape`");
+}
+
+#[test]
+fn a_blanket_impl_and_a_concrete_impl_overlap() {
+    let fixture = Fixture::new(
+        "trait Show {} struct Point { x: i32 } \
+         impl<T> Show for T {} impl Show for Point {}",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2058", "overlaps");
+    fixture.expect("E2058", "`T` = `Point`");
+    assert!(!fixture.codes().iter().any(|code| code == "E2021"));
+}
+
+#[test]
+fn two_blanket_impls_overlap() {
+    let fixture = Fixture::new("trait Show {} impl<T> Show for T {} impl<U> Show for U {}");
+    let _ = fixture.lower();
+    fixture.expect("E2058", "overlaps");
+}
+
+#[test]
+fn disjoint_trait_arguments_do_not_overlap() {
+    let (fixture, hir) = lower_clean(
+        "trait Keyed<K> {} struct Pair<T, U> { first: T, second: U } \
+         impl<T, U> Keyed<i32> for Pair<T, U> {} \
+         impl<T, U> Keyed<bool> for Pair<T, U> {}",
+    );
+    assert_eq!(hir.trait_impls().len(), 2);
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn disjoint_self_arguments_do_not_overlap() {
+    let (fixture, hir) = lower_clean(
+        "trait Show {} struct Pair<T> { value: T } \
+         impl Show for Pair<i32> {} impl Show for Pair<bool> {}",
+    );
+    assert_eq!(hir.trait_impls().len(), 2);
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn duplicate_primitive_impls_are_reported_as_duplicates() {
+    let fixture = Fixture::new("trait Show {} impl Show for i32 {} impl Show for i32 {}");
+    let _ = fixture.lower();
+    fixture.expect("E2021", "already implemented");
+    assert!(!fixture.codes().iter().any(|code| code == "E2058"));
+}
+
+#[test]
+fn disjoint_inherent_impls_may_share_a_function_name() {
+    let (fixture, hir) = lower_clean(
+        "struct Pair<T> { value: T } \
+         impl Pair<i32> { func make(value: i32) -> Pair<i32> { Pair { value: value } } } \
+         impl Pair<bool> { func make(value: bool) -> Pair<bool> { Pair { value: value } } } \
+         func main() -> i32 { \
+             let pair = Pair::<i32>::make(1); \
+             pair.value \
+         }",
+    );
+    let pair = type_named(&fixture, &hir, "Pair");
+    assert_eq!(hir.methods(pair, fixture.interner.intern("make")).len(), 2);
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn an_associated_function_needs_arguments_when_impls_are_disjoint() {
+    let fixture = Fixture::new(
+        "struct Pair<T> { value: T } \
+         impl Pair<i32> { func make(value: i32) -> Pair<i32> { Pair { value: value } } } \
+         impl Pair<bool> { func make(value: bool) -> Pair<bool> { Pair { value: value } } } \
+         func main() { let pair = Pair::make(1); }",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2063", "more than one impl");
+}
+
+#[test]
+fn an_associated_function_is_reachable_through_a_type_parameter_bound() {
+    let (fixture, hir) = lower_clean(
+        "trait Factory { func make() -> i32; } \
+         func build<T: Factory>() -> i32 { T::make() }",
+    );
+    let (_, body) = function(&fixture, &hir, "build");
+    let ExprKind::Call { callee, .. } = hir.expr(tail(&hir, body)).kind.clone() else {
+        panic!("expected a call");
+    };
+    let ExprKind::Path {
+        res: Res::Function(function),
+        ..
+    } = hir.expr(callee).kind
+    else {
+        panic!("expected a function path");
+    };
+    assert_eq!(hir.definitions().kind(function), DefKind::TraitMethod);
+    assert_invariants(&fixture, &hir);
 }
 
 fn type_named(fixture: &Fixture, hir: &crate::Hir, name: &str) -> seal_def::DefId {

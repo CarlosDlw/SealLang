@@ -19,6 +19,7 @@ use crate::res::Res;
 use crate::{Block, Hir, HirBlockId, ReceiverKind};
 
 mod aggregates;
+mod coherence;
 mod enums;
 mod expr;
 mod generics;
@@ -27,6 +28,7 @@ mod patterns;
 mod scope;
 mod stmt;
 mod structs;
+mod supertraits;
 mod types;
 
 pub(crate) use types::intern_primitives;
@@ -74,6 +76,7 @@ pub(crate) struct Lowering<'a> {
 struct PendingBounds {
     owner: DefId,
     params: GenericParams,
+    supertraits: Vec<seal_ast::TraitPath>,
     where_clause: WhereClause,
     self_ty: Option<TyId>,
 }
@@ -97,7 +100,6 @@ struct TraitMethodSig {
 
 /// One `impl Trait for Type` block waiting for signature validation.
 struct PendingTraitImpl {
-    impl_def: DefId,
     trait_ref: TraitRef,
     self_ty: TyId,
     span: Span,
@@ -146,6 +148,8 @@ impl<'a> Lowering<'a> {
         self.lower_enums();
         self.validate_aggregates();
         self.build_trait_definitions();
+        self.validate_supertraits();
+        self.validate_coherence();
         self.validate_trait_impls();
         self.lower_bodies();
         self.hir
@@ -218,18 +222,19 @@ impl<'a> Lowering<'a> {
             parent: None,
             mutable: false,
         });
-        let (generics, where_clause, methods) = {
+        let (generics, supertraits, where_clause, methods) = {
             let ItemKind::Trait(declaration) = &self.ast.item(item_id).kind else {
                 return;
             };
             (
                 declaration.generics.clone(),
+                declaration.supertraits.clone(),
                 declaration.where_clause.clone(),
                 declaration.methods.clone(),
             )
         };
         self.register_generics(definition, &generics, None, true);
-        self.queue_bounds(definition, &generics, &where_clause, None);
+        self.queue_bounds(definition, &generics, &supertraits, &where_clause, None);
         self.trait_items.push((item_id, definition));
 
         let existing = self
@@ -305,7 +310,7 @@ impl<'a> Lowering<'a> {
             mutable: false,
         });
         self.register_generics(definition, &generics_decl, Some(trait_def), false);
-        self.queue_bounds(definition, &generics_decl, &where_clause, None);
+        self.queue_bounds(definition, &generics_decl, &[], &where_clause, None);
         self.trait_method_items.push((item_id, definition));
 
         let (receiver, parameters) = self.trait_signature(trait_def, &params);
@@ -451,6 +456,7 @@ impl<'a> Lowering<'a> {
         self.queue_bounds(
             impl_def,
             &declaration.generics,
+            &[],
             &declaration.where_clause,
             Some(self_ty),
         );
@@ -508,6 +514,7 @@ impl<'a> Lowering<'a> {
         self.queue_bounds(
             impl_def,
             &declaration.generics,
+            &[],
             &declaration.where_clause,
             Some(self_ty),
         );
@@ -539,31 +546,33 @@ impl<'a> Lowering<'a> {
 
         if let Some(trait_ref) = trait_ref {
             let trait_def = trait_ref.trait_def;
-            if let Some(type_def) = nominal {
-                let concrete = !self.hir.ty_ctxt().contains_param(self_ty)
-                    && self
-                        .hir
-                        .ty_ctxt()
-                        .substs_args(trait_ref.args)
-                        .into_iter()
-                        .all(|argument| !self.hir.ty_ctxt().contains_param(argument));
-                if concrete {
-                    if let Some(first) = self.hir.trait_impl_span(trait_def, type_def) {
-                        self.error(
-                            codes::E2021,
-                            span,
-                            format!(
-                                "the trait `{}` is already implemented for `{}`",
-                                self.interner
-                                    .resolve(self.hir.definitions().name(trait_def)),
-                                self.display_ty(self_ty)
-                            ),
-                        )
-                        .secondary(first, "first implemented here")
-                        .help("remove this block, or merge its functions into the first one")
-                        .emit();
-                    }
-                }
+            let concrete = !self.hir.ty_ctxt().contains_param(self_ty)
+                && self
+                    .hir
+                    .ty_ctxt()
+                    .substs_args(trait_ref.args)
+                    .into_iter()
+                    .all(|argument| !self.hir.ty_ctxt().contains_param(argument));
+            let implementations = self.hir.trait_impls();
+            if concrete
+                && let Some(first) = implementations
+                    .iter()
+                    .find(|implementation| implementation.trait_ref == trait_ref)
+            {
+                let first_span = self.hir.definitions().get(first.def).span;
+                self.error(
+                    codes::E2021,
+                    span,
+                    format!(
+                        "the trait `{}` is already implemented for `{}`",
+                        self.interner
+                            .resolve(self.hir.definitions().name(trait_def)),
+                        self.display_ty(self_ty)
+                    ),
+                )
+                .secondary(first_span, "first implemented here")
+                .help("remove this block, or merge its functions into the first one")
+                .emit();
             }
         }
 
@@ -600,10 +609,8 @@ impl<'a> Lowering<'a> {
         };
         let trait_def = trait_ref.trait_def;
         if let Some(type_def) = nominal {
-            if self.hir.trait_impl_span(trait_def, type_def).is_none() {
-                let map: FxHashMap<Symbol, DefId> = functions.iter().copied().collect();
-                self.hir.insert_trait_impl(trait_def, type_def, map, span);
-            }
+            let map: FxHashMap<Symbol, DefId> = functions.iter().copied().collect();
+            self.hir.insert_trait_impl(trait_def, type_def, map);
         }
         if let Some(generics) = self.hir.generics(impl_def) {
             self.hir
@@ -613,7 +620,6 @@ impl<'a> Lowering<'a> {
                 ));
         }
         self.pending_trait_impls.push(PendingTraitImpl {
-            impl_def,
             trait_ref,
             self_ty,
             span,
@@ -655,7 +661,7 @@ impl<'a> Lowering<'a> {
         self.function_items.push(item_id);
         self.impl_self_ty_of_function.insert(definition, self_ty);
         self.register_generics(definition, &generics, Some(impl_def), false);
-        self.queue_bounds(definition, &generics, &where_clause, Some(self_ty));
+        self.queue_bounds(definition, &generics, &[], &where_clause, Some(self_ty));
 
         let Some(receiver_param) = params.first().copied() else {
             return Some((name, definition));
@@ -684,6 +690,26 @@ impl<'a> Lowering<'a> {
         Some((name, definition))
     }
 
+    /// Returns a previously registered inherent function with the same name and
+    /// an impl self type that can equal `self_ty`.
+    ///
+    /// Two impl blocks may declare the same name for disjoint instances, such
+    /// as `impl Pair<i32>` and `impl Pair<bool>`. Only overlapping blocks would
+    /// make a call ambiguous, so only they are rejected.
+    fn overlapping_inherent(&self, type_def: DefId, name: Symbol, self_ty: TyId) -> Option<DefId> {
+        self.hir
+            .methods(type_def, name)
+            .iter()
+            .copied()
+            .find(|function| {
+                self.impl_self_ty_of_function
+                    .get(function)
+                    .is_some_and(|existing| {
+                        seal_ty::unify_templates(self.hir.ty_ctxt(), *existing, self_ty).is_some()
+                    })
+            })
+    }
+
     /// Registers one inherent impl function under its type.
     fn collect_inherent_function(
         &mut self,
@@ -696,7 +722,7 @@ impl<'a> Lowering<'a> {
         let Some(type_def) = type_def else {
             return Some((name, definition));
         };
-        if let Some(first) = self.hir.method(type_def, name) {
+        if let Some(first) = self.overlapping_inherent(type_def, name, self_ty) {
             let first_span = self.hir.definitions().get(first).name_span;
             let name_span = self.hir.definitions().get(definition).name_span;
             self.error(
@@ -771,8 +797,7 @@ impl<'a> Lowering<'a> {
                             &raw,
                             method,
                             function,
-                            implementation.impl_def,
-                            implementation.self_ty,
+                            implementation.trait_ref,
                             (&trait_name, &type_name),
                         );
                     }
@@ -804,11 +829,11 @@ impl<'a> Lowering<'a> {
         raw: &TraitMethodSig,
         declared: &seal_ty::TraitMethodDef,
         function: DefId,
-        impl_def: DefId,
-        self_ty: TyId,
+        trait_ref: TraitRef,
         names: (&str, &str),
     ) {
         let (trait_name, type_name) = names;
+        let self_ty = trait_ref.self_ty;
         let Some(&item_id) = self.function_item_of.get(&function) else {
             return;
         };
@@ -850,15 +875,13 @@ impl<'a> Lowering<'a> {
                 implemented.len()
             ))
         } else {
-            match self.instantiate_trait_signature(declared, impl_def, function, self_ty) {
+            match self.instantiate_trait_signature(declared, trait_ref, function) {
                 Err(difference) => Some(difference),
                 Ok(expected) => self.compare_parameter_types(&expected.params, &implemented),
             }
         };
         if difference.is_none() {
-            if let Ok(expected) =
-                self.instantiate_trait_signature(declared, impl_def, function, self_ty)
-            {
+            if let Ok(expected) = self.instantiate_trait_signature(declared, trait_ref, function) {
                 difference = self.compare_return_type(expected.ret, found_ret);
             }
         }
@@ -882,16 +905,24 @@ impl<'a> Lowering<'a> {
     }
 
     /// Replaces the trait method's `Self`, trait, and method parameters with the
-    /// implementation's self type and corresponding parameters.
+    /// implementation's header and the function's own parameters.
+    ///
+    /// The impl header already lowered its trait arguments, so `impl<A, B>
+    /// Trait<B> for Pair<A, B>` maps the trait's argument to `B` regardless of
+    /// declaration order. The method's own parameters map to the function's own
+    /// parameters positionally, which is the only order they have.
     fn instantiate_trait_signature(
         &self,
         method: &seal_ty::TraitMethodDef,
-        impl_def: DefId,
+        trait_ref: TraitRef,
         function: DefId,
-        self_ty: TyId,
     ) -> Result<GenericSignature, String> {
         let parameters = self.hir.ty_ctxt().flattened_generics(method.def);
-        let impl_params = self.hir.flattened_generics(impl_def);
+        let trait_generics = self
+            .hir
+            .generics(trait_ref.trait_def)
+            .map(|generics| generics.params.len())
+            .unwrap_or(1);
         let method_params = self
             .hir
             .generics(function)
@@ -904,31 +935,27 @@ impl<'a> Lowering<'a> {
                 method.generics.params.len()
             ));
         }
-        let mut args = vec![self.hir.ty_ctxt().error_ty(); parameters.len()];
-        for parameter in &parameters {
-            if parameter.is_self {
-                args[parameter.index as usize] = self_ty;
-                continue;
-            }
-            let declared_by_parent = method.generics.parent.is_some_and(|parent| {
-                self.hir.definitions().get(parameter.def).parent == Some(parent)
-            });
-            let source = if declared_by_parent {
-                impl_params
-                    .iter()
-                    .find(|candidate| candidate.name == parameter.name)
-            } else {
-                method_params
-                    .iter()
-                    .find(|candidate| candidate.name == parameter.name)
-            };
-            let Some(source) = source else {
-                return Err(format!(
-                    "the implementation does not declare the generic parameter `{}`",
-                    self.interner.resolve(parameter.name)
-                ));
-            };
-            args[parameter.index as usize] = self.hir.ty_ctxt().param_ty(source.param);
+        let mut args = Vec::with_capacity(parameters.len());
+        args.push(trait_ref.self_ty);
+        args.extend(self.hir.ty_ctxt().substs_args(trait_ref.args));
+        if args.len() != trait_generics {
+            return Err(format!(
+                "the implementation names {} trait argument(s), but the trait declares {}",
+                args.len().saturating_sub(1),
+                trait_generics.saturating_sub(1)
+            ));
+        }
+        args.extend(
+            method_params
+                .iter()
+                .map(|parameter| self.hir.ty_ctxt().param_ty(parameter.param)),
+        );
+        if args.len() != parameters.len() {
+            return Err(format!(
+                "the trait method has {} generic parameter(s), but this implementation provides {}",
+                parameters.len().saturating_sub(trait_generics),
+                method_params.len()
+            ));
         }
         let substs = self.hir.ty_ctxt().substs(&args);
         let params = method
@@ -1035,7 +1062,7 @@ impl<'a> Lowering<'a> {
             _ => (GenericParams::empty(span), WhereClause::empty(span)),
         };
         self.register_generics(definition, &generics, None, false);
-        self.queue_bounds(definition, &generics, &where_clause, None);
+        self.queue_bounds(definition, &generics, &[], &where_clause, None);
 
         if let Some(first) = self.globals.get(&name).copied() {
             let first_span = self.hir.definitions().get(first).name_span;
@@ -1077,6 +1104,7 @@ impl<'a> Lowering<'a> {
             self.queue_bounds(
                 definition,
                 &declaration.generics,
+                &[],
                 &declaration.where_clause,
                 None,
             );
@@ -1119,6 +1147,7 @@ impl<'a> Lowering<'a> {
             self.queue_bounds(
                 definition,
                 &declaration.generics,
+                &[],
                 &declaration.where_clause,
                 None,
             );

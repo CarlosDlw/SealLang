@@ -1077,6 +1077,28 @@ whose target is a concrete type cannot be stored in the parameter environment
 and is rejected here until the trait solver can prove it.\n\nMove the bound to a type parameter, or remove the predicate.",
 };
 
+/// An associated function is declared by several impls and cannot be chosen.
+pub const E2063: ErrorCode = ErrorCode {
+    code: "E2063",
+    title: "ambiguous associated function",
+    explanation: "\
+Several inherent impl blocks for one generic type declare an associated
+function with this name. The blocks apply to different instances, so the call
+needs type arguments to select one; without them there is no single target.
+\n\nWrite the type arguments on the aggregate, as in `Type::<i32>::function()`, or
+remove one of the declarations.",
+};
+
+/// A trait's supertrait relation contains a cycle.
+pub const E2064: ErrorCode = ErrorCode {
+    code: "E2064",
+    title: "cyclic supertrait relation",
+    explanation: "\
+A trait may require its implementors to implement other traits. When the
+requirement graph contains a cycle, proving one bound would require proving the
+same bound again, so no implementation could ever satisfy it.\n\nRemove one of the supertrait requirements that closes the cycle.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1852,12 +1874,12 @@ pub static ALL: &[ErrorCode] = &[
     E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
     E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
     E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051, E2052, E2053, E2054,
-    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E3001, E3002, E3003, E3004, E3005,
-    E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018,
-    E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031,
-    E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044,
-    E3045, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002,
-    E6003, E9001, E9002,
+    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064, E3001, E3002, E3003,
+    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
+    E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
+    E3043, E3044, E3045, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1973,7 +1995,8 @@ mod tests {
                 "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035", "E2036",
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
                 "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
-                "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062",
+                "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
+                "E2064",
             ]
         );
     }

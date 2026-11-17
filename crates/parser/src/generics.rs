@@ -331,7 +331,7 @@ impl Parser<'_> {
 
     /// Parses a trait path without creating a throwaway type node.
     pub(crate) fn parse_trait_path(&mut self) -> TraitPath {
-        let (name, name_span) = self.expect_ident("a trait name after `impl`");
+        let (name, name_span) = self.expect_ident("a trait name");
         let args = self.parse_optional_generic_args();
         let end = args.as_ref().map_or(name_span, |args| args.span);
         TraitPath {

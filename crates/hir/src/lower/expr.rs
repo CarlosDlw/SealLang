@@ -3,7 +3,7 @@
 use seal_ast::{ExprId as AstExprId, ExprKind as AstExprKind};
 use seal_def::DefId;
 use seal_error_codes as codes;
-use seal_hash::FxHashSet;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_span::Span;
 use seal_symbol::Symbol;
 
@@ -316,6 +316,12 @@ impl Lowering<'_> {
         name: Symbol,
         name_span: Span,
     ) -> ExprKind {
+        // A type parameter is not a type definition, but it can still name an
+        // associated function through its bounds.
+        if let Some(param) = self.generic_scope_param(type_name) {
+            return self
+                .lower_bound_associated(param, type_name, type_span, type_args, name, name_span);
+        }
         let Some(&type_def) = self.types.get(&type_name) else {
             let missing = self.interner.resolve(type_name);
             if self.traits.contains_key(&type_name) {
@@ -381,8 +387,12 @@ impl Lowering<'_> {
             };
         }
 
-        if let Some(function) = self.hir.method(type_def, name) {
-            return self.qualified_function(function, name, name_span, type_args);
+        match self.select_inherent_function(type_def, name, type_args, name_span) {
+            InherentLookup::Found(function) => {
+                return self.qualified_function(function, name, name_span, type_args);
+            }
+            InherentLookup::Rejected => return ExprKind::Error,
+            InherentLookup::Missing => {}
         }
 
         match self.hir.trait_method(type_def, name) {
@@ -889,4 +899,215 @@ impl Lowering<'_> {
         }
         resolved
     }
+
+    /// Chooses the inherent associated function named by `Type::name`.
+    ///
+    /// Several impl blocks for one generic type may declare the same name for
+    /// disjoint instances. Written type arguments select the block whose self
+    /// type they match; without them, more than one candidate is ambiguous.
+    fn select_inherent_function(
+        &mut self,
+        type_def: DefId,
+        name: Symbol,
+        type_args: Option<seal_ty::SubstsId>,
+        name_span: Span,
+    ) -> InherentLookup {
+        let candidates: Vec<DefId> = self.hir.methods(type_def, name).to_vec();
+        let Some(&first) = candidates.first() else {
+            return InherentLookup::Missing;
+        };
+        let Some(type_args) = type_args else {
+            if candidates.len() == 1 {
+                return InherentLookup::Found(first);
+            }
+            self.report_ambiguous_associated(type_def, name, name_span);
+            return InherentLookup::Rejected;
+        };
+        let adt = self
+            .hir
+            .adt(type_def)
+            .expect("every type definition reserves an aggregate");
+        let actual = self.hir.ty_ctxt().adt_ty_with(adt, type_args);
+        let matches: Vec<DefId> = candidates
+            .into_iter()
+            .filter(|function| {
+                self.impl_self_ty_of_function
+                    .get(function)
+                    .is_some_and(|self_ty| {
+                        seal_ty::match_template(
+                            self.hir.ty_ctxt(),
+                            *self_ty,
+                            actual,
+                            &mut FxHashMap::default(),
+                        )
+                    })
+            })
+            .collect();
+        match matches.len() {
+            1 => InherentLookup::Found(matches[0]),
+            0 => {
+                let type_name = self.interner.resolve(self.type_name(type_def));
+                let function = self.interner.resolve(name);
+                self.error(
+                    codes::E2018,
+                    name_span,
+                    format!(
+                        "no impl of `{type_name}` matching these type arguments declares `{function}`"
+                    ),
+                )
+                .help("use type arguments that match an impl self type")
+                .emit();
+                InherentLookup::Rejected
+            }
+            _ => {
+                self.report_ambiguous_associated(type_def, name, name_span);
+                InherentLookup::Rejected
+            }
+        }
+    }
+
+    fn report_ambiguous_associated(&self, type_def: DefId, name: Symbol, span: Span) {
+        let type_name = self.interner.resolve(self.type_name(type_def));
+        let function = self.interner.resolve(name);
+        self.error(
+            codes::E2063,
+            span,
+            format!(
+                "the associated function `{function}` is declared by more than one impl of `{type_name}`"
+            ),
+        )
+        .help(format!(
+            "write the type arguments on the aggregate, as in `{type_name}::<...>::{function}()`"
+        ))
+        .emit();
+    }
+
+    fn type_name(&self, type_def: DefId) -> Symbol {
+        self.hir.definitions().name(type_def)
+    }
+
+    /// Lowers `T::name()` where `T` is a type parameter.
+    ///
+    /// The method itself is symbolic until monomorphization: the call records
+    /// the trait method declaration, and type checking resolves the trait from
+    /// the parameter's bounds. Only associated functions are reachable this way.
+    fn lower_bound_associated(
+        &mut self,
+        param: seal_ty::ParamTyId,
+        type_name: Symbol,
+        type_span: Span,
+        type_args: Option<&seal_ast::GenericArgs>,
+        name: Symbol,
+        name_span: Span,
+    ) -> ExprKind {
+        let Some(function) = self.function else {
+            return ExprKind::Error;
+        };
+        let environment = self.hir.param_env(function);
+        let mut candidates: Vec<seal_ty::TraitMethodDef> = Vec::new();
+        let mut seen_traits = FxHashSet::default();
+        for bound in environment.bounds(param) {
+            let seal_ty::Bound::Trait(trait_ref) = bound else {
+                continue;
+            };
+            self.collect_bound_methods(*trait_ref, name, &mut seen_traits, &mut candidates);
+        }
+        let mut seen_methods = FxHashSet::default();
+        candidates.retain(|method| seen_methods.insert(method.def));
+        let parameter = self.interner.resolve(type_name);
+        let function_name = self.interner.resolve(name);
+        match candidates.len() {
+            1 => {
+                let method = &candidates[0];
+                if method.receiver.is_some() {
+                    self.error(
+                        codes::E2019,
+                        name_span,
+                        format!("`{function_name}` is a method, not an associated function"),
+                    )
+                    .help(format!(
+                        "call it on a value of type `{parameter}`, as in `value.{function_name}()`"
+                    ))
+                    .emit();
+                    return ExprKind::Error;
+                }
+                let expected = method.generics.params.len();
+                let args = self.lower_expr_arguments(type_args, expected);
+                ExprKind::Path {
+                    res: crate::Res::Function(method.def),
+                    args,
+                }
+            }
+            0 => {
+                self.error(
+                    codes::E2018,
+                    type_span,
+                    format!(
+                        "the bounds of `{parameter}` do not declare an associated function `{function_name}`"
+                    ),
+                )
+                .help("add a bound whose trait declares it, or call it on a concrete type")
+                .emit();
+                ExprKind::Error
+            }
+            _ => {
+                let traits: Vec<String> = candidates
+                    .iter()
+                    .filter_map(|method| self.hir.definitions().get(method.def).parent)
+                    .map(|trait_def| {
+                        format!(
+                            "`{}`",
+                            self.interner
+                                .resolve(self.hir.definitions().name(trait_def))
+                        )
+                    })
+                    .collect();
+                self.error(
+                    codes::E2028,
+                    name_span,
+                    format!(
+                        "`{function_name}` is declared by more than one trait visible on `{parameter}`"
+                    ),
+                )
+                .help(format!(
+                    "the traits are {}; rename the method in one of them",
+                    traits.join(", ")
+                ))
+                .emit();
+                ExprKind::Error
+            }
+        }
+    }
+
+    /// Adds the trait methods named `name` visible through `trait_ref`.
+    fn collect_bound_methods(
+        &self,
+        trait_ref: seal_ty::TraitRef,
+        name: Symbol,
+        seen: &mut FxHashSet<DefId>,
+        out: &mut Vec<seal_ty::TraitMethodDef>,
+    ) {
+        if !seen.insert(trait_ref.trait_def) {
+            return;
+        }
+        let Some(declaration) = self.hir.trait_definition(trait_ref.trait_def) else {
+            return;
+        };
+        if let Some(method) = declaration.method(name) {
+            out.push(method.clone());
+        }
+        for supertrait in &declaration.supertraits {
+            self.collect_bound_methods(*supertrait, name, seen, out);
+        }
+    }
+}
+
+/// The outcome of resolving one `Type::name` qualified path.
+enum InherentLookup {
+    /// Exactly one impl declares the function for the written type.
+    Found(DefId),
+    /// The type declares no such function, so trait lookup continues.
+    Missing,
+    /// An error was reported and the path cannot be resolved.
+    Rejected,
 }

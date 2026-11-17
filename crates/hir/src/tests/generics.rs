@@ -568,6 +568,62 @@ fn a_supertrait_is_recorded_on_the_trait() {
 }
 
 #[test]
+fn a_supertrait_is_written_after_the_trait_name() {
+    let (fixture, hir) = lower_clean("trait Base {} trait Child: Base {}");
+    let child = named_type(&fixture, &hir, "Child", DefKind::Trait);
+    let declaration = hir.trait_definition(child).expect("semantic trait");
+    assert_eq!(declaration.supertraits.len(), 1);
+    assert_eq!(
+        declaration.supertraits[0].trait_def,
+        named_type(&fixture, &hir, "Base", DefKind::Trait)
+    );
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn supertrait_arguments_and_duplicates_are_normalized() {
+    let (fixture, hir) = lower_clean("trait Base<T> {} trait Child<T>: Base<T> + Base<T> {}");
+    let child = named_type(&fixture, &hir, "Child", DefKind::Trait);
+    let declaration = hir.trait_definition(child).expect("semantic trait");
+    assert_eq!(declaration.supertraits.len(), 1);
+    assert_eq!(
+        hir.ty_ctxt()
+            .substs_args(declaration.supertraits[0].args)
+            .len(),
+        1
+    );
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn transitive_supertraits_are_allowed() {
+    let (fixture, hir) = lower_clean("trait A {} trait B: A {} trait C: B {}");
+    let c = named_type(&fixture, &hir, "C", DefKind::Trait);
+    assert_eq!(
+        hir.trait_definition(c)
+            .expect("semantic trait")
+            .supertraits
+            .len(),
+        1
+    );
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn a_supertrait_cycle_is_rejected() {
+    let fixture = Fixture::new("trait A: B {} trait B: A {}");
+    let _ = fixture.lower();
+    fixture.expect("E2064", "cyclic");
+}
+
+#[test]
+fn a_self_referential_supertrait_is_rejected() {
+    let fixture = Fixture::new("trait A: A {}");
+    let _ = fixture.lower();
+    fixture.expect("E2064", "cyclic");
+}
+
+#[test]
 fn self_in_an_inherent_method_return_is_the_impl_type() {
     let (fixture, hir) = lower_clean(
         "struct Box<T> { value: T } impl<T> Box<T> { func same(self: *Self) -> Self { *self } }",

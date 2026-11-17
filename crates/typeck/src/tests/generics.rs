@@ -258,6 +258,13 @@ fn a_bound_method_resolves_symbolically() {
         results.method(call).expect("method resolved").kind,
         MethodKind::TraitBound { .. }
     ));
+    let instance = results
+        .instantiation(call)
+        .expect("the symbolic call is recorded");
+    assert_eq!(
+        hir.definitions().kind(instance.def),
+        seal_def::DefKind::TraitMethod
+    );
 }
 
 #[test]

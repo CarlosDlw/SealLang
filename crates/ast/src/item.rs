@@ -155,6 +155,8 @@ pub struct TraitDecl {
     pub name_span: Span,
     /// Declared type parameters.
     pub generics: GenericParams,
+    /// Traits every implementor must also implement, in source order.
+    pub supertraits: Vec<TraitPath>,
     /// Bounds written after the header.
     pub where_clause: WhereClause,
     /// Method signatures in declaration order.

@@ -270,6 +270,15 @@ impl<'a> Parser<'a> {
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("a trait name");
         let generics = self.parse_generic_params();
+        let mut supertraits = Vec::new();
+        if self.eat(TokenKind::Colon) {
+            loop {
+                supertraits.push(self.parse_trait_path());
+                if !self.eat(TokenKind::Plus) {
+                    break;
+                }
+            }
+        }
         let where_clause = self.parse_where_clause();
         let _ = self.expect(TokenKind::LBrace, "`{` after the trait name");
 
@@ -301,6 +310,7 @@ impl<'a> Parser<'a> {
                 name,
                 name_span,
                 generics,
+                supertraits,
                 where_clause,
                 methods,
             }),

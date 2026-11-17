@@ -114,12 +114,14 @@ impl Lowering<'_> {
         &mut self,
         owner: DefId,
         params: &GenericParams,
+        supertraits: &[TraitPath],
         where_clause: &WhereClause,
         self_ty: Option<TyId>,
     ) {
         self.pending_bounds.push(super::PendingBounds {
             owner,
             params: params.clone(),
+            supertraits: supertraits.to_vec(),
             where_clause: where_clause.clone(),
             self_ty,
         });
@@ -153,6 +155,21 @@ impl Lowering<'_> {
             let target = self.hir.ty_ctxt().param_ty(parameter.param);
             let lowered = self.lower_bound_ids(target, &declaration.bounds);
             merge_bounds(&mut generics.params[offset + position].bounds, lowered);
+        }
+
+        // Supertraits are bounds on the implicit `Self` parameter, so they go
+        // through the same environment as inline and where-clause bounds.
+        if let Some(position) = generics.params.iter().position(|param| param.is_self) {
+            let target = self.hir.ty_ctxt().param_ty(generics.params[position].param);
+            let mut lowered = Vec::with_capacity(pending.supertraits.len());
+            for path in &pending.supertraits {
+                if let Some(bound) = self.lower_trait_bound(target, path)
+                    && !lowered.contains(&bound)
+                {
+                    lowered.push(bound);
+                }
+            }
+            merge_bounds(&mut generics.params[position].bounds, lowered);
         }
 
         let mut extra: FxHashMap<ParamTyId, Vec<Bound>> = FxHashMap::default();
@@ -225,11 +242,13 @@ impl Lowering<'_> {
     fn lower_bound(&mut self, target: TyId, id: seal_ast::BoundId) -> Option<Bound> {
         match self.ast.bound(id).kind.clone() {
             BoundKind::Copy => Some(Bound::Copy),
-            BoundKind::Trait(path) => {
-                let (trait_def, args) = self.lower_bound_trait_path(&path)?;
-                Some(Bound::Trait(TraitRef::new(trait_def, target, args)))
-            }
+            BoundKind::Trait(path) => self.lower_trait_bound(target, &path),
         }
+    }
+
+    fn lower_trait_bound(&mut self, target: TyId, path: &TraitPath) -> Option<Bound> {
+        let (trait_def, args) = self.lower_bound_trait_path(path)?;
+        Some(Bound::Trait(TraitRef::new(trait_def, target, args)))
     }
 
     fn lower_bound_trait_path(&mut self, path: &TraitPath) -> Option<(DefId, seal_ty::SubstsId)> {

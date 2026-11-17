@@ -154,10 +154,11 @@ impl<'a> Solver<'a> {
     fn prove_from_impls(&mut self, goal: TraitRef, depth: usize) -> Proof {
         let mut proven = 0usize;
         let mut ambiguous = false;
-        for implementation in self.hir.trait_impls() {
-            if implementation.trait_ref.trait_def != goal.trait_def {
-                continue;
-            }
+        for implementation in self
+            .hir
+            .ty_ctxt()
+            .trait_impls_for(goal.trait_def, goal.self_ty)
+        {
             let Some(mapping) = self.match_impl(&implementation.trait_ref, goal) else {
                 continue;
             };
@@ -270,89 +271,13 @@ impl<'a> Solver<'a> {
 
 /// Matches a type template against a concrete type, binding template params.
 ///
-/// A parameter may appear several times; every occurrence must receive the same
-/// type. This is the same rule as unification, minus inference variables.
+/// The algorithm is shared with HIR impl selection and coherence, so the
+/// definition lives in [`seal_ty::match_template`].
 pub(super) fn match_type(
     hir: &Hir,
     pattern: TyId,
     actual: TyId,
     mapping: &mut FxHashMap<ParamTyId, TyId>,
 ) -> bool {
-    let ctxt = hir.ty_ctxt();
-    if pattern == actual {
-        return true;
-    }
-    match (ctxt.kind(pattern), ctxt.kind(actual)) {
-        (TyKind::Error, _) | (_, TyKind::Error) => true,
-        (TyKind::Param(param), _) => match mapping.get(&param).copied() {
-            Some(previous) => previous == actual,
-            None => {
-                if matches!(ctxt.kind(actual), TyKind::Infer(_)) {
-                    return false;
-                }
-                mapping.insert(param, actual);
-                true
-            }
-        },
-        (
-            TyKind::Ref {
-                kind: pattern_kind,
-                pointee: pattern_pointee,
-            },
-            TyKind::Ref {
-                kind: actual_kind,
-                pointee: actual_pointee,
-            },
-        ) if pattern_kind == actual_kind => {
-            match_type(hir, pattern_pointee, actual_pointee, mapping)
-        }
-        (
-            TyKind::Array {
-                element: pattern_element,
-                length: pattern_length,
-            },
-            TyKind::Array {
-                element: actual_element,
-                length: actual_length,
-            },
-        ) if pattern_length == actual_length => {
-            match_type(hir, pattern_element, actual_element, mapping)
-        }
-        (
-            TyKind::Slice {
-                element: pattern_element,
-            },
-            TyKind::Slice {
-                element: actual_element,
-            },
-        ) => match_type(hir, pattern_element, actual_element, mapping),
-        (TyKind::Tuple(pattern_tuple), TyKind::Tuple(actual_tuple)) => {
-            let patterns = ctxt.tuple_elements(pattern_tuple);
-            let actuals = ctxt.tuple_elements(actual_tuple);
-            patterns.len() == actuals.len()
-                && patterns
-                    .into_iter()
-                    .zip(actuals)
-                    .all(|(pattern, actual)| match_type(hir, pattern, actual, mapping))
-        }
-        (
-            TyKind::Adt {
-                adt: pattern_adt,
-                args: pattern_args,
-            },
-            TyKind::Adt {
-                adt: actual_adt,
-                args: actual_args,
-            },
-        ) if pattern_adt == actual_adt => {
-            let patterns = ctxt.substs_args(pattern_args);
-            let actuals = ctxt.substs_args(actual_args);
-            patterns.len() == actuals.len()
-                && patterns
-                    .into_iter()
-                    .zip(actuals)
-                    .all(|(pattern, actual)| match_type(hir, pattern, actual, mapping))
-        }
-        _ => false,
-    }
+    seal_ty::match_template(hir.ty_ctxt(), pattern, actual, mapping)
 }

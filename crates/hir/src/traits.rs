@@ -7,7 +7,6 @@
 
 use seal_def::DefId;
 use seal_hash::FxHashMap;
-use seal_span::Span;
 use seal_symbol::Symbol;
 
 /// The outcome of looking up a trait method for one nominal type.
@@ -33,7 +32,6 @@ pub enum TraitMethodLookup {
 #[derive(Debug, Default)]
 pub(crate) struct TraitImpls {
     entries: Vec<TraitImpl>,
-    index: FxHashMap<(DefId, DefId), usize>,
 }
 
 /// One `impl Trait for Type` block.
@@ -42,34 +40,24 @@ struct TraitImpl {
     trait_def: DefId,
     type_def: DefId,
     functions: FxHashMap<Symbol, DefId>,
-    span: Span,
 }
 
 impl TraitImpls {
-    /// Returns the span of the implementation of `trait_def` for `type_def`.
-    pub(crate) fn span_of(&self, trait_def: DefId, type_def: DefId) -> Option<Span> {
-        self.index
-            .get(&(trait_def, type_def))
-            .map(|index| self.entries[*index].span)
-    }
-
     /// Records an implementation.
     ///
-    /// The caller rules out a duplicate first, so the index is never replaced.
+    /// The caller rules out a duplicate first. Several impls may exist for one
+    /// nominal type with disjoint arguments, so entries are kept in order and
+    /// every one is consulted by [`TraitImpls::lookup`].
     pub(crate) fn insert(
         &mut self,
         trait_def: DefId,
         type_def: DefId,
         functions: FxHashMap<Symbol, DefId>,
-        span: Span,
     ) {
-        let index = self.entries.len();
-        self.index.insert((trait_def, type_def), index);
         self.entries.push(TraitImpl {
             trait_def,
             type_def,
             functions,
-            span,
         });
     }
 

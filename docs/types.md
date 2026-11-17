@@ -636,20 +636,38 @@ func main() -> i32 {
 }
 ```
 
-Lookup is ordered: an inherent method on the struct wins, then the trait methods
-the struct implements. Every candidate is the concrete function of one impl, so
-a trait call is a direct call with no vtable, trait object, or dynamic dispatch.
-When two implemented traits declare the same method name and the type has no
-inherent method with that name, the call is ambiguous (`E2028`). Seal has no
-syntax for naming the trait at a call, so the fix is to rename one of the
-methods; an inherent method with the name resolves the call instead.
+Traits and impls may declare type parameters. An impl header is matched
+structurally: `impl<K> Keyed<K> for Pair<K, K>` applies to `Pair<i32, i32>`, and
+`impl<T> Keyed<i32> for Pair<T, i32>` fixes the trait argument while leaving the
+self argument open. An impl may also target a sized primitive, array, tuple, or
+reference; only inherent impls are restricted to a struct or enum (`E2056`).
+
+A trait may require other traits with `trait Sub: Super` (or in its `where`
+clause). Every `T: Sub` therefore also proves `Super`, and the requirement is
+transitive. A cycle in that relation is rejected (`E2064`), and a duplicate
+requirement is kept once.
+
+Lookup is ordered: an inherent method on the struct wins, then the bounds
+visible on a type parameter, then the trait methods implemented for a concrete
+type, and finally the intrinsic catalog for receivers with no user method. Every
+concrete candidate is the function of one impl, so a trait call is a direct call
+with no vtable, trait object, or dynamic dispatch. A call through a type
+parameter has no known impl yet; it records the trait method and its arguments
+for monomorphization instead. When two implemented traits declare the same
+method name and nothing earlier resolves it, the call is ambiguous (`E2028`).
+Seal has no syntax for naming the trait at a call, so the fix is to rename one
+of the methods; an inherent method with the name resolves the call instead.
 
 Implementing a trait is checked as a complete contract. Every declared method
 must be present (`E2022`), nothing else may appear in the block (`E2023`), and
 the receiver, parameter types, and return type must match the declaration after
-`Self` is replaced with the struct (`E2024`). A trait receiver uses one of the
-three `Self` forms (`E2016`), while an impl writes the concrete type. A type
-implements a trait once (`E2021`), a trait name is neither a type nor a value
+`Self` and the trait arguments are replaced (`E2024`). A trait receiver uses one
+of the three `Self` forms (`E2016`), while an impl writes the concrete type. A
+type implements a trait once: an identical header is `E2021`, and two headers
+that can describe the same instance are rejected as overlapping (`E2058`), with
+the unifying substitution in the message. Bounds on an impl do not make it
+disjoint, so `impl<T: Copy> Trait for Pair<T, T>` overlaps
+`impl<T> Trait for Pair<T, T>`. A trait name is neither a type nor a value
 (`E2027`), and `Self` outside a trait signature is `E2025`.
 
 A method that declares `self: *Struct` can also be called through a

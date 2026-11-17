@@ -7,7 +7,7 @@
 
 use seal_def::DefId;
 use seal_error_codes as codes;
-use seal_hash::FxHashMap;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_methods::{MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind};
 use seal_span::Span;
@@ -204,8 +204,100 @@ impl Checker<'_> {
                 self.bound_method_target(base, receiver_ty, param, name, name_span)
             }
             TyKind::Error => UserLookup::Rejected,
-            _ => UserLookup::NotAStruct,
+            _ => self.primitive_method_target(base, receiver_ty, name, name_span),
         }
+    }
+
+    /// Looks up a trait method implemented for a primitive, tuple, or reference.
+    ///
+    /// Implemented traits take precedence over the intrinsic catalog, so a
+    /// user trait can give a primitive a method with an intrinsic name. When no
+    /// impl declares the name, the caller falls through to the catalog.
+    fn primitive_method_target(
+        &mut self,
+        base: TyId,
+        receiver_ty: TyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> UserLookup {
+        let candidates = self.trait_impl_candidates(receiver_ty, base, name);
+        match candidates.len() {
+            0 => UserLookup::NotAStruct,
+            1 => {
+                let candidate = candidates.into_iter().next().unwrap();
+                UserLookup::Method(UserMethod::Concrete {
+                    function: candidate.function,
+                    receiver: candidate.receiver,
+                    source: MethodSource::Trait(candidate.trait_def),
+                    self_ty: candidate.self_ty,
+                    seed: candidate.seed,
+                })
+            }
+            _ => {
+                let traits: Vec<DefId> = candidates
+                    .iter()
+                    .map(|candidate| candidate.trait_def)
+                    .collect();
+                self.report_ambiguous_trait_method(base, name, name_span, &traits);
+                UserLookup::Rejected
+            }
+        }
+    }
+
+    /// Returns every trait impl whose self type matches the receiver.
+    ///
+    /// The unpeeled receiver is tried first, so an impl for a reference type is
+    /// reachable; the peeled base is the automatic-deref fallback.
+    fn trait_impl_candidates(
+        &self,
+        receiver_ty: TyId,
+        base: TyId,
+        name: Symbol,
+    ) -> Vec<TraitCandidate> {
+        let mut implementations = self.hir.ty_ctxt().trait_impls_matching(receiver_ty);
+        if receiver_ty != base {
+            let mut seen: FxHashSet<DefId> = implementations
+                .iter()
+                .map(|implementation| implementation.def)
+                .collect();
+            for implementation in self.hir.ty_ctxt().trait_impls_matching(base) {
+                if seen.insert(implementation.def) {
+                    implementations.push(implementation);
+                }
+            }
+        }
+        let mut candidates = Vec::new();
+        for implementation in implementations {
+            let Some(function) = implementation.method(name) else {
+                continue;
+            };
+            let Some(receiver) = self.hir.receiver(function) else {
+                continue;
+            };
+            let pattern = implementation.trait_ref.self_ty;
+            let mut seed = FxHashMap::default();
+            let self_ty = if match_type(self.hir, pattern, receiver_ty, &mut seed) {
+                receiver_ty
+            } else if receiver_ty != base {
+                let mut peeled = FxHashMap::default();
+                if match_type(self.hir, pattern, base, &mut peeled) {
+                    seed = peeled;
+                    base
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+            candidates.push(TraitCandidate {
+                trait_def: implementation.trait_ref.trait_def,
+                function,
+                receiver,
+                seed,
+                self_ty,
+            });
+        }
+        candidates
     }
 
     fn adimpl_method_target(
@@ -259,36 +351,27 @@ impl Checker<'_> {
             };
         }
 
-        let mut traits = Vec::new();
-        for implementation in self.hir.trait_impls() {
-            let Some(function) = implementation.method(name) else {
-                continue;
-            };
-            let mut seed = FxHashMap::default();
-            if !match_type(self.hir, implementation.trait_ref.self_ty, base, &mut seed) {
-                continue;
-            }
-            if let Some(receiver) = self.hir.receiver(function) {
-                traits.push((implementation.trait_ref.trait_def, function, receiver, seed));
-            }
-        }
-        match traits.len() {
+        let candidates = self.trait_impl_candidates(receiver_ty, base, name);
+        match candidates.len() {
             0 => {
                 self.report_missing_method(receiver_ty, name, name_span);
                 UserLookup::Rejected
             }
             1 => {
-                let (trait_def, function, receiver, seed) = traits.pop().unwrap();
+                let candidate = candidates.into_iter().next().unwrap();
                 UserLookup::Method(UserMethod::Concrete {
-                    function,
-                    receiver,
-                    source: MethodSource::Trait(trait_def),
-                    self_ty: base,
-                    seed,
+                    function: candidate.function,
+                    receiver: candidate.receiver,
+                    source: MethodSource::Trait(candidate.trait_def),
+                    self_ty: candidate.self_ty,
+                    seed: candidate.seed,
                 })
             }
             _ => {
-                let traits: Vec<DefId> = traits.iter().map(|(trait_def, ..)| *trait_def).collect();
+                let traits: Vec<DefId> = candidates
+                    .iter()
+                    .map(|candidate| candidate.trait_def)
+                    .collect();
                 self.report_ambiguous_trait_method(base, name, name_span, &traits);
                 UserLookup::Rejected
             }
@@ -344,7 +427,7 @@ impl Checker<'_> {
     }
 
     /// Returns every trait visible on `param`, including supertraits.
-    fn visible_traits(&self, param: seal_ty::ParamTyId) -> Vec<seal_ty::TraitRef> {
+    pub(super) fn visible_traits(&self, param: seal_ty::ParamTyId) -> Vec<seal_ty::TraitRef> {
         let mut traits = Vec::new();
         for bound in self.env.bounds(param) {
             let seal_ty::Bound::Trait(trait_ref) = bound else {
@@ -654,40 +737,11 @@ impl Checker<'_> {
             receiver_kind,
             name,
         );
-        if instantiated.params.len() != args.len() {
-            self.error(
-                codes::E3028,
-                span,
-                format!(
-                    "method `{}` takes {} argument(s) but {} were supplied",
-                    self.interner.resolve(name),
-                    instantiated.params.len(),
-                    args.len()
-                ),
-            )
-            .help("pass exactly one argument for each parameter after the receiver")
-            .emit();
-        }
-        for (index, arg) in args.iter().enumerate() {
-            match instantiated.params.get(index) {
-                Some(expected) => self.check_expr(*arg, *expected, flow),
-                None => {
-                    self.infer_expr(*arg, None, flow);
-                }
-            }
-        }
-        let Some(args) = self.finish_arguments(&instantiated.generics, &instantiated.args, span)
+        let Some((params, ret_ty, _)) =
+            self.finish_trait_method_call(expr, instantiated, &method, args, flow, span)
         else {
             return self.error_ty();
         };
-        let substs = self.hir.ty_ctxt().substs(&args);
-        let params: Vec<TyId> = method
-            .signature
-            .params
-            .iter()
-            .map(|parameter| self.substitute(*parameter, substs))
-            .collect();
-        let ret_ty = self.substitute(method.signature.ret, substs);
         if !self.is_error(ret_ty) {
             self.results.record_method(
                 expr,
@@ -1014,6 +1068,16 @@ impl Checker<'_> {
             ReturnKind::Unit => self.unit(),
         }
     }
+}
+
+/// One trait impl that could provide the called method.
+struct TraitCandidate {
+    trait_def: DefId,
+    function: DefId,
+    receiver: ReceiverKind,
+    seed: FxHashMap<seal_ty::ParamTyId, TyId>,
+    /// The self type matched against the receiver, used for receiver checks.
+    self_ty: TyId,
 }
 
 /// The user-defined resolution chosen for a method call.

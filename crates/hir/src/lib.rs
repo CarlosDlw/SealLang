@@ -53,7 +53,6 @@ use seal_def::{DefData, DefId, Definitions};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
-use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{
     AdtId, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef, TraitImplDef,
@@ -86,7 +85,12 @@ pub struct Hir {
     variants: FxHashMap<(DefId, Symbol), VariantIdx>,
     traits: FxHashMap<Symbol, DefId>,
     trait_impls: traits::TraitImpls,
-    methods: FxHashMap<(DefId, Symbol), DefId>,
+    /// Inherent associated functions, in declaration order per type and name.
+    ///
+    /// Several impl blocks may declare the same name for disjoint instances of
+    /// one generic type, so a name maps to every candidate. Choosing one needs
+    /// the type arguments or the receiver, which only the caller has.
+    methods: FxHashMap<(DefId, Symbol), Vec<DefId>>,
     receivers: FxHashMap<DefId, ReceiverKind>,
     inherent_impls: Vec<InherentImpl>,
 }
@@ -219,7 +223,19 @@ impl Hir {
     /// The lookup covers methods and associated functions. Use
     /// [`Hir::receiver`] to distinguish them.
     pub fn method(&self, type_def: DefId, name: Symbol) -> Option<DefId> {
-        self.methods.get(&(type_def, name)).copied()
+        let candidates = self.methods(type_def, name);
+        (candidates.len() == 1).then(|| candidates[0])
+    }
+
+    /// Returns every inherent function `name` declared for `type_def`.
+    ///
+    /// The candidates are in declaration order. Each one belongs to an impl
+    /// block whose self type may restrict the instances where it applies.
+    pub fn methods(&self, type_def: DefId, name: Symbol) -> &[DefId] {
+        self.methods
+            .get(&(type_def, name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Returns the receiver kind of `function`, or `None` when it is associated.
@@ -315,11 +331,6 @@ impl Hir {
         self.trait_impls.lookup(type_def, name)
     }
 
-    /// Returns the span of the `impl Trait for Type` block, when it exists.
-    pub fn trait_impl_span(&self, trait_def: DefId, type_def: DefId) -> Option<Span> {
-        self.trait_impls.span_of(trait_def, type_def)
-    }
-
     pub(crate) fn insert_adt(&mut self, def: DefId, adt: AdtId) {
         self.adts.insert(def, adt);
     }
@@ -337,14 +348,15 @@ impl Hir {
         trait_def: DefId,
         type_def: DefId,
         functions: FxHashMap<Symbol, DefId>,
-        span: Span,
     ) {
-        self.trait_impls
-            .insert(trait_def, type_def, functions, span);
+        self.trait_impls.insert(trait_def, type_def, functions);
     }
 
     pub(crate) fn insert_method(&mut self, type_def: DefId, name: Symbol, function: DefId) {
-        self.methods.insert((type_def, name), function);
+        self.methods
+            .entry((type_def, name))
+            .or_default()
+            .push(function);
     }
 
     pub(crate) fn insert_receiver(&mut self, function: DefId, receiver: ReceiverKind) {

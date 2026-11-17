@@ -54,6 +54,8 @@ pub(crate) struct Checker<'a> {
     pub(super) infer: InferCtxt,
     pub(super) env: ParamEnv,
     pub(super) proof_cache: FxHashMap<TraitRef, trait_solver::Proof>,
+    /// The definition whose body is being checked, for its generic scope.
+    pub(super) owner: Option<DefId>,
     pub(super) ret: TyId,
     /// Non-`Copy` pattern bindings referenced by the guard being checked.
     ///
@@ -84,6 +86,7 @@ impl<'a> Checker<'a> {
             infer: InferCtxt::new(),
             env: ParamEnv::new(),
             proof_cache: FxHashMap::default(),
+            owner: None,
             ret: unit,
             guard_moves: None,
         };
@@ -135,6 +138,7 @@ impl<'a> Checker<'a> {
         self.infer = InferCtxt::new();
         self.env = self.hir.param_env(body.owner);
         self.proof_cache.clear();
+        self.owner = Some(body.owner);
 
         let mut flow = Flow::new();
         for (param, ty) in body.params.iter().zip(&signature.params) {

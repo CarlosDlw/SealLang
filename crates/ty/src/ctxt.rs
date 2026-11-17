@@ -12,6 +12,71 @@ use crate::generics::{GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, Tr
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
+/// The outer constructor of an impl target or trait goal.
+///
+/// Two types can only be equal when their heads are equal, so grouping impls
+/// by trait and head rejects every non-candidate before structural matching.
+/// A blanket impl has a parameter head and is kept in a separate list, because
+/// it may apply to a goal with any head.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ImplHead {
+    /// A struct or enum.
+    Adt(AdtId),
+    /// A signed integer.
+    Int(IntTy),
+    /// An unsigned integer.
+    Uint(UintTy),
+    /// A floating-point number.
+    Float(FloatTy),
+    /// `bool`.
+    Bool,
+    /// `char`.
+    Char,
+    /// `str`.
+    Str,
+    /// `()`.
+    Unit,
+    /// The never type.
+    Never,
+    /// A shared or exclusive reference.
+    Ref(RefKind),
+    /// An array, independent of its length.
+    Array,
+    /// A slice.
+    Slice,
+    /// A tuple with the given arity.
+    Tuple(usize),
+    /// A declared type parameter, which makes the impl a blanket one.
+    Param,
+    /// An unresolved inference variable.
+    Infer,
+    /// The error recovery type.
+    Error,
+}
+
+impl TyCtxt {
+    fn impl_head(&self, ty: TyId) -> ImplHead {
+        match self.kind(ty) {
+            TyKind::Adt { adt, .. } => ImplHead::Adt(adt),
+            TyKind::Int(int) => ImplHead::Int(int),
+            TyKind::Uint(uint) => ImplHead::Uint(uint),
+            TyKind::Float(float) => ImplHead::Float(float),
+            TyKind::Bool => ImplHead::Bool,
+            TyKind::Char => ImplHead::Char,
+            TyKind::Str => ImplHead::Str,
+            TyKind::Unit => ImplHead::Unit,
+            TyKind::Never => ImplHead::Never,
+            TyKind::Ref { kind, .. } => ImplHead::Ref(kind),
+            TyKind::Array { .. } => ImplHead::Array,
+            TyKind::Slice { .. } => ImplHead::Slice,
+            TyKind::Tuple(tuple) => ImplHead::Tuple(self.tuple_elements(tuple).len()),
+            TyKind::Param(_) => ImplHead::Param,
+            TyKind::Infer(_) => ImplHead::Infer,
+            TyKind::Error => ImplHead::Error,
+        }
+    }
+}
+
 /// Interns types and answers structural queries about them.
 ///
 /// Interning makes type equality a single integer comparison: two types are the
@@ -37,6 +102,8 @@ pub struct TyCtxt {
     param_envs: RefCell<FxHashMap<DefId, ParamEnv>>,
     trait_defs: RefCell<FxHashMap<DefId, TraitDef>>,
     trait_impls: RefCell<Vec<TraitImplDef>>,
+    trait_impl_index: RefCell<FxHashMap<(DefId, ImplHead), Vec<usize>>>,
+    blanket_trait_impls: RefCell<Vec<usize>>,
 }
 
 impl TyCtxt {
@@ -203,13 +270,72 @@ impl TyCtxt {
     }
 
     /// Records one trait implementation in declaration order.
+    ///
+    /// The implementation is also indexed by trait and self head, so a proof
+    /// goal only considers candidates with the same outer constructor. Blanket
+    /// impls have a parameter head and are kept separately, because they may
+    /// apply to a goal with any head.
     pub fn push_trait_impl(&self, implementation: TraitImplDef) {
+        let index = self.trait_impls.borrow().len();
+        let head = self.impl_head(implementation.trait_ref.self_ty);
+        if head == ImplHead::Param {
+            self.blanket_trait_impls.borrow_mut().push(index);
+        } else {
+            self.trait_impl_index
+                .borrow_mut()
+                .entry((implementation.trait_ref.trait_def, head))
+                .or_default()
+                .push(index);
+        }
         self.trait_impls.borrow_mut().push(implementation);
     }
 
     /// Returns every trait implementation in declaration order.
     pub fn trait_impls(&self) -> Vec<TraitImplDef> {
         self.trait_impls.borrow().clone()
+    }
+
+    /// Returns the impls of `trait_def` that may apply to `self_ty`.
+    ///
+    /// The result keeps declaration order and includes blanket impls. A head
+    /// that cannot match is rejected without inspecting the impl header.
+    pub fn trait_impls_for(&self, trait_def: DefId, self_ty: TyId) -> Vec<TraitImplDef> {
+        let head = self.impl_head(self_ty);
+        let impls = self.trait_impls.borrow();
+        let index = self.trait_impl_index.borrow();
+        let mut matches: Vec<usize> = index.get(&(trait_def, head)).cloned().unwrap_or_default();
+        for candidate in self.blanket_trait_impls.borrow().iter() {
+            if impls[*candidate].trait_ref.trait_def == trait_def {
+                matches.push(*candidate);
+            }
+        }
+        matches.sort_unstable();
+        matches
+            .into_iter()
+            .map(|position| impls[position].clone())
+            .collect()
+    }
+
+    /// Returns every impl that may apply to a self type with the head of `self_ty`.
+    ///
+    /// Method resolution uses this before knowing the trait: the head filters
+    /// the candidates, and the method name filters the rest.
+    pub fn trait_impls_matching(&self, self_ty: TyId) -> Vec<TraitImplDef> {
+        let head = self.impl_head(self_ty);
+        let impls = self.trait_impls.borrow();
+        let index = self.trait_impl_index.borrow();
+        let mut matches: Vec<usize> = Vec::new();
+        for (key, indices) in index.iter() {
+            if key.1 == head {
+                matches.extend(indices.iter().copied());
+            }
+        }
+        matches.extend(self.blanket_trait_impls.borrow().iter().copied());
+        matches.sort_unstable();
+        matches
+            .into_iter()
+            .map(|position| impls[position].clone())
+            .collect()
     }
 
     /// Replaces every declared parameter in `ty` using `substs`.
