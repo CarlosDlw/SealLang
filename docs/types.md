@@ -285,7 +285,7 @@ func classify(command: Command) -> i32 {
 | `Enum::Variant` | a unit variant |
 | `Enum::Variant(p, q)` | a positional variant, one pattern per field |
 | `Enum::Variant { field: p, other }` | a named variant; a bare name is shorthand for `other: other` |
-| `Struct { field: p, other }` | a struct; a bare name is shorthand for `other: other` |
+| `Struct { field: p, other, .. }` | a struct; a bare name is shorthand for `other: other`, and `..` ignores the remaining fields |
 | `a..=b`, `a..b` | an integer or `char` value inside the range |
 | `name @ p` | any value matching `p`, also bound as `name` |
 | `[p, q]`, `[first, .., last]` | a fixed-size array; `..` skips the elements between the fixed patterns |
@@ -302,7 +302,9 @@ variant (`E2042`), a positional variant needs exactly one pattern per field
 (`E2043`), and a named pattern must use declared field names, written in any
 order (`E2044`). A struct pattern has the same rules with its own codes: an
 unknown field is `E2046`, a field written twice is `E2047`, and an omitted field
-is `E2048`. An array pattern writes one pattern per element, or uses a single
+is `E2048` unless the pattern ends with `..`, which ignores every field it did
+not name. A named variant follows the same rule (`E2043` without `..`). An
+array pattern writes one pattern per element, or uses a single
 `..` to skip the elements between its fixed patterns; a pattern with more fixed
 elements than the array has is `E2049`. On a slice reference (`*[T]` or
 `*mut [T]`) the same forms test a runtime length: without `..` the length must
@@ -333,7 +335,8 @@ Coverage uses the usefulness algorithm from the pattern literature: an arm is
 reachable when some value matches it and no earlier unguarded arm, and a match is
 exhaustive when no value escapes every arm. `bool` and enums have finitely many
 constructors, so covering every variant is enough; a struct or array is a single
-constructor, so its fields decide coverage. Integer and character ranges
+constructor, so its fields decide coverage, and an unnamed field left by `..` is
+a wildcard for that purpose. Integer and character ranges
 partition the value domain at every observed endpoint, which makes adjacent
 ranges exhaustive without a catch-all and reports an uncovered gap as a concrete
 range such as `10..=19`. Floats have no usable constructor order, so a float

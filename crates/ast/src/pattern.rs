@@ -84,7 +84,8 @@ pub enum PatternKind {
         /// The fields matched by the pattern.
         fields: VariantPatternFields,
     },
-    /// A struct destructuring pattern such as `Point { x, y: 0 }`.
+    /// A struct destructuring pattern such as `Point { x, y: 0 }` or
+    /// `Point { x, .. }`.
     Struct {
         /// The struct name.
         name: Symbol,
@@ -92,6 +93,8 @@ pub enum PatternKind {
         name_span: Span,
         /// The fields matched by the pattern, in source order.
         fields: Vec<NamedPatternField>,
+        /// Whether the pattern ends with `..`, ignoring the other fields.
+        has_rest: bool,
     },
     /// A fixed-size array pattern such as `[first, second]` or `[first, .., last]`.
     Array {
@@ -115,8 +118,13 @@ pub enum VariantPatternFields {
     Unit,
     /// Positional fields, in source order.
     Positional(Vec<PatternId>),
-    /// Named fields, in source order.
-    Named(Vec<NamedPatternField>),
+    /// Named fields, in source order, with `..` optionally ignoring the rest.
+    Named {
+        /// The fields matched by the pattern, in source order.
+        fields: Vec<NamedPatternField>,
+        /// Whether the pattern ends with `..`, ignoring the other fields.
+        has_rest: bool,
+    },
 }
 
 /// One named field in a variant or struct pattern.

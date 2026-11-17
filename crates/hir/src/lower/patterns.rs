@@ -129,7 +129,8 @@ impl Lowering<'_> {
                 name,
                 name_span,
                 fields,
-            } => self.build_raw_struct(name, name_span, &fields),
+                has_rest,
+            } => self.build_raw_struct(name, name_span, &fields, has_rest),
             AstPatternKind::Array {
                 prefix,
                 has_rest,
@@ -311,7 +312,10 @@ impl Lowering<'_> {
                     fields,
                 }
             }
-            VariantPatternFields::Named(named) => {
+            VariantPatternFields::Named {
+                fields: named,
+                has_rest,
+            } => {
                 if variant_def.is_tuple() {
                     self.error(
                         codes::E2042,
@@ -403,7 +407,7 @@ impl Lowering<'_> {
                             .map(|name| format!("`{}`", self.interner.resolve(name)))
                     })
                     .collect();
-                if !missing.is_empty() {
+                if !has_rest && !missing.is_empty() {
                     self.error(
                         codes::E2043,
                         name_span,
@@ -414,7 +418,9 @@ impl Lowering<'_> {
                             missing.join(", ")
                         ),
                     )
-                    .help("write every field, or use `_` for the ones the arm ignores")
+                    .help(
+                        "write every field, use `_` for the ones the arm ignores, or end with `..`",
+                    )
                     .emit();
                 }
                 let fields = variant_def
@@ -441,6 +447,7 @@ impl Lowering<'_> {
         name: Symbol,
         name_span: Span,
         fields: &[NamedPatternField],
+        has_rest: bool,
     ) -> RawPatternKind {
         let Some(definition) = self.types.get(&name).copied() else {
             self.report_missing_pattern_type(name, name_span);
@@ -517,7 +524,7 @@ impl Lowering<'_> {
                     .map(|name| format!("`{}`", self.interner.resolve(name)))
             })
             .collect();
-        if !missing.is_empty() {
+        if !has_rest && !missing.is_empty() {
             self.error(
                 codes::E2048,
                 name_span,
@@ -527,7 +534,7 @@ impl Lowering<'_> {
                     missing.join(", ")
                 ),
             )
-            .help("write every field, or use `_` for the ones the arm ignores")
+            .help("write every field, use `_` for the ones the arm ignores, or end with `..`")
             .emit();
         }
 
@@ -585,7 +592,7 @@ impl Lowering<'_> {
                     self.build_raw_pattern(pattern);
                 }
             }
-            VariantPatternFields::Named(fields) => {
+            VariantPatternFields::Named { fields, .. } => {
                 for field in fields {
                     self.build_raw_pattern(field.pattern);
                 }

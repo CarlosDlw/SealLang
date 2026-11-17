@@ -407,9 +407,62 @@ impl Parser<'_> {
 
     /// Parses a struct pattern after its name, starting at `{`.
     fn parse_struct_pattern(&mut self, name: seal_symbol::Symbol, start: Span) -> PatternId {
+        let (fields, has_rest) = self.parse_named_pattern_fields();
+        let span = start.cover(self.previous_span());
+        self.builder.push_pattern(
+            PatternKind::Struct {
+                name,
+                name_span: start,
+                fields,
+                has_rest,
+            },
+            span,
+        )
+    }
+
+    /// Parses a braced named field list, including an optional trailing `..`.
+    ///
+    /// The list is shared by struct patterns and named variant patterns, so the
+    /// rest rule is written once: `..` must be the last entry, and any field
+    /// after it is reported before the parser skips to the closing brace.
+    fn parse_named_pattern_fields(&mut self) -> (Vec<NamedPatternField>, bool) {
         self.bump();
         let mut fields = Vec::new();
+        let mut has_rest = false;
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            if self.at(TokenKind::DotDot) {
+                let rest_span = self.current_span();
+                self.bump();
+                has_rest = true;
+                let _ = self.eat(TokenKind::Comma);
+                if !self.at(TokenKind::RBrace) && !self.is_eof() {
+                    self.error(
+                        codes::E1011,
+                        rest_span,
+                        "`..` must be the last entry in a pattern field list",
+                    )
+                    .help("move `..` to the end of the field list")
+                    .emit();
+                    let mut depth = 0usize;
+                    while !self.is_eof() {
+                        match self.current_kind() {
+                            TokenKind::LBrace => {
+                                depth += 1;
+                                self.bump();
+                            }
+                            TokenKind::RBrace if depth == 0 => break,
+                            TokenKind::RBrace => {
+                                depth -= 1;
+                                self.bump();
+                            }
+                            _ => {
+                                self.bump();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
             let before = self.index;
             let (field_name, field_name_span) = self.expect_ident("a field name");
             let pattern = if self.eat(TokenKind::Colon) {
@@ -440,7 +493,7 @@ impl Parser<'_> {
             self.error(
                 codes::E1002,
                 self.current_span(),
-                format!("expected `,` or `}}` in the struct pattern, found {found}"),
+                format!("expected `,` or `}}` in the pattern fields, found {found}"),
             )
             .help("separate field patterns with `,`")
             .emit();
@@ -449,16 +502,8 @@ impl Parser<'_> {
             }
             self.ensure_progress(before);
         }
-        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct pattern");
-        let span = start.cover(self.previous_span());
-        self.builder.push_pattern(
-            PatternKind::Struct {
-                name,
-                name_span: start,
-                fields,
-            },
-            span,
-        )
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the pattern fields");
+        (fields, has_rest)
     }
 
     /// Parses a fixed-size array pattern after its `[`.
@@ -582,50 +627,8 @@ impl Parser<'_> {
         }
 
         if self.at(TokenKind::LBrace) {
-            self.bump();
-            let mut fields = Vec::new();
-            while !self.at(TokenKind::RBrace) && !self.is_eof() {
-                let before = self.index;
-                let (name, name_span) = self.expect_ident("a field name");
-                let pattern = if self.eat(TokenKind::Colon) {
-                    self.parse_match_pattern()
-                } else {
-                    self.builder.push_pattern(
-                        PatternKind::Binding {
-                            name,
-                            pattern: None,
-                        },
-                        name_span,
-                    )
-                };
-                let pattern_span = self.builder.ast().pattern(pattern).span;
-                fields.push(NamedPatternField {
-                    name,
-                    name_span,
-                    pattern,
-                    span: name_span.cover(pattern_span),
-                });
-                if self.eat(TokenKind::Comma) {
-                    continue;
-                }
-                if self.at(TokenKind::RBrace) || self.is_eof() {
-                    break;
-                }
-                let found = self.describe(self.current_kind());
-                self.error(
-                    codes::E1002,
-                    self.current_span(),
-                    format!("expected `,` or `}}` in the pattern fields, found {found}"),
-                )
-                .help("separate field patterns with `,`")
-                .emit();
-                if !can_start_pattern(self.current_kind()) {
-                    break;
-                }
-                self.ensure_progress(before);
-            }
-            let _ = self.expect(TokenKind::RBrace, "`}` to close the pattern fields");
-            return VariantPatternFields::Named(fields);
+            let (fields, has_rest) = self.parse_named_pattern_fields();
+            return VariantPatternFields::Named { fields, has_rest };
         }
 
         VariantPatternFields::Unit

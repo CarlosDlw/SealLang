@@ -564,7 +564,7 @@ impl Reachability<'_> {
                             self.check_pattern(pattern);
                         }
                     }
-                    VariantPatternFields::Named(fields) => {
+                    VariantPatternFields::Named { fields, .. } => {
                         for field in fields {
                             self.assert_span(field.name_span);
                             self.assert_span(field.span);

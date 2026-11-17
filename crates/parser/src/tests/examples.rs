@@ -36,7 +36,7 @@ fn all_examples_parse_without_diagnostics() {
         ("019_match.sl", 3),
         ("020_match_advanced.sl", 8),
         ("021_match_slice.sl", 5),
-        ("022_match_reference.sl", 5),
+        ("022_match_reference.sl", 6),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

@@ -32,6 +32,31 @@ fn overlapping_ranges_make_later_arms_unreachable() {
 }
 
 #[test]
+fn a_rest_pattern_covers_the_remaining_fields() {
+    let (_, _, _) = check_clean(
+        "struct Point { x: i32, y: i32 } \
+         func main(point: Point) -> i32 { \
+           match point { Point { x: 0, .. } => 1, Point { .. } => 0 } \
+         }",
+    );
+    let (_, _, _) = check_clean(
+        "enum Shape { Label { value: i32, tag: i32 } } \
+         func main(shape: Shape) -> i32 { \
+           match shape { Shape::Label { value: 0, .. } => 1, Shape::Label { .. } => 0 } \
+         }",
+    );
+
+    let fixture = Fixture::new(
+        "struct Point { x: i32, y: i32 } \
+         func main(point: Point) -> i32 { \
+           match point { Point { x: 0, .. } => 1, Point { x: 0, .. } => 2, Point { .. } => 0 } \
+         }",
+    );
+    let _ = fixture.check(64);
+    fixture.expect("E3033", "unreachable");
+}
+
+#[test]
 fn an_empty_range_is_rejected() {
     let fixture =
         Fixture::new("func main(value: i32) -> i32 { match value { 9..=0 => 1, _ => 0 } }");

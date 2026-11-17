@@ -20,6 +20,14 @@ func manhattan(point: *Point) -> i32 {
   }
 }
 
+// A `..` rest ignores every field the arm does not use, also through a
+// reference.
+func abscissa(point: *Point) -> i32 {
+  match point {
+    Point { x, .. } => x,
+  }
+}
+
 func shape_value(shape: *Shape) -> i32 {
   match shape {
     Shape::Point => 0,
@@ -30,7 +38,7 @@ func shape_value(shape: *Shape) -> i32 {
 
 func main() -> i32 {
   let point = Point { x: 3, y: 4 };
-  let pair = Shape::Pair(20, 10);
+  let pair = Shape::Pair(17, 10);
   let label = Shape::Label { value: 5 };
-  manhattan(&point) + shape_value(&pair) + shape_value(&label)
+  manhattan(&point) + shape_value(&pair) + shape_value(&label) + abscissa(&point)
 }

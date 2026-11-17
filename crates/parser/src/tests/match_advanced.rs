@@ -1,6 +1,6 @@
 //! Advanced pattern syntax: structs, ranges, `@` bindings, arrays, and blocks.
 
-use seal_ast::{ExprKind, PatternKind, PatternLiteral};
+use seal_ast::{ExprKind, PatternKind, PatternLiteral, VariantPatternFields};
 
 use super::support::{Fixture, assert_invariants, body, function, parse_clean};
 
@@ -149,6 +149,70 @@ fn a_rest_pattern_skips_the_elements_in_between() {
     assert!(has_rest);
     assert_eq!(prefix.len(), 1);
     assert_eq!(suffix.len(), 1);
+}
+
+#[test]
+fn a_rest_pattern_covers_the_remaining_named_fields() {
+    let (fixture, ast) = parse_clean(
+        "struct Point { x: i32, y: i32 } \
+         func pick(point: Point) -> i32 { match point { Point { x, .. } => x } }",
+    );
+    assert_invariants(&fixture, &ast);
+
+    let declaration = function(&ast, 1);
+    let tail = body(&ast, declaration)
+        .tail
+        .expect("the function has a tail expression");
+    let ExprKind::Match { arms, .. } = &ast.expr(tail).kind else {
+        panic!("expected a match expression");
+    };
+    let PatternKind::Struct {
+        fields, has_rest, ..
+    } = &ast.pattern(arms[0].pattern).kind
+    else {
+        panic!("expected a struct pattern");
+    };
+    assert!(has_rest);
+    assert_eq!(fields.len(), 1);
+    assert!(matches!(
+        &ast.pattern(fields[0].pattern).kind,
+        PatternKind::Binding { .. }
+    ));
+
+    let (fixture, ast) = parse_clean(
+        "enum Shape { Label { value: i32, tag: i32 } } \
+         func main(shape: Shape) -> i32 { \
+           match shape { Shape::Label { value, .. } => value } \
+         }",
+    );
+    assert_invariants(&fixture, &ast);
+    let declaration = function(&ast, 1);
+    let tail = body(&ast, declaration)
+        .tail
+        .expect("the function has a tail expression");
+    let ExprKind::Match { arms, .. } = &ast.expr(tail).kind else {
+        panic!("expected a match expression");
+    };
+    let PatternKind::Variant {
+        fields: VariantPatternFields::Named { fields, has_rest },
+        ..
+    } = &ast.pattern(arms[0].pattern).kind
+    else {
+        panic!("expected a named variant pattern");
+    };
+    assert!(has_rest);
+    assert_eq!(fields.len(), 1);
+}
+
+#[test]
+fn a_rest_pattern_must_be_the_last_entry() {
+    let fixture = Fixture::new(
+        "struct Point { x: i32, y: i32 } \
+         func main(point: Point) -> i32 { match point { Point { .., x } => x } }",
+    );
+    let ast = fixture.parse();
+    fixture.expect("E1011", "must be the last");
+    assert_invariants(&fixture, &ast);
 }
 
 #[test]

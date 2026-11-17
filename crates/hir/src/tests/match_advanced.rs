@@ -71,6 +71,21 @@ fn struct_fields_are_resolved_into_declaration_order() {
 }
 
 #[test]
+fn a_rest_pattern_leaves_the_remaining_fields_unmatched() {
+    let (fixture, hir) = lower_clean(
+        "struct Point { x: i32, y: i32 } \
+         func main(point: Point) -> i32 { match point { Point { x, .. } => x } }",
+    );
+    let (_, body) = function(&fixture, &hir, "main");
+    let arms = match_arms(&hir, body);
+    let PatternKind::Struct { fields, .. } = &hir.pattern(arms[0].pattern).kind else {
+        panic!("expected a struct pattern");
+    };
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fixture.symbol(hir.definitions().name(fields[0].0)), "x");
+}
+
+#[test]
 fn struct_pattern_field_errors_are_reported() {
     let fixture = Fixture::new(
         "struct Point { x: i32 } \

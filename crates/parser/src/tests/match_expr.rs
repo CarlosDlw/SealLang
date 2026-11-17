@@ -70,7 +70,7 @@ fn a_match_expression_parses_patterns_fields_and_bodies() {
         panic!("expected a variant pattern");
     };
     assert_eq!(fixture.symbol(*name), "Write");
-    let VariantPatternFields::Named(named) = fields else {
+    let VariantPatternFields::Named { fields: named, .. } = fields else {
         panic!("expected named field patterns");
     };
     assert_eq!(named.len(), 1);

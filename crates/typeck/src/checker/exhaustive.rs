@@ -204,11 +204,17 @@ impl Checker<'_> {
                 let Some(variant_def) = definition.variant(*variant) else {
                     return vec![Cover::Wildcard];
                 };
-                let field_types: Vec<TyId> =
-                    variant_def.fields.iter().map(|field| field.ty).collect();
+                let declared: Vec<_> = variant_def
+                    .fields
+                    .iter()
+                    .map(|field| (field.def, field.ty))
+                    .collect();
                 let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
-                for (field, field_ty) in fields.iter().zip(&field_types) {
-                    let options = self.cover_pattern(field.1, *field_ty, budget);
+                for (field, field_ty) in declared {
+                    let options = match fields.iter().find(|(matched, _)| *matched == field) {
+                        Some((_, pattern)) => self.cover_pattern(*pattern, field_ty, budget),
+                        None => vec![Cover::Wildcard],
+                    };
                     if budget.exhausted || options.is_empty() {
                         return Vec::new();
                     }
@@ -231,12 +237,17 @@ impl Checker<'_> {
                     return vec![Cover::Wildcard];
                 };
                 let definition = self.hir.ty_ctxt().adt(adt_id);
+                let declared: Vec<_> = definition
+                    .fields
+                    .iter()
+                    .map(|field| (field.def, field.ty))
+                    .collect();
                 let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
-                for (field, field_pattern) in fields {
-                    let Some(field_def) = definition.field(*field) else {
-                        return vec![Cover::Wildcard];
+                for (field, field_ty) in declared {
+                    let options = match fields.iter().find(|(matched, _)| *matched == field) {
+                        Some((_, pattern)) => self.cover_pattern(*pattern, field_ty, budget),
+                        None => vec![Cover::Wildcard],
                     };
-                    let options = self.cover_pattern(*field_pattern, field_def.ty, budget);
                     if budget.exhausted || options.is_empty() {
                         return Vec::new();
                     }

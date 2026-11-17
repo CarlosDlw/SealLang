@@ -881,7 +881,8 @@ pub const E2043: ErrorCode = ErrorCode {
 Every field of a positional variant must be matched by exactly one pattern.
 Omitting a field would leave part of the value unaccounted for, and supplying
 extra patterns would have nothing to match.\n\nWrite one pattern per declared field, in declaration order, and use `_` for a
-field the arm ignores.",
+field the arm ignores. A named variant pattern must name every field unless it
+ends with `..`, which ignores the remaining fields.",
 };
 
 /// A named variant pattern names an unknown field.
@@ -933,8 +934,8 @@ pub const E2048: ErrorCode = ErrorCode {
     title: "missing field in struct pattern",
     explanation: "\
 A struct pattern matches a whole struct value, so it must account for every
-field. Write the field pattern, or use `_` to ignore the field without binding
-it.\n\nThis rule matches struct literals: a `let` binding cannot read a field, only a
+field. Write the field pattern, use `_` to ignore the field without binding it,
+or end the pattern with `..` to ignore every field it did not name.\n\nThis rule matches struct literals: a `let` binding cannot read a field, only a
 pattern decides what a field does.",
 };
 
