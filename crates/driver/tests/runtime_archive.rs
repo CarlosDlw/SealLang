@@ -28,7 +28,7 @@ impl Drop for TempOutput {
 fn emit_runtime_writes_the_embedded_archive_without_an_input() {
     let output = TempOutput::new("runtime.a");
     let result = Command::new(env!("CARGO_BIN_EXE_sealc"))
-        .arg("--emit-runtime")
+        .arg("emit-runtime")
         .arg(&output.0)
         .output()
         .expect("the compiler runs");
@@ -47,7 +47,7 @@ fn exported_runtime_can_be_used_for_linking() {
     let archive = TempOutput::new("runtime.a");
     let executable = TempOutput::new("program");
     let export = Command::new(env!("CARGO_BIN_EXE_sealc"))
-        .arg("--emit-runtime")
+        .arg("emit-runtime")
         .arg(&archive.0)
         .output()
         .expect("the compiler runs");
@@ -60,6 +60,7 @@ fn exported_runtime_can_be_used_for_linking() {
     let example =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/007_runtime_panic.sl");
     let compile = Command::new(env!("CARGO_BIN_EXE_sealc"))
+        .arg("build")
         .arg("--runtime-archive")
         .arg(&archive.0)
         .arg(&example)

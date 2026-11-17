@@ -16,6 +16,8 @@ use std::process::ExitCode;
 
 use seal_diagnostics::IcePanic;
 
+use crate::cli::CliCommand;
+
 fn main() -> ExitCode {
     install_panic_hook();
     let cli = match cli::Cli::parse_from(std::env::args_os()) {
@@ -34,13 +36,14 @@ fn main() -> ExitCode {
 
 /// Runs the action the arguments select.
 fn run(cli: &cli::Cli) -> Result<ExitCode, String> {
-    if let Some(code) = &cli.explain {
-        return actions::explain(code);
+    match &cli.command {
+        CliCommand::Build(args) => pipeline::build(args),
+        CliCommand::Run(args) => actions::run(args),
+        CliCommand::Check(args) => pipeline::check(args),
+        CliCommand::Explain(args) => actions::explain(&args.code),
+        CliCommand::EmitRuntime(args) => actions::emit_runtime(&args.path),
+        CliCommand::Version => actions::version(),
     }
-    if let Some(path) = &cli.runtime.emit_runtime {
-        return actions::emit_runtime(path);
-    }
-    pipeline::compile(cli)
 }
 
 /// Suppresses the default panic report for internal compiler errors; the

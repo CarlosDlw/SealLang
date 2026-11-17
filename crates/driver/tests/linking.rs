@@ -43,6 +43,7 @@ fn a_failed_link_preserves_the_existing_output_and_leaves_no_temporary_files() {
 
     let result = Command::new(env!("CARGO_BIN_EXE_sealc"))
         .env("SEAL_LINKER", "seal-missing-linker")
+        .arg("build")
         .arg(&source)
         .arg("-o")
         .arg(&output)

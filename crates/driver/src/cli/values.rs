@@ -12,11 +12,12 @@ use seal_session::{ErrorFormat, OptLevel};
 use seal_target::TargetTriple;
 use seal_version::LanguageVersion;
 
-/// Artifact selected by `--emit`.
+/// Artifact selected by `build --emit`.
+///
+/// Checking is a separate subcommand rather than an artifact kind, so a build
+/// request always names something to write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum EmitArg {
-    /// Type-check only; write no artifact.
-    Check,
     /// Relocatable object file.
     Obj,
     /// Target assembly text.
@@ -25,32 +26,12 @@ pub(crate) enum EmitArg {
     Exe,
 }
 
-/// What a successful compilation should write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RequestedOutput {
-    /// No artifact; analysis only.
-    Check,
-    /// A code generation artifact.
-    Artifact(Emit),
-}
-
-impl RequestedOutput {
-    /// Returns the artifact to generate, or `None` when only checking.
-    pub(crate) const fn artifact(self) -> Option<Emit> {
-        match self {
-            Self::Check => None,
-            Self::Artifact(emit) => Some(emit),
-        }
-    }
-}
-
-impl From<EmitArg> for RequestedOutput {
+impl From<EmitArg> for Emit {
     fn from(emit: EmitArg) -> Self {
         match emit {
-            EmitArg::Check => Self::Check,
-            EmitArg::Obj => Self::Artifact(Emit::Object),
-            EmitArg::Asm => Self::Artifact(Emit::Assembly),
-            EmitArg::Exe => Self::Artifact(Emit::Executable),
+            EmitArg::Obj => Self::Object,
+            EmitArg::Asm => Self::Assembly,
+            EmitArg::Exe => Self::Executable,
         }
     }
 }
@@ -132,8 +113,8 @@ mod tests {
     use seal_session::{ErrorFormat, OptLevel};
 
     use super::{
-        ColorArg, EmitArg, ErrorFormatArg, RequestedOutput, parse_language_version,
-        parse_opt_level, parse_positive, parse_target,
+        ColorArg, EmitArg, ErrorFormatArg, parse_language_version, parse_opt_level, parse_positive,
+        parse_target,
     };
 
     #[test]
@@ -179,24 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn emit_kinds_map_to_artifacts_and_check() {
-        assert_eq!(
-            RequestedOutput::from(EmitArg::Check),
-            RequestedOutput::Check
-        );
-        assert_eq!(RequestedOutput::Check.artifact(), None);
-        assert_eq!(
-            RequestedOutput::from(EmitArg::Obj),
-            RequestedOutput::Artifact(Emit::Object)
-        );
-        assert_eq!(
-            RequestedOutput::from(EmitArg::Asm),
-            RequestedOutput::Artifact(Emit::Assembly)
-        );
-        assert_eq!(
-            RequestedOutput::from(EmitArg::Exe).artifact(),
-            Some(Emit::Executable)
-        );
+    fn emit_kinds_map_to_artifacts() {
+        assert_eq!(Emit::from(EmitArg::Obj), Emit::Object);
+        assert_eq!(Emit::from(EmitArg::Asm), Emit::Assembly);
+        assert_eq!(Emit::from(EmitArg::Exe), Emit::Executable);
     }
 
     #[test]

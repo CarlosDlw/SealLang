@@ -1,8 +1,8 @@
 //! Command-line coverage for the language examples.
 //!
-//! `--emit=check` runs through type checking, borrow checking, and
-//! monomorphization without writing an artifact, so it proves the examples
-//! compile through the same pipeline the driver uses.
+//! `check` runs through type checking, borrow checking, and monomorphization
+//! without writing an artifact, so it proves the examples compile through the
+//! same pipeline the driver uses.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,7 +22,7 @@ fn generic_examples_check_cleanly() {
             .join("../../examples")
             .join(name);
         let output = Command::new(env!("CARGO_BIN_EXE_sealc"))
-            .arg("--emit=check")
+            .arg("check")
             .arg(&path)
             .output()
             .expect("the compiler runs");

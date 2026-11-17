@@ -3,45 +3,107 @@
 //! Each phase runs only when the previous one reported no errors: later phases
 //! assume the invariants their predecessors establish. The control flow is
 //! written as early returns so the order of those checks stays obvious.
+//!
+//! The request type makes the difference between building and checking
+//! structural: only a build carries an artifact to write, so no command can
+//! accidentally produce files or silently skip code generation.
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use seal_codegen::{CodegenInput, CodegenOptions};
+use seal_codegen::{CodegenInput, CodegenOptions, Emit};
 use seal_session::Session;
 
-use crate::cli::{Cli, RequestedOutput};
+use crate::cli::{BuildArgs, CheckArgs, CompileArgs, OutputArgs};
 use crate::options::session_options;
 use crate::output::artifact_path;
 use crate::report;
 
-/// Compiles every input and returns the process exit status.
-pub(crate) fn compile(cli: &Cli) -> Result<ExitCode, String> {
-    let session = Session::new(session_options(cli)).map_err(|error| error.to_string())?;
-    let requested = cli.output.requested();
-    for input in &cli.inputs {
-        compile_input(&session, cli, requested, input);
+/// What the selected command asks the pipeline to do.
+#[derive(Clone, Copy)]
+enum Request<'a> {
+    /// Run analysis through monomorphization and write nothing.
+    Check,
+    /// Run the whole pipeline and write an artifact.
+    Build {
+        emit: Emit,
+        output: &'a OutputArgs,
+        runtime_archive: Option<&'a Path>,
+    },
+}
+
+impl Request<'_> {
+    /// Returns the output options that affect session configuration, if any.
+    fn output(&self) -> Option<&OutputArgs> {
+        match self {
+            Self::Check => None,
+            Self::Build { output, .. } => Some(output),
+        }
+    }
+
+    /// Returns the verb that describes this request in the failure summary.
+    const fn action(&self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::Build { .. } => "compile",
+        }
+    }
+}
+
+/// Compiles every input and writes the requested artifacts.
+pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
+    compile(
+        &args.compile,
+        Request::Build {
+            emit: args.output.artifact(),
+            output: &args.output,
+            runtime_archive: args.runtime_archive.as_deref(),
+        },
+    )
+}
+
+/// Analyzes every input without writing anything.
+pub(crate) fn check(args: &CheckArgs) -> Result<ExitCode, String> {
+    compile(&args.compile, Request::Check)
+}
+
+/// Creates the session, compiles each input, and reports the final status.
+fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<ExitCode, String> {
+    let session = Session::new(session_options(arguments, request.output()))
+        .map_err(|error| error.to_string())?;
+    for input in &arguments.inputs {
+        compile_input(&session, request, input);
     }
 
     if let Some(error) = session.diag().emitter_error() {
         return Err(format!("failed to write diagnostics: {error}"));
     }
-    if cli.diagnostics.time_passes {
+    if arguments.diagnostics.time_passes {
         eprint!("{}", session.profiler().report());
     }
     if session.abort_if_errors().is_err() {
+        let files = arguments.inputs.len();
         let errors = session.diag().error_count();
         eprintln!(
-            "error: could not compile {} input file(s) due to {errors} previous error(s)",
-            cli.inputs.len()
+            "error: could not {} {} input {} due to {} previous {}",
+            request.action(),
+            files,
+            plural(files, "file", "files"),
+            errors,
+            plural(errors, "error", "errors"),
         );
         return Ok(ExitCode::from(1));
     }
     Ok(ExitCode::SUCCESS)
 }
 
+/// Selects the singular or plural spelling of a counted noun.
+const fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 { singular } else { plural }
+}
+
 /// Runs the whole pipeline for one input file.
-fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input: &Path) {
+fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     let Ok(file_id) = session.load_file(input) else {
         return;
     };
@@ -104,8 +166,8 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
         return;
     }
 
-    // Collection runs even for `--emit=check`: it resolves symbolic trait calls
-    // and proves the program has a finite, fully concrete instance set.
+    // Collection runs even for `check`: it resolves symbolic trait calls and
+    // proves the program has a finite, fully concrete instance set.
     let mono = session.profiler().time("mono", || {
         seal_mono::collect(&hir, &mir, session.diag(), session.interner())
     });
@@ -118,18 +180,23 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
         ));
     }
 
-    let Some(emit) = requested.artifact() else {
+    let Request::Build {
+        emit,
+        output,
+        runtime_archive,
+    } = request
+    else {
         return;
     };
     let options = CodegenOptions {
         emit,
-        output: artifact_path(cli, input, emit),
-        opt_level: cli.output.opt_level,
-        debug_info: cli.output.debug_info,
+        output: artifact_path(output, input, emit),
+        opt_level: output.opt_level,
+        debug_info: output.debug_info,
         crate_name: input
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned()),
-        runtime_archive: cli.runtime.runtime_archive.clone(),
+        runtime_archive: runtime_archive.map(Path::to_path_buf),
     };
     let codegen_input = CodegenInput {
         mono: &mono,

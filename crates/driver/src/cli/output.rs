@@ -3,9 +3,10 @@
 use std::path::PathBuf;
 
 use clap::Args;
+use seal_codegen::Emit;
 use seal_session::OptLevel;
 
-use super::values::{EmitArg, RequestedOutput, parse_opt_level};
+use super::values::{EmitArg, parse_opt_level};
 
 /// What to produce and how to optimize it.
 #[derive(Debug, Args)]
@@ -48,8 +49,8 @@ pub(crate) struct OutputArgs {
 }
 
 impl OutputArgs {
-    /// Returns what a successful compilation should write.
-    pub(crate) fn requested(&self) -> RequestedOutput {
+    /// Returns the artifact a successful build should write.
+    pub(crate) fn artifact(&self) -> Emit {
         self.emit.into()
     }
 }

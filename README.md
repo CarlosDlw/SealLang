@@ -11,13 +11,13 @@ Rust.
 | Cost model | No hidden allocation, deep copy, or synchronization |
 | Lifetimes | Inferred from liveness; no lifetime syntax in the source |
 | Artifacts | LLVM object, assembly, or a linked native executable |
-| Diagnostics | Stable error codes with long-form explanations (`--explain`) |
+| Diagnostics | Stable error codes with long-form explanations (`sealc explain`) |
 
 ## Quick start
 
 ```text
 cargo build --release
-./target/release/sealc -g examples/006_structs.sl -o /tmp/seal-structs
+./target/release/sealc build -g examples/006_structs.sl -o /tmp/seal-structs
 /tmp/seal-structs; echo $?
 ```
 
@@ -25,9 +25,10 @@ cargo build --release
 10
 ```
 
-`sealc` runs the whole pipeline: it type-checks, borrow-checks, lowers checked
-MIR to LLVM IR, optimizes, and links an executable. `--emit=check` stops after
-analysis, while `--emit=obj` and `--emit=asm` write intermediate artifacts.
+`sealc build` runs the whole pipeline: it type-checks, borrow-checks, lowers
+checked MIR to LLVM IR, optimizes, and links an executable. `sealc check` stops
+after analysis, while `sealc build --emit=obj` and `sealc build --emit=asm` write
+intermediate artifacts.
 
 ## The language at a glance
 
@@ -102,27 +103,45 @@ innermost loop, and `continue` reevaluates the scrutinee.
 ## Command line
 
 ```text
-sealc [OPTIONS] <INPUT>...
-sealc --emit-runtime <PATH>
-sealc --explain <CODE>
+sealc build [OPTIONS] <INPUT>...
+sealc check [OPTIONS] <INPUT>...
+sealc run <INPUT>              # reserved; not implemented yet
+sealc explain <CODE>
+sealc emit-runtime <PATH>
+sealc version
+sealc help [COMMAND]
 ```
+
+| Command | Effect |
+|---------|--------|
+| `build` | Type-check, borrow-check, and write an executable, object, or assembly |
+| `check` | Run every analysis pass through monomorphization; write nothing |
+| `run` | Reserved for building and running a program; currently exits with an error |
+| `explain` | Print the long-form explanation of a diagnostic code |
+| `emit-runtime` | Export the embedded runtime archive |
+| `version` | Print the compiler version, language version, and host triple |
+| `help` | Print top-level help or the help of one command |
+
+`build` options:
 
 | Option | Effect |
 |--------|--------|
-| `--emit=check` | Stop after borrow checking; write nothing |
 | `--emit=obj` | Write a relocatable object |
 | `--emit=asm` | Write target assembly |
 | `--emit=exe` | Link a native executable (default) |
 | `-O0` … `-O3`, `-O` | Select the optimization level (`-O` means 3) |
 | `-g` | Embed DWARF debug information |
 | `-o <PATH>` | Write the artifact to `PATH` (one input only) |
-| `--emit-runtime <PATH>` | Export the embedded runtime archive |
 | `--runtime-archive <PATH>` | Link a different runtime archive |
-| `--explain <CODE>` | Print the long-form explanation of a diagnostic |
 
-Without `-o`, `file.sl` produces `file`, `file.o`, or `file.s` next to the
-input. The exit status is `0` on success, `1` after a compile error, `2` after a
-usage error, and `101` after an internal compiler error or a runtime panic.
+`build` and `check` both accept `--target`, `--language-version`,
+`--allow-unstable-features`, and the diagnostic options (`--error-format`,
+`--color`, `--max-errors`, `--remap-path-prefix`, `--time-passes`).
+
+Without `-o`, `sealc build` writes `file`, `file.o`, or `file.s` next to the
+input. The exit status is `0` on success, `1` after a compile error or the
+unimplemented `run` command, `2` after a usage error, and `101` after an internal
+compiler error or a runtime panic.
 
 ## Verifying a commit
 

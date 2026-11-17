@@ -3,11 +3,11 @@
 `seal-codegen` is the only crate that turns checked MIR into machine code. It
 produces one artifact per invocation:
 
-- a relocatable object (`--emit=obj`),
-- target assembly (`--emit=asm`), or
-- a linked native executable (`--emit=exe`, the default).
+- a relocatable object (`sealc build --emit=obj`),
+- target assembly (`sealc build --emit=asm`), or
+- a linked native executable (`sealc build --emit=exe`, the default).
 
-`--emit=check` stops after monomorphization and writes nothing. Object and
+`sealc check` stops after monomorphization and writes nothing. Object and
 assembly output do not require an entry point; executables do.
 
 ## Pipeline
@@ -39,31 +39,35 @@ assembly output do not require an entry point; executables do.
 ## Command line
 
 ```text
-sealc [OPTIONS] <INPUT>...
-sealc --emit-runtime <PATH>
-sealc --explain <CODE>
+sealc build [OPTIONS] <INPUT>...
+sealc check [OPTIONS] <INPUT>...
+sealc emit-runtime <PATH>
+sealc explain <CODE>
 ```
 
-`--help` lists every option grouped by concern: output, optimization, target,
-diagnostics, and runtime. Options accept `--name value` and `--name=value`, and
-`--` ends option parsing so a file named like a flag stays an input.
+`sealc help` lists the commands, and `sealc help build` lists every build option
+grouped by concern: output, optimization, target, diagnostics, and runtime.
+Options accept `--name value` and `--name=value`, and `--` ends option parsing so
+a file named like a flag stays an input.
 
-- `--emit=exe` (the default) links an executable, `--emit=obj` writes an object,
-  `--emit=asm` writes assembly, and `--emit=check` stops after
-  monomorphization and writes nothing.
-- Without `-o`, `file.sl` produces `file` for an executable, `file.o` for an
+- `sealc build --emit=exe` (the default) links an executable,
+  `sealc build --emit=obj` writes an object, and `sealc build --emit=asm` writes
+  assembly. `sealc check` stops after monomorphization and writes nothing.
+- Without `-o`, `sealc build` writes `file` for an executable, `file.o` for an
   object, or `file.s` for assembly, next to the input.
 - `-o` accepts one output path and is rejected with more than one input.
 - `-O` alone selects level 3; `-O0` through `-O3` and `--opt-level <LEVEL>`
   select a level explicitly.
 - `-g` embeds DWARF in objects and executables; assembly contains the matching
   `.file`/`.loc` directives.
-- `--emit-runtime <PATH>` writes the embedded runtime archive without compiling,
-  and `--runtime-archive <PATH>` links against a different archive.
-- `--explain <CODE>` prints an error-code explanation without compiling.
+- `sealc emit-runtime <PATH>` writes the embedded runtime archive without
+  compiling, and `sealc build --runtime-archive <PATH>` links against a
+  different archive.
+- `sealc explain <CODE>` prints an error-code explanation without compiling.
 
-The exit status is 0 on success, 1 after a compile error, 2 after a usage error,
-and 101 after an internal compiler error or a runtime panic.
+The exit status is 0 on success, 1 after a compile error or the unimplemented
+`run` command, 2 after a usage error, and 101 after an internal compiler error
+or a runtime panic.
 
 The linker is selected from `SEAL_LINKER`, then `CC`, then `cc`. Arguments are
 passed directly, never through a shell. A linker failure is `E6003` and includes
@@ -272,12 +276,12 @@ allocation, locks, stdio, locale, or `atexit` handlers:
 - The archive is linked after the generated object and only into executables;
   unused members do not enter the output. Object and assembly emission never
   need the runtime.
-- `sealc --emit-runtime <PATH>` writes the embedded archive for manual links of
-  object files produced with `--emit=obj`.
-- The archive is built for the compiler host. `--emit=exe` for another
-  architecture or OS is rejected with `E6003` unless `--runtime-archive <PATH>`
-  supplies an archive built for that target. `--emit=obj` remains available for
-  cross-compilation.
+- `sealc emit-runtime <PATH>` writes the embedded archive for manual links of
+  object files produced with `sealc build --emit=obj`.
+- The archive is built for the compiler host. `sealc build --emit=exe` for
+  another architecture or OS is rejected with `E6003` unless
+  `--runtime-archive <PATH>` supplies an archive built for that target.
+  `sealc build --emit=obj` remains available for cross-compilation.
 
 ## Linking
 
@@ -312,7 +316,8 @@ compiler errors, not user diagnostics.
   `load_operand`); places, debug locations, and verification stay unchanged.
 - **New target.** `seal-target` supplies the triple, pointer width, and data
   model; LLVM supplies the backend. Cross-linking needs a matching linker,
-  sysroot, and runtime archive, while `--emit=obj` works without them.
+  sysroot, and runtime archive, while `sealc build --emit=obj` works without
+  them.
 - **New debug metadata.** Add it to `DebugContext` and finalize it before
   verification. Metadata must describe the IR that was actually generated.
 
@@ -358,4 +363,4 @@ construction into struct fields, moves through calls, associated constructors,
 variant and field diagnostics, recursive and unsized variant fields, and the
 generated tag/payload layout in debug and release. The driver tests export the
 embedded archive with
-`--emit-runtime` and reuse it with `--runtime-archive` to link that example.
+`sealc emit-runtime` and reuse it with `--runtime-archive` to link that example.

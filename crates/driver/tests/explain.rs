@@ -1,4 +1,4 @@
-//! `--explain` coverage for the monomorphization codes.
+//! `explain` coverage for the monomorphization codes.
 //!
 //! Every user-visible code must have long-form text that names the construct
 //! and the action a user can take.
@@ -18,7 +18,7 @@ fn monomorphization_codes_explain_the_action() {
         ("E7004", "Reduce the number of distinct instantiations"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_sealc"))
-            .arg("--explain")
+            .arg("explain")
             .arg(code)
             .output()
             .expect("the compiler runs");

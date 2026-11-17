@@ -9,7 +9,7 @@ use super::values::{parse_language_version, parse_target};
 /// The target and language version a compilation is checked against.
 #[derive(Debug, Args)]
 pub(crate) struct TargetArgs {
-    /// Compile for this target triple instead of the host.
+    /// Use this target triple instead of the host.
     #[arg(long, value_name = "TRIPLE", value_parser = parse_target, help_heading = "Target")]
     pub(crate) target: Option<TargetTriple>,
 

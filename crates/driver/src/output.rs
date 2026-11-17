@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 
 use seal_codegen::Emit;
 
-use crate::cli::Cli;
+use crate::cli::OutputArgs;
 
 /// Returns the path an artifact is written to.
-pub(crate) fn artifact_path(cli: &Cli, input: &Path, emit: Emit) -> PathBuf {
-    let requested = cli
-        .output
+pub(crate) fn artifact_path(output: &OutputArgs, input: &Path, emit: Emit) -> PathBuf {
+    let requested = output
         .path
         .clone()
         .unwrap_or_else(|| default_output(input, emit));

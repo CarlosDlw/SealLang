@@ -43,7 +43,7 @@ allowed to depend only on crates below it in the list.
 | `seal-profiling` | Phase timings for `--time-passes`. |
 | `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
-| `seal-driver` | The `sealc` binary: clap-based argument groups, exit codes, panic policy, and phase wiring. |
+| `seal-driver` | The `sealc` binary: clap-based subcommands and argument groups, exit codes, panic policy, and phase wiring. |
 
 ## Invariants
 
@@ -333,13 +333,16 @@ allowed to depend only on crates below it in the list.
     Writes transfer exactly the requested bytes, retrying `EINTR` and partial
     writes; panics never unwind and always terminate with status 101. The
     archive is host-specific and linked only into executables, so object and
-    assembly output stay target-independent. `--emit-runtime` exports the
-    embedded archive, and `--runtime-archive` supplies a target archive.
-60. **The command line is declarative.** `seal-driver` parses arguments with
-    `clap`, one module per option group (output, optimization, target,
-    diagnostics, runtime), and converts them into session options in one place.
-    Rules that span arguments, such as a required input or a single `-o`, are
-    reported as ordinary usage errors with status 2.
+    assembly output stay target-independent. `sealc emit-runtime` exports the
+    embedded archive, and `sealc build --runtime-archive <PATH>` supplies a
+    target archive.
+60. **The command line is declarative.** `seal-driver` parses a required
+    subcommand with `clap`. Each command declares only the options it honors:
+    shared compile options (inputs, target, diagnostics) are reused, while
+    output and runtime options belong to `build`. Checking is a command, not an
+    artifact kind, so it cannot write files. One module converts the parsed
+    arguments into session options, and rules that span arguments, such as a
+    single `-o`, are ordinary usage errors with status 2.
 61. **A call accesses through its reference arguments.** An exclusive argument
     (`*mut T`, or an aggregate carrying one) gives the callee sole access to its
     pointee for the whole call, so the checker rejects it when a live loan of

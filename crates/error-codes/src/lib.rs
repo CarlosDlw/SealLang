@@ -1696,7 +1696,7 @@ that architecture, or the triple does not name a target LLVM can lower.
 
 Use a target supported by the LLVM installation, or rebuild LLVM with the
 required target enabled. Cross-compiling an executable also needs a linker and
-sysroot for that target; `--emit=obj` avoids the linker requirement.",
+sysroot for that target; `sealc build --emit=obj` avoids the linker requirement.",
 };
 
 /// Writing or linking an artifact failed.
@@ -1708,8 +1708,8 @@ The compiler produced valid machine code but could not write the requested file
 or could not run the system linker. The linker error is included with the
 diagnostic. Linking an executable also needs the embedded runtime to match the
 target architecture and operating system; the bundled runtime is built for the
-compiler host. Use `--runtime-archive <PATH>` to supply a runtime built for the
-target, or `--emit=obj` to link the object separately.
+compiler host. Use `sealc build --runtime-archive <PATH>` to supply a runtime
+built for the target, or `sealc build --emit=obj` to link the object separately.
 
 Check that the output directory exists and is writable, that a C toolchain is
 installed, and that the target's linker and sysroot are available. Nothing is
@@ -1948,7 +1948,7 @@ pub fn lookup(code: &str) -> Option<&'static ErrorCode> {
     ALL.iter().find(|entry| entry.code == code)
 }
 
-/// Renders the `--explain` output for a code.
+/// Renders the `sealc explain` output for a code.
 pub fn explain(code: &str) -> Option<String> {
     let entry = lookup(code)?;
     Some(format!(

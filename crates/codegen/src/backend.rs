@@ -240,7 +240,8 @@ fn runtime_archive(
             &options.output,
             format!(
                 "the embedded runtime was built for the host (`{}`), not for `{}`; \
-                 pass --runtime-archive <PATH> with a runtime for the target, or use --emit=obj",
+                 pass `sealc build --runtime-archive <PATH>` with a runtime for the target, \
+                 or use `sealc build --emit=obj`",
                 seal_target::host_triple(),
                 target
             ),

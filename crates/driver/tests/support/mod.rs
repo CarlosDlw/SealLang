@@ -26,7 +26,7 @@ impl SourceFile {
     /// Type-checks the file and captures the compiler output.
     pub(crate) fn check(&self) -> Output {
         Command::new(env!("CARGO_BIN_EXE_sealc"))
-            .arg("--emit=check")
+            .arg("check")
             .arg(&self.0)
             .output()
             .expect("the compiler runs")
