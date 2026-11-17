@@ -2,7 +2,7 @@
 
 use seal_hir::ExprKind;
 
-use crate::ReceiverForm;
+use crate::{MethodKind, ReceiverAdjust, ReceiverForm};
 
 use super::support::{check_clean, check_errors, expect_ty, expr_ty, function, tail, ty_text};
 
@@ -88,6 +88,22 @@ fn fill_requires_a_copy_element() {
 fn fill_accepts_copy_elements_on_arrays_and_slices() {
     check_clean("func f() { let mut values = [1, 2]; values.fill(9); }");
     check_clean("func f(values: *mut [i32], value: i32) { values.fill(value); }");
+}
+
+#[test]
+fn a_generic_mutable_receiver_reborrows_shared_for_a_read_only_method() {
+    let (fixture, hir, results) = check_clean(
+        "struct Box<T> { value: T } \
+         impl<T> Box<T> { \
+           func read(self: *Box<T>) -> T { (*self).value } \
+           func read_through_mut(self: *mut Box<T>) -> T { self.read() } \
+         } \
+         func main() -> i32 { let mut boxed = Box { value: 1 }; boxed.read_through_mut() }",
+    );
+    let (_, body) = function(&fixture, &hir, "read_through_mut");
+    let resolved = results.method(tail(&hir, body)).expect("read is resolved");
+    assert_eq!(resolved.receiver_adjust, ReceiverAdjust::SharedReborrow);
+    assert!(matches!(resolved.kind, MethodKind::User { .. }));
 }
 
 #[test]

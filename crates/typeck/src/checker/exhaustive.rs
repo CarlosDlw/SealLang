@@ -655,14 +655,27 @@ fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) ->
         TyKind::Tuple(tuple) => Some(vec![Ctor::Tuple { tuple: Some(tuple) }]),
         TyKind::Unit => Some(vec![Ctor::Tuple { tuple: None }]),
         TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
-        TyKind::Ref { pointee, .. } => match tcx.kind(pointee) {
-            TyKind::Slice { element } => Some(slice_constructors(element, covers)),
-            TyKind::Adt { adt, .. } => Some(adt_constructors(tcx, adt)),
-            TyKind::Ref { .. } | TyKind::Tuple(_) | TyKind::Unit => {
-                constructors(tcx, pointee, covers, pointer_width)
+        TyKind::Ref { pointee, .. } => {
+            // Patterns match through references, but a bare wildcard already
+            // covers every pointer. Expanding the pointee there would recurse
+            // forever on self-referential types such as `enum List<T>` with a
+            // `*List<T>` field, because every pointer column would enumerate
+            // the pointee's constructors again.
+            let traversed = covers
+                .iter()
+                .any(|cover| !matches!(cover, Cover::Wildcard | Cover::Opaque));
+            if !traversed {
+                return None;
             }
-            _ => None,
-        },
+            match tcx.kind(pointee) {
+                TyKind::Slice { element } => Some(slice_constructors(element, covers)),
+                TyKind::Adt { adt, .. } => Some(adt_constructors(tcx, adt)),
+                TyKind::Ref { .. } | TyKind::Tuple(_) | TyKind::Unit => {
+                    constructors(tcx, pointee, covers, pointer_width)
+                }
+                _ => None,
+            }
+        }
         TyKind::Int(_) | TyKind::Uint(_) => Some(interval_ctors(ty, covers, tcx, pointer_width)),
         TyKind::Char => Some(char_ctors(covers)),
         TyKind::Never | TyKind::Error => Some(Vec::new()),

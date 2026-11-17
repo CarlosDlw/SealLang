@@ -97,3 +97,19 @@ fn coverage_through_a_reference_reports_the_missing_variant() {
     let _ = fixture.check(64);
     fixture.expect("E3033", "unreachable");
 }
+
+#[test]
+fn a_recursive_enum_by_reference_does_not_expand_forever() {
+    let (_, _, _) = check_clean(
+        "enum List { Empty, Node(i32, *List) } \
+         func sum(list: *List) -> i32 { \
+           match list { List::Node(value, next) => value + sum(next), List::Empty => 0 } \
+         }",
+    );
+    let (_, _, _) = check_clean(
+        "enum List<T> { Empty, Node(T, *List<T>) } \
+         func sum(list: *List<i32>) -> i32 { \
+           match list { List::Node(value, next) => value + sum(next), List::Empty => 0 } \
+         }",
+    );
+}

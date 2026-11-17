@@ -43,13 +43,16 @@ impl TemplateMatch {
 /// type. This is the same rule as unification, minus inference variables: an
 /// unresolved inference variable on the `actual` side makes the match fail,
 /// because no decision can be made from it.
+///
+/// Identical templates that contain parameters still record one self-binding per
+/// parameter, so callers always receive a complete substitution for the pattern.
 pub fn match_template(
     ctxt: &TyCtxt,
     pattern: TyId,
     actual: TyId,
     mapping: &mut FxHashMap<ParamTyId, TyId>,
 ) -> bool {
-    if pattern == actual {
+    if pattern == actual && !ctxt.contains_param(pattern) {
         return true;
     }
     match (ctxt.kind(pattern), ctxt.kind(actual)) {
