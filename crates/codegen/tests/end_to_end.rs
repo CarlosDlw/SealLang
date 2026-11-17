@@ -871,6 +871,66 @@ fn a_value_receiver_moves_a_field_out_of_a_struct() {
 }
 
 #[test]
+fn a_value_receiver_moves_an_element_out_of_an_array() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "trait-value-array-debug"),
+        (OptLevel::O2, false, "trait-value-array-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Token { value: i32 }\n\
+             trait Consume { func consume(self: Self) -> i32; }\n\
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } }\n\
+             func main() -> i32 {\n\
+               let items = [Token { value: 21 }, Token { value: 7 }];\n\
+               let first = items[0].consume();\n\
+               first + items[1].value\n\
+             }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("an array element receiver compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(28),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn sibling_fields_stay_usable_after_moving_a_trait_receiver_field() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "trait-value-sibling-debug"),
+        (OptLevel::O2, false, "trait-value-sibling-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Token { value: i32 }\n\
+             struct Holder { token: Token, bonus: i32 }\n\
+             trait Consume { func consume(self: Self) -> i32; }\n\
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } }\n\
+             func main() -> i32 {\n\
+               let holder = Holder { token: Token { value: 21 }, bonus: 21 };\n\
+               holder.token.consume() + holder.bonus\n\
+             }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("a sibling field stays usable");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\
