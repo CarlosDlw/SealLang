@@ -32,6 +32,7 @@ pub(crate) fn statement_def(statement: &Statement) -> Option<LocalId> {
 pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
     match rvalue {
         Rvalue::Use(operand) => operand_uses(operand, uses),
+        Rvalue::Discriminant(place) => place_uses(place, uses),
         Rvalue::Ref { place, .. } => {
             uses.insert(place.local);
         }

@@ -11,6 +11,7 @@ use super::Lowering;
 use crate::TraitMethodLookup;
 use crate::expr::{Expr, ExprKind};
 use crate::id::HirExprId;
+use crate::pattern::MatchArm;
 
 impl Lowering<'_> {
     /// Lowers one expression. `Paren` is removed: the tree already makes
@@ -188,6 +189,26 @@ impl Lowering<'_> {
                 name_span,
                 args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
             },
+            AstExprKind::Match { scrutinee, arms } => {
+                let scrutinee = self.lower_expr(scrutinee);
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        self.scopes.push();
+                        let pattern = self.lower_arm_pattern(arm.pattern);
+                        let guard = arm.guard.map(|guard| self.lower_expr(guard));
+                        let body = self.lower_expr(arm.body);
+                        self.scopes.pop();
+                        MatchArm {
+                            pattern,
+                            guard,
+                            body,
+                            span: arm.span,
+                        }
+                    })
+                    .collect();
+                ExprKind::Match { scrutinee, arms }
+            }
             AstExprKind::If {
                 condition,
                 then_branch,

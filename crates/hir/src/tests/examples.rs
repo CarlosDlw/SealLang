@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 17] = [
+const EXAMPLES: [&str; 18] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -25,6 +25,7 @@ const EXAMPLES: [&str; 17] = [
     "016_trait_receivers.sl",
     "017_enums.sl",
     "018_tuple_variants.sl",
+    "019_match.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -138,6 +139,15 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
             collect_expr(hir, *receiver, stmts, exprs);
             for arg in args {
                 collect_expr(hir, *arg, stmts, exprs);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_expr(hir, *scrutinee, stmts, exprs);
+            for arm in arms {
+                if let Some(guard) = arm.guard {
+                    collect_expr(hir, guard, stmts, exprs);
+                }
+                collect_expr(hir, arm.body, stmts, exprs);
             }
         }
         ExprKind::If {

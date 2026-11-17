@@ -25,6 +25,7 @@ const TRAITS: &str = include_str!("../../../examples/015_traits.sl");
 const TRAIT_RECEIVERS: &str = include_str!("../../../examples/016_trait_receivers.sl");
 const ENUMS: &str = include_str!("../../../examples/017_enums.sl");
 const TUPLE_VARIANTS: &str = include_str!("../../../examples/018_tuple_variants.sl");
+const MATCH: &str = include_str!("../../../examples/019_match.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -778,6 +779,29 @@ fn tuple_variants_construct_and_move_in_debug_and_release() {
             debug_info,
         )
         .expect("the tuple variant example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn match_produces_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "match-debug"),
+        (OptLevel::O2, false, "match-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            MATCH,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the match example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

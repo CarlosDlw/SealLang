@@ -33,6 +33,7 @@ fn all_examples_parse_without_diagnostics() {
         ("016_trait_receivers.sl", 5),
         ("017_enums.sl", 6),
         ("018_tuple_variants.sl", 8),
+        ("019_match.sl", 3),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

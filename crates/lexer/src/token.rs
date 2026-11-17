@@ -184,6 +184,8 @@ pub enum TokenKind {
     Mut,
     /// `while`
     While,
+    /// `match`
+    Match,
     /// `break`
     Break,
     /// `continue`
@@ -222,6 +224,8 @@ pub enum TokenKind {
     DotDot,
     /// `->`
     Arrow,
+    /// `=>`
+    FatArrow,
 
     /// `+`
     Plus,

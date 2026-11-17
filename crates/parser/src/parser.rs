@@ -809,6 +809,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Let => "let",
         TokenKind::Mut => "mut",
         TokenKind::While => "while",
+        TokenKind::Match => "match",
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",
         TokenKind::Return => "return",
@@ -826,6 +827,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::ColonColon => "::",
         TokenKind::Dot => ".",
         TokenKind::Arrow => "->",
+        TokenKind::FatArrow => "=>",
         TokenKind::Plus => "+",
         TokenKind::Minus => "-",
         TokenKind::Star => "*",
@@ -885,6 +887,7 @@ pub(crate) fn is_expression_stop(kind: TokenKind) -> bool {
             | TokenKind::Comma
             | TokenKind::Colon
             | TokenKind::Arrow
+            | TokenKind::FatArrow
     )
 }
 
@@ -909,6 +912,7 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::LParen
             | TokenKind::LBracket
             | TokenKind::If
+            | TokenKind::Match
             | TokenKind::Error
     )
 }

@@ -30,9 +30,9 @@ allowed to depend only on crates below it in the list.
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct, enum, and array layout: field offsets, alignment, tag and payload layout, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
-| `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, resolved paths and places, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index projections and bounds checks, terminators, and structural validation. |
+| `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index and variant projections, bounds checks, match dispatch, terminators, and structural validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, array element paths, escaping references, `E5xxx` diagnostics. |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
@@ -232,7 +232,8 @@ allowed to depend only on crates below it in the list.
     to write `(*p).x`), and selects a field whose resolved `DefId` is recorded
     once by the checker for MIR. Reading a field reads only that field's move
     path; it does not require sibling fields to be initialized. An enum value
-    has no field place until `match` names its variant.
+    has no field place until `match` proves its variant: the `VariantField`
+    projection is valid only after the discriminant test selected it.
 47. **Aggregates own their fields and are not `Copy`.** A struct or enum value
     moves as a whole; a `Copy` field still copies when read. Field writes
     require the root binding to be `mut` (`E3004`), because a field write does
@@ -248,7 +249,7 @@ allowed to depend only on crates below it in the list.
     An enum adds a tag sized by its variant count and a payload at the widest
     variant alignment; variant offsets are absolute.
 50. **MIR places carry projections.** A `Place` is a local plus
-    `Projection::{Deref, Field(DefId)}`; a struct literal lowers to
+    `Projection::{Deref, Field(DefId), Index, VariantField}`; a struct literal lowers to
     `Rvalue::Aggregate` with `AggregateKind::Struct`, a variant literal lowers
     with `AggregateKind::Variant { adt, variant }`, and a non-`Copy` field read
     is a `Move`. Validation checks every projected place's local. A
@@ -350,6 +351,14 @@ allowed to depend only on crates below it in the list.
     it, so an inherent method and a trait method may share a name. A `*mut T`
     receiver passed to a shared method is reborrowed as `*T`, lowering to a
     shared `Rvalue::Ref` of the pointee.
+64. **`match` evaluates its scrutinee once and tests it structurally.** Lowering
+    moves the scrutinee into a temporary, reads the tag with
+    `Rvalue::Discriminant`, and dispatches with `SwitchInt`; a literal pattern
+    compares with `BinOp::Eq`. Or-patterns expand into one test chain per
+    alternative, bindings are stored only after the whole pattern matched, and
+    `Copy` bindings are stored before a guard while non-`Copy` ones follow it
+    (`E2045`). Coverage and reachability come from the usefulness algorithm
+    (`E3032`, `E3033`), and a guard never contributes coverage.
 
 ## Extension points
 
@@ -377,6 +386,14 @@ allowed to depend only on crates below it in the list.
   operands; a mixed-type use is `E3002` or `E3001`. Finally add the matching
   `BinOp` or `UnOp` variant in `seal-mir` and lower it in `lower.rs`'s operator
   tables.
+- **New pattern form.** Add the AST variant in `seal-ast`'s pattern arena, parse
+  it in `seal-parser`, resolve it in `seal-hir`'s pattern lowering, type it in
+  `seal-typeck`'s `check_pattern`, extend the cover/uncover algorithm in
+  `exhaustive.rs`, and lower its tests in `seal-mir`'s `match_expr.rs`. A new
+  form must also define its binding rule for `|` alternatives and whether a
+  guard may observe it. Keep the pattern tree canonical: named fields are
+  reordered into declaration order during lowering, so no later phase depends on
+  source order.
 - **New intrinsic method.** Add its entry to `seal-methods`, then handle the
   new `IntrinsicOp` in `seal-typeck`'s signature checks if it needs a special
   receiver rule, in `seal-codegen`, and in any borrow-check rule the operation
@@ -407,9 +424,11 @@ allowed to depend only on crates below it in the list.
   edges; `while` shows the loop-target stack and `&&`/`||` the short-circuit
   shape. Every new edge must go through `validate`'s target check.
 - **New projection.** `Place` carries
-  `Projection::{Deref, Field(DefId), Index { local, constant }}`; a new
-  projection (slice range, dereference of a smart pointer) is a variant in
-  `seal-mir` plus a resolved counterpart in `seal-typeck`. Update
+  `Projection::{Deref, Field(DefId), Index { local, constant }, VariantField { variant, field }}`;
+  a new projection (slice range, dereference of a smart pointer) is a variant in
+  `seal-mir` plus a resolved counterpart in `seal-typeck`. `VariantField` is
+  only valid after the tag test proved its variant active, so lowering emits it
+  inside one match arm and validation keeps the invariant. Update
   `seal-borrowck`'s prefix comparison and `seal-layout` when the projection
   selects storage with an address; the walk that reads and writes places
   otherwise stays unchanged.

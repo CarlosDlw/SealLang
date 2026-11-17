@@ -21,6 +21,7 @@ pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
         "let" => TokenKind::Let,
         "mut" => TokenKind::Mut,
         "while" => TokenKind::While,
+        "match" => TokenKind::Match,
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
         "return" => TokenKind::Return,

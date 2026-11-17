@@ -212,6 +212,7 @@ fn check_operand(
 fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(), ValidationError> {
     match rvalue {
         Rvalue::Use(operand) => check_operand(body, block, operand),
+        Rvalue::Discriminant(place) => check_place(body, block, place.clone()),
         Rvalue::Ref { place, .. } => check_place(body, block, place.clone()),
         Rvalue::SliceRef {
             base, start, end, ..

@@ -21,3 +21,8 @@ newtype_index! {
     /// Index of an expression in a [`Hir`](crate::Hir).
     pub struct HirExprId;
 }
+
+newtype_index! {
+    /// Index of a pattern in a [`Hir`](crate::Hir).
+    pub struct HirPatternId;
+}

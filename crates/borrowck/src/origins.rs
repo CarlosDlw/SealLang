@@ -280,7 +280,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             let origins = keys_of(state, &effective);
             state.assign(place, origins);
         }
-        Rvalue::Len { .. } => state.clear(place),
+        Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
         Rvalue::Use(operand) => {
             let origins = operand_origins(hir, body, state, operand);
             if let Some(source) = operand.place()
@@ -478,6 +478,8 @@ fn field_path(projections: &[Projection]) -> Vec<DefId> {
         .iter()
         .filter_map(|projection| match projection {
             Projection::Field(field) => Some(*field),
+            // A variant field is still a field of the enum's storage.
+            Projection::VariantField { field, .. } => Some(*field),
             // Array indices are intentionally absent from storage keys: any
             // element may alias any other when only the runtime value is known,
             // so treating the whole array as one storage key is conservative.
@@ -499,6 +501,13 @@ pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
                 TyKind::Adt(adt) => hir
                     .ty_ctxt()
                     .field(adt, *field)
+                    .map_or(ty, |field| field.ty),
+                _ => ty,
+            },
+            Projection::VariantField { variant, field } => match hir.ty_ctxt().kind(ty) {
+                TyKind::Adt(adt) => hir
+                    .ty_ctxt()
+                    .variant_field(adt, *variant, *field)
                     .map_or(ty, |field| field.ty),
                 _ => ty,
             },

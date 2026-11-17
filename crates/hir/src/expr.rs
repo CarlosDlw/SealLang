@@ -6,6 +6,7 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::id::{HirBlockId, HirExprId};
+use crate::pattern::MatchArm;
 use crate::res::Res;
 
 /// A storage location: a local definition plus its projections.
@@ -244,6 +245,13 @@ pub enum ExprKind {
         name_span: Span,
         /// Arguments in source order, excluding the receiver.
         args: Vec<HirExprId>,
+    },
+    /// A pattern-matching expression.
+    Match {
+        /// The value being matched, evaluated exactly once.
+        scrutinee: HirExprId,
+        /// Arms in source order; the parser guarantees at least one.
+        arms: Vec<MatchArm>,
     },
     /// A conditional expression.
     If {

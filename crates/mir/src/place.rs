@@ -1,6 +1,7 @@
 //! Storage locations.
 
 use seal_def::DefId;
+use seal_ty::VariantIdx;
 
 use crate::id::LocalId;
 
@@ -17,6 +18,17 @@ pub enum Projection {
         local: LocalId,
         /// The constant index when the source used an in-range literal.
         constant: Option<u64>,
+    },
+    /// Selects one field of one enum variant.
+    ///
+    /// The variant is part of the projection because the field lives inside the
+    /// payload at an offset that depends on which variant is active. Reaching
+    /// this projection is only valid after the tag proved the variant.
+    VariantField {
+        /// The variant whose payload is read.
+        variant: VariantIdx,
+        /// The field definition inside that variant.
+        field: DefId,
     },
 }
 
@@ -68,6 +80,22 @@ impl Place {
     pub fn index(mut self, local: LocalId, constant: Option<u64>) -> Self {
         self.projections.push(Projection::Index { local, constant });
         self
+    }
+
+    /// Returns the place reached by selecting a field of an enum variant.
+    #[inline]
+    pub fn variant_field(mut self, variant: VariantIdx, field: DefId) -> Self {
+        self.projections
+            .push(Projection::VariantField { variant, field });
+        self
+    }
+
+    /// Returns `true` when the place selects an enum field through a variant.
+    #[inline]
+    pub fn has_variant_field(&self) -> bool {
+        self.projections
+            .iter()
+            .any(|projection| matches!(projection, Projection::VariantField { .. }))
     }
 
     /// Returns the projections in application order.

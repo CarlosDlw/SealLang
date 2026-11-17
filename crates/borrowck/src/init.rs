@@ -128,7 +128,7 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
         }
         Rvalue::Repeat { value, .. } => move_operand(value, state),
         Rvalue::Len { slice } => move_operand(slice, state),
-        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
+        Rvalue::Discriminant(_) | Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
     }
     if let Some((local, fields)) = path_of(place) {
         state.assign(local, &fields);
@@ -150,7 +150,10 @@ fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
     for projection in &place.projections {
         match projection {
             seal_mir::Projection::Deref => return None,
-            seal_mir::Projection::Field(field) => path.push(PathElem::Field(*field)),
+            seal_mir::Projection::Field(field)
+            | seal_mir::Projection::VariantField { field, .. } => {
+                path.push(PathElem::Field(*field))
+            }
             seal_mir::Projection::Index {
                 constant: Some(index),
                 ..
@@ -175,7 +178,10 @@ pub(crate) fn state_of(
     for projection in &place.projections {
         match projection {
             seal_mir::Projection::Deref => return Init::Initialized,
-            seal_mir::Projection::Field(field) => path.push(PathElem::Field(*field)),
+            seal_mir::Projection::Field(field)
+            | seal_mir::Projection::VariantField { field, .. } => {
+                path.push(PathElem::Field(*field))
+            }
             seal_mir::Projection::Index {
                 constant: Some(index),
                 ..

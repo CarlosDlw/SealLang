@@ -24,17 +24,22 @@ mod block;
 mod expr;
 mod id;
 mod item;
+mod pattern;
 mod program;
 mod ty;
 
 pub use block::{Block, LetStmt, Stmt, StmtKind};
 pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
 pub use id::{
-    BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TupleFieldDeclId, TypeId, VariantDeclId,
+    BlockId, ExprId, FieldDeclId, ItemId, ParamId, PatternId, StmtId, TupleFieldDeclId, TypeId,
+    VariantDeclId,
 };
 pub use item::{
     EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, Param, StructDecl, TraitDecl,
     TraitMethodDecl, TupleFieldDecl, VariantDecl, VariantFieldList,
+};
+pub use pattern::{
+    MatchArm, NamedPatternField, Pattern, PatternKind, PatternLiteral, VariantPatternFields,
 };
 pub use program::{Ast, AstBuilder, Program};
 pub use ty::{PrimitiveType, Type, TypeKind};

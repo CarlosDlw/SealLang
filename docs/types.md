@@ -243,15 +243,81 @@ variant and field names are rejected at declaration (`E2029`, `E2006`).
 Variants and associated functions share the `Type::name` namespace, so a variant
 may not have the same name as an inherent or trait associated function of its
 enum (`E2030`). An `impl` block may target an enum, which is how an associated
-constructor such as `Shape::unit()` is declared; methods receive `self` exactly
-as on a struct, and a trait may be implemented for an enum. A method cannot read
-the payload until `match` exists, but it can construct and return variants.
+constructor such as `Shape::unit()` is declared; methods receive `self`exactly as on a struct, and a trait may be implemented for an enum. A method reads
+the payload with `match` and can construct and return variants.
 
 An enum owns its payload and is never `Copy`, so assignment, argument passing,
 and return move the whole value. It is `Sized` when every field of every variant
 is; an unsized variant field is `E3010`, and a variant field that makes the enum
 recursive by value is `E3016`. Moving a payload variant moves its fields as a
-unit; there is no partial move out of a variant without `match`.
+unit; `match` performs the only partial move out of a variant, by binding one of
+its fields.
+
+## Patterns and `match`
+
+`match` is an expression. It evaluates its scrutinee once into an internal
+temporary and then tries the arms in source order; the first arm whose pattern
+matches and whose guard succeeds supplies the result, and every arm must have
+that result type. A `match` whose arms never fall through has the `never` type.
+
+```seal
+enum Command {
+  Stop,
+  Move(i32),
+  Write { code: i32 },
+}
+
+func classify(command: Command) -> i32 {
+  match command {
+    Command::Stop => 0,
+    Command::Move(step) if step > 10 => 2,
+    Command::Move(step) => step,
+    Command::Write { code } => code,
+  }
+}
+```
+
+| Pattern | Matches |
+|---------|---------|
+| `_` | any value, binding nothing |
+| `name` | any value, binding it under `name` |
+| `0`, `-1`, `2.5`, `'x'`, `true` | a scalar equal to the literal |
+| `Enum::Variant` | a unit variant |
+| `Enum::Variant(p, q)` | a positional variant, one pattern per field |
+| `Enum::Variant { field: p, other }` | a named variant; a bare name is shorthand for `other: other` |
+| `p \| q` | either alternative |
+
+A pattern name is always a binding: an enum variant is written with its enum
+(`Mode::On`), never bare. Strings are not patterns (`E1011`), because comparing
+borrowed text would need a runtime operation the language does not define. A
+name may be bound once per pattern (`E2040`), and every alternative of `|` must
+bind the same names, because the arm body runs once for all of them (`E2041`). A
+pattern mirrors the variant declaration: fields cannot be written on a unit
+variant (`E2042`), a positional variant needs exactly one pattern per field
+(`E2043`), and a named pattern must use declared field names, written in any
+order (`E2044`). Lowering reorders named fields into declaration order, so every
+later phase sees one canonical shape.
+
+A guard is an `if` expression after the pattern. It must have type `bool`
+(`E3003`) and may read only bindings whose type is `Copy` (`E2045`): a failed
+guard continues with the next arm, so a value the guard moved could not be put
+back. Bindings are materialized only after the whole pattern matched; `Copy`
+bindings are assigned before the guard and the rest after it succeeds.
+
+Coverage uses the usefulness algorithm from the pattern literature: an arm is
+reachable when some value matches it and no earlier unguarded arm, and a match is
+exhaustive when no value escapes every arm. `bool` and enums have finitely many
+constructors, so covering every variant is enough; integer, float, and character
+types are infinite and need `_` or a binding. A guard never contributes coverage.
+A missing value is `E3032` and names a witness such as `Mode::Off`; an arm that no
+value can reach is `E3033`.
+
+Matching moves the scrutinee into the temporary. Binding a field of a variant
+moves that field when its type is not `Copy`, which is the one way to move part
+of an enum out; the rest of the scrutinee is then unusable. Binding a `Copy`
+field only copies it. Reading a variant field is valid only after the
+discriminant proved that variant active, which is why the projection exists only
+inside an arm.
 
 ## Arrays
 

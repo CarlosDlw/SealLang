@@ -293,6 +293,8 @@ impl<'a> Scanner<'a> {
             b'=' => {
                 if self.cursor.eat_byte(b'=') {
                     TokenKind::EqEq
+                } else if self.cursor.eat_byte(b'>') {
+                    TokenKind::FatArrow
                 } else {
                     TokenKind::Eq
                 }

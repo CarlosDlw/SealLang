@@ -30,6 +30,7 @@ mod body;
 mod expr;
 mod id;
 mod lower;
+mod pattern;
 mod primitives;
 mod res;
 mod traits;
@@ -39,7 +40,8 @@ mod tests;
 
 pub use body::{Block, Body, ParamData, Stmt, StmtKind};
 pub use expr::{Expr, ExprKind, Place, Projection};
-pub use id::{BodyId, HirBlockId, HirExprId, HirStmtId};
+pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
+pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
 pub use res::Res;
 pub use traits::TraitMethodLookup;
@@ -72,6 +74,7 @@ pub struct Hir {
     blocks: IndexVec<HirBlockId, Block>,
     stmts: IndexVec<HirStmtId, Stmt>,
     exprs: IndexVec<HirExprId, Expr>,
+    patterns: IndexVec<HirPatternId, Pattern>,
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
     adts: FxHashMap<DefId, AdtId>,
@@ -150,6 +153,20 @@ impl Hir {
     /// Panics if `id` did not come from this tree.
     pub fn expr(&self, id: HirExprId) -> &Expr {
         &self.exprs[id]
+    }
+
+    /// Returns a pattern.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this tree.
+    pub fn pattern(&self, id: HirPatternId) -> &Pattern {
+        &self.patterns[id]
+    }
+
+    /// Returns all patterns, indexable by [`HirPatternId`].
+    pub fn pattern_arena(&self) -> &IndexVec<HirPatternId, Pattern> {
+        &self.patterns
     }
 
     /// Returns the place denoted by `expr`, when it denotes storage.
@@ -270,6 +287,7 @@ impl Hir {
             blocks: IndexVec::new(),
             stmts: IndexVec::new(),
             exprs: IndexVec::new(),
+            patterns: IndexVec::new(),
             ty_ctxt,
             body_of: FxHashMap::default(),
             adts: FxHashMap::default(),
@@ -303,6 +321,10 @@ impl Hir {
 
     pub(crate) fn push_expr(&mut self, expr: Expr) -> HirExprId {
         self.exprs.push(expr)
+    }
+
+    pub(crate) fn push_pattern(&mut self, pattern: Pattern) -> HirPatternId {
+        self.patterns.push(pattern)
     }
 
     pub(crate) fn ty_ctxt_mut(&mut self) -> &mut TyCtxt {

@@ -281,7 +281,7 @@ impl<'a> Reporter<'a> {
                 Projection::Deref => {
                     text = format!("(*{text})");
                 }
-                Projection::Field(field) => {
+                Projection::Field(field) | Projection::VariantField { field, .. } => {
                     text.push('.');
                     text.push_str(
                         self.interner

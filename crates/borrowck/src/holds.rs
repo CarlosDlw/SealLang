@@ -223,7 +223,7 @@ fn transfer(
             }
             state.assign(place, loans);
         }
-        Rvalue::Len { .. } => state.clear(place),
+        Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
         Rvalue::Use(operand) => {
             let loans = match operand.place() {
                 Some(source) if source.is_deref() => all_loans.clone(),

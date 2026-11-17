@@ -153,6 +153,21 @@ fn keywords_are_not_identifiers() {
 }
 
 #[test]
+fn match_and_fat_arrow_are_tokens() {
+    let fixture = Fixture::new("match value { _ => 1 }");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    let kinds = fixture.kinds(&lexed);
+    assert_eq!(kinds[0], TokenKind::Match);
+    assert!(
+        kinds.contains(&TokenKind::FatArrow),
+        "expected `=>` in {:?}",
+        kinds
+    );
+    assert_eq!(kinds.last(), Some(&TokenKind::Eof));
+}
+
+#[test]
 fn unicode_identifiers_are_accepted() {
     let fixture = Fixture::new("ação _日本 e\u{301}");
     let lexed = fixture.lex();

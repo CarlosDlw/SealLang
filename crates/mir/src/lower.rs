@@ -1,5 +1,7 @@
 //! HIR-to-MIR lowering.
 
+mod match_expr;
+
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::DefId;
 use seal_hash::FxHashMap;
@@ -514,6 +516,7 @@ impl<'a> BodyLowering<'a> {
                 args,
                 ..
             } => self.lower_method(expr, receiver, name_span, &args, dest, span),
+            ExprKind::Match { scrutinee, arms } => self.lower_match(scrutinee, &arms, dest, span),
             ExprKind::If {
                 condition,
                 then_branch,

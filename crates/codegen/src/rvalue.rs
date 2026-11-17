@@ -24,6 +24,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
+            Rvalue::Discriminant(place) => self.discriminant(place),
             Rvalue::Ref { place, .. } => Ok(self.place_ptr(place)?.into()),
             Rvalue::SliceRef {
                 base,
@@ -54,6 +55,40 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
             Rvalue::Repeat { value, count, ty } => self.array_repeat(value, *count, *ty),
         }
+    }
+
+    fn discriminant(&self, place: &seal_mir::Place) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let ty = self.place_type(place)?;
+        let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+            return Err(CodegenError::internal(format!(
+                "cannot read a discriminant from `{ty:?}`"
+            )));
+        };
+        let enum_type = self.mapper.adt(adt);
+        let pointer = self.place_ptr(place)?;
+        let layout = self.mapper.enum_layout(adt)?;
+        let tag_bits = u16::try_from(layout.tag.size() * 8).map_err(|_| {
+            CodegenError::internal(format!("enum {adt:?} has a tag too wide for codegen"))
+        })?;
+        let tag_type = self.mapper.integer_type(tag_bits)?;
+        let tag_pointer = self.build(
+            self.builder
+                .build_struct_gep(enum_type, pointer, 0, "enum.tag"),
+            "enum tag projection",
+        )?;
+        let tag = self
+            .build(
+                self.builder.build_load(tag_type, tag_pointer, "enum tag"),
+                "enum tag load",
+            )?
+            .into_int_value();
+        let wide = self.context.i32_type();
+        Ok(self
+            .build(
+                self.builder.build_int_z_extend(tag, wide, "discriminant"),
+                "discriminant extension",
+            )?
+            .into())
     }
 
     fn slice_ref(

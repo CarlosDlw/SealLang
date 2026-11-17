@@ -92,9 +92,18 @@ The ABI is defined by the language, not by a C header:
   payload is a byte array as large as the largest variant. Constructing a
   variant stores the discriminant and then stores a variant-shaped struct at the
   payload address; the temporary lives in the function prologue, so a loop does
-  not grow the stack. Every variant shares the same LLVM type, positional and
-  named fields are stored in declaration order, and the payload bytes at the
-  language offsets are what `match` will later read.
+  not grow the stack. Every variant shares the same LLVM type, and positional
+  and named fields are stored in declaration order. `match` reads the payload
+  through the same offsets: a field pattern is a `Projection::VariantField` GEP
+  into the payload, valid because the tag test selected that variant.
+- `match` lowers to control flow. The scrutinee is moved into a temporary,
+  `Rvalue::Discriminant` reads the tag into a `u32`, and a chain of `SwitchInt`
+  tests selects the arm; a literal pattern compares with `Rvalue::Binary`
+  `Eq` and switches on the boolean result. An or-pattern becomes one such chain
+  per alternative. Bindings are stores from the variant field places, emitted
+  after the whole pattern matched, and a guard is another `SwitchInt` on its
+  boolean result. Falling past the last arm enters an `Unreachable` block, which
+  exhaustiveness checking already made impossible.
 - Array indexing evaluates the index once, checks it against the length, and
   then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
   unsafe operation and every compiler crate except the debug bridge forbids
@@ -293,7 +302,9 @@ output without `main`, verify entry-point diagnostics, confirm panic messages
 and status 101 for zero divisors, signed overflow in both `/` and `%`, and
 out-of-range array indices, and reject executable linking when the embedded
 runtime does not match the target. `examples/007_runtime_panic.sl` pins the
-user-visible panic message and location. Array tests also cover literals,
+user-visible panic message and location. `examples/019_match.sl` exercises unit,
+positional, and named variant patterns, alternatives, a guard, and bindings in
+debug and release. Array tests also cover literals,
 repeats, zero-length arrays, copy semantics, arrays in structs, structs in
 arrays, function parameters, dynamic writes, and repeats inside loops. Slice
 tests cover array-to-slice coercion, every range form, mutable views,

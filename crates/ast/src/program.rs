@@ -7,11 +7,13 @@ use seal_symbol::Symbol;
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
 use crate::expr::{Expr, ExprKind};
 use crate::id::{
-    BlockId, ExprId, FieldDeclId, ItemId, ParamId, StmtId, TupleFieldDeclId, TypeId, VariantDeclId,
+    BlockId, ExprId, FieldDeclId, ItemId, ParamId, PatternId, StmtId, TupleFieldDeclId, TypeId,
+    VariantDeclId,
 };
 use crate::item::{
     FieldDecl, Item, ItemKind, Param, TupleFieldDecl, VariantDecl, VariantFieldList,
 };
+use crate::pattern::Pattern;
 use crate::ty::{Type, TypeKind};
 
 /// The items of one source file, in source order.
@@ -55,6 +57,7 @@ pub struct Ast {
     blocks: IndexVec<BlockId, Block>,
     stmts: IndexVec<StmtId, Stmt>,
     exprs: IndexVec<ExprId, Expr>,
+    patterns: IndexVec<PatternId, Pattern>,
     types: IndexVec<TypeId, Type>,
     program: Program,
 }
@@ -114,6 +117,12 @@ impl Ast {
         &self.exprs[id]
     }
 
+    /// Returns a pattern.
+    #[inline]
+    pub fn pattern(&self, id: PatternId) -> &Pattern {
+        &self.patterns[id]
+    }
+
     /// Returns a type.
     #[inline]
     pub fn ty(&self, id: TypeId) -> &Type {
@@ -168,6 +177,12 @@ impl Ast {
     #[inline]
     pub fn expr_arena(&self) -> &IndexVec<ExprId, Expr> {
         &self.exprs
+    }
+
+    /// Returns all pattern nodes, indexable by [`PatternId`].
+    #[inline]
+    pub fn pattern_arena(&self) -> &IndexVec<PatternId, Pattern> {
+        &self.patterns
     }
 
     /// Returns all type nodes, indexable by [`TypeId`].
@@ -350,6 +365,11 @@ impl AstBuilder {
     /// Adds an expression and returns its ID.
     pub fn push_expr(&mut self, kind: ExprKind, span: Span) -> ExprId {
         self.ast.exprs.push(Expr { kind, span })
+    }
+
+    /// Adds a pattern and returns its ID.
+    pub fn push_pattern(&mut self, kind: crate::pattern::PatternKind, span: Span) -> PatternId {
+        self.ast.patterns.push(Pattern { kind, span })
     }
 
     /// Adds a type and returns its ID.

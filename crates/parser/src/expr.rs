@@ -296,6 +296,7 @@ impl Parser<'_> {
             }
             TokenKind::LBracket => self.parse_array_literal(token.span),
             TokenKind::If => self.parse_if_expr(token.span),
+            TokenKind::Match => self.parse_match_expr(token.span),
             TokenKind::Error => {
                 self.bump();
                 self.builder.push_expr(ExprKind::Error, token.span)
@@ -610,7 +611,7 @@ impl Parser<'_> {
             .push_expr(ExprKind::Unary { op, operand }, span)
     }
 
-    fn suffix(&self, suffix: Option<NumericSuffix>) -> Option<Symbol> {
+    pub(crate) fn suffix(&self, suffix: Option<NumericSuffix>) -> Option<Symbol> {
         suffix.map(|suffix| self.interner.intern(suffix.as_str()))
     }
 

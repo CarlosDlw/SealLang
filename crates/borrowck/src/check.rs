@@ -150,6 +150,10 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= operand_unknown(operand, context);
             check_operand(statement, operand, context);
         }
+        Rvalue::Discriminant(place) => {
+            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            check_read(place, statement.span, context);
+        }
         Rvalue::Ref { place, kind } => {
             unknown |= origins::keys_of(context.origins, place).is_unknown();
             check_borrow(place, *kind, statement.span, context);

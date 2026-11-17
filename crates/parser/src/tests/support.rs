@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use seal_ast::{
     Ast, Block, BlockId, Expr, ExprId, ExprKind, FieldDeclId, FnDecl, ItemId, ItemKind, ParamId,
-    StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
+    PatternId, PatternKind, StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId,
+    VariantFieldList, VariantPatternFields,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -507,6 +508,16 @@ impl Reachability<'_> {
                 }
             }
             ExprKind::Paren(inner) => self.check_expr(inner),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_expr(scrutinee);
+                for arm in arms {
+                    self.check_pattern(arm.pattern);
+                    if let Some(guard) = arm.guard {
+                        self.check_expr(guard);
+                    }
+                    self.check_expr(arm.body);
+                }
+            }
             ExprKind::If {
                 condition,
                 then_branch,
@@ -527,6 +538,49 @@ impl Reachability<'_> {
                 self.assert_span(name_span);
             }
             ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
+        }
+    }
+
+    fn check_pattern(&mut self, id: PatternId) {
+        let (span, kind) = {
+            let pattern = self.ast.pattern(id);
+            (pattern.span, pattern.kind.clone())
+        };
+        self.assert_span(span);
+        match kind {
+            PatternKind::Variant {
+                type_span,
+                name_span,
+                fields,
+                ..
+            } => {
+                self.assert_span(type_span);
+                self.assert_span(name_span);
+                match fields {
+                    VariantPatternFields::Unit => {}
+                    VariantPatternFields::Positional(patterns) => {
+                        for pattern in patterns {
+                            self.check_pattern(pattern);
+                        }
+                    }
+                    VariantPatternFields::Named(fields) => {
+                        for field in fields {
+                            self.assert_span(field.name_span);
+                            self.assert_span(field.span);
+                            self.check_pattern(field.pattern);
+                        }
+                    }
+                }
+            }
+            PatternKind::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.check_pattern(alternative);
+                }
+            }
+            PatternKind::Wildcard
+            | PatternKind::Binding(_)
+            | PatternKind::Literal(_)
+            | PatternKind::Error => {}
         }
     }
 

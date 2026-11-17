@@ -59,6 +59,15 @@ two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
 
+`match` is an expression over enum variants and scalar values. Patterns nest:
+they match unit, positional, and named variants, bind fields, compare integer,
+float, character, and boolean literals, and combine alternatives with `|`. An arm
+may carry an `if` guard, which sees only `Copy` bindings because a failed guard
+must leave the scrutinee available for the next arm. Coverage is proved by the
+usefulness algorithm: an enum or `bool` match is exhaustive once every
+constructor is covered, an integer, float, or character match needs a catch-all,
+and an arm that no value can reach is `E3033`.
+
 ## Command line
 
 ```text
@@ -127,8 +136,9 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 The current language surface is functions, nominal structs and enums,
 fixed-size arrays, slices, shared and exclusive references, `let` bindings with
-definite initialization, `if`, `while`, `break`, `continue`, `return`, the usual
-arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
+definite initialization, `if`, `while`, `break`, `continue`, `return`, `match`
+expressions with structural patterns, guards, and exhaustiveness checking, the
+usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
 methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`
 methods and associated functions on nominal types, and traits with static
 dispatch. Every call resolves statically: there is no vtable, dynamic dispatch,
@@ -138,6 +148,6 @@ User methods declare their receiver explicitly as `self: S`, `self: *S`, or
 method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
 read-only method. A trait writes `Self` for the implementing type and every
 `impl Trait for S` binds one concrete function per method, so a trait call is an
-ordinary direct call. Pattern matching over enum variants, generics, trait
-objects, and an `unsafe` layer are not part of the surface yet; the memory model
-records how they fit without redesigning the type system.
+ordinary direct call. Generics, trait objects, and an `unsafe` layer are not part
+of the surface yet; the memory model records how they fit without redesigning the
+type system.

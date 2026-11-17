@@ -153,6 +153,9 @@ impl Checker<'_> {
                 },
                 flow,
             ),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(scrutinee, &arms, expected, flow, span)
+            }
             ExprKind::If {
                 condition,
                 then_branch,
@@ -176,6 +179,23 @@ impl Checker<'_> {
         match res {
             Res::Local(local) => {
                 let ty = self.local_type(local);
+                let moved_in_guard = self
+                    .guard_moves
+                    .as_mut()
+                    .is_some_and(|moves| moves.remove(&local));
+                if moved_in_guard && !self.is_error(ty) {
+                    self.error(
+                        seal_error_codes::E2045,
+                        span,
+                        format!(
+                            "the guard uses `{}`, but its type `{}` is not `Copy`",
+                            self.def_name(local),
+                            self.ty_text(ty)
+                        ),
+                    )
+                    .help("move the check into the arm body, or match a `Copy` field")
+                    .emit();
+                }
                 self.results.record_place(
                     expr,
                     ResolvedPlace {

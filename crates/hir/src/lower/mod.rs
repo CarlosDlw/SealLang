@@ -19,6 +19,7 @@ use crate::{Block, Hir, HirBlockId, ReceiverKind};
 mod aggregates;
 mod enums;
 mod expr;
+mod patterns;
 mod scope;
 mod stmt;
 mod structs;

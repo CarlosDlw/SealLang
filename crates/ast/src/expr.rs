@@ -4,6 +4,7 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::id::{BlockId, ExprId};
+use crate::pattern::MatchArm;
 
 /// A binary operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -364,6 +365,13 @@ pub enum ExprKind {
     },
     /// A parenthesized expression. Kept so formatting and spans stay faithful.
     Paren(ExprId),
+    /// A pattern-matching expression, written `match scrutinee { ... }`.
+    Match {
+        /// The value being matched.
+        scrutinee: ExprId,
+        /// The arms in source order; the parser rejects an empty list.
+        arms: Vec<MatchArm>,
+    },
     /// A conditional expression.
     ///
     /// The value of the expression is the value of the branch that runs. An

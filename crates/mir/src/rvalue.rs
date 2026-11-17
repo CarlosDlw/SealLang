@@ -156,6 +156,12 @@ pub enum Rvalue {
         /// The resulting `*[T]` or `*mut [T]` type.
         ty: seal_ty::TyId,
     },
+    /// Reads the discriminant of an enum place.
+    ///
+    /// The result is a `u32`, wide enough for every supported discriminant, so
+    /// a `SwitchInt` can compare it directly. Reading the discriminant never
+    /// moves the enum.
+    Discriminant(Place),
     /// Reads the length of a slice reference.
     Len {
         /// The fat pointer whose length is read.

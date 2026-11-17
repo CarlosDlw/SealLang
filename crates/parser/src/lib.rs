@@ -51,6 +51,7 @@
 
 mod expr;
 mod parser;
+mod pattern;
 mod stmt;
 mod types;
 

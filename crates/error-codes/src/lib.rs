@@ -377,6 +377,18 @@ than `Empty()`. A positional field is written as its type alone; names belong in
 the braced form.",
 };
 
+/// A pattern is malformed.
+pub const E1011: ErrorCode = ErrorCode {
+    code: "E1011",
+    title: "invalid pattern",
+    explanation: "\
+A match arm starts with a pattern. Seal patterns are `_`, a binding name, a
+scalar literal (`0`, `-1`, `'x'`, `true`), a qualified enum variant such as
+`Option::Some(value)`, or alternatives joined by `|`.\n\nA string cannot be a pattern because comparing text needs a runtime operation
+that Seal does not define. An enum variant must always be written with its enum
+name, as in `Mode::On`; a bare variant name is a binding.\n\nFix the pattern syntax, or use `_` when the arm ignores the value.",
+};
+
 /// A definition is declared twice in the same scope.
 pub const E2001: ErrorCode = ErrorCode {
     code: "E2001",
@@ -826,6 +838,73 @@ Writing `Variant()` would suggest a callable that takes no arguments and would
 give the same value two spellings.\n\nWrite the variant without parentheses, as in `Mode::On`.",
 };
 
+/// A binding name appears twice in one pattern.
+pub const E2040: ErrorCode = ErrorCode {
+    code: "E2040",
+    title: "binding name appears twice in one pattern",
+    explanation: "\
+A pattern introduces each binding name at most once. `Some(value, value)` would
+ask one name to refer to two fields, so the compiler cannot tell which value a
+later use means. A duplicate is rejected even when both fields have the same
+type.\n\nRename one binding, or replace it with `_` if the field is not used.",
+};
+
+/// Or-pattern alternatives bind different names.
+pub const E2041: ErrorCode = ErrorCode {
+    code: "E2041",
+    title: "or-pattern alternatives bind different names",
+    explanation: "\
+Every alternative of an or-pattern must bind the same set of names with the same
+types, because the arm body runs after whichever alternative matched and has one
+set of names available. `Some(x) | None` is rejected: `None` has no `x` to
+supply.\n\nUse `_` in alternatives that do not need a binding, or bind the same names on
+every side.",
+};
+
+/// A variant pattern uses the wrong field form.
+pub const E2042: ErrorCode = ErrorCode {
+    code: "E2042",
+    title: "variant pattern uses the wrong field form",
+    explanation: "\
+A variant pattern mirrors the variant declaration. A unit variant is written
+bare (`Mode::Off`), a positional variant with parentheses
+(`Option::Some(value)`), and a named variant with braces
+(`Shape::Circle { radius }`).\n\nWriting fields on a unit variant, or the wrong delimiter for the declared form,
+is rejected instead of silently ignoring a field pattern.",
+};
+
+/// A variant pattern has the wrong number of fields.
+pub const E2043: ErrorCode = ErrorCode {
+    code: "E2043",
+    title: "wrong number of fields in variant pattern",
+    explanation: "\
+Every field of a positional variant must be matched by exactly one pattern.
+Omitting a field would leave part of the value unaccounted for, and supplying
+extra patterns would have nothing to match.\n\nWrite one pattern per declared field, in declaration order, and use `_` for a
+field the arm ignores.",
+};
+
+/// A named variant pattern names an unknown field.
+pub const E2044: ErrorCode = ErrorCode {
+    code: "E2044",
+    title: "no such field in variant pattern",
+    explanation: "\
+A named pattern must use the field names the variant declares. A name that the
+declaration does not contain cannot match anything and is usually a typo.\n\nCheck the field spelling against the variant declaration.",
+};
+
+/// A guard reads a binding that is not `Copy`.
+pub const E2045: ErrorCode = ErrorCode {
+    code: "E2045",
+    title: "guard cannot use a non-`Copy` binding",
+    explanation: "\
+A guard runs after a pattern matches but before the arm commits. If the guard
+fails, matching continues to the next arm, so a value the guard consumed could
+not be put back. Seal therefore allows only bindings whose type is `Copy` in the
+guard expression of an arm.\n\nMove the check into the arm body with an `if`, match the value structurally
+without a guard, or use a `Copy` field.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1224,6 +1303,33 @@ be passed to an exclusive receiver, and a reference receiver cannot consume a
 value. Adjust the receiver or the method signature.",
 };
 
+/// A match expression does not cover every value.
+pub const E3032: ErrorCode = ErrorCode {
+    code: "E3032",
+    title: "non-exhaustive match",
+    explanation: "\
+A match expression must handle every value its scrutinee type can have, because
+Seal has no fallback that would panic or leave the result undefined. The
+diagnostic lists a value that no arm covers.\n\nAdd an arm for the missing value, or finish with `_ => ...` to handle everything
+not written explicitly. Guards do not make an arm exhaustive, because a guard
+can fail.\n\nSeal checks usefulness rather than just counting arms: alternatives inside one
+arm are considered together, and impossible combinations are ignored.",
+};
+
+/// A match arm can never be selected.
+pub const E3033: ErrorCode = ErrorCode {
+    code: "E3033",
+    title: "unreachable match arm",
+    explanation: "\
+An arm is unreachable when every value it matches is already matched by an
+earlier arm. Seal reports the arm instead of compiling code that can never run,
+because an unreachable arm usually hides a mistake in the patterns or their
+order.\n\nRemove the arm, or move it before the arm that covers it. An arm with a guard
+is reachable while the guard can succeed, even when its pattern overlaps an
+earlier one; the guard is what can still make it select.\n\n`_` after an exhaustive list of variants is the most common case: the previous
+arms already cover every value.",
+};
+
 /// A place is assigned while a shared reference to it is live.
 pub const E5001: ErrorCode = ErrorCode {
     code: "E5001",
@@ -1440,14 +1546,14 @@ Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010, E2001, E2002, E2003,
-    E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016,
-    E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E2029,
-    E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E3001, E3002, E3003,
-    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
-    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
-    E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001,
-    E6002, E6003, E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010, E1011, E2001, E2002,
+    E2003, E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015,
+    E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
+    E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
+    E2042, E2043, E2044, E2045, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009,
+    E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022,
+    E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E5001, E5002,
+    E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1540,7 +1646,7 @@ mod tests {
             codes,
             [
                 "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008", "E1009",
-                "E1010",
+                "E1010", "E1011",
             ]
         );
         assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
@@ -1561,7 +1667,7 @@ mod tests {
                 "E2010", "E2011", "E2012", "E2013", "E2014", "E2015", "E2016", "E2017", "E2018",
                 "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
                 "E2028", "E2029", "E2030", "E2031", "E2032", "E2033", "E2034", "E2035", "E2036",
-                "E2037", "E2038", "E2039",
+                "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
             ]
         );
     }
@@ -1579,7 +1685,7 @@ mod tests {
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
-                "E3028", "E3029", "E3030", "E3031",
+                "E3028", "E3029", "E3030", "E3031", "E3032", "E3033",
             ]
         );
     }

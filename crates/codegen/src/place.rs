@@ -72,6 +72,41 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     )?;
                     ty = definition.fields[index].ty;
                 }
+                Projection::VariantField { variant, field } => {
+                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                        return Err(CodegenError::internal(format!(
+                            "cannot project an enum field from `{ty:?}` during code generation"
+                        )));
+                    };
+                    let definition = self.tcx.adt(adt);
+                    let variant_def = definition.variant(*variant).ok_or_else(|| {
+                        CodegenError::internal(format!(
+                            "variant {variant:?} does not belong to enum {adt:?}"
+                        ))
+                    })?;
+                    let index = variant_def
+                        .fields
+                        .iter()
+                        .position(|candidate| candidate.def == *field)
+                        .ok_or_else(|| {
+                            CodegenError::internal(format!(
+                                "field {field:?} does not belong to variant {variant:?}"
+                            ))
+                        })?;
+                    let layout = self.mapper.enum_layout(adt)?;
+                    let offset = layout
+                        .variants
+                        .get(variant.index() as usize)
+                        .and_then(|variant| variant.fields.get(index))
+                        .map(|field| field.offset)
+                        .ok_or_else(|| {
+                            CodegenError::internal(format!(
+                                "enum {adt:?} has no layout for variant {variant:?} field {index}"
+                            ))
+                        })?;
+                    pointer = self.offset_ptr(pointer, offset)?;
+                    ty = variant_def.fields[index].ty;
+                }
                 Projection::Index { local, constant } => {
                     let element = match self.tcx.kind(ty) {
                         TyKind::Array { element, .. } | TyKind::Slice { element } => element,
@@ -93,6 +128,34 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             }
         }
         Ok(pointer)
+    }
+
+    /// Returns the address `offset` bytes past `pointer`.
+    ///
+    /// The same integer arithmetic used by array indexing avoids an unsafe GEP
+    /// call. Enum field offsets come from the language layout, so the result is
+    /// inside the enum allocation.
+    fn offset_ptr(
+        &self,
+        pointer: PointerValue<'ctx>,
+        offset: u64,
+    ) -> Result<PointerValue<'ctx>, CodegenError> {
+        let usize_type = self.mapper.usize_type()?;
+        let base = self.build(
+            self.builder
+                .build_ptr_to_int(pointer, usize_type, "field base"),
+            "field base address",
+        )?;
+        let address = self.build(
+            self.builder
+                .build_int_add(base, usize_type.const_int(offset, false), "field address"),
+            "field address",
+        )?;
+        self.build(
+            self.builder
+                .build_int_to_ptr(address, self.mapper.pointer(), "field pointer"),
+            "field pointer",
+        )
     }
 
     /// Returns the address of `index` elements into an array.
@@ -173,6 +236,25 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             ))
                         })?;
                     ty = definition.fields[index].ty;
+                }
+                Projection::VariantField { variant, field } => {
+                    let TyKind::Adt(adt) = self.tcx.kind(ty) else {
+                        return Err(CodegenError::internal(format!(
+                            "cannot project an enum field from `{ty:?}` during code generation"
+                        )));
+                    };
+                    let definition = self.tcx.adt(adt);
+                    let variant_def = definition.variant(*variant).ok_or_else(|| {
+                        CodegenError::internal(format!(
+                            "variant {variant:?} does not belong to enum {adt:?}"
+                        ))
+                    })?;
+                    let field = variant_def.field(*field).ok_or_else(|| {
+                        CodegenError::internal(format!(
+                            "field {field:?} does not belong to variant {variant:?}"
+                        ))
+                    })?;
+                    ty = field.ty;
                 }
                 Projection::Index { .. } => {
                     ty = match self.tcx.kind(ty) {

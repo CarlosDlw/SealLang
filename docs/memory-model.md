@@ -227,8 +227,9 @@ as the largest variant and the whole value is padded to its alignment. The
 aggregate owns its fields: moving it moves all of them, and moving one field out
 leaves the rest initialized, which is what the move-path initializer tracks
 (D9). A borrow may select a struct field (`&p.x`), which is what lets a sibling
-stay writable (D6). There is no field projection on an enum value until `match`
-names the active variant.
+stay writable (D6). The discriminant is read by `match` and never by field
+access: a field of a variant is reachable only through a pattern that tested the
+variant first, the one projection whose validity depends on control flow.
 
 ### D14 — Slices are borrowed views with a length
 
@@ -375,6 +376,11 @@ call.
     reordering, so offsets are stable across phases and targets with the same
     data model. An enum adds a tag followed by an aligned payload, and the tag
     is the smallest unsigned integer that addresses every variant.
+12. `match` binds each name once (`E2040`), or-pattern alternatives bind the
+    same names (`E2041`), and a guard reads only `Copy` bindings (`E2045`). A
+    guarded arm never contributes coverage, every match is exhaustive
+    (`E3032`), and no arm is unreachable (`E3033`). Matching moves the
+    scrutinee; a non-`Copy` field binding moves that field out of the value.
 
 ## Reserved syntax
 
@@ -383,8 +389,9 @@ above and only waits for the surrounding features.
 
 - Generics, visibility, and `Drop` for aggregates — layers on the nominal
   struct, enum, and array foundation, not redesigns of it.
-- Pattern matching over enum variants (`match`) — the next layer on the tag and
-  payload layout above; construction and layout already reserve the tag.
+- Pattern layers above v0.1 — ranges (`0..=9`), `@` bindings, and destructuring
+  a bare struct — extend the same pattern tree and the same usefulness check;
+  the tag and payload layout above does not change.
 - User-defined implementations, trait implementations, and intrinsic methods
   already share the static lookup and receiver-borrow model that generics will
   parameterize.

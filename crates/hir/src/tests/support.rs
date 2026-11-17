@@ -4,7 +4,10 @@ use std::collections::BTreeSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use crate::{Body, BodyId, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId, Res, StmtKind};
+use crate::{
+    Body, BodyId, ExprKind, Hir, HirBlockId, HirExprId, HirPatternId, HirStmtId, PatternKind, Res,
+    StmtKind,
+};
 use seal_ast::Ast;
 use seal_def::{DefId, DefKind};
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
@@ -420,6 +423,16 @@ impl Reachability<'_> {
                     self.check_expr(arg);
                 }
             }
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_expr(scrutinee);
+                for arm in arms {
+                    self.check_pattern(arm.pattern);
+                    if let Some(guard) = arm.guard {
+                        self.check_expr(guard);
+                    }
+                    self.check_expr(arm.body);
+                }
+            }
             ExprKind::If {
                 condition,
                 then_branch,
@@ -432,6 +445,32 @@ impl Reachability<'_> {
                 }
             }
             ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
+        }
+    }
+
+    fn check_pattern(&mut self, id: HirPatternId) {
+        let (span, kind) = {
+            let pattern = self.hir.pattern(id);
+            (pattern.span, pattern.kind.clone())
+        };
+        self.assert_span(span);
+        match kind {
+            PatternKind::Binding { def, .. } => {
+                let data = self.hir.definitions().get(def);
+                assert!(data.kind.is_local(), "a pattern binding names a local");
+                assert_eq!(data.parent, self.owner);
+            }
+            PatternKind::Variant { fields, .. } => {
+                for (_, field) in fields {
+                    self.check_pattern(field);
+                }
+            }
+            PatternKind::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.check_pattern(alternative);
+                }
+            }
+            PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Error => {}
         }
     }
 }

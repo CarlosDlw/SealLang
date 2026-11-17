@@ -2,11 +2,13 @@
 
 mod borrow;
 mod call;
+mod exhaustive;
 mod expr;
 mod flow;
 mod literal;
 mod method;
 mod operators;
+mod pattern;
 mod place;
 mod slice;
 mod stmt;
@@ -16,6 +18,7 @@ use seal_def::DefId;
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
+use seal_hash::FxHashSet;
 use seal_hir::{Body, Hir, HirBlockId};
 use seal_span::Span;
 use seal_symbol::Interner;
@@ -45,6 +48,13 @@ pub(crate) struct Checker<'a> {
     pub(super) pointer_width: u8,
     pub(super) results: TypeckResults,
     pub(super) ret: TyId,
+    /// Non-`Copy` pattern bindings referenced by the guard being checked.
+    ///
+    /// A guard runs before the arm commits, so moving a binding into it could
+    /// not be undone when the guard fails. The set starts with every non-`Copy`
+    /// binding of the arm; a path removes its entry after reporting, so one
+    /// diagnostic covers all uses of the same binding.
+    pub(super) guard_moves: Option<FxHashSet<DefId>>,
 }
 
 impl<'a> Checker<'a> {
@@ -65,6 +75,7 @@ impl<'a> Checker<'a> {
             pointer_width,
             results: TypeckResults::new(),
             ret: unit,
+            guard_moves: None,
         };
         checker.build_signatures();
         checker

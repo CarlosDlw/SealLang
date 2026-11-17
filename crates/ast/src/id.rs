@@ -47,6 +47,11 @@ newtype_index! {
 }
 
 newtype_index! {
+    /// Identifies a pattern.
+    pub struct PatternId;
+}
+
+newtype_index! {
     /// Identifies a type.
     pub struct TypeId;
 }

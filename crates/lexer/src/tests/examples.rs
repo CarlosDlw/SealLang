@@ -32,6 +32,7 @@ fn all_examples_lex_cleanly() {
         "016_trait_receivers.sl",
         "017_enums.sl",
         "018_tuple_variants.sl",
+        "019_match.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

@@ -40,7 +40,7 @@ impl Parser<'_> {
                 // A block-like expression in statement position stands alone: a
                 // token on the next line starts a new statement, so `if c { }`
                 // followed by `*r` is not a multiplication.
-                let expr = if self.at(TokenKind::If) {
+                let expr = if self.at(TokenKind::If) || self.at(TokenKind::Match) {
                     self.parse_prefix()
                 } else {
                     self.parse_expr(0)
@@ -52,7 +52,10 @@ impl Parser<'_> {
                 } else if self.at(TokenKind::RBrace) || self.is_eof() {
                     tail = Some(expr);
                     break;
-                } else if matches!(self.builder.ast().expr(expr).kind, ExprKind::If { .. }) {
+                } else if matches!(
+                    self.builder.ast().expr(expr).kind,
+                    ExprKind::If { .. } | ExprKind::Match { .. }
+                ) {
                     // Block-like expressions are statements without a `;`.
                     statements.push(self.builder.push_expr_stmt(expr_span, expr));
                 } else {
