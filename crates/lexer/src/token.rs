@@ -172,6 +172,8 @@ pub enum TokenKind {
     Impl,
     /// `trait`
     Trait,
+    /// `dyn`
+    Dyn,
     /// `for`
     For,
     /// `in`

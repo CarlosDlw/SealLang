@@ -130,6 +130,7 @@ impl Parser<'_> {
         }
 
         let mut args = Vec::new();
+        let mut reported_separator = false;
         loop {
             if self.at_generic_close() || self.is_eof() {
                 break;
@@ -154,6 +155,7 @@ impl Parser<'_> {
             )
             .help("separate type arguments with `,`")
             .emit();
+            reported_separator = true;
             if !can_start_type(self.current_kind()) {
                 break;
             }
@@ -163,14 +165,20 @@ impl Parser<'_> {
         let close = if self.eat_gt() {
             self.previous_span()
         } else {
-            let found = self.describe(self.current_kind());
-            self.error(
-                codes::E1002,
-                self.current_span(),
-                format!("expected `>` to close the type argument list, found {found}"),
-            )
-            .help("add the missing `>`")
-            .emit();
+            // A closing delimiter already produced the targeted "expected `,`
+            // or `>`" message; repeating it as a missing `>` only adds noise.
+            let already_explained = reported_separator
+                && matches!(self.current_kind(), TokenKind::RParen | TokenKind::RBracket);
+            if !already_explained {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `>` to close the type argument list, found {found}"),
+                )
+                .help("add the missing `>`")
+                .emit();
+            }
             self.current_span()
         };
         let span = start.cover(close);

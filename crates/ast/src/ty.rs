@@ -2,7 +2,7 @@
 
 use seal_span::Span;
 
-use crate::generics::TypePath;
+use crate::generics::{TraitPath, TypePath};
 use crate::id::TypeId;
 
 /// A built-in type name.
@@ -124,6 +124,12 @@ pub enum TypeKind {
     /// The optional argument list is kept here so nested generic types and
     /// `Self` arguments retain their exact source spans.
     Path(TypePath),
+    /// A trait object, written `dyn Trait` or `dyn Trait<Args>`.
+    ///
+    /// Trait objects are unsized and only become usable behind a pointer. The
+    /// path is kept unresolved here; HIR validates that it names a trait and
+    /// applies the dyn-compatibility rules.
+    Dyn(TraitPath),
     /// A tuple type, written `(A, B, ...)`.
     ///
     /// The empty list is the unit type `()`. A one-element tuple must keep its

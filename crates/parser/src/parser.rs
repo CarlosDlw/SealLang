@@ -852,6 +852,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Struct => "struct",
         TokenKind::Impl => "impl",
         TokenKind::Trait => "trait",
+        TokenKind::Dyn => "dyn",
         TokenKind::For => "for",
         TokenKind::In => "in",
         TokenKind::If => "if",

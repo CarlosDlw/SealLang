@@ -798,6 +798,13 @@ impl Reachability<'_> {
                     self.check_generic_args(args);
                 }
             }
+            TypeKind::Dyn(path) => {
+                self.assert_span(path.name_span);
+                self.assert_span(path.span);
+                if let Some(args) = &path.args {
+                    self.check_generic_args(args);
+                }
+            }
             _ => {}
         }
     }

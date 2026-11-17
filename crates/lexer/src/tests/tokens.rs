@@ -128,7 +128,7 @@ fn in_is_a_keyword_but_a_prefixed_name_is_not() {
 #[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
-        "func funcx struct structx enum enumx impl implx trait traitx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
+        "func funcx struct structx enum enumx impl implx trait traitx dyn dynx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
     );
     let lexed = fixture.lex();
     fixture.assert_clean();
@@ -145,6 +145,8 @@ fn keywords_are_not_identifiers() {
             TokenKind::Ident(fixture.interner.intern("implx")),
             TokenKind::Trait,
             TokenKind::Ident(fixture.interner.intern("traitx")),
+            TokenKind::Dyn,
+            TokenKind::Ident(fixture.interner.intern("dynx")),
             TokenKind::For,
             TokenKind::Ident(fixture.interner.intern("forx")),
             TokenKind::If,

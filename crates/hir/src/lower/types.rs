@@ -52,6 +52,13 @@ impl Lowering<'_> {
                 let element = self.lower_type_inner(element, unknown_parameter);
                 self.hir.ty_ctxt_mut().slice_ty(element)
             }
+            TypeKind::Dyn(_) => {
+                // Trait-object lowering, object safety, and pointer metadata
+                // arrive in the next phases. Keeping the semantic type as an
+                // error here prevents later phases from treating `dyn` as a
+                // sized value before those invariants exist.
+                self.hir.ty_ctxt_mut().error_ty()
+            }
             TypeKind::Path(path) if path.name == self.self_symbol => {
                 if let Some(args) = &path.args {
                     self.error(

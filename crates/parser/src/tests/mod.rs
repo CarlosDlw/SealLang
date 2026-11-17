@@ -1,6 +1,7 @@
 //! Parser tests, split by concern.
 
 mod arrays;
+mod dyn_types;
 mod enums;
 mod errors;
 mod examples;
