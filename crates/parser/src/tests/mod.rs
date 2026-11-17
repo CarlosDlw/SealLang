@@ -19,3 +19,4 @@ mod structs;
 mod support;
 mod traits;
 mod tuple_variants;
+mod while_let;

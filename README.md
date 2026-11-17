@@ -85,6 +85,11 @@ the body only when the pattern matches. Its pattern may be refutable, and the
 bindings it introduces exist only in the body. `else if let` chains mix freely
 with ordinary `else if`, and an `if let` without `else` has type `()`.
 
+`while let pattern = value { ... }` reevaluates the value and retests the
+pattern before every iteration. A successful match binds its names only in the
+loop body; a failed match exits the loop. `break` and `continue` act on the
+innermost loop, and `continue` reevaluates the scrutinee.
+
 ## Command line
 
 ```text
@@ -153,7 +158,7 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 The current language surface is functions, nominal structs and enums,
 fixed-size arrays, slices, shared and exclusive references, `let` bindings with
-definite initialization, `if`, `if let`, `while`, `for` over integer ranges and sequences,
+definite initialization, `if`, `if let`, `while`, `while let`, `for` over integer ranges and sequences,
 `break`, `continue`, `return`, `match`
 expressions with structural patterns, guards, and exhaustiveness checking, the
 usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic

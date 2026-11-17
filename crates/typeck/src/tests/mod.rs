@@ -22,3 +22,4 @@ mod structs;
 mod support;
 mod traits;
 mod user_methods;
+mod while_let;

@@ -4,7 +4,7 @@ use seal_def::DefId;
 use seal_span::Span;
 use seal_ty::TyId;
 
-use crate::id::{HirBlockId, HirExprId, HirStmtId};
+use crate::id::{HirBlockId, HirExprId, HirPatternId, HirStmtId};
 
 /// An executable body, owned by a function.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +85,15 @@ pub enum StmtKind {
     While {
         /// Evaluated before every iteration; it must have type `bool`.
         condition: HirExprId,
+        /// The loop body.
+        body: HirBlockId,
+    },
+    /// A `while let` loop.
+    WhileLet {
+        /// Matched against the scrutinee before every iteration.
+        pattern: HirPatternId,
+        /// Evaluated before every iteration.
+        scrutinee: HirExprId,
         /// The loop body.
         body: HirBlockId,
     },

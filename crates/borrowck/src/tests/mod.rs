@@ -13,3 +13,4 @@ mod returns;
 mod slices;
 mod structs;
 mod support;
+mod while_let;

@@ -38,6 +38,7 @@ fn all_examples_lex_cleanly() {
         "022_match_reference.sl",
         "023_for.sl",
         "024_if_let.sl",
+        "025_while_let.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

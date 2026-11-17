@@ -795,7 +795,18 @@ zero-sized structs in the ABI.
 
 `while condition { ... }` repeats while the condition is `bool`. `for pattern
 in source { ... }` evaluates `source` once and repeats for each element, with
-`break` and `continue` acting on the innermost loop. A `for` source is one of:
+`break` and `continue` acting on the innermost loop.
+
+`while let pattern = scrutinee { ... }` reevaluates the scrutinee and retests
+the pattern before every iteration. The pattern may be refutable, and it follows
+the same rules as a match arm, including struct, variant, array, slice,
+reference, range, binding, `@`, and `|` patterns. A successful match binds its
+names only in the body; a failed match exits the loop. There is no `else`
+branch. `continue` returns to the pattern test, so the scrutinee is evaluated
+again, and `break` exits immediately. An irrefutable pattern repeats forever
+unless the body reaches `break` or another diverging expression.
+
+A `for` source is one of:
 
 | Source | Element bound by the pattern |
 |--------|------------------------------|

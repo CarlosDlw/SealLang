@@ -42,6 +42,15 @@ pub enum StmtKind {
         /// The loop body.
         body: BlockId,
     },
+    /// A `while let` loop.
+    WhileLet {
+        /// Matched against the scrutinee before every iteration.
+        pattern: PatternId,
+        /// Evaluated before every iteration.
+        scrutinee: ExprId,
+        /// The loop body.
+        body: BlockId,
+    },
     /// A `for` loop over an iterable value.
     For {
         /// Matched against each element; it must be irrefutable.

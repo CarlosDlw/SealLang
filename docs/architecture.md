@@ -111,9 +111,9 @@ allowed to depend only on crates below it in the list.
     malformed construct costs one error rather than a cascade.
 22. **Control flow is structured.** `if` and `if let` are expressions with
     block branches, `else if` is a block whose tail is another `if` or `if let`,
-    `while` and `for` are statements with a block body, and `break`/`continue`
-    target the innermost loop. A block-like expression used as a statement needs
-    no semicolon.
+    and `while`, `while let`, and `for` are statements with a block body.
+    `break`/`continue` target the innermost loop. A block-like expression used
+    as a statement needs no semicolon.
 23. **Every HIR name is resolved.** A `Path` holds a `Res` (a `DefId`), never a
     `Symbol`; a name that does not resolve becomes an `Error` node after `E2002`
     was reported, so no consumer performs a textual lookup.
@@ -127,8 +127,9 @@ allowed to depend only on crates below it in the list.
 26. **Scopes follow the source.** Resolution walks ribs from the innermost
     outwards; a `let` inserts after its initializer, so a binding is not visible
     in its own initializer, and `if`/`while`/`for` bodies never leak bindings;
-    a `for` pattern is scoped to its body, and an `if let` pattern is scoped to
-    its then block, never its else branch.
+    a `for` pattern is scoped to its body, an `if let` pattern is scoped to its
+    then block and never its else branch, and a `while let` pattern is scoped to
+    the loop body.
 27. **Types are assigned without coercion.** Checked types are exactly equal, or
     one side is `!`/`Error`; there is no implicit numeric conversion (D12). A
     literal adopts the expected type only when that type belongs to the same
@@ -137,8 +138,9 @@ allowed to depend only on crates below it in the list.
     expression except the callee of a valid call, which is not a value because
     the language has no first-class function type. Every local has a type and
     every function has a signature.
-29. **Conditions are boolean.** `if` and `while` conditions are checked against
-    `bool`; there is no truthiness.
+29. **Plain conditions are boolean.** `if` and `while` conditions are checked
+    against `bool`; there is no truthiness. `if let` and `while let` replace the
+    condition with a pattern match instead.
 30. **Initialization is definite.** A local read requires initialization on
     every path that reaches it. Assignments in both `if` branches count only at
     the join; a branch that diverges does not participate; a `while` or `for`
@@ -163,13 +165,15 @@ allowed to depend only on crates below it in the list.
     graphs whose short-circuit block stores the constant result, so the right
     operand is evaluated only on the path that needs it. MIR has no `BinOp` for
     them.
-35. **Loops and branches are explicit.** `if`, `if let`, `while`, `for`,
-    `break`, and `continue` lower to blocks and edges; boolean conditions use
-    `SwitchInt` with `1` for true, an `if let` pattern jumps to its else or unit
-    path on failure, `while` continues to the condition block, `for` continues to
-    the increment block so an index or counter always advances, and `break`
-    jumps to the loop exit. A condition is always evaluated in its own block,
-    once per test.
+35. **Loops and branches are explicit.** `if`, `if let`, `while`, `while let`,
+    `for`, `break`, and `continue` lower to blocks and edges; boolean conditions
+    use `SwitchInt` with `1` for true, an `if let` pattern jumps to its else or
+    unit path on failure, and a `while let` pattern jumps to the loop exit on
+    failure. `while` continues to the condition block, `while let` continues to
+    the pattern test so the scrutinee is reevaluated, `for` continues to the
+    increment block so an index or counter always advances, and `break` jumps to
+    the loop exit. A condition is always evaluated in its own block, once per
+    test.
 36. **Lowering assumes a clean check.** MIR is produced only from a HIR tree
     that type checking accepted without errors, so every value expression has a
     type, every assignment target is a local place, and every local has a
@@ -377,7 +381,9 @@ allowed to depend only on crates below it in the list.
     coverage unwraps the same references, so exhaustive reasoning sees the
     aggregate. `if let` reuses the same pattern tests for one refutable pattern;
     failure jumps to the else block, or to a unit value when there is no else,
-    while success binds the pattern before lowering the then block.
+    while success binds the pattern before lowering the then block. `while let`
+    performs the same tests at the loop head, binds on success, and adds a
+    backedge from the body to the head; failure exits the loop.
 
 ## Extension points
 

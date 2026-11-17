@@ -43,6 +43,26 @@ impl Lowering<'_> {
                 self.loop_depth -= 1;
                 StmtKind::While { condition, body }
             }
+            AstStmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => {
+                // The scrutinee is evaluated before the pattern is in scope, so
+                // it cannot read this iteration's bindings.
+                let scrutinee = self.lower_expr(scrutinee);
+                self.scopes.push();
+                let pattern = self.lower_arm_pattern(pattern);
+                self.loop_depth += 1;
+                let body = self.lower_block(body);
+                self.loop_depth -= 1;
+                self.scopes.pop();
+                StmtKind::WhileLet {
+                    pattern,
+                    scrutinee,
+                    body,
+                }
+            }
             AstStmtKind::For {
                 pattern,
                 source,

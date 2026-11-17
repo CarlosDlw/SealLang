@@ -304,6 +304,15 @@ impl Reachability<'_> {
                 self.check_expr(condition);
                 self.check_block(body);
             }
+            StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => {
+                self.check_pattern(pattern);
+                self.check_expr(scrutinee);
+                self.check_block(body);
+            }
             StmtKind::For {
                 pattern,
                 source,

@@ -3,6 +3,7 @@
 mod for_loop;
 mod if_let;
 mod match_expr;
+mod while_let;
 
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::DefId;
@@ -272,6 +273,11 @@ impl<'a> BodyLowering<'a> {
                 self.terminate(TerminatorKind::Return, return_span);
             }
             StmtKind::While { condition, body } => self.lower_while(condition, body, span),
+            StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => self.lower_while_let(pattern, scrutinee, body, span),
             StmtKind::For {
                 pattern,
                 source,

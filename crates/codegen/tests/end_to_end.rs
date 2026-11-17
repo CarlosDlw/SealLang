@@ -31,6 +31,7 @@ const SLICE_MATCH: &str = include_str!("../../../examples/021_match_slice.sl");
 const REFERENCE_MATCH: &str = include_str!("../../../examples/022_match_reference.sl");
 const FOR_LOOP: &str = include_str!("../../../examples/023_for.sl");
 const IF_LET: &str = include_str!("../../../examples/024_if_let.sl");
+const WHILE_LET: &str = include_str!("../../../examples/025_while_let.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -899,6 +900,29 @@ fn if_let_produces_the_language_result_in_debug_and_release() {
             debug_info,
         )
         .expect("the if-let example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn while_let_produces_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "while-let-debug"),
+        (OptLevel::O2, false, "while-let-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            WHILE_LET,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the while-let example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

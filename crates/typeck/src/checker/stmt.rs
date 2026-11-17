@@ -107,6 +107,16 @@ fn check_stmt(checker: &mut Checker<'_>, statement: HirStmtId, mut flow: Flow) -
             checker.check_condition(condition, &mut flow);
             let _body = checker.check_block(body, None, flow.clone());
         }
+        StmtKind::WhileLet {
+            pattern,
+            scrutinee,
+            body,
+        } => {
+            let scrutinee_ty = checker.infer_expr(scrutinee, None, &mut flow);
+            let mut body_flow = flow.clone();
+            checker.check_pattern(pattern, scrutinee_ty, &mut body_flow);
+            let _body = checker.check_block(body, None, body_flow);
+        }
         StmtKind::For {
             pattern,
             source,

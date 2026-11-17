@@ -312,6 +312,24 @@ impl AstBuilder {
         })
     }
 
+    /// Adds a `while let` statement and returns its ID.
+    pub fn push_while_let(
+        &mut self,
+        span: Span,
+        pattern: PatternId,
+        scrutinee: ExprId,
+        body: BlockId,
+    ) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            },
+            span,
+        })
+    }
+
     /// Adds a `for` statement and returns its ID.
     pub fn push_for(
         &mut self,

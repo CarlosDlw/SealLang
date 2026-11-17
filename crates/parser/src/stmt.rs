@@ -147,6 +147,24 @@ impl Parser<'_> {
 
     fn parse_while(&mut self) -> StmtId {
         let keyword = self.bump();
+        if self.eat(TokenKind::Let) {
+            let pattern = self.parse_match_pattern();
+            if !self.eat(TokenKind::Eq) {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `=` after the `while let` pattern, found {found}"),
+                )
+                .help("write `while let pattern = value { ... }`")
+                .emit();
+            }
+            let scrutinee = self.parse_condition();
+            let body = self.parse_block();
+            let span = keyword.span.cover(self.previous_span());
+            return self.builder.push_while_let(span, pattern, scrutinee, body);
+        }
+
         let condition = self.parse_condition();
         let body = self.parse_block();
         let span = keyword.span.cover(self.previous_span());

@@ -16,3 +16,4 @@ mod slices;
 mod straight_line;
 mod support;
 mod validation;
+mod while_let;
