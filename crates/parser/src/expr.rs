@@ -8,7 +8,9 @@
 //! Prefix `&` and `*` are borrow and dereference, not the binary operators with
 //! the same spelling: prefix position decides, so `&x & y` is `(&x) & y`.
 
-use seal_ast::{AssignOp, BinaryOp, ExprId, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
+use seal_ast::{
+    AssignOp, BinaryOp, ExprId, ExprKind, FieldInit, Literal, PatternId, UnaryOp, UpdateOp,
+};
 use seal_error_codes as codes;
 use seal_lexer::{NumericSuffix, TokenKind};
 use seal_symbol::Symbol;
@@ -19,6 +21,17 @@ use crate::parser::{MAX_DEPTH, Parser, can_start_expr, is_expression_stop};
 const ASSIGN_BP: u8 = 1;
 /// Binding power of prefix operators; higher than every binary operator.
 const PREFIX_BP: u8 = 13;
+
+/// The condition of one `if` or `if let` expression.
+enum IfCondition {
+    /// A boolean expression.
+    Expr(ExprId),
+    /// A refutable pattern and the value it is matched against.
+    Let {
+        pattern: PatternId,
+        scrutinee: ExprId,
+    },
+}
 
 /// Which braced initializer list is being parsed, for diagnostic wording.
 #[derive(Clone, Copy)]
@@ -339,7 +352,7 @@ impl Parser<'_> {
         self.depth += 1;
 
         let _ = self.bump();
-        let condition = self.parse_condition();
+        let condition = self.parse_if_condition();
         let then_branch = self.parse_block();
         let else_branch = if self.eat(TokenKind::Else) {
             if self.at(TokenKind::If) {
@@ -370,8 +383,45 @@ impl Parser<'_> {
 
         self.depth -= 1;
         let span = start.cover(self.previous_span());
-        self.builder
-            .push_if(span, condition, then_branch, else_branch)
+        match condition {
+            IfCondition::Expr(condition) => {
+                self.builder
+                    .push_if(span, condition, then_branch, else_branch)
+            }
+            IfCondition::Let { pattern, scrutinee } => {
+                self.builder
+                    .push_if_let(span, pattern, scrutinee, then_branch, else_branch)
+            }
+        }
+    }
+
+    /// Parses the condition of an `if` or `if let` expression.
+    ///
+    /// `let` is recognized only immediately after `if`, so it stays an ordinary
+    /// keyword elsewhere. The scrutinee follows the same brace rule as a
+    /// condition: a `{` starts the body, not a struct literal.
+    fn parse_if_condition(&mut self) -> IfCondition {
+        if !self.eat(TokenKind::Let) {
+            return IfCondition::Expr(self.parse_condition());
+        }
+
+        let pattern = self.parse_match_pattern();
+        if !self.eat(TokenKind::Eq) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `=` after the `if let` pattern, found {found}"),
+            )
+            .help("write `if let pattern = value { ... }`")
+            .emit();
+        }
+
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = false;
+        let scrutinee = self.parse_expr(0);
+        self.struct_literal_allowed = allowed;
+        IfCondition::Let { pattern, scrutinee }
     }
 
     /// Parses a condition, where a `{` starts the body rather than a struct

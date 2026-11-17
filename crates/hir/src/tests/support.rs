@@ -460,6 +460,19 @@ impl Reachability<'_> {
                     self.check_block(else_branch);
                 }
             }
+            ExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_pattern(pattern);
+                self.check_expr(scrutinee);
+                self.check_block(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.check_block(else_branch);
+                }
+            }
             ExprKind::Lit(_) | ExprKind::Path(_) | ExprKind::Error => {}
         }
     }

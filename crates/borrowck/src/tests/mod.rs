@@ -6,6 +6,7 @@ mod calls;
 mod constructed;
 mod examples;
 mod for_loop;
+mod if_let;
 mod match_expr;
 mod methods;
 mod returns;

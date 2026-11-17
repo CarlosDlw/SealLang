@@ -6,6 +6,7 @@ mod control_flow;
 mod enums;
 mod examples;
 mod for_loop;
+mod if_let;
 mod match_advanced;
 mod match_expr;
 mod methods;

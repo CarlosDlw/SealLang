@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 22] = [
+const EXAMPLES: [&str; 23] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -30,6 +30,7 @@ const EXAMPLES: [&str; 22] = [
     "021_match_slice.sl",
     "022_match_reference.sl",
     "023_for.sl",
+    "024_if_let.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -171,6 +172,18 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
             else_branch,
         } => {
             collect_expr(hir, *condition, stmts, exprs);
+            collect_block(hir, *then_branch, stmts, exprs);
+            if let Some(else_branch) = else_branch {
+                collect_block(hir, *else_branch, stmts, exprs);
+            }
+        }
+        ExprKind::IfLet {
+            scrutinee,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_expr(hir, *scrutinee, stmts, exprs);
             collect_block(hir, *then_branch, stmts, exprs);
             if let Some(else_branch) = else_branch {
                 collect_block(hir, *else_branch, stmts, exprs);

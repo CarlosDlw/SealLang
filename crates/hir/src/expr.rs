@@ -5,7 +5,7 @@ use seal_def::DefId;
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{HirBlockId, HirExprId};
+use crate::id::{HirBlockId, HirExprId, HirPatternId};
 use crate::pattern::MatchArm;
 use crate::res::Res;
 
@@ -262,6 +262,17 @@ pub enum ExprKind {
         /// The block evaluated when the condition is `true`.
         then_branch: HirBlockId,
         /// The block evaluated when the condition is `false`, if any.
+        else_branch: Option<HirBlockId>,
+    },
+    /// A conditional expression that runs its body only when a pattern matches.
+    IfLet {
+        /// The lower pattern matched against the scrutinee.
+        pattern: HirPatternId,
+        /// The value tested exactly once.
+        scrutinee: HirExprId,
+        /// The block evaluated when the pattern matches.
+        then_branch: HirBlockId,
+        /// The block evaluated when the pattern does not match, if any.
         else_branch: Option<HirBlockId>,
     },
     /// Syntax that could not be lowered, after a diagnostic was reported.

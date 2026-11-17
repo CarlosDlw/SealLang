@@ -27,7 +27,7 @@ use crate::terminator::{SwitchTarget, TerminatorKind};
 
 /// A pattern with or-patterns expanded and every enum and struct resolved.
 #[derive(Clone, Debug)]
-struct FlatPattern {
+pub(super) struct FlatPattern {
     kind: FlatPatternKind,
     span: Span,
 }
@@ -149,7 +149,7 @@ impl BodyLowering<'_> {
     }
 
     /// Emits binding assignments for an unguarded arm.
-    fn bind_all(&mut self, bindings: &[(DefId, Place)], span: Span) {
+    pub(super) fn bind_all(&mut self, bindings: &[(DefId, Place)], span: Span) {
         for (definition, place) in bindings {
             self.bind_one(*definition, place.clone(), span);
         }
@@ -201,7 +201,7 @@ impl BodyLowering<'_> {
         }
     }
 
-    fn declare_pattern_bindings(&mut self, pattern: HirPatternId) {
+    pub(super) fn declare_pattern_bindings(&mut self, pattern: HirPatternId) {
         let mut definitions = Vec::new();
         self.collect_binding_defs(pattern, &mut definitions);
         for definition in definitions {
@@ -251,7 +251,7 @@ impl BodyLowering<'_> {
     }
 
     /// Expands or-patterns into one flat pattern per alternative combination.
-    fn expand_pattern(&self, pattern: HirPatternId) -> Vec<FlatPattern> {
+    pub(super) fn expand_pattern(&self, pattern: HirPatternId) -> Vec<FlatPattern> {
         let span = self.hir.pattern(pattern).span;
         match &self.hir.pattern(pattern).kind {
             PatternKind::Wildcard | PatternKind::Error => vec![FlatPattern {
@@ -409,7 +409,7 @@ impl BodyLowering<'_> {
     ///
     /// On success the current block is open and every binding path has been
     /// recorded; on failure control jumps to `fail`.
-    fn lower_flat_pattern(
+    pub(super) fn lower_flat_pattern(
         &mut self,
         pattern: &FlatPattern,
         place: Place,

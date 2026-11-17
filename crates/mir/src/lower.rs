@@ -1,6 +1,7 @@
 //! HIR-to-MIR lowering.
 
 mod for_loop;
+mod if_let;
 mod match_expr;
 
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
@@ -529,6 +530,12 @@ impl<'a> BodyLowering<'a> {
                 then_branch,
                 else_branch,
             } => self.lower_if(condition, then_branch, else_branch, dest, span),
+            ExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            } => self.lower_if_let(pattern, scrutinee, then_branch, else_branch, dest, span),
         }
     }
 

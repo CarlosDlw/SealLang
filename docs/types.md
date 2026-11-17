@@ -351,6 +351,39 @@ field only copies it. Reading a variant field is valid only after the
 discriminant proved that variant active, which is why the projection exists only
 inside an arm.
 
+### Conditional `if let`
+
+`if let pattern = scrutinee { ... } else { ... }` is an expression that tests
+one refutable pattern. The scrutinee is evaluated once, exactly as in `match`;
+when the pattern matches, its bindings are initialized for the then block only.
+The else block starts from the state before the pattern, so those bindings are
+not visible there. An `else if let` chain is represented like an ordinary
+`else if`: the else block's tail is the nested conditional.
+
+```seal
+enum Option {
+  None,
+  Some(i32),
+}
+
+func value_or(option: Option, fallback: i32) -> i32 {
+  if let Option::Some(inner) = option {
+    inner
+  } else {
+    fallback
+  }
+}
+```
+
+The pattern follows the same rules as a match arm, including struct, variant,
+array, slice, reference, range, binding, `@`, and `|` patterns. It may be
+refutable, so no exhaustiveness check applies. Without `else`, the expression
+has type `()` and the then branch must also produce `()`; with `else`, both
+branches must agree on the result type. Matching moves a non-`Copy` field into
+its binding exactly as a match arm does, which means the scrutinee is partially
+or wholly moved afterward. A pattern on a reference follows the reference and
+can bind only fields whose type is `Copy` (`E3018`).
+
 ## Arrays
 
 A fixed-size array is written `[T; N]`: one element type and one non-negative

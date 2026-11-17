@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{BlockId, ExprId};
+use crate::id::{BlockId, ExprId, PatternId};
 use crate::pattern::MatchArm;
 
 /// A binary operator.
@@ -388,6 +388,22 @@ pub enum ExprKind {
         /// The block evaluated when the condition is `true`.
         then_branch: BlockId,
         /// The block evaluated when the condition is `false`, if any.
+        else_branch: Option<BlockId>,
+    },
+    /// A conditional expression with a refutable pattern, written
+    /// `if let pattern = scrutinee { ... } else { ... }`.
+    ///
+    /// The scrutinee is evaluated once and matched against the pattern. The
+    /// body runs only when the pattern matches, and the bindings exist only in
+    /// that body.
+    IfLet {
+        /// The pattern matched against the scrutinee; it may be refutable.
+        pattern: PatternId,
+        /// The value tested exactly once.
+        scrutinee: ExprId,
+        /// The block evaluated when the pattern matches.
+        then_branch: BlockId,
+        /// The block evaluated when the pattern does not match, if any.
         else_branch: Option<BlockId>,
     },
     /// Syntax the parser could not turn into an expression.

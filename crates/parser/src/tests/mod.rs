@@ -6,6 +6,7 @@ mod errors;
 mod examples;
 mod exprs;
 mod for_loop;
+mod if_let;
 mod impls;
 mod items;
 mod match_advanced;

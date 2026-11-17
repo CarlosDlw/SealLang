@@ -218,6 +218,24 @@ impl Lowering<'_> {
                 then_branch: self.lower_block(then_branch),
                 else_branch: else_branch.map(|branch| self.lower_block(branch)),
             },
+            AstExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            } => {
+                let scrutinee = self.lower_expr(scrutinee);
+                self.scopes.push();
+                let pattern = self.lower_arm_pattern(pattern);
+                let then_branch = self.lower_block(then_branch);
+                self.scopes.pop();
+                ExprKind::IfLet {
+                    pattern,
+                    scrutinee,
+                    then_branch,
+                    else_branch: else_branch.map(|branch| self.lower_block(branch)),
+                }
+            }
             AstExprKind::Block(block) => ExprKind::Block(self.lower_block(block)),
             AstExprKind::Paren(inner) => return self.lower_expr(inner),
             AstExprKind::Error => ExprKind::Error,

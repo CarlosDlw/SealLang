@@ -80,6 +80,11 @@ a borrowed array or slice. The loop pattern must be irrefutable, and `continue`
 advances the range or index before the next test, so a skipped iteration still
 makes progress.
 
+`if let pattern = value { ... } else { ... }` evaluates the value once and runs
+the body only when the pattern matches. Its pattern may be refutable, and the
+bindings it introduces exist only in the body. `else if let` chains mix freely
+with ordinary `else if`, and an `if let` without `else` has type `()`.
+
 ## Command line
 
 ```text
@@ -148,7 +153,7 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 The current language surface is functions, nominal structs and enums,
 fixed-size arrays, slices, shared and exclusive references, `let` bindings with
-definite initialization, `if`, `while`, `for` over integer ranges and sequences,
+definite initialization, `if`, `if let`, `while`, `for` over integer ranges and sequences,
 `break`, `continue`, `return`, `match`
 expressions with structural patterns, guards, and exhaustiveness checking, the
 usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic

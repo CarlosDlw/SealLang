@@ -63,7 +63,7 @@ impl Parser<'_> {
                     break;
                 } else if matches!(
                     self.builder.ast().expr(expr).kind,
-                    ExprKind::If { .. } | ExprKind::Match { .. }
+                    ExprKind::If { .. } | ExprKind::IfLet { .. } | ExprKind::Match { .. }
                 ) {
                     // Block-like expressions are statements without a `;`.
                     statements.push(self.builder.push_expr_stmt(expr_span, expr));

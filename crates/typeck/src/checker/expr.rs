@@ -1,7 +1,7 @@
 //! Expression checking.
 
 use seal_ast::Literal;
-use seal_hir::{ExprKind, HirBlockId, HirExprId, Res};
+use seal_hir::{ExprKind, HirBlockId, HirExprId, HirPatternId, Res};
 use seal_span::Span;
 use seal_symbol::Symbol;
 use seal_ty::{TyId, TyKind};
@@ -166,6 +166,19 @@ impl Checker<'_> {
                 then_branch,
                 else_branch,
             } => self.check_if(condition, then_branch, else_branch, expected, flow, span),
+            ExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            } => self.check_if_let(
+                (pattern, scrutinee),
+                then_branch,
+                else_branch,
+                expected,
+                flow,
+                span,
+            ),
             ExprKind::Error => self.error_ty(),
         };
 
@@ -584,49 +597,123 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         self.check_condition(condition, flow);
+        let start = flow.clone();
 
         let Some(else_branch) = else_branch else {
-            let otherwise = flow.clone();
-            let then_out = self.check_block(then_branch, None, flow.clone());
-            let result = match expected {
-                Some(expected) if expected != self.unit() && !self.is_error(expected) => {
-                    self.mismatch(span, expected, self.unit());
-                    if self.is_error(then_out.ty) {
-                        self.error_ty()
-                    } else {
-                        expected
-                    }
-                }
-                Some(expected) => {
-                    if !self.is_unit(then_out.ty)
-                        && !self.is_never(then_out.ty)
-                        && !self.is_error(then_out.ty)
-                    {
-                        self.report_if_without_else(then_branch, then_out.ty);
-                    }
-                    expected
-                }
-                None => {
-                    if !self.is_unit(then_out.ty)
-                        && !self.is_never(then_out.ty)
-                        && !self.is_error(then_out.ty)
-                    {
-                        self.report_if_without_else(then_branch, then_out.ty);
-                    }
-                    self.unit()
-                }
-            };
-            flow.merge(then_out.flow, otherwise);
-            return result;
+            let then_out = self.check_block(then_branch, None, start.clone());
+            return self.finish_if_without_else(
+                "if",
+                (then_branch, then_out),
+                expected,
+                flow,
+                start,
+                span,
+            );
         };
 
-        let then_out = self.check_block(then_branch, expected, flow.clone());
+        let then_out = self.check_block(then_branch, expected, start.clone());
         let else_expected = match expected {
             Some(expected) => Some(expected),
             None if self.is_never(then_out.ty) => None,
             None => Some(then_out.ty),
         };
-        let else_out = self.check_block(else_branch, else_expected, flow.clone());
+        let else_out = self.check_block(else_branch, else_expected, start);
+        self.finish_if_with_else(then_out, else_out, expected, flow)
+    }
+
+    /// Checks an `if let` expression.
+    ///
+    /// The scrutinee is evaluated once. The pattern may be refutable; when it
+    /// matches, its bindings are initialized in the then branch only. The else
+    /// branch starts from the state before the pattern, because no binding is
+    /// available when the match fails.
+    fn check_if_let(
+        &mut self,
+        (pattern, scrutinee): (HirPatternId, HirExprId),
+        then_branch: HirBlockId,
+        else_branch: Option<HirBlockId>,
+        expected: Option<TyId>,
+        flow: &mut Flow,
+        span: Span,
+    ) -> TyId {
+        let scrutinee_ty = self.infer_expr(scrutinee, None, flow);
+        let start = flow.clone();
+        let mut matched = start.clone();
+        self.check_pattern(pattern, scrutinee_ty, &mut matched);
+
+        let Some(else_branch) = else_branch else {
+            let then_out = self.check_block(then_branch, None, matched);
+            return self.finish_if_without_else(
+                "if let",
+                (then_branch, then_out),
+                expected,
+                flow,
+                start,
+                span,
+            );
+        };
+
+        let then_out = self.check_block(then_branch, expected, matched);
+        let else_expected = match expected {
+            Some(expected) => Some(expected),
+            None if self.is_never(then_out.ty) => None,
+            None => Some(then_out.ty),
+        };
+        let else_out = self.check_block(else_branch, else_expected, start);
+        self.finish_if_with_else(then_out, else_out, expected, flow)
+    }
+
+    /// Combines the branches of a conditional that has no `else`, where the
+    /// missing branch produces `()`.
+    fn finish_if_without_else(
+        &mut self,
+        construct: &str,
+        (then_branch, then_out): (HirBlockId, super::stmt::BlockOutcome),
+        expected: Option<TyId>,
+        flow: &mut Flow,
+        otherwise: Flow,
+        span: Span,
+    ) -> TyId {
+        let result = match expected {
+            Some(expected) if expected != self.unit() && !self.is_error(expected) => {
+                self.mismatch(span, expected, self.unit());
+                if self.is_error(then_out.ty) {
+                    self.error_ty()
+                } else {
+                    expected
+                }
+            }
+            Some(expected) => {
+                if !self.is_unit(then_out.ty)
+                    && !self.is_never(then_out.ty)
+                    && !self.is_error(then_out.ty)
+                {
+                    self.report_if_without_else(construct, then_branch, then_out.ty);
+                }
+                expected
+            }
+            None => {
+                if !self.is_unit(then_out.ty)
+                    && !self.is_never(then_out.ty)
+                    && !self.is_error(then_out.ty)
+                {
+                    self.report_if_without_else(construct, then_branch, then_out.ty);
+                }
+                self.unit()
+            }
+        };
+        flow.merge(then_out.flow, otherwise);
+        result
+    }
+
+    /// Combines the branches of a conditional that has an `else`.
+    fn finish_if_with_else(
+        &mut self,
+        then_out: super::stmt::BlockOutcome,
+        else_out: super::stmt::BlockOutcome,
+        expected: Option<TyId>,
+        flow: &mut Flow,
+    ) -> TyId {
         flow.merge(then_out.flow, else_out.flow);
 
         if let Some(expected) = expected {
@@ -650,12 +737,12 @@ impl Checker<'_> {
         }
     }
 
-    fn report_if_without_else(&self, then_branch: HirBlockId, found: TyId) {
+    fn report_if_without_else(&self, construct: &str, then_branch: HirBlockId, found: TyId) {
         self.error(
             seal_error_codes::E3001,
             self.hir.block(then_branch).span,
             format!(
-                "`if` without `else` requires the branch to have type `()`, found `{}`",
+                "`{construct}` without `else` requires the branch to have type `()`, found `{}`",
                 self.ty_text(found)
             ),
         )

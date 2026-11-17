@@ -380,6 +380,26 @@ impl AstBuilder {
         })
     }
 
+    /// Adds an `if let` expression and returns its ID.
+    pub fn push_if_let(
+        &mut self,
+        span: Span,
+        pattern: PatternId,
+        scrutinee: ExprId,
+        then_branch: BlockId,
+        else_branch: Option<BlockId>,
+    ) -> ExprId {
+        self.ast.exprs.push(Expr {
+            kind: ExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            },
+            span,
+        })
+    }
+
     /// Adds an expression and returns its ID.
     pub fn push_expr(&mut self, kind: ExprKind, span: Span) -> ExprId {
         self.ast.exprs.push(Expr { kind, span })
