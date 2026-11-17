@@ -144,6 +144,13 @@ impl<'ctx> TypeMapper<'ctx> {
             TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
                 // `*str` and `*[T]` are fat pointers: data plus length.
                 TyKind::Str | TyKind::Slice { .. } => BasicTypeEnum::StructType(self.fat_pointer),
+                // The data/vtable pair is emitted with the trait-object lowering;
+                // treating it as a thin pointer now would silently corrupt the ABI.
+                TyKind::Dyn { .. } => {
+                    return Err(CodegenError::internal(
+                        "a trait-object pointer reached code generation before vtable lowering",
+                    ));
+                }
                 _ => BasicTypeEnum::PointerType(self.pointer()),
             },
             TyKind::Array { element, length } => {
@@ -172,7 +179,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 BasicTypeEnum::StructType(tuple_type)
             }
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
-            TyKind::Str | TyKind::Slice { .. } => {
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
                 return Err(CodegenError::internal(
                     "an unsized type has no LLVM value type; only its reference is representable",
                 ));

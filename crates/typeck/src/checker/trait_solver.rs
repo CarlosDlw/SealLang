@@ -72,6 +72,7 @@ impl<'a> Solver<'a> {
         match self.hir.ty_ctxt().kind(goal.self_ty) {
             TyKind::Error => Proof::Proven,
             TyKind::Param(param) => self.prove_from_env(goal, param),
+            TyKind::Dyn { .. } => self.prove_from_dyn(goal),
             _ => self.prove_from_impls(goal, depth),
         }
     }
@@ -102,48 +103,49 @@ impl<'a> Solver<'a> {
         found: &mut Vec<TraitRef>,
     ) {
         if candidate.trait_def == goal.trait_def && self.trait_refs_equal(*candidate, goal) {
-            found.push(*candidate);
+            if !found.contains(candidate) {
+                found.push(*candidate);
+            }
             return;
         }
         let Some(definition) = self.hir.trait_definition(candidate.trait_def) else {
             return;
         };
         for supertrait in &definition.supertraits {
-            let instantiated = self.instantiate_supertrait(*supertrait, *candidate);
+            let Some(instantiated) = self
+                .hir
+                .ty_ctxt()
+                .instantiate_supertrait(*supertrait, *candidate)
+            else {
+                continue;
+            };
             if instantiated.trait_def == goal.trait_def && self.trait_refs_equal(instantiated, goal)
             {
-                found.push(*candidate);
+                if !found.contains(candidate) {
+                    found.push(*candidate);
+                }
                 return;
             }
             self.collect_supertrait_goals(&instantiated, goal, found);
         }
     }
 
-    /// Replaces a trait's `Self` and arguments in one of its supertraits.
-    fn instantiate_supertrait(&self, supertrait: TraitRef, base: TraitRef) -> TraitRef {
-        let Some(definition) = self.hir.trait_definition(base.trait_def) else {
-            return supertrait;
-        };
-        let mut arguments = Vec::with_capacity(definition.generics.params.len());
-        arguments.push(base.self_ty);
-        arguments.extend(self.hir.ty_ctxt().substs_args(base.args));
-        if arguments.len() != definition.generics.params.len() {
-            return supertrait;
+    /// Proves a goal from the principal trait and supertraits of a trait object.
+    ///
+    /// [`TyCtxt::dyn_trait_refs`](seal_ty::TyCtxt::dyn_trait_refs) already
+    /// flattens supertraits depth-first and removes duplicate paths, so a
+    /// diamond does not turn one proof into an ambiguity. Distinct arguments of
+    /// the same supertrait remain distinct references and only the exact goal
+    /// matches.
+    fn prove_from_dyn(&self, goal: TraitRef) -> Proof {
+        let refs = self.hir.ty_ctxt().dyn_trait_refs(goal.self_ty);
+        if refs.iter().any(|candidate| {
+            candidate.trait_def == goal.trait_def && self.trait_refs_equal(*candidate, goal)
+        }) {
+            Proof::Proven
+        } else {
+            Proof::Missing
         }
-        let substs = self.hir.ty_ctxt().substs(&arguments);
-        let self_ty = self.hir.ty_ctxt().substitute(supertrait.self_ty, substs);
-        let args: Vec<TyId> = self
-            .hir
-            .ty_ctxt()
-            .substs_args(supertrait.args)
-            .into_iter()
-            .map(|argument| self.hir.ty_ctxt().substitute(argument, substs))
-            .collect();
-        TraitRef::new(
-            supertrait.trait_def,
-            self_ty,
-            self.hir.ty_ctxt().substs(&args),
-        )
     }
 
     fn trait_refs_equal(&self, left: TraitRef, right: TraitRef) -> bool {
@@ -280,4 +282,106 @@ pub(super) fn match_type(
     mapping: &mut FxHashMap<ParamTyId, TyId>,
 ) -> bool {
     seal_ty::match_template(hir.ty_ctxt(), pattern, actual, mapping)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use seal_diagnostics::{DiagCtxt, SilentEmitter};
+    use seal_hir::Hir;
+    use seal_span::{FileName, SourceMap};
+    use seal_symbol::Interner;
+    use seal_ty::{IntTy, ParamEnv, TraitRef, TyId};
+
+    use super::{Proof, Solver};
+
+    fn lower(source: &str) -> (Hir, Interner) {
+        let map = Arc::new(SourceMap::new());
+        let id = map
+            .add_file(FileName::virtual_name("test.sl"), source.to_owned())
+            .expect("test source registers");
+        let file = map.file(id).expect("registered file exists");
+        let dcx = DiagCtxt::new(Box::new(SilentEmitter::new()), Arc::clone(&map));
+        let interner = Interner::new();
+        let lexed = seal_lexer::lex(&file, &dcx, &interner);
+        let ast = seal_parser::parse(&lexed, &dcx, &interner);
+        let hir = Hir::lower(&ast, &dcx, &interner);
+        (hir, interner)
+    }
+
+    fn object(hir: &Hir, interner: &Interner, name: &str, args: &[TyId]) -> TyId {
+        let trait_def = hir
+            .trait_def(interner.intern(name))
+            .unwrap_or_else(|| panic!("trait `{name}` was not lowered"));
+        hir.ty_ctxt().dyn_ty(trait_def, hir.ty_ctxt().substs(args))
+    }
+
+    fn goal(hir: &Hir, interner: &Interner, name: &str, object: TyId, args: &[TyId]) -> TraitRef {
+        let trait_def = hir
+            .trait_def(interner.intern(name))
+            .unwrap_or_else(|| panic!("trait `{name}` was not lowered"));
+        TraitRef::new(trait_def, object, hir.ty_ctxt().substs(args))
+    }
+
+    fn prove(hir: &Hir, goal: TraitRef) -> Proof {
+        let env = ParamEnv::new();
+        let mut cache = seal_hash::FxHashMap::default();
+        Solver::new(hir, &env, &mut cache).prove(goal, 0)
+    }
+
+    #[test]
+    fn dyn_object_proves_principal_and_super_traits() {
+        let (hir, interner) = lower("trait Base {} trait Child: Base {} trait Missing {}");
+        let object = object(&hir, &interner, "Child", &[]);
+
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Child", object, &[])),
+            Proof::Proven
+        );
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Base", object, &[])),
+            Proof::Proven
+        );
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Missing", object, &[])),
+            Proof::Missing
+        );
+    }
+
+    #[test]
+    fn dyn_diamond_supertraits_are_not_ambiguous() {
+        let (hir, interner) = lower(
+            "trait Root {} trait Left: Root {} trait Right: Root {} trait Leaf: Left + Right {}",
+        );
+        let object = object(&hir, &interner, "Leaf", &[]);
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Root", object, &[])),
+            Proof::Proven
+        );
+    }
+
+    #[test]
+    fn dyn_goals_keep_distinct_trait_arguments() {
+        let (hir, interner) =
+            lower("trait Convert<T> {} trait Both: Convert<i32> + Convert<bool> {}");
+        let object = object(&hir, &interner, "Both", &[]);
+        let tcx = hir.ty_ctxt();
+        let int = tcx.int_ty(IntTy::I32);
+        let bool_ty = tcx.bool_ty();
+        let byte = tcx.uint_ty(seal_ty::UintTy::U8);
+
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Convert", object, &[int])),
+            Proof::Proven
+        );
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Convert", object, &[bool_ty])),
+            Proof::Proven
+        );
+        assert_eq!(
+            prove(&hir, goal(&hir, &interner, "Convert", object, &[byte])),
+            Proof::Missing
+        );
+    }
 }

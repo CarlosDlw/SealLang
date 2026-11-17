@@ -87,6 +87,15 @@ fn hash_type(tcx: &TyCtxt, ty: TyId, hasher: &mut StableHasher) {
                 hash_type(tcx, argument, hasher);
             }
         }
+        TyKind::Dyn { trait_def, args } => {
+            hasher.write_u8(16);
+            hasher.write_usize(trait_def.index() as usize);
+            let arguments = tcx.substs_args(args);
+            hasher.write_length(arguments.len());
+            for argument in arguments {
+                hash_type(tcx, argument, hasher);
+            }
+        }
         TyKind::Param(param) => {
             hasher.write_u8(14);
             hasher.write_usize(param.index() as usize);

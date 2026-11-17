@@ -8,7 +8,9 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
-use crate::generics::{GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef};
+use crate::generics::{
+    GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
+};
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
@@ -44,6 +46,8 @@ pub enum ImplHead {
     Array,
     /// A slice.
     Slice,
+    /// A trait object.
+    Dyn,
     /// A tuple with the given arity.
     Tuple(usize),
     /// A declared type parameter, which makes the impl a blanket one.
@@ -69,6 +73,7 @@ impl TyCtxt {
             TyKind::Ref { kind, .. } => ImplHead::Ref(kind),
             TyKind::Array { .. } => ImplHead::Array,
             TyKind::Slice { .. } => ImplHead::Slice,
+            TyKind::Dyn { .. } => ImplHead::Dyn,
             TyKind::Tuple(tuple) => ImplHead::Tuple(self.tuple_elements(tuple).len()),
             TyKind::Param(_) => ImplHead::Param,
             TyKind::Infer(_) => ImplHead::Infer,
@@ -448,6 +453,105 @@ impl TyCtxt {
         }
     }
 
+    /// Returns the trait object `dyn trait_def<args>`.
+    ///
+    /// The identity is only the trait declaration and its own arguments; the
+    /// concrete implementing type is erased. The trait's implicit `Self` is not
+    /// part of `args`, so a known trait must receive exactly one argument fewer
+    /// than its declared parameter list.
+    pub fn dyn_ty(&self, trait_def: DefId, args: SubstsId) -> TyId {
+        if let Some(definition) = self.trait_def(trait_def) {
+            let expected = definition.generics.params.len().saturating_sub(1);
+            let found = self.substs_len(args);
+            assert_eq!(
+                found, expected,
+                "trait {trait_def:?} expects {expected} type arguments, but received {found}"
+            );
+        }
+        self.intern(TyKind::Dyn { trait_def, args })
+    }
+
+    /// Returns the principal trait and arguments of `ty` when it is a trait object.
+    pub fn dyn_parts(&self, ty: TyId) -> Option<(DefId, SubstsId)> {
+        match self.kind(ty) {
+            TyKind::Dyn { trait_def, args } => Some((trait_def, args)),
+            _ => None,
+        }
+    }
+
+    /// Returns the principal trait followed by every reachable supertrait.
+    ///
+    /// The order is depth-first through supertraits in declaration order, the
+    /// same order used to flatten vtable methods. A trait reference reached
+    /// through several paths appears once; the same trait with different
+    /// arguments is a distinct entry. A trait cycle is cut off defensively even
+    /// though the declaration checker already rejects it.
+    pub fn dyn_trait_refs(&self, ty: TyId) -> Vec<TraitRef> {
+        let Some((trait_def, args)) = self.dyn_parts(ty) else {
+            return Vec::new();
+        };
+        let mut refs = Vec::new();
+        let mut seen = FxHashSet::default();
+        let mut active = FxHashSet::default();
+        self.collect_dyn_trait_refs(
+            TraitRef::new(trait_def, ty, args),
+            &mut refs,
+            &mut seen,
+            &mut active,
+        );
+        refs
+    }
+
+    fn collect_dyn_trait_refs(
+        &self,
+        current: TraitRef,
+        refs: &mut Vec<TraitRef>,
+        seen: &mut FxHashSet<TraitRef>,
+        active: &mut FxHashSet<DefId>,
+    ) {
+        if !seen.insert(current) {
+            return;
+        }
+        refs.push(current);
+        if !active.insert(current.trait_def) {
+            return;
+        }
+        if let Some(definition) = self.trait_def(current.trait_def) {
+            for supertrait in &definition.supertraits {
+                if let Some(instantiated) = self.instantiate_supertrait(*supertrait, current) {
+                    self.collect_dyn_trait_refs(instantiated, refs, seen, active);
+                }
+            }
+        }
+        active.remove(&current.trait_def);
+    }
+
+    /// Replaces a trait's `Self` and own arguments in one of its supertraits.
+    ///
+    /// Returns `None` when the trait declaration is missing or its generic
+    /// arity disagrees with `base`, which only malformed internal state can do.
+    pub fn instantiate_supertrait(&self, supertrait: TraitRef, base: TraitRef) -> Option<TraitRef> {
+        let definition = self.trait_def(base.trait_def)?;
+        let mut arguments = Vec::with_capacity(definition.generics.params.len());
+        arguments.push(base.self_ty);
+        arguments.extend(self.substs_args(base.args));
+        if arguments.len() != definition.generics.params.len() {
+            return None;
+        }
+        let substs = self.substs(&arguments);
+        let self_ty = self.substitute(supertrait.self_ty, substs);
+        let args: Vec<TyId> = self
+            .substs_args(supertrait.args)
+            .into_iter()
+            .map(|argument| self.substitute(argument, substs))
+            .collect();
+        Some(TraitRef::new(
+            supertrait.trait_def,
+            self_ty,
+            self.substs(&args),
+        ))
+    }
+
     /// Returns the type naming non-generic `adt`.
     pub fn adt_ty(&self, adt: AdtId) -> TyId {
         self.adt_ty_with(adt, self.empty_substs())
@@ -691,7 +795,11 @@ impl TyCtxt {
             // A user-defined aggregate owns its fields; it becomes `Copy` only
             // through an explicit opt-in, which the language does not have yet.
             // Its fields remain individually copyable.
-            TyKind::Adt { .. } | TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
+            TyKind::Adt { .. }
+            | TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Infer(_) => false,
         }
     }
 
@@ -707,7 +815,7 @@ impl TyCtxt {
 
     fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<(AdtId, SubstsId)>) -> bool {
         match self.kind(ty) {
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Infer(_) => false,
             TyKind::Param(_) => true,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Tuple(tuple) => self
@@ -772,6 +880,7 @@ impl TyCtxt {
                 visiting.remove(&key);
                 needs_drop
             }
+            TyKind::Dyn { .. } => false,
             _ => false,
         }
     }
@@ -798,6 +907,10 @@ impl TyCtxt {
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.contains_reference_inner(*element, visiting)),
+            TyKind::Dyn { args, .. } => self
+                .substs_args(args)
+                .into_iter()
+                .any(|argument| self.contains_reference_inner(argument, visiting)),
             TyKind::Adt { adt, args } => {
                 let key = (adt, args);
                 if !visiting.insert(key) {
@@ -844,6 +957,10 @@ impl TyCtxt {
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.contains_exclusive_reference_inner(*element, visiting)),
+            TyKind::Dyn { args, .. } => self
+                .substs_args(args)
+                .into_iter()
+                .any(|argument| self.contains_exclusive_reference_inner(argument, visiting)),
             TyKind::Adt { adt, args } => {
                 let key = (adt, args);
                 if !visiting.insert(key) {
@@ -984,6 +1101,32 @@ mod tests {
         ] {
             assert!(ctxt.is_copy(ty), "{ty:?} must be Copy");
         }
+    }
+
+    #[test]
+    fn dyn_is_unsized_not_copy_and_needs_no_drop() {
+        let ctxt = TyCtxt::new();
+        let object = ctxt.dyn_ty(def(0), ctxt.empty_substs());
+        assert!(!ctxt.is_copy(object));
+        assert!(!ctxt.is_sized(object));
+        assert!(!ctxt.needs_drop(object));
+        assert!(!ctxt.contains_reference(object));
+        assert!(!ctxt.contains_exclusive_reference(object));
+        assert_eq!(
+            ctxt.kind(object),
+            TyKind::Dyn {
+                trait_def: def(0),
+                args: ctxt.empty_substs(),
+            }
+        );
+
+        let int = ctxt.int_ty(IntTy::I32);
+        let with_reference = ctxt.dyn_ty(def(1), ctxt.substs(&[ctxt.ref_ty(int)]));
+        assert!(ctxt.contains_reference(with_reference));
+        assert!(!ctxt.contains_exclusive_reference(with_reference));
+        let with_exclusive = ctxt.dyn_ty(def(1), ctxt.substs(&[ctxt.mut_ref_ty(int)]));
+        assert!(ctxt.contains_reference(with_exclusive));
+        assert!(ctxt.contains_exclusive_reference(with_exclusive));
     }
 
     #[test]

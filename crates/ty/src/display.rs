@@ -77,6 +77,27 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 Ok(())
             }
+            TyKind::Dyn { trait_def, args } => {
+                f.write_str("dyn ")?;
+                match (self.ctxt.trait_def(trait_def), self.interner) {
+                    (Some(definition), Some(interner)) => {
+                        f.write_str(interner.resolve(definition.name))?
+                    }
+                    _ => write!(f, "<trait#{}>", trait_def.index())?,
+                }
+                let arguments = self.ctxt.substs_args(args);
+                if !arguments.is_empty() {
+                    f.write_str("<")?;
+                    for (index, argument) in arguments.iter().enumerate() {
+                        if index > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{}", self.display(*argument))?;
+                    }
+                    f.write_str(">")?;
+                }
+                Ok(())
+            }
             TyKind::Param(param) => {
                 let data = self.ctxt.param_data(param);
                 match self.interner {
@@ -118,6 +139,10 @@ impl TyDisplay<'_> {
 
 #[cfg(test)]
 mod tests {
+    use seal_def::DefId;
+    use seal_symbol::Interner;
+
+    use crate::generics::{GenericParamDef, Generics, TraitDef};
     use crate::kind::{FloatTy, IntTy, UintTy};
     use crate::{InferCtxt, TyCtxt};
 
@@ -180,6 +205,50 @@ mod tests {
         assert_eq!(
             ctxt.display(ctxt.ref_ty(ctxt.slice_ty(int))).to_string(),
             "*[i32]"
+        );
+    }
+
+    #[test]
+    fn dyn_display_names_trait_and_arguments() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let def = DefId::from_u32(0).expect("small definition");
+        let self_param = ctxt.push_param(def, def, 0, interner.intern("Self"));
+        let argument = ctxt.push_param(
+            DefId::from_u32(1).expect("small definition"),
+            def,
+            1,
+            interner.intern("T"),
+        );
+        ctxt.insert_trait_def(TraitDef::new(
+            def,
+            interner.intern("Convert"),
+            Generics::new(
+                def,
+                None,
+                vec![
+                    GenericParamDef::new(def, self_param, interner.intern("Self"), 0).as_self(),
+                    GenericParamDef::new(
+                        DefId::from_u32(1).expect("small definition"),
+                        argument,
+                        interner.intern("T"),
+                        1,
+                    ),
+                ],
+            ),
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        let dyn_ty = ctxt.dyn_ty(def, ctxt.substs(&[ctxt.int_ty(IntTy::I32)]));
+        assert_eq!(
+            ctxt.display_with(dyn_ty, &interner).to_string(),
+            "dyn Convert<i32>"
+        );
+        let bare = ctxt.dyn_ty(def, ctxt.substs(&[ctxt.bool_ty()]));
+        assert_eq!(
+            ctxt.display_with(bare, &interner).to_string(),
+            "dyn Convert<bool>"
         );
     }
 

@@ -150,6 +150,28 @@ impl InferCtxt {
                 }
                 Ok(())
             }
+            (
+                TyKind::Dyn {
+                    trait_def: expected_trait,
+                    args: expected_args,
+                },
+                TyKind::Dyn {
+                    trait_def: found_trait,
+                    args: found_args,
+                },
+            ) if expected_trait == found_trait => {
+                let expected_arguments = ctxt.substs_args(expected_args);
+                let found_arguments = ctxt.substs_args(found_args);
+                if expected_arguments.len() != found_arguments.len() {
+                    return Err(UnifyError::Mismatch { expected, found });
+                }
+                for (expected_argument, found_argument) in
+                    expected_arguments.into_iter().zip(found_arguments)
+                {
+                    self.unify(ctxt, expected_argument, found_argument)?;
+                }
+                Ok(())
+            }
             (TyKind::Param(expected_param), TyKind::Param(found_param))
                 if expected_param == found_param =>
             {
@@ -215,6 +237,21 @@ impl InferCtxt {
                     return ctxt.adt_ty_with(adt, ctxt.substs(&resolved));
                 }
             }
+            TyKind::Dyn { trait_def, args } => {
+                let arguments = ctxt.substs_args(args);
+                let mut changed = false;
+                let resolved: Vec<TyId> = arguments
+                    .iter()
+                    .map(|argument| {
+                        let resolved = self.resolve_deep(ctxt, *argument);
+                        changed |= resolved != *argument;
+                        resolved
+                    })
+                    .collect();
+                if changed {
+                    return ctxt.dyn_ty(trait_def, ctxt.substs(&resolved));
+                }
+            }
             _ => {}
         }
         shallow
@@ -257,7 +294,7 @@ impl InferCtxt {
                 .tuple_elements(tuple)
                 .into_iter()
                 .any(|element| self.occurs(ctxt, var, element)),
-            TyKind::Adt { args, .. } => ctxt
+            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => ctxt
                 .substs_args(args)
                 .into_iter()
                 .any(|argument| self.occurs(ctxt, var, argument)),

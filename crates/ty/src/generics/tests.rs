@@ -3,7 +3,7 @@
 use seal_def::DefId;
 use seal_symbol::Interner;
 
-use crate::generics::{Bound, ParamEnv};
+use crate::generics::{Bound, GenericParamDef, Generics, ParamEnv, TraitDef, TraitRef};
 use crate::{AdtKind, FieldDef, InferCtxt, ParamTyId, TyCtxt, TyId, TyKind, UnifyError};
 
 fn def(index: u32) -> DefId {
@@ -19,6 +19,56 @@ fn push_param(
 ) -> (TyId, ParamTyId) {
     let param = ctxt.push_param(def(100 + index), owner, index, interner.intern(name));
     (ctxt.param_ty(param), param)
+}
+
+struct TraitInfo {
+    def: DefId,
+    self_ty: TyId,
+}
+
+fn insert_trait(
+    ctxt: &TyCtxt,
+    interner: &Interner,
+    index: u32,
+    name: &str,
+    params: &[&str],
+) -> TraitInfo {
+    let owner = def(index);
+    let self_id = ctxt.push_param(def(index + 1), owner, 0, interner.intern("Self"));
+    let mut generic_params =
+        vec![GenericParamDef::new(def(index + 1), self_id, interner.intern("Self"), 0).as_self()];
+    for (offset, name) in params.iter().enumerate() {
+        let position = offset as u32 + 1;
+        let param = ctxt.push_param(
+            def(index + 2 + offset as u32),
+            owner,
+            position,
+            interner.intern(name),
+        );
+        generic_params.push(GenericParamDef::new(
+            def(index + 2 + offset as u32),
+            param,
+            interner.intern(name),
+            position,
+        ));
+    }
+    ctxt.insert_trait_def(TraitDef::new(
+        owner,
+        interner.intern(name),
+        Generics::new(owner, None, generic_params),
+        Vec::new(),
+        Vec::new(),
+    ));
+    TraitInfo {
+        def: owner,
+        self_ty: ctxt.param_ty(self_id),
+    }
+}
+
+fn set_supertraits(ctxt: &TyCtxt, trait_def: DefId, supertraits: Vec<TraitRef>) {
+    let mut definition = ctxt.trait_def(trait_def).expect("the test trait exists");
+    definition.supertraits = supertraits;
+    ctxt.insert_trait_def(definition);
 }
 
 fn pair(ctxt: &TyCtxt, interner: &Interner) -> (crate::AdtId, TyId, TyId) {
@@ -430,4 +480,181 @@ fn display_renders_params_and_instantiated_adts() {
             .to_string(),
         "Self"
     );
+}
+
+#[test]
+fn substitution_rewrites_trait_arguments() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let convert = insert_trait(&ctxt, &interner, 200, "Convert", &["T"]);
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let param = ctxt.param_ty(ctxt.push_param(def(1_000), def(1_001), 0, interner.intern("T")));
+    let dyn_ty = ctxt.dyn_ty(convert.def, ctxt.substs(&[param]));
+    assert!(ctxt.contains_param(dyn_ty));
+
+    let substituted = ctxt.substitute(dyn_ty, ctxt.substs(&[int]));
+    assert!(!ctxt.contains_param(substituted));
+    assert_eq!(
+        ctxt.dyn_parts(substituted),
+        Some((convert.def, ctxt.substs(&[int])))
+    );
+    assert_eq!(
+        ctxt.substitute(substituted, ctxt.substs(&[ctxt.bool_ty()])),
+        substituted
+    );
+}
+
+#[test]
+fn dyn_does_not_unify_with_the_concrete_type() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let shape = insert_trait(&ctxt, &interner, 210, "Shape", &[]);
+    let object = ctxt.dyn_ty(shape.def, ctxt.empty_substs());
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let mut infer = InferCtxt::new();
+
+    assert_eq!(
+        infer.unify(&ctxt, object, int),
+        Err(UnifyError::Mismatch {
+            expected: object,
+            found: int,
+        })
+    );
+    assert_eq!(infer.unify(&ctxt, object, object), Ok(()));
+}
+
+#[test]
+fn different_trait_arguments_are_distinct_types() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let convert = insert_trait(&ctxt, &interner, 220, "Convert", &["T"]);
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let bool_ty = ctxt.bool_ty();
+    let first = ctxt.dyn_ty(convert.def, ctxt.substs(&[int]));
+    let second = ctxt.dyn_ty(convert.def, ctxt.substs(&[bool_ty]));
+    assert_ne!(first, second);
+    assert_eq!(
+        ctxt.dyn_parts(first),
+        Some((convert.def, ctxt.substs(&[int])))
+    );
+    assert_eq!(
+        ctxt.dyn_parts(second),
+        Some((convert.def, ctxt.substs(&[bool_ty])))
+    );
+
+    let mut infer = InferCtxt::new();
+    assert_eq!(
+        infer.unify(&ctxt, first, second),
+        Err(UnifyError::Mismatch {
+            expected: int,
+            found: bool_ty,
+        })
+    );
+}
+
+#[test]
+fn dyn_arguments_participate_in_templates_and_inference() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let convert = insert_trait(&ctxt, &interner, 225, "Convert", &["T"]);
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let bool_ty = ctxt.bool_ty();
+    let param = ctxt.param_ty(ctxt.push_param(def(1_100), def(1_101), 0, interner.intern("T")));
+    let pattern = ctxt.dyn_ty(convert.def, ctxt.substs(&[param]));
+    let concrete = ctxt.dyn_ty(convert.def, ctxt.substs(&[int]));
+
+    let mut mapping = seal_hash::FxHashMap::default();
+    assert!(crate::match_template(
+        &ctxt,
+        pattern,
+        concrete,
+        &mut mapping
+    ));
+    assert_eq!(
+        mapping.get(&match ctxt.kind(param) {
+            TyKind::Param(param) => param,
+            other => panic!("expected a parameter, found {other:?}"),
+        }),
+        Some(&int)
+    );
+    assert!(!crate::match_template(
+        &ctxt,
+        pattern,
+        ctxt.dyn_ty(convert.def, ctxt.substs(&[bool_ty])),
+        &mut mapping
+    ));
+
+    let mut infer = InferCtxt::new();
+    let variable = infer.fresh_ty_var(&ctxt);
+    let inferred = ctxt.dyn_ty(convert.def, ctxt.substs(&[variable]));
+    infer
+        .unify(&ctxt, inferred, concrete)
+        .expect("trait arguments unify");
+    assert_eq!(infer.resolve_deep(&ctxt, inferred), concrete);
+}
+
+#[test]
+fn dyn_trait_refs_flatten_supertraits_without_duplicates() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let root = insert_trait(&ctxt, &interner, 230, "Root", &[]);
+    let left = insert_trait(&ctxt, &interner, 240, "Left", &[]);
+    let right = insert_trait(&ctxt, &interner, 250, "Right", &[]);
+    let leaf = insert_trait(&ctxt, &interner, 260, "Leaf", &[]);
+    set_supertraits(
+        &ctxt,
+        left.def,
+        vec![TraitRef::new(root.def, left.self_ty, ctxt.empty_substs())],
+    );
+    set_supertraits(
+        &ctxt,
+        right.def,
+        vec![TraitRef::new(root.def, right.self_ty, ctxt.empty_substs())],
+    );
+    set_supertraits(
+        &ctxt,
+        leaf.def,
+        vec![
+            TraitRef::new(left.def, leaf.self_ty, ctxt.empty_substs()),
+            TraitRef::new(right.def, leaf.self_ty, ctxt.empty_substs()),
+        ],
+    );
+
+    let object = ctxt.dyn_ty(leaf.def, ctxt.empty_substs());
+    let refs = ctxt.dyn_trait_refs(object);
+    let defs: Vec<DefId> = refs.iter().map(|reference| reference.trait_def).collect();
+    assert_eq!(defs, vec![leaf.def, left.def, root.def, right.def]);
+    assert!(refs.iter().all(|reference| reference.self_ty == object));
+    assert!(
+        ctxt.dyn_trait_refs(ctxt.int_ty(crate::IntTy::I32))
+            .is_empty()
+    );
+}
+
+#[test]
+fn dyn_trait_refs_keep_distinct_supertrait_arguments() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let convert = insert_trait(&ctxt, &interner, 270, "Convert", &["T"]);
+    let both = insert_trait(&ctxt, &interner, 280, "Both", &[]);
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let bool_ty = ctxt.bool_ty();
+    set_supertraits(
+        &ctxt,
+        both.def,
+        vec![
+            TraitRef::new(convert.def, both.self_ty, ctxt.substs(&[int])),
+            TraitRef::new(convert.def, both.self_ty, ctxt.substs(&[bool_ty])),
+        ],
+    );
+
+    let object = ctxt.dyn_ty(both.def, ctxt.empty_substs());
+    let refs = ctxt.dyn_trait_refs(object);
+    assert_eq!(refs.len(), 3);
+    assert!(refs.iter().any(|reference| {
+        reference.trait_def == convert.def && reference.args == ctxt.substs(&[int])
+    }));
+    assert!(refs.iter().any(|reference| {
+        reference.trait_def == convert.def && reference.args == ctxt.substs(&[bool_ty])
+    }));
 }

@@ -63,6 +63,20 @@ fn substitute_args(ctxt: &TyCtxt, ty: TyId, args: &[TyId]) -> TyId {
             };
             ctxt.adt_ty_with(adt, inner)
         }
+        TyKind::Dyn {
+            trait_def,
+            args: inner,
+        } => {
+            let inner_args = ctxt.substs_args(inner);
+            let substituted: Vec<TyId> = inner_args
+                .iter()
+                .map(|argument| substitute_args(ctxt, *argument, args))
+                .collect();
+            if substituted == inner_args {
+                return ty;
+            }
+            ctxt.dyn_ty(trait_def, ctxt.substs(&substituted))
+        }
         _ => ty,
     }
 }
@@ -96,7 +110,7 @@ fn collect_free_params(
                 collect_free_params(ctxt, element, seen, params);
             }
         }
-        TyKind::Adt { args, .. } => {
+        TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
             for argument in ctxt.substs_args(args) {
                 collect_free_params(ctxt, argument, seen, params);
             }
@@ -115,7 +129,7 @@ pub(crate) fn contains_param(ctxt: &TyCtxt, ty: TyId) -> bool {
             .tuple_elements(tuple)
             .into_iter()
             .any(|element| contains_param(ctxt, element)),
-        TyKind::Adt { args, .. } => ctxt
+        TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => ctxt
             .substs_args(args)
             .into_iter()
             .any(|argument| contains_param(ctxt, argument)),

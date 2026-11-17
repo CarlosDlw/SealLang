@@ -126,6 +126,24 @@ pub fn match_template(
                     .zip(actuals)
                     .all(|(pattern, actual)| match_template(ctxt, pattern, actual, mapping))
         }
+        (
+            TyKind::Dyn {
+                trait_def: pattern_trait,
+                args: pattern_args,
+            },
+            TyKind::Dyn {
+                trait_def: actual_trait,
+                args: actual_args,
+            },
+        ) if pattern_trait == actual_trait => {
+            let patterns = ctxt.substs_args(pattern_args);
+            let actuals = ctxt.substs_args(actual_args);
+            patterns.len() == actuals.len()
+                && patterns
+                    .into_iter()
+                    .zip(actuals)
+                    .all(|(pattern, actual)| match_template(ctxt, pattern, actual, mapping))
+        }
         _ => false,
     }
 }
@@ -258,6 +276,24 @@ impl TemplateUnifier<'_> {
                     args: right_args,
                 },
             ) if left_adt == right_adt => {
+                let lefts = self.ctxt.substs_args(left_args);
+                let rights = self.ctxt.substs_args(right_args);
+                lefts.len() == rights.len()
+                    && lefts
+                        .into_iter()
+                        .zip(rights)
+                        .all(|(left, right)| self.unify(left, right))
+            }
+            (
+                TyKind::Dyn {
+                    trait_def: left_trait,
+                    args: left_args,
+                },
+                TyKind::Dyn {
+                    trait_def: right_trait,
+                    args: right_args,
+                },
+            ) if left_trait == right_trait => {
                 let lefts = self.ctxt.substs_args(left_args);
                 let rights = self.ctxt.substs_args(right_args);
                 lefts.len() == rights.len()

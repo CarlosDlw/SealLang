@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use seal_def::DefId;
+
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
 
 /// A signed integer type.
@@ -254,6 +256,17 @@ pub enum TyKind {
     /// by [`TyCtxt::substitute`](crate::TyCtxt::substitute) when a declaration is
     /// instantiated.
     Param(ParamTyId),
+    /// A trait object, written `dyn Trait` or `dyn Trait<Args>`.
+    ///
+    /// The object is unsized. Its identity is the trait declaration plus the
+    /// trait's own type arguments; the concrete implementing type is erased and
+    /// only appears behind a fat pointer such as `*dyn Trait`.
+    Dyn {
+        /// The principal trait declaration.
+        trait_def: DefId,
+        /// The trait's own type arguments, excluding `Self`.
+        args: SubstsId,
+    },
     /// A structural tuple type `(T, U, ...)`.
     ///
     /// The tuple's element types live in [`TyCtxt`](crate::TyCtxt)'s tuple

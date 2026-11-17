@@ -269,6 +269,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Float(float) => {
                 self.basic_type(ty, float.as_str(), u64::from(float.bits()), encoding::FLOAT)?
             }
+            TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. }) => {
+                return Err(CodegenError::internal(
+                    "a trait-object pointer reached debug information before vtable lowering",
+                ));
+            }
             TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Str) => {
                 self.string_type()?
             }
@@ -375,6 +380,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Adt { adt, args } => self.adt_type(adt, args)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,
+            TyKind::Dyn { .. } => {
+                return Err(CodegenError::internal(
+                    "an unsized trait object reached debug information without its pointer",
+                ));
+            }
             TyKind::Unit | TyKind::Never | TyKind::Error => {
                 self.basic_type(ty, "()", 0, encoding::UNSIGNED)?
             }

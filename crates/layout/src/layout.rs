@@ -233,7 +233,9 @@ impl<'a> LayoutCtxt<'a> {
             TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
                 // `*str` and `*[T]` are fat pointers: data plus a
                 // pointer-sized length.
-                TyKind::Str | TyKind::Slice { .. } => Layout::new(pointer * 2, pointer),
+                TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
+                    Layout::new(pointer * 2, pointer)
+                }
                 _ => Layout::new(pointer, pointer),
             },
             TyKind::Unit | TyKind::Never | TyKind::Error => Layout::new(0, 1),
@@ -258,7 +260,9 @@ impl<'a> LayoutCtxt<'a> {
                 }
                 Layout::new(round_up(offset, align), align)
             }
-            TyKind::Str | TyKind::Slice { .. } => return Err(LayoutError::Unsized(ty)),
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
+                return Err(LayoutError::Unsized(ty));
+            }
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
             TyKind::Param(param) => return Err(LayoutError::Parameter(param)),
             TyKind::Adt { adt, args } => {
@@ -572,6 +576,56 @@ mod tests {
         assert_eq!(
             LayoutCtxt::new(&ctxt, 64).layout_of(ctxt.slice_ty(int)),
             Err(LayoutError::Unsized(ctxt.slice_ty(int)))
+        );
+    }
+
+    #[test]
+    fn dyn_is_unsized() {
+        let ctxt = TyCtxt::new();
+        let object = ctxt.dyn_ty(def(0), ctxt.empty_substs());
+        for width in [32, 64] {
+            assert_eq!(
+                LayoutCtxt::new(&ctxt, width).layout_of(object),
+                Err(LayoutError::Unsized(object))
+            );
+        }
+    }
+
+    #[test]
+    fn shared_dyn_pointer_is_two_words() {
+        let ctxt = TyCtxt::new();
+        let object = ctxt.dyn_ty(def(0), ctxt.empty_substs());
+        let pointer = ctxt.ref_ty(object);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(pointer),
+            Ok(Layout::new(16, 8))
+        );
+    }
+
+    #[test]
+    fn exclusive_dyn_pointer_has_the_same_size() {
+        let ctxt = TyCtxt::new();
+        let object = ctxt.dyn_ty(def(0), ctxt.empty_substs());
+        let shared = ctxt.ref_ty(object);
+        let exclusive = ctxt.mut_ref_ty(object);
+        for width in [32, 64] {
+            let layout = LayoutCtxt::new(&ctxt, width);
+            assert_eq!(layout.layout_of(exclusive), layout.layout_of(shared));
+        }
+    }
+
+    #[test]
+    fn dyn_layout_uses_the_target_pointer_width() {
+        let ctxt = TyCtxt::new();
+        let object = ctxt.dyn_ty(def(0), ctxt.empty_substs());
+        let pointer = ctxt.ref_ty(object);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 32).layout_of(pointer),
+            Ok(Layout::new(8, 4))
+        );
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(pointer),
+            Ok(Layout::new(16, 8))
         );
     }
 
