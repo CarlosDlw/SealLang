@@ -126,15 +126,16 @@ fn call_named<'a>(
         .find_map(|statement| {
             let (_, rvalue) = assignment(statement);
             let Rvalue::Call {
-                func,
+                target,
                 args,
                 arg_spans,
             } = rvalue
             else {
                 return None;
             };
-            (fixture.symbol(hir.definitions().name(*func)) == name).then_some((
-                *func,
+            let function = target.instance().def;
+            (fixture.symbol(hir.definitions().name(function)) == name).then_some((
+                function,
                 args.as_slice(),
                 arg_spans.as_slice(),
             ))

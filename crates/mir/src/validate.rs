@@ -2,11 +2,15 @@
 
 use std::fmt;
 
+use seal_def::{DefId, DefKind};
+use seal_hir::Hir;
+use seal_ty::TyKind;
+
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::operand::Operand;
 use crate::place::Place;
-use crate::rvalue::{IntrinsicReceiver, Rvalue};
+use crate::rvalue::{CallTarget, IntrinsicReceiver, Rvalue};
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 
@@ -69,6 +73,40 @@ pub enum ValidationError {
         /// The number of recorded spans.
         spans: usize,
     },
+    /// A local still has an inference-variable type.
+    InferredType {
+        /// The local with the unresolved type.
+        local: LocalId,
+    },
+    /// A literal still has an inference-variable type.
+    InferredConstant {
+        /// The block containing the literal.
+        block: BasicBlockId,
+    },
+    /// A call passes a different number of arguments than the target expects.
+    CallArityMismatch {
+        /// The operands supplied.
+        args: usize,
+        /// The parameters the target declares.
+        parameters: usize,
+    },
+    /// An aggregate literal supplies the wrong number of type arguments.
+    AggregateArgsMismatch {
+        /// The aggregate definition.
+        adt: DefId,
+        /// The number of parameters the declaration takes.
+        expected: u32,
+        /// The number of type arguments recorded on the literal.
+        found: usize,
+    },
+    /// A known method receives a type parameter by value.
+    ///
+    /// Such a receiver only exists behind a bound: the implementation is
+    /// unknown until monomorphization, so the call must stay symbolic.
+    ParamReceiverOnDirectCall {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -108,6 +146,29 @@ impl fmt::Display for ValidationError {
                 f,
                 "call has {args} argument(s) but {spans} argument span(s)"
             ),
+            Self::InferredType { local } => {
+                write!(f, "local {local:?} still has an inference-variable type")
+            }
+            Self::InferredConstant { block } => write!(
+                f,
+                "block {block:?} holds a literal with an inference-variable type"
+            ),
+            Self::CallArityMismatch { args, parameters } => write!(
+                f,
+                "call passes {args} argument(s) but the target takes {parameters}"
+            ),
+            Self::AggregateArgsMismatch {
+                adt,
+                expected,
+                found,
+            } => write!(
+                f,
+                "aggregate {adt:?} takes {expected} type argument(s) but {found} were recorded"
+            ),
+            Self::ParamReceiverOnDirectCall { block } => write!(
+                f,
+                "block {block:?} passes a type parameter by value to a known callee"
+            ),
         }
     }
 }
@@ -115,7 +176,13 @@ impl fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Checks one body.
-pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
+///
+/// The structural invariants always apply. When `hir` is provided, the type
+/// invariants apply too: no local may keep an inference variable, a call must
+/// match its target's parameter count, an aggregate must carry the declared
+/// number of type arguments, and a by-value type-parameter receiver may only
+/// reach a symbolic trait call.
+pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), ValidationError> {
     if body.blocks.is_empty() {
         return Err(ValidationError::NoBlocks);
     }
@@ -149,13 +216,18 @@ pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
         } else if kind == LocalKind::Arg {
             return Err(ValidationError::UnexpectedArg { local });
         }
+        if let Some(hir) = hir
+            && contains_infer(hir, declaration.ty)
+        {
+            return Err(ValidationError::InferredType { local });
+        }
     }
 
     for (block, data) in body.blocks.iter_enumerated() {
         for statement in &data.statements {
             let StatementKind::Assign { place, rvalue } = &statement.kind;
             check_place(body, block, place.clone())?;
-            check_rvalue(body, block, rvalue)?;
+            check_rvalue(body, block, rvalue, hir)?;
         }
         match &data.terminator.kind {
             TerminatorKind::Goto(target) => check_target(body, block, *target)?,
@@ -164,7 +236,7 @@ pub(crate) fn validate_body(body: &Body) -> Result<(), ValidationError> {
                 targets,
                 otherwise,
             } => {
-                check_operand(body, block, discriminant)?;
+                check_operand(body, block, discriminant, hir)?;
                 for target in targets {
                     check_target(body, block, target.target)?;
                 }
@@ -202,16 +274,39 @@ fn check_operand(
     body: &Body,
     block: BasicBlockId,
     operand: &Operand,
+    hir: Option<&Hir>,
 ) -> Result<(), ValidationError> {
     if let Some(place) = operand.place() {
         check_place(body, block, place)?;
     }
+    if let (Some(hir), Some(ty)) = (hir, constant_ty(operand))
+        && contains_infer(hir, ty)
+    {
+        return Err(ValidationError::InferredConstant { block });
+    }
     Ok(())
 }
 
-fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(), ValidationError> {
+/// Returns the type of a literal operand, when it carries one.
+fn constant_ty(operand: &Operand) -> Option<seal_ty::TyId> {
+    match operand {
+        Operand::Constant(
+            crate::operand::Constant::Int { ty, .. }
+            | crate::operand::Constant::Float { ty, .. }
+            | crate::operand::Constant::Str { ty, .. },
+        ) => Some(*ty),
+        _ => None,
+    }
+}
+
+fn check_rvalue(
+    body: &Body,
+    block: BasicBlockId,
+    rvalue: &Rvalue,
+    hir: Option<&Hir>,
+) -> Result<(), ValidationError> {
     match rvalue {
-        Rvalue::Use(operand) => check_operand(body, block, operand),
+        Rvalue::Use(operand) => check_operand(body, block, operand, hir),
         Rvalue::Discriminant(place) => check_place(body, block, place.clone()),
         Rvalue::Ref { place, .. } => check_place(body, block, place.clone()),
         Rvalue::SliceRef {
@@ -219,31 +314,33 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
         } => {
             check_place(body, block, base.clone())?;
             if let Some(start) = start {
-                check_operand(body, block, start)?;
+                check_operand(body, block, start, hir)?;
             }
             if let Some(end) = end {
-                check_operand(body, block, end)?;
+                check_operand(body, block, end, hir)?;
             }
             Ok(())
         }
-        Rvalue::Len { slice } => check_operand(body, block, slice),
+        Rvalue::Len { slice } => check_operand(body, block, slice, hir),
         Rvalue::Binary { lhs, rhs, .. } => {
-            check_operand(body, block, lhs)?;
-            check_operand(body, block, rhs)
+            check_operand(body, block, lhs, hir)?;
+            check_operand(body, block, rhs, hir)
         }
-        Rvalue::Unary { operand, .. } => check_operand(body, block, operand),
+        Rvalue::Unary { operand, .. } => check_operand(body, block, operand, hir),
         Rvalue::Intrinsic { receiver, args, .. } => {
             match receiver {
                 IntrinsicReceiver::Place(place) => check_place(body, block, place.clone())?,
-                IntrinsicReceiver::Value(operand) => check_operand(body, block, operand)?,
+                IntrinsicReceiver::Value(operand) => check_operand(body, block, operand, hir)?,
             }
             for arg in args {
-                check_operand(body, block, arg)?;
+                check_operand(body, block, arg, hir)?;
             }
             Ok(())
         }
         Rvalue::Call {
-            args, arg_spans, ..
+            target,
+            args,
+            arg_spans,
         } => {
             if args.len() != arg_spans.len() {
                 return Err(ValidationError::CallSpansMismatch {
@@ -251,25 +348,96 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
                     spans: arg_spans.len(),
                 });
             }
+            if let Some(hir) = hir {
+                if args.len() != target.parameters() {
+                    return Err(ValidationError::CallArityMismatch {
+                        args: args.len(),
+                        parameters: target.parameters(),
+                    });
+                }
+                if matches!(target, CallTarget::Direct { .. })
+                    && has_receiver(hir, target.instance().def)
+                    && first_argument_is_param(hir, body, args)
+                {
+                    return Err(ValidationError::ParamReceiverOnDirectCall { block });
+                }
+            }
             for arg in args {
-                check_operand(body, block, arg)?;
+                check_operand(body, block, arg, hir)?;
             }
             Ok(())
         }
-        Rvalue::Aggregate { fields, .. } => {
+        Rvalue::Aggregate { kind, fields } => {
+            if let Some(hir) = hir {
+                let (adt, args) = match kind {
+                    crate::rvalue::AggregateKind::Struct { adt, args } => (*adt, *args),
+                    crate::rvalue::AggregateKind::Variant { adt, args, .. } => (*adt, *args),
+                };
+                if let Some(adt_id) = hir.adt(adt) {
+                    let expected = hir.ty_ctxt().adt_generic_count(adt_id);
+                    let found = hir.ty_ctxt().substs_args(args).len();
+                    if found != expected as usize {
+                        return Err(ValidationError::AggregateArgsMismatch {
+                            adt,
+                            expected,
+                            found,
+                        });
+                    }
+                }
+            }
             for (_, operand) in fields {
-                check_operand(body, block, operand)?;
+                check_operand(body, block, operand, hir)?;
             }
             Ok(())
         }
         Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
             for element in elements {
-                check_operand(body, block, element)?;
+                check_operand(body, block, element, hir)?;
             }
             Ok(())
         }
-        Rvalue::Repeat { value, .. } => check_operand(body, block, value),
+        Rvalue::Repeat { value, .. } => check_operand(body, block, value, hir),
     }
+}
+
+/// Returns `true` when `ty` is, or contains, an inference variable.
+fn contains_infer(hir: &Hir, ty: seal_ty::TyId) -> bool {
+    let tcx = hir.ty_ctxt();
+    match tcx.kind(ty) {
+        TyKind::Infer(_) => true,
+        TyKind::Ref { pointee, .. } => contains_infer(hir, pointee),
+        TyKind::Slice { element } | TyKind::Array { element, .. } => contains_infer(hir, element),
+        TyKind::Tuple(tuple) => tcx
+            .tuple_elements(tuple)
+            .iter()
+            .any(|element| contains_infer(hir, *element)),
+        TyKind::Adt { args, .. } => tcx
+            .substs_args(args)
+            .iter()
+            .any(|argument| contains_infer(hir, *argument)),
+        _ => false,
+    }
+}
+
+/// Returns `true` when `def` is a method with a receiver.
+///
+/// A trait method declaration has no entry in the impl receiver registry, but a
+/// direct call can never target one: bound calls stay symbolic. An impl
+/// function that declares no receiver is an associated function and its first
+/// argument is an ordinary parameter.
+fn has_receiver(hir: &Hir, def: DefId) -> bool {
+    hir.definitions().kind(def) == DefKind::TraitMethod || hir.receiver(def).is_some()
+}
+
+/// Returns `true` when the first operand is a whole local of type `Param`.
+fn first_argument_is_param(hir: &Hir, body: &Body, args: &[Operand]) -> bool {
+    args.first().and_then(Operand::place).is_some_and(|place| {
+        place.is_whole()
+            && matches!(
+                hir.ty_ctxt().kind(body.local(place.local).ty),
+                TyKind::Param(_)
+            )
+    })
 }
 
 fn check_target(

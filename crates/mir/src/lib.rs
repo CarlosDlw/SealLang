@@ -14,6 +14,12 @@
 //!
 //! [`Rvalue::Call`](crate::Rvalue::Call) is a statement rather than a terminator:
 //! Seal has no unwinding, so a call cannot leave the block on a failure path.
+//! Its [`CallTarget`](crate::CallTarget) keeps the complete instance: a concrete
+//! call names the function or impl method with its type arguments, while a call
+//! through a trait bound names the trait method and stays symbolic until
+//! monomorphization selects the implementation. Aggregate literals carry the
+//! instantiation's type arguments too, so a generic body can resolve every field
+//! projection from its own parameter types.
 //! Borrows are [`Rvalue::Ref`](crate::Rvalue::Ref) statements, and reads through
 //! a reference carry a dereference projection on the [`Place`](crate::Place). A
 //! dereference whose operand is itself a value, as in `*identity(&v)` or `*&x`,
@@ -24,7 +30,10 @@
 //!
 //! [`lower`] consumes a checked [`Hir`](seal_hir::Hir) and its
 //! [`TypeckResults`](seal_typeck::TypeckResults). It assumes type checking
-//! reported no errors; the driver only runs it on a clean tree. Evaluation order
+//! reported no errors; the driver only runs it on a clean tree. Generic bodies
+//! lower like any other: parameters stay rigid, `Copy` decisions consult the
+//! body's parameter environment, and field types are resolved after substituting
+//! the instantiation's arguments. Evaluation order
 //! is preserved, `&&`/`||` become `SwitchInt` graphs so the right operand is
 //! evaluated only when needed, `&place` becomes a `Ref`, and
 //! `if`/`while`/`break`/`continue` become explicit edges.
@@ -58,7 +67,7 @@ pub use lower::lower;
 pub use mir::Mir;
 pub use operand::{Constant, Operand};
 pub use place::{Place, Projection};
-pub use rvalue::{AggregateKind, BinOp, IntrinsicReceiver, Rvalue, UnOp};
+pub use rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
 pub use statement::{Statement, StatementKind};
 pub use terminator::{SwitchTarget, Terminator, TerminatorKind};
 pub use validate::ValidationError;

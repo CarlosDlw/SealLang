@@ -32,7 +32,7 @@ allowed to depend only on crates below it in the list.
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, trait and impl coherence, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, bounds checks, match dispatch, terminators, and structural validation. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct and symbolic call targets, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, escaping references, `E5xxx` diagnostics. |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |

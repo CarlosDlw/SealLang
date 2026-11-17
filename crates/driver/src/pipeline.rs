@@ -92,7 +92,7 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
     let mir = session
         .profiler()
         .time("mir", || seal_mir::lower(&hir, &typeck));
-    if let Err(error) = mir.validate() {
+    if let Err(error) = mir.validate_with(&hir) {
         session
             .diag()
             .bug(format!("MIR lowering produced an invalid body: {error}"));

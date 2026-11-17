@@ -84,6 +84,11 @@ impl Fixture {
         self.interner.resolve(symbol).to_owned()
     }
 
+    /// Displays `ty` with the test interner, so parameters show their names.
+    pub(crate) fn ty_text(&self, hir: &Hir, ty: TyId) -> String {
+        hir.ty_ctxt().display_with(ty, &self.interner).to_string()
+    }
+
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         self.recording.diagnostics()
     }
@@ -106,7 +111,7 @@ pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir, Mir) {
     let fixture = Fixture::new(source);
     let (hir, mir) = fixture.lower();
     fixture.assert_clean();
-    mir.validate()
+    mir.validate_with(&hir)
         .expect("MIR lowering maintains its invariants");
     assert_eq!(
         mir.bodies().len(),

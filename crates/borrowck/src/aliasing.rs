@@ -112,8 +112,12 @@ pub(crate) fn facts(
         if !has_exclusive {
             continue;
         }
+        // A parameter type may change what the pointee is at every
+        // instantiation. Until monomorphization proves the contract for each
+        // concrete instance, the grant is withheld rather than assumed.
+        let monomorphic = body.args().all(|argument| !tcx.contains_param(argument.ty));
         let clean = bodies.get(&body.owner).is_some_and(|facts| !facts.unknown);
-        if clean && calls.proven(body.owner) {
+        if monomorphic && clean && calls.proven(body.owner) {
             noalias.insert(body.owner);
         }
     }

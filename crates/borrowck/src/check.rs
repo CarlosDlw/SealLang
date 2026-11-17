@@ -230,7 +230,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             }
         }
         Rvalue::Call {
-            func,
+            target,
             args,
             arg_spans,
         } => {
@@ -250,7 +250,12 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 reporter: context.reporter,
             });
             unknown |= outcome.unknown;
-            calls.record(*func, outcome.proven);
+            // A symbolic trait call has no concrete callee whose `noalias`
+            // contract could be proven here; monomorphization checks each
+            // selected implementation at its own call sites.
+            if let seal_mir::CallTarget::Direct { instance, .. } = target {
+                calls.record(instance.def, outcome.proven);
+            }
         }
         Rvalue::Aggregate { fields, .. } => {
             for (_, operand) in fields {

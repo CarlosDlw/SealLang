@@ -52,7 +52,15 @@ impl Mir {
     /// Checks the structural invariants of every body.
     pub fn validate(&self) -> Result<(), ValidationError> {
         for body in self.bodies.iter() {
-            validate_body(body)?;
+            validate_body(body, None)?;
+        }
+        Ok(())
+    }
+
+    /// Checks the structural and type invariants of every body.
+    pub fn validate_with(&self, hir: &seal_hir::Hir) -> Result<(), ValidationError> {
+        for body in self.bodies.iter() {
+            validate_body(body, Some(hir))?;
         }
         Ok(())
     }

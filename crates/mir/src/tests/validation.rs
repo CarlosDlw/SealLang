@@ -1,9 +1,11 @@
 //! Structural validation of MIR bodies.
 
+use seal_ty::InferTyId;
+
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::place::Place;
-use crate::rvalue::Rvalue;
+use crate::rvalue::{AggregateKind, CallTarget, Rvalue};
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 use crate::validate::ValidationError;
@@ -128,5 +130,151 @@ fn switch_targets_are_checked() {
     assert!(matches!(
         body.validate(),
         Err(ValidationError::BlockTargetOutOfRange { .. })
+    ));
+}
+
+#[test]
+fn a_leftover_inference_variable_is_rejected() {
+    let (fixture, hir, mir) = lower_clean("func main() -> i32 { 0 }");
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let infer = hir
+        .ty_ctxt()
+        .infer_ty(InferTyId::from_u32(0).expect("zero is representable"));
+    body.locals[Body::return_local()].ty = infer;
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::InferredType {
+            local: Body::return_local()
+        })
+    );
+}
+
+#[test]
+fn a_call_must_match_its_targets_parameter_count() {
+    let source = "func identity(value: i32) -> i32 { value } \
+                  func main() -> i32 { identity(1) }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let statement = body
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+        .find(|statement| {
+            matches!(
+                statement.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Call { .. },
+                    ..
+                }
+            )
+        })
+        .expect("main calls identity");
+    let StatementKind::Assign {
+        rvalue: Rvalue::Call { target, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        unreachable!();
+    };
+    let instance = target.instance();
+    *target = CallTarget::Direct {
+        instance,
+        parameters: 2,
+    };
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::CallArityMismatch {
+            args: 1,
+            parameters: 2
+        })
+    );
+}
+
+#[test]
+fn an_aggregate_must_carry_the_declared_type_arguments() {
+    let source = "struct Wrapper<T> { value: T } \
+                  func main() -> i32 { \
+                      let wrapper = Wrapper { value: 1 }; \
+                      wrapper.value \
+                  }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let statement = body
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+        .find(|statement| {
+            matches!(
+                statement.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Aggregate { .. },
+                    ..
+                }
+            )
+        })
+        .expect("main builds a struct");
+    let StatementKind::Assign {
+        rvalue: Rvalue::Aggregate { kind, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        unreachable!();
+    };
+    let AggregateKind::Struct { adt, args } = kind else {
+        panic!("expected a struct aggregate, got {kind:?}");
+    };
+    let adt = *adt;
+    *args = hir.ty_ctxt().empty_substs();
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::AggregateArgsMismatch {
+            adt,
+            expected: 1,
+            found: 0
+        })
+    );
+}
+
+#[test]
+fn a_type_parameter_receiver_requires_a_symbolic_call() {
+    let source = "trait Take { func take(self: Self) -> i32; } \
+                  func take_one<T: Take>(value: T) -> i32 { value.take() }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "take_one").clone();
+    let statement = body
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+        .find(|statement| {
+            matches!(
+                statement.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Call { .. },
+                    ..
+                }
+            )
+        })
+        .expect("take_one calls the bound method");
+    let StatementKind::Assign {
+        rvalue: Rvalue::Call { target, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        unreachable!();
+    };
+    let CallTarget::TraitMethod {
+        instance,
+        parameters,
+    } = *target
+    else {
+        panic!("expected a symbolic target, got {target:?}");
+    };
+    *target = CallTarget::Direct {
+        instance,
+        parameters,
+    };
+    assert!(matches!(
+        body.validate_with(&hir),
+        Err(ValidationError::ParamReceiverOnDirectCall { .. })
     ));
 }

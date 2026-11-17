@@ -9,7 +9,7 @@ use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_hir::Hir;
 use seal_mir::{Body, Mir};
 use seal_span::{FileName, SourceFile, SourceMap};
-use seal_symbol::Interner;
+use seal_symbol::{Interner, Symbol};
 
 #[derive(Clone, Default)]
 struct Recording(Arc<Mutex<Vec<Diagnostic>>>);
@@ -72,9 +72,13 @@ impl Fixture {
         let typeck = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
         self.assert_clean();
         let mir = seal_mir::lower(&hir, &typeck);
-        mir.validate()
+        mir.validate_with(&hir)
             .expect("MIR lowering maintains its invariants");
         (hir, mir)
+    }
+
+    pub(crate) fn symbol(&self, symbol: Symbol) -> String {
+        self.interner.resolve(symbol).to_owned()
     }
 
     /// Runs the whole pipeline through borrow checking.

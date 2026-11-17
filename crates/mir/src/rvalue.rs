@@ -3,7 +3,7 @@
 use seal_def::DefId;
 use seal_methods::MethodId;
 use seal_span::Span;
-use seal_ty::VariantIdx;
+use seal_ty::{Instance, SubstsId, VariantIdx};
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -107,18 +107,76 @@ pub enum IntrinsicReceiver {
     Value(Operand),
 }
 
+/// What one call reaches.
+///
+/// A call is direct when type checking selected one function or one concrete
+/// impl method. A call through a type parameter bound has no implementation yet:
+/// it keeps the trait method declaration and its arguments as a symbolic target
+/// that monomorphization resolves for each instantiation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CallTarget {
+    /// A known function or method.
+    Direct {
+        /// The function and its complete type arguments.
+        instance: Instance,
+        /// The parameter count the declaration expects, receiver included for
+        /// methods.
+        parameters: usize,
+    },
+    /// A trait method reached through a bound on a type parameter.
+    TraitMethod {
+        /// The trait method declaration and its complete type arguments, with
+        /// the implementing type as the first argument.
+        instance: Instance,
+        /// The parameter count the declaration expects, receiver included for
+        /// methods.
+        parameters: usize,
+    },
+}
+
+impl CallTarget {
+    /// Returns the callee instance.
+    #[inline]
+    pub fn instance(self) -> Instance {
+        match self {
+            Self::Direct { instance, .. } | Self::TraitMethod { instance, .. } => instance,
+        }
+    }
+
+    /// Returns the expected parameter count.
+    #[inline]
+    pub fn parameters(self) -> usize {
+        match self {
+            Self::Direct { parameters, .. } | Self::TraitMethod { parameters, .. } => parameters,
+        }
+    }
+
+    /// Returns `true` when monomorphization must choose the implementation.
+    #[inline]
+    pub fn is_trait_method(self) -> bool {
+        matches!(self, Self::TraitMethod { .. })
+    }
+}
+
 /// The aggregate being built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AggregateKind {
-    /// A struct, identified by its definition.
-    Struct(DefId),
-    /// One variant of an enum, identified by the enum definition and the
-    /// variant's position in declaration order.
+    /// A struct, identified by its definition and type arguments.
+    Struct {
+        /// The struct definition.
+        adt: DefId,
+        /// The complete type arguments of the instantiation.
+        args: SubstsId,
+    },
+    /// One variant of an enum, identified by the enum definition, the variant's
+    /// position in declaration order, and the instantiation's type arguments.
     Variant {
         /// The enum definition.
         adt: DefId,
         /// The variant's discriminant.
         variant: VariantIdx,
+        /// The complete type arguments of the instantiation.
+        args: SubstsId,
     },
 }
 
@@ -201,14 +259,15 @@ pub enum Rvalue {
         /// The source range of the whole method call.
         span: Span,
     },
-    /// Calls a function.
+    /// Calls a function or a trait method.
     ///
     /// Calls are rvalues because Seal has no unwinding and a call cannot fail in
     /// a way that changes control flow. A future ABI with unwind edges will turn
-    /// this into a terminator.
+    /// this into a terminator. A symbolic trait call keeps its declaration as
+    /// the target until monomorphization picks the implementing function.
     Call {
-        /// The called function.
-        func: DefId,
+        /// The callee, with its complete type arguments.
+        target: CallTarget,
         /// Arguments in evaluation order.
         args: Vec<Operand>,
         /// The source range of each argument, matching `args` by position.

@@ -143,18 +143,6 @@ pub enum MethodKind {
     },
 }
 
-impl MethodKind {
-    /// Returns the impl function a user or trait call reaches.
-    ///
-    /// `None` means the call resolves to the intrinsic catalog instead.
-    pub fn function(self) -> Option<DefId> {
-        match self {
-            Self::Intrinsic(_) | Self::TraitBound { .. } => None,
-            Self::User { function, .. } | Self::Trait { function, .. } => Some(function),
-        }
-    }
-}
-
 /// How MIR must adjust the receiver expression before a call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiverAdjust {

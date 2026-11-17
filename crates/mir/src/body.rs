@@ -101,6 +101,17 @@ impl Body {
 
     /// Checks the structural invariants of this body.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        crate::validate::validate_body(self)
+        crate::validate::validate_body(self, None)
+    }
+
+    /// Checks the structural and type invariants of this body.
+    ///
+    /// The type invariants need `hir` to inspect declared types: no local or
+    /// literal may keep an inference variable, a call must match its target's
+    /// parameter count, an aggregate must carry the declared number of type
+    /// arguments, and a by-value type parameter may only reach a symbolic trait
+    /// call.
+    pub fn validate_with(&self, hir: &seal_hir::Hir) -> Result<(), ValidationError> {
+        crate::validate::validate_body(self, Some(hir))
     }
 }

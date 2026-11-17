@@ -6,12 +6,12 @@ mod match_expr;
 mod while_let;
 
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
-use seal_def::DefId;
+use seal_def::{DefId, DefKind};
 use seal_hash::FxHashMap;
 use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId, Res, StmtKind};
 use seal_index::IndexVec;
 use seal_span::Span;
-use seal_ty::{TyId, TyKind};
+use seal_ty::{Instance, ParamEnv, SubstsId, TyId, TyKind};
 use seal_typeck::{MethodKind, PlaceProjection, ReceiverAdjust, ResolvedPlace, TypeckResults};
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
@@ -19,7 +19,7 @@ use crate::id::{BasicBlockId, LocalId};
 use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
 use crate::place::{Place, Projection};
-use crate::rvalue::{AggregateKind, BinOp, IntrinsicReceiver, Rvalue, UnOp};
+use crate::rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
 use crate::statement::Statement;
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
 
@@ -55,6 +55,17 @@ struct SliceBounds {
     end: Option<HirExprId>,
 }
 
+/// The resolved pieces of one intrinsic method call.
+struct IntrinsicCall<'a> {
+    receiver: HirExprId,
+    name_span: Span,
+    args: &'a [HirExprId],
+    dest: Option<Place>,
+    span: Span,
+    method: seal_methods::MethodId,
+    resolved: &'a seal_typeck::ResolvedMethod,
+}
+
 struct BodyLowering<'a> {
     hir: &'a Hir,
     typeck: &'a TypeckResults,
@@ -66,6 +77,7 @@ struct BodyLowering<'a> {
     entry: BasicBlockId,
     loops: Vec<LoopTargets>,
     arg_count: usize,
+    param_env: ParamEnv,
 }
 
 impl<'a> BodyLowering<'a> {
@@ -76,6 +88,7 @@ impl<'a> BodyLowering<'a> {
             .expect("type checking gives every body a signature");
         let ret = signature.ret;
         let param_types = signature.params.clone();
+        let param_env = hir.param_env(body.owner);
 
         let placeholder = BasicBlockId::from_u32(0).expect("zero is a valid block index");
         let mut lowering = Self {
@@ -89,6 +102,7 @@ impl<'a> BodyLowering<'a> {
             entry: placeholder,
             loops: Vec::new(),
             arg_count: body.params.len(),
+            param_env,
         };
 
         let return_local = lowering.push_local(LocalDecl {
@@ -462,6 +476,7 @@ impl<'a> BodyLowering<'a> {
             }
             ExprKind::Struct { adt, fields, .. } => {
                 if let Some(dest) = dest {
+                    let args = self.instantiation_args(expr);
                     let fields = fields
                         .iter()
                         .map(|(field, value)| (*field, self.lower_operand(*value)))
@@ -469,7 +484,7 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(
                         dest,
                         Rvalue::Aggregate {
-                            kind: AggregateKind::Struct(adt),
+                            kind: AggregateKind::Struct { adt, args },
                             fields,
                         },
                         span,
@@ -483,6 +498,7 @@ impl<'a> BodyLowering<'a> {
                 ..
             } => {
                 if let Some(dest) = dest {
+                    let args = self.instantiation_args(expr);
                     let fields = fields
                         .iter()
                         .map(|(field, value)| (*field, self.lower_operand(*value)))
@@ -490,7 +506,7 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(
                         dest,
                         Rvalue::Aggregate {
-                            kind: AggregateKind::Variant { adt, variant },
+                            kind: AggregateKind::Variant { adt, variant, args },
                             fields,
                         },
                         span,
@@ -540,7 +556,7 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Update { op, target, .. } => self.lower_update(op, target, dest, span),
             ExprKind::Call { callee, args } => {
                 let result_ty = self.expr_ty(expr);
-                self.lower_call(callee, &args, dest, result_ty, span);
+                self.lower_call(expr, callee, &args, dest, result_ty, span);
             }
             ExprKind::MethodCall {
                 receiver,
@@ -711,6 +727,7 @@ impl<'a> BodyLowering<'a> {
 
     fn lower_call(
         &mut self,
+        expr: HirExprId,
         callee: HirExprId,
         args: &[HirExprId],
         dest: Option<Place>,
@@ -733,11 +750,35 @@ impl<'a> BodyLowering<'a> {
             }
             return;
         };
+        let instance = self.call_instance(expr, function);
+        // A trait method reached through a type parameter has no concrete
+        // function yet, so monomorphization receives the symbolic target. The
+        // same syntax on a concrete type names a trait implementation and is a
+        // direct call like any other function.
+        let symbolic = self.hir.definitions().kind(function) == DefKind::TraitMethod;
+        let parameters = if symbolic {
+            self.trait_method_parameters(function)
+        } else {
+            self.typeck
+                .signature(function)
+                .map_or(args.len(), |signature| signature.params.len())
+        };
+        let target = if symbolic {
+            CallTarget::TraitMethod {
+                instance,
+                parameters,
+            }
+        } else {
+            CallTarget::Direct {
+                instance,
+                parameters,
+            }
+        };
         let dest = dest.unwrap_or_else(|| self.new_temp(result_ty, span));
         self.assign_rvalue(
             dest,
             Rvalue::Call {
-                func: function,
+                target,
                 args,
                 arg_spans,
             },
@@ -759,44 +800,81 @@ impl<'a> BodyLowering<'a> {
         });
 
         // A user method and a trait method are ordinary functions whose first
-        // parameter is the receiver, so both lower to a direct call: traits use
-        // static dispatch and have no vtable. The receiver adjustment is
-        // explicit in the argument expression, and the borrow checker sees the
-        // same `Rvalue::Ref` it would see for a written borrow.
-        if let Some(function) = resolved.kind.function() {
-            let receiver_argument = match resolved.receiver_adjust {
-                ReceiverAdjust::None => self.lower_operand(receiver),
-                ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
-                    self.lower_borrowed_receiver(receiver, &resolved)
-                }
-                ReceiverAdjust::SharedReborrow => self.lower_shared_reborrow(receiver, &resolved),
-            };
-            let mut call_args = Vec::with_capacity(args.len() + 1);
-            call_args.push(receiver_argument);
-            call_args.extend(args.iter().map(|arg| self.lower_operand(*arg)));
-            let mut arg_spans = Vec::with_capacity(args.len() + 1);
-            arg_spans.push(self.hir.expr(receiver).span);
-            arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
-
-            // A method call always runs, even when its value is discarded. A
-            // modifying method has its whole effect in the call, so dropping it
-            // because the statement has no value would remove the mutation.
-            let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
-            self.assign_rvalue(
-                dest,
-                Rvalue::Call {
-                    func: function,
-                    args: call_args,
-                    arg_spans,
-                },
-                span,
-            );
-            return;
-        }
-
-        let MethodKind::Intrinsic(method) = resolved.kind else {
-            unreachable!("the user and trait branches returned")
+        // parameter is the receiver, so both lower to a call: traits use static
+        // dispatch and have no vtable. A bound method is symbolic until
+        // monomorphization selects the implementation. The receiver adjustment
+        // is explicit in the argument expression, and the borrow checker sees
+        // the same `Rvalue::Ref` it would see for a written borrow.
+        let (function, symbolic) = match resolved.kind {
+            MethodKind::Intrinsic(method) => {
+                return self.lower_intrinsic_call(IntrinsicCall {
+                    receiver,
+                    name_span,
+                    args,
+                    dest,
+                    span,
+                    method,
+                    resolved: &resolved,
+                });
+            }
+            MethodKind::User { function, .. } | MethodKind::Trait { function, .. } => {
+                (function, false)
+            }
+            MethodKind::TraitBound { method, .. } => (method, true),
         };
+        let receiver_argument = match resolved.receiver_adjust {
+            ReceiverAdjust::None => self.lower_operand(receiver),
+            ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
+                self.lower_borrowed_receiver(receiver, &resolved)
+            }
+            ReceiverAdjust::SharedReborrow => self.lower_shared_reborrow(receiver, &resolved),
+        };
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(receiver_argument);
+        call_args.extend(args.iter().map(|arg| self.lower_operand(*arg)));
+        let mut arg_spans = Vec::with_capacity(args.len() + 1);
+        arg_spans.push(self.hir.expr(receiver).span);
+        arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
+
+        // A method call always runs, even when its value is discarded. A
+        // modifying method has its whole effect in the call, so dropping it
+        // because the statement has no value would remove the mutation.
+        let instance = self.call_instance(expr, function);
+        let parameters = resolved.arg_tys.len() + 1;
+        let target = if symbolic {
+            CallTarget::TraitMethod {
+                instance,
+                parameters,
+            }
+        } else {
+            CallTarget::Direct {
+                instance,
+                parameters,
+            }
+        };
+        let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
+        self.assign_rvalue(
+            dest,
+            Rvalue::Call {
+                target,
+                args: call_args,
+                arg_spans,
+            },
+            span,
+        );
+    }
+
+    /// Lowers one intrinsic method call.
+    fn lower_intrinsic_call(&mut self, call: IntrinsicCall<'_>) {
+        let IntrinsicCall {
+            receiver,
+            name_span,
+            args,
+            dest,
+            span,
+            method,
+            resolved,
+        } = call;
         let receiver = match resolved.receiver_form {
             seal_typeck::ReceiverForm::Value => {
                 IntrinsicReceiver::Value(self.lower_operand(receiver))
@@ -829,6 +907,42 @@ impl<'a> BodyLowering<'a> {
             },
             span,
         );
+    }
+
+    /// Returns the complete instantiation type checking recorded for `expr`.
+    ///
+    /// Every call and method call records one; a missing instance would make
+    /// monomorphization use the wrong body, so the failure is an internal bug.
+    fn call_instance(&self, expr: HirExprId, function: DefId) -> Instance {
+        self.typeck.instantiation(expr).unwrap_or_else(|| {
+            panic!("call to {function:?} has no recorded instantiation; this is a compiler bug")
+        })
+    }
+
+    /// Returns the number of parameters a trait method declaration takes.
+    ///
+    /// The trait method has no type-checked signature of its own, so the count
+    /// comes from the declaration in the trait.
+    fn trait_method_parameters(&self, function: DefId) -> usize {
+        let Some(trait_def) = self.hir.definitions().get(function).parent else {
+            return 0;
+        };
+        let Some(definition) = self.hir.trait_definition(trait_def) else {
+            return 0;
+        };
+        definition
+            .methods
+            .iter()
+            .find(|method| method.def == function)
+            .map_or(0, |method| method.signature.params.len())
+    }
+
+    /// Returns the type arguments of the aggregate literal `expr`.
+    fn instantiation_args(&self, expr: HirExprId) -> SubstsId {
+        match self.hir.ty_ctxt().kind(self.expr_ty(expr)) {
+            TyKind::Adt { args, .. } => args,
+            _ => self.hir.ty_ctxt().substs(&[]),
+        }
     }
 
     /// Materializes the automatic borrow of a user method receiver.
@@ -957,7 +1071,7 @@ impl<'a> BodyLowering<'a> {
     fn place_operand(&self, place: Place, ty: TyId) -> Operand {
         // Reading through a shared reference never transfers ownership: the
         // pointee outlives the read and is still owned by whoever lent it.
-        if place.is_deref() || self.hir.ty_ctxt().is_copy(ty) {
+        if place.is_deref() || self.hir.ty_ctxt().is_copy_with(ty, &self.param_env) {
             Operand::Copy(place)
         } else {
             Operand::Move(place)

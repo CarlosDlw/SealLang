@@ -288,6 +288,16 @@ There is still no vtable, trait object, or dynamic dispatch, so the ownership
 model is unchanged: a trait call owns and borrows exactly what the concrete
 function declares.
 
+With generics, the receiver may be a declared type parameter. The generic body
+cannot select an implementation, so the call stays symbolic until
+monomorphization; the eventual concrete call owns and borrows exactly what the
+selected impl declares. Moves and copies consult the body's parameter
+environment: a `T: Copy` parameter is copied and stays usable, while an
+unbounded `T` is moved. A declared parameter is conservatively treated as
+containing a reference, so a generic aggregate never drops a loan it may carry,
+and `noalias` is withheld for a parameter whose type mentions a declared
+parameter until each instantiation proves the contract.
+
 A user method declares its receiver explicitly. `self: T` moves or copies the
 receiver, `self: *T` borrows it shared, and `self: *mut T` borrows it exclusive.
 When the receiver expression is a `T` place and the method expects a reference,
@@ -405,13 +415,13 @@ call.
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- Generics, visibility, and `Drop` for aggregates — layers on the nominal
-  struct, enum, and array foundation, not redesigns of it.
+- Visibility and `Drop` for aggregates — layers on the nominal struct, enum,
+  and array foundation, not redesigns of it.
 - Pattern layers above v0.1 — ranges (`0..=9`), `@` bindings, and destructuring
   a bare struct — extend the same pattern tree and the same usefulness check;
   the tag and payload layout above does not change.
 - User-defined implementations, trait implementations, and intrinsic methods
-  already share the static lookup and receiver-borrow model that generics will
+  already share the static lookup and receiver-borrow model that generics
   parameterize.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.

@@ -50,7 +50,15 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 args,
                 span,
             } => self.emit_intrinsic(*method, receiver, args, *span),
-            Rvalue::Call { func, args, .. } => self.call(*func, args),
+            Rvalue::Call { target, args, .. } => {
+                if target.is_trait_method() {
+                    return Err(CodegenError::internal(
+                        "a symbolic trait call reached code generation; monomorphization must \
+                         resolve it first",
+                    ));
+                }
+                self.call(target.instance().def, args)
+            }
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
             Rvalue::Tuple { elements, ty } => self.tuple_aggregate(elements, *ty),
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
@@ -818,8 +826,10 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         fields: &[(DefId, seal_mir::Operand)],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match kind {
-            AggregateKind::Struct(def) => self.struct_aggregate(def, fields),
-            AggregateKind::Variant { adt, variant } => self.variant_aggregate(adt, variant, fields),
+            AggregateKind::Struct { adt, .. } => self.struct_aggregate(adt, fields),
+            AggregateKind::Variant { adt, variant, .. } => {
+                self.variant_aggregate(adt, variant, fields)
+            }
         }
     }
 

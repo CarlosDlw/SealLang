@@ -530,8 +530,10 @@ tried first; on scalars, sequences, and references to them, lookup uses the
 closed compiler-owned intrinsic catalog. Every reference layer is followed
 before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
 scalar method, and a `*Point` can call a `Point` method written for `*Point`.
-There is no vtable, dynamic dispatch, method value, or generic method. A trait
-method resolved on a nominal type is a static call to the implementing function.
+There is no vtable, dynamic dispatch, or method value; a trait method resolved
+on a nominal type is a static call to the implementing function, and a method
+declared by a trait bound records the trait method until monomorphization selects
+the implementation. Methods and impls may declare type parameters in both cases.
 An unknown name is `E3027`, an associated function written as a method is
 `E2019`, and a method written as `Type::name` is `E2019` as well.
 

@@ -3,7 +3,7 @@
 use crate::body::{Body, LocalKind};
 use crate::operand::{Constant, Operand};
 use crate::place::Place;
-use crate::rvalue::Rvalue;
+use crate::rvalue::{CallTarget, Rvalue};
 use crate::terminator::TerminatorKind;
 
 use super::support::{assignment, function, lower_clean};
@@ -25,14 +25,19 @@ fn a_call_in_value_position_writes_to_its_destination() {
     assert_eq!(place.local, Body::return_local());
 
     let Rvalue::Call {
-        func,
+        target,
         args,
         arg_spans,
     } = rvalue
     else {
         panic!("expected a call, got {rvalue:?}");
     };
-    assert_eq!(fixture.symbol(hir.definitions().name(*func)), "identity");
+    assert!(matches!(target, CallTarget::Direct { .. }));
+    assert_eq!(target.parameters(), 1, "identity takes one parameter");
+    assert_eq!(
+        fixture.symbol(hir.definitions().name(target.instance().def)),
+        "identity"
+    );
     assert_eq!(args.len(), 1);
     assert_eq!(arg_spans.len(), 1, "every argument records its span");
     assert!(matches!(
