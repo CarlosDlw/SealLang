@@ -81,6 +81,13 @@ Without `-o`, `file.sl` produces `file`, `file.o`, or `file.s` next to the
 input. The exit status is `0` on success, `1` after a compile error, `2` after a
 usage error, and `101` after an internal compiler error or a runtime panic.
 
+## Verifying a commit
+
+`scripts/verify-commit.sh [<commit>]` checks out a commit, runs formatting, lint,
+and the full test suite against it, and restores the original checkout
+afterwards. The working tree must be clean. Every commit must pass this
+isolation check on its own.
+
 ## Types
 
 | Family | Types | Notes |
