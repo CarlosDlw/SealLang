@@ -35,6 +35,22 @@ impl Lowering<'_> {
                 let element = self.lower_type(element);
                 self.hir.ty_ctxt_mut().slice_ty(element)
             }
+            TypeKind::Path(symbol) if symbol == self.self_symbol => {
+                let span = self.ast.ty(ty).span;
+                match self.self_ty {
+                    Some(self_ty) => self_ty,
+                    None => {
+                        self.error(
+                            codes::E2025,
+                            span,
+                            "`Self` is only allowed in a trait method signature",
+                        )
+                        .help("write the concrete type instead")
+                        .emit();
+                        self.hir.ty_ctxt_mut().error_ty()
+                    }
+                }
+            }
             TypeKind::Path(symbol) => {
                 if let Some(definition) = self.types.get(&symbol).copied() {
                     let adt = self
@@ -42,6 +58,17 @@ impl Lowering<'_> {
                         .adt(definition)
                         .expect("every struct definition reserves an aggregate");
                     self.hir.ty_ctxt().adt_ty(adt)
+                } else if self.traits.contains_key(&symbol) {
+                    let span = self.ast.ty(ty).span;
+                    let name = self.interner.resolve(symbol);
+                    self.error(
+                        codes::E2027,
+                        span,
+                        format!("`{name}` is a trait, not a type"),
+                    )
+                    .help("name the struct that implements it, or call a method on a value")
+                    .emit();
+                    self.hir.ty_ctxt_mut().error_ty()
                 } else {
                     let span = self.ast.ty(ty).span;
                     let name = self.interner.resolve(symbol);

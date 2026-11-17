@@ -693,16 +693,18 @@ impl<'a> BodyLowering<'a> {
             panic!("method call at {name_span:?} was not resolved; this is a compiler bug")
         });
 
-        // A user method is an ordinary function whose first parameter is the
-        // receiver, so it lowers to a direct call. The receiver adjustment is
+        // A user method and a trait method are ordinary functions whose first
+        // parameter is the receiver, so both lower to a direct call: traits use
+        // static dispatch and have no vtable. The receiver adjustment is
         // explicit in the argument expression, and the borrow checker sees the
         // same `Rvalue::Ref` it would see for a written borrow.
-        if let MethodKind::User { function, .. } = resolved.kind {
+        if let Some(function) = resolved.kind.function() {
             let receiver_argument = match resolved.receiver_adjust {
                 ReceiverAdjust::None => self.lower_operand(receiver),
                 ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
                     self.lower_borrowed_receiver(receiver, &resolved)
                 }
+                ReceiverAdjust::SharedReborrow => self.lower_shared_reborrow(receiver, &resolved),
             };
             let mut call_args = Vec::with_capacity(args.len() + 1);
             call_args.push(receiver_argument);
@@ -728,7 +730,7 @@ impl<'a> BodyLowering<'a> {
         }
 
         let MethodKind::Intrinsic(method) = resolved.kind else {
-            unreachable!("the user branch returned")
+            unreachable!("the user and trait branches returned")
         };
         let receiver = match resolved.receiver_form {
             seal_typeck::ReceiverForm::Value => {
@@ -782,7 +784,7 @@ impl<'a> BodyLowering<'a> {
         let kind = match resolved.receiver_adjust {
             ReceiverAdjust::ExclusiveBorrow => seal_ty::RefKind::Exclusive,
             ReceiverAdjust::SharedBorrow => seal_ty::RefKind::Shared,
-            ReceiverAdjust::None => {
+            ReceiverAdjust::None | ReceiverAdjust::SharedReborrow => {
                 unreachable!("only borrowed receivers need materialization")
             }
         };
@@ -794,6 +796,45 @@ impl<'a> BodyLowering<'a> {
             self.hir.expr(receiver).span,
         );
         Operand::Copy(reference)
+    }
+
+    /// Reborrows a `*mut T` receiver as a `*T` for a read-only method.
+    ///
+    /// The receiver expression holds the exclusive reference, so the new shared
+    /// loan covers the pointee, not the pointer variable: the place is
+    /// dereferenced before the borrow, exactly as `&*reference` would be. The
+    /// borrow checker then orders this loan against every other loan of the
+    /// pointee and allows the method to read it.
+    fn lower_shared_reborrow(
+        &mut self,
+        receiver: HirExprId,
+        resolved: &seal_typeck::ResolvedMethod,
+    ) -> Operand {
+        let reference = if let Some(place) = self.typeck.place(receiver) {
+            let place = place.clone();
+            self.resolved_place(&place)
+        } else {
+            let ty = self.expr_ty(receiver);
+            let temp = self.new_temp(ty, self.hir.expr(receiver).span);
+            self.lower_expr_into(receiver, Some(temp.clone()));
+            temp
+        };
+        let pointee = reference.deref();
+        let shared_ty = self
+            .hir
+            .ty_ctxt()
+            .ref_ty_with(seal_ty::RefKind::Shared, resolved.receiver_ty);
+        let span = self.hir.expr(receiver).span;
+        let shared = self.new_temp(shared_ty, span);
+        self.assign_rvalue(
+            shared.clone(),
+            Rvalue::Ref {
+                place: pointee,
+                kind: seal_ty::RefKind::Shared,
+            },
+            span,
+        );
+        Operand::Copy(shared)
     }
 
     fn lower_operand(&mut self, expr: HirExprId) -> Operand {

@@ -1,7 +1,8 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
 use seal_ast::{
-    Ast, AstBuilder, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl, TypeId,
+    Ast, AstBuilder, ExprId, FnDecl, ImplDecl, ItemId, ItemKind, ParamId, StructDecl, TraitDecl,
+    TraitMethodDecl, TypeId,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -65,6 +66,9 @@ impl<'a> Parser<'a> {
             } else if self.at(TokenKind::Impl) {
                 let item = self.parse_impl();
                 self.items.push(item);
+            } else if self.at(TokenKind::Trait) {
+                let item = self.parse_trait();
+                self.items.push(item);
             } else {
                 let start = self.current_span();
                 let found = self.describe(self.current_kind());
@@ -73,12 +77,13 @@ impl<'a> Parser<'a> {
                     start,
                     format!("expected an item, found {found}"),
                 )
-                .help("top-level items start with `func`, `struct`, or `impl`")
+                .help("top-level items start with `func`, `struct`, `impl`, or `trait`")
                 .emit();
                 while !self.is_eof()
                     && !self.at(TokenKind::Func)
                     && !self.at(TokenKind::Struct)
                     && !self.at(TokenKind::Impl)
+                    && !self.at(TokenKind::Trait)
                 {
                     self.bump();
                 }
@@ -95,55 +100,7 @@ impl<'a> Parser<'a> {
 
     fn parse_function(&mut self) -> ItemId {
         let keyword = self.bump();
-        let (name, name_span) = self.expect_ident("a function name");
-        let _ = self.expect(TokenKind::LParen, "`(` after the function name");
-
-        let mut params: Vec<ParamId> = Vec::new();
-        while !self.at(TokenKind::RParen)
-            && !self.at(TokenKind::Arrow)
-            && !self.at(TokenKind::LBrace)
-            && !self.is_eof()
-        {
-            let before = self.index;
-            let (param_name, param_name_span) = self.expect_ident("a parameter name");
-            let _ = self.expect(TokenKind::Colon, "`:` after the parameter name");
-            let ty = self.parse_type();
-            let span = param_name_span.cover(self.builder.ast().ty(ty).span);
-            params.push(
-                self.builder
-                    .push_param(param_name, param_name_span, ty, span),
-            );
-
-            if self.eat(TokenKind::Comma) {
-                continue;
-            }
-            if self.at(TokenKind::RParen)
-                || self.at(TokenKind::Arrow)
-                || self.at(TokenKind::LBrace)
-                || self.is_eof()
-            {
-                break;
-            }
-            let found = self.describe(self.current_kind());
-            self.error(
-                codes::E1002,
-                self.current_span(),
-                format!("expected `,` between parameters, found {found}"),
-            )
-            .help("separate parameters with `,`")
-            .emit();
-            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
-                break;
-            }
-            self.ensure_progress(before);
-        }
-
-        let _ = self.expect(TokenKind::RParen, "`)` after the parameter list");
-        let ret = if self.eat(TokenKind::Arrow) {
-            Some(self.parse_type())
-        } else {
-            None
-        };
+        let (name, name_span, params, ret) = self.parse_signature();
         let body = if self.at(TokenKind::LBrace) {
             self.parse_block()
         } else {
@@ -172,15 +129,81 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// Parses `impl Type { func ... }`.
+    /// Parses the name, parameters, and return type shared by every function
+    /// declaration, including trait method signatures.
     ///
-    /// Seal has no traits yet, so the target is always a single nominal type
-    /// name. Functions are parsed by the regular function parser and kept in
-    /// the item arena; the implementation item references them, keeping the
-    /// whole tree reachable without a second declaration grammar.
+    /// Parameters stop at the closing parenthesis, the arrow, a `{`, or a `;`,
+    /// so a missing `)` in a trait signature does not swallow the semicolon that
+    /// ends the declaration.
+    fn parse_signature(&mut self) -> (Symbol, Span, Vec<ParamId>, Option<TypeId>) {
+        let (name, name_span) = self.expect_ident("a function name");
+        let _ = self.expect(TokenKind::LParen, "`(` after the function name");
+
+        let mut params: Vec<ParamId> = Vec::new();
+        while !self.at(TokenKind::RParen)
+            && !self.at(TokenKind::Arrow)
+            && !self.at(TokenKind::LBrace)
+            && !self.at(TokenKind::Semicolon)
+            && !self.is_eof()
+        {
+            let before = self.index;
+            let (param_name, param_name_span) = self.expect_ident("a parameter name");
+            let _ = self.expect(TokenKind::Colon, "`:` after the parameter name");
+            let ty = self.parse_type();
+            let span = param_name_span.cover(self.builder.ast().ty(ty).span);
+            params.push(
+                self.builder
+                    .push_param(param_name, param_name_span, ty, span),
+            );
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RParen)
+                || self.at(TokenKind::Arrow)
+                || self.at(TokenKind::LBrace)
+                || self.at(TokenKind::Semicolon)
+                || self.is_eof()
+            {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` between parameters, found {found}"),
+            )
+            .help("separate parameters with `,`")
+            .emit();
+            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RParen, "`)` after the parameter list");
+        let ret = if self.eat(TokenKind::Arrow) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        (name, name_span, params, ret)
+    }
+
+    /// Parses `impl Type { func ... }` and `impl Trait for Type { func ... }`.
+    ///
+    /// Functions are parsed by the regular function parser and kept in the item
+    /// arena; the implementation item references them, keeping the whole tree
+    /// reachable without a second declaration grammar.
     fn parse_impl(&mut self) -> ItemId {
         let keyword = self.bump();
-        let (type_name, type_span) = self.expect_ident("a type name after `impl`");
+        let (first, first_span) = self.expect_ident("a type or trait name after `impl`");
+        let (trait_name, type_name, type_span) = if self.eat(TokenKind::For) {
+            let (type_name, type_span) = self.expect_ident("a type name after `for`");
+            (Some((first, first_span)), type_name, type_span)
+        } else {
+            (None, first, first_span)
+        };
         let _ = self.expect(TokenKind::LBrace, "`{` after the impl type");
 
         let mut functions = Vec::new();
@@ -210,7 +233,91 @@ impl<'a> Parser<'a> {
             ItemKind::Impl(ImplDecl {
                 type_name,
                 type_span,
+                trait_name,
                 functions,
+            }),
+            span,
+        )
+    }
+
+    /// Parses `trait Name { func signature; ... }`.
+    ///
+    /// A trait contains only signatures. They are stored as items so the arena
+    /// owns them and the reachability invariant covers the whole tree.
+    fn parse_trait(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (name, name_span) = self.expect_ident("a trait name");
+        let _ = self.expect(TokenKind::LBrace, "`{` after the trait name");
+
+        let mut methods = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            if self.at(TokenKind::Func) {
+                methods.push(self.parse_trait_method());
+            } else {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    format!("expected `func` in the trait, found {found}"),
+                )
+                .help("a trait only contains method signatures")
+                .emit();
+                while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::RBrace) {
+                    self.bump();
+                }
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the trait");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::Trait(TraitDecl {
+                name,
+                name_span,
+                methods,
+            }),
+            span,
+        )
+    }
+
+    /// Parses one `func name(...) -> Type;` trait method signature.
+    fn parse_trait_method(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (name, name_span, params, ret) = self.parse_signature();
+
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            if self.at(TokenKind::LBrace) {
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    "a trait method declares only its signature, not a body",
+                )
+                .help("end the declaration with `;`; the implementation supplies the body")
+                .emit();
+                // Consume the body so its braces cannot open a second item and
+                // so recovery resumes after the method.
+                let _ = self.parse_block();
+            } else {
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `;` after the trait method signature, found {found}"),
+                )
+                .help("a trait method declaration ends with `;`")
+                .emit();
+            }
+        }
+
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::TraitMethod(TraitMethodDecl {
+                name,
+                name_span,
+                params,
+                ret,
             }),
             span,
         )
@@ -480,6 +587,8 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Func => "func",
         TokenKind::Struct => "struct",
         TokenKind::Impl => "impl",
+        TokenKind::Trait => "trait",
+        TokenKind::For => "for",
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::Let => "let",

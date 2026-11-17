@@ -240,9 +240,27 @@ impl Reachability<'_> {
                 }
             }
             ItemKind::Impl(declaration) => {
+                if let Some((_, trait_span)) = declaration.trait_name {
+                    self.assert_span(trait_span);
+                }
                 self.assert_span(declaration.type_span);
                 for function in &declaration.functions {
                     self.check_item(*function);
+                }
+            }
+            ItemKind::Trait(declaration) => {
+                self.assert_span(declaration.name_span);
+                for method in &declaration.methods {
+                    self.check_item(*method);
+                }
+            }
+            ItemKind::TraitMethod(declaration) => {
+                self.assert_span(declaration.name_span);
+                if let Some(ret) = declaration.ret {
+                    self.check_type(ret);
+                }
+                for param in &declaration.params {
+                    self.check_param(*param);
                 }
             }
             ItemKind::Error => {}

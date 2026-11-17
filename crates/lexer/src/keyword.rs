@@ -13,6 +13,8 @@ pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
         "func" => TokenKind::Func,
         "struct" => TokenKind::Struct,
         "impl" => TokenKind::Impl,
+        "trait" => TokenKind::Trait,
+        "for" => TokenKind::For,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
         "let" => TokenKind::Let,

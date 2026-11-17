@@ -168,6 +168,10 @@ pub enum TokenKind {
     Struct,
     /// `impl`
     Impl,
+    /// `trait`
+    Trait,
+    /// `for`
+    For,
     /// `if`
     If,
     /// `else`

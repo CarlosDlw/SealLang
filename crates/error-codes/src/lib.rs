@@ -541,10 +541,11 @@ pub const E2015: ErrorCode = ErrorCode {
     code: "E2015",
     title: "invalid impl target",
     explanation: "\
-An inherent implementation attaches methods to one nominal struct declared in
-the same module. The name after `impl` must be that struct, not a primitive, a
-reference, a function, or an undeclared name. Seal has no traits yet, so there
-is no `impl Trait for Type` form.\n\nDeclare the struct with `struct`, then write `impl StructName { ... }`.",
+An implementation attaches methods to one nominal struct declared in the same
+module. The name after `impl` must be that struct, not a primitive, a reference,
+a function, or an undeclared name. The `impl Trait for Type` form names the
+trait first and the struct after `for`; the struct is the target validated here.\n\nDeclare the struct with `struct`, then write `impl StructName { ... }` or
+`impl TraitName for StructName { ... }`.",
 };
 
 /// A method receiver has an invalid declaration.
@@ -576,8 +577,9 @@ pub const E2018: ErrorCode = ErrorCode {
     title: "no such associated function",
     explanation: "\
 A qualified path such as `Point::new` names an associated function declared in
-an impl block for `Point`. The name must be a function in that type's impl
-blocks, and it must not take a `self` receiver.\n\nCheck the name and the impl block, or call an instance method on a value.",
+an impl block for `Point`, either inherent or as part of a trait implementation.
+The name must be one of those functions, and it must not take a `self`
+receiver.\n\nCheck the name and the impl blocks, or call an instance method on a value.",
 };
 
 /// A qualified path names an instance method and omits its receiver.
@@ -589,6 +591,108 @@ The function named by this qualified path is an instance method, because its
 first parameter is `self`. It needs a receiver value and is called with `.`, as
 in `point.sum()`.\n\nCall the method on a value, or make the function associated by removing its
 `self` parameter.",
+};
+
+/// An `impl Trait for Type` block names a trait that is not declared.
+pub const E2020: ErrorCode = ErrorCode {
+    code: "E2020",
+    title: "cannot find the trait for this impl",
+    explanation: "\
+An impl block with the `Trait for Type` form names a trait declared in the same
+file. The name after `impl` must be that trait, not a struct, a function, or an
+undeclared name.\n\nDeclare the trait with `trait`, then write `impl Trait for Type { ... }`. An
+inherent impl omits the trait and keeps only the type: `impl Type { ... }`.",
+};
+
+/// One trait is implemented twice for the same type.
+pub const E2021: ErrorCode = ErrorCode {
+    code: "E2021",
+    title: "trait is implemented twice for one type",
+    explanation: "\
+A type has exactly one implementation of each trait. Two `impl Trait for Type`
+blocks would define the trait's methods twice, and a call would have no way to
+choose between them.\n\nRemove one of the impl blocks, or merge their functions into a single block.",
+};
+
+/// An impl block omits a method the trait declares.
+pub const E2022: ErrorCode = ErrorCode {
+    code: "E2022",
+    title: "trait method is not implemented",
+    explanation: "\
+A trait is a complete list of signatures: implementing it means supplying one
+function for each method, with the name and the signature the trait declares.
+Seal has no default methods, so there is nothing to inherit when a method is
+missing.\n\nAdd the missing function to the impl block, or remove the method from the trait
+declaration.",
+};
+
+/// An impl block defines a function the trait does not declare.
+pub const E2023: ErrorCode = ErrorCode {
+    code: "E2023",
+    title: "function is not declared by the trait",
+    explanation: "\
+An `impl Trait for Type` block implements exactly the methods of that trait. A
+function the trait does not declare does not belong to the trait implementation:
+other code would never reach it through the trait.\n\nMove the function into an inherent `impl Type` block, or declare it in the trait
+first.",
+};
+
+/// An impl function does not match the trait signature.
+pub const E2024: ErrorCode = ErrorCode {
+    code: "E2024",
+    title: "trait method does not match its declaration",
+    explanation: "\
+An implementation must reproduce every method signature exactly: the same
+receiver kind, the same parameter types in the same order, and the same return
+type. Seal has no overloading and no implicit conversions, so a mismatch would
+make the trait's guarantee untrue for one implementor.\n\nIn the trait, write the implementing type as `Self`; in the impl, write the
+concrete struct name. Adjust the receiver or the parameter and return types to
+match the declaration.",
+};
+
+/// `Self` appears outside a trait method signature.
+pub const E2025: ErrorCode = ErrorCode {
+    code: "E2025",
+    title: "`Self` used outside a trait declaration",
+    explanation: "\
+`Self` names the type that implements a trait. It only has a meaning inside a
+trait method signature, where it is replaced with the concrete type when an impl
+is checked. Free functions, inherent impls, struct fields, and local annotations
+have no implementing type, so `Self` there has nothing to name.\n\nWrite the concrete type instead: `Point::new()` or `self: *Point`.",
+};
+
+/// One trait declaration lists the same method name twice.
+pub const E2026: ErrorCode = ErrorCode {
+    code: "E2026",
+    title: "trait method is declared twice",
+    explanation: "\
+A trait is a set of method names, and each name identifies exactly one signature.
+Declaring a name twice would make the trait's requirement depend on declaration
+order and would ask implementors for two functions with one name.\n\nRename one of the methods, or remove the duplicate declaration.",
+};
+
+/// A trait name is used as a value or as a type.
+pub const E2027: ErrorCode = ErrorCode {
+    code: "E2027",
+    title: "trait name used as a value or type",
+    explanation: "\
+A trait declares method signatures: it is not a value, and it is not a type a
+value can have. Trait calls resolve statically to the implementation of the
+receiver's concrete type, so there is no trait object to store or pass.\n\nName a struct in type position and call a trait method on a value of that
+struct. Associated functions declared by a trait are called as `Type::name()`.",
+};
+
+/// A call names a method declared by more than one implemented trait.
+pub const E2028: ErrorCode = ErrorCode {
+    code: "E2028",
+    title: "ambiguous trait method",
+    explanation: "\
+A type may implement several traits, and two of them may declare a method with
+the same name. A call through the value's type then has no single target, and
+Seal has no syntax for naming the trait, so the call is rejected instead of
+picking one by declaration order.\n\nRename one of the trait methods, or remove one of the impl blocks. An inherent
+method with the same name takes precedence over every trait method and is not
+ambiguous.",
 };
 
 /// Expression types do not match.
@@ -1207,10 +1311,11 @@ pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
     E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015, E2016, E2017,
-    E2018, E2019, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011,
-    E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024,
-    E3025, E3026, E3027, E3028, E3029, E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006,
-    E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028, E3001, E3002,
+    E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015,
+    E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028,
+    E3029, E3030, E3031, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1321,7 +1426,8 @@ mod tests {
             [
                 "E2001", "E2002", "E2003", "E2004", "E2005", "E2006", "E2007", "E2008", "E2009",
                 "E2010", "E2011", "E2012", "E2013", "E2014", "E2015", "E2016", "E2017", "E2018",
-                "E2019",
+                "E2019", "E2020", "E2021", "E2022", "E2023", "E2024", "E2025", "E2026", "E2027",
+                "E2028",
             ]
         );
     }

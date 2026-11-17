@@ -32,6 +32,7 @@ mod id;
 mod lower;
 mod primitives;
 mod res;
+mod traits;
 
 #[cfg(test)]
 mod tests;
@@ -41,12 +42,14 @@ pub use expr::{Expr, ExprKind, Place, Projection};
 pub use id::{BodyId, HirBlockId, HirExprId, HirStmtId};
 pub use primitives::primitive_kind;
 pub use res::Res;
+pub use traits::TraitMethodLookup;
 
 use seal_ast::Ast;
 use seal_def::{DefData, DefId, Definitions};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
+use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{AdtId, TyCtxt};
 
@@ -72,6 +75,8 @@ pub struct Hir {
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
     structs: FxHashMap<DefId, AdtId>,
+    traits: FxHashMap<Symbol, DefId>,
+    trait_impls: traits::TraitImpls,
     methods: FxHashMap<(DefId, Symbol), DefId>,
     receivers: FxHashMap<DefId, ReceiverKind>,
 }
@@ -181,8 +186,41 @@ impl Hir {
         self.receivers.get(&function).copied()
     }
 
+    /// Returns the trait declared with `name`, if any.
+    pub fn trait_def(&self, name: Symbol) -> Option<DefId> {
+        self.traits.get(&name).copied()
+    }
+
+    /// Returns the trait method `name` implemented by `type_def`.
+    ///
+    /// Inherent functions are not considered here: callers try [`Hir::method`]
+    /// first, so an inherent method shadows a trait method with the same name.
+    pub fn trait_method(&self, type_def: DefId, name: Symbol) -> TraitMethodLookup {
+        self.trait_impls.lookup(type_def, name)
+    }
+
+    /// Returns the span of the `impl Trait for Type` block, when it exists.
+    pub fn trait_impl_span(&self, trait_def: DefId, type_def: DefId) -> Option<Span> {
+        self.trait_impls.span_of(trait_def, type_def)
+    }
+
     pub(crate) fn insert_struct(&mut self, def: DefId, adt: AdtId) {
         self.structs.insert(def, adt);
+    }
+
+    pub(crate) fn insert_trait_name(&mut self, name: Symbol, def: DefId) {
+        self.traits.insert(name, def);
+    }
+
+    pub(crate) fn insert_trait_impl(
+        &mut self,
+        trait_def: DefId,
+        type_def: DefId,
+        functions: FxHashMap<Symbol, DefId>,
+        span: Span,
+    ) {
+        self.trait_impls
+            .insert(trait_def, type_def, functions, span);
     }
 
     pub(crate) fn insert_method(&mut self, type_def: DefId, name: Symbol, function: DefId) {
@@ -219,6 +257,8 @@ impl Hir {
             ty_ctxt,
             body_of: FxHashMap::default(),
             structs: FxHashMap::default(),
+            traits: FxHashMap::default(),
+            trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
         }

@@ -5,8 +5,9 @@
 //! one entry. The resolved call records every dereference and the way the
 //! receiver reaches MIR, so later phases never repeat inference.
 
+use seal_def::DefId;
 use seal_error_codes as codes;
-use seal_hir::{HirExprId, ReceiverKind};
+use seal_hir::{HirExprId, ReceiverKind, TraitMethodLookup};
 use seal_methods::{MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind};
 use seal_span::Span;
 use seal_symbol::Symbol;
@@ -41,19 +42,28 @@ impl Checker<'_> {
         let receiver_ty = self.infer_expr(receiver, None, flow);
         let receiver_place = self.results.place(receiver).cloned();
 
-        if let Some((type_def, receiver_kind)) =
-            self.user_method_target(receiver_ty, name, name_span)
-        {
+        let target = match self.user_method_target(receiver_ty, name, name_span) {
+            UserLookup::NotAStruct => None,
+            UserLookup::Rejected => {
+                for arg in args {
+                    self.infer_expr(*arg, None, flow);
+                }
+                return self.error_ty();
+            }
+            UserLookup::Method(target) => Some(target),
+        };
+        if let Some(target) = target {
             return self.check_user_method(
-                expr,
-                receiver,
-                receiver_ty,
-                receiver_place.as_ref(),
-                type_def,
-                receiver_kind,
-                name,
-                args,
-                span,
+                UserCall {
+                    expr,
+                    receiver,
+                    receiver_ty,
+                    receiver_place,
+                    target,
+                    name,
+                    args,
+                    span,
+                },
                 flow,
             );
         }
@@ -151,74 +161,127 @@ impl Checker<'_> {
 
     /// Looks up a user method on a nominal receiver before intrinsic lookup.
     ///
-    /// Returns `None` when the receiver is not a struct. A struct with no such
-    /// method reports the error here and returns `Some` so the caller stops
-    /// rather than falling through to the intrinsic catalog.
-    fn user_method_target(
-        &self,
-        receiver_ty: TyId,
-        name: Symbol,
-        name_span: Span,
-    ) -> Option<(seal_def::DefId, ReceiverKind)> {
+    /// An inherent function wins; otherwise the traits the type implements are
+    /// searched. The receiver is not a struct in [`UserLookup::NotAStruct`], so
+    /// the caller falls through to the intrinsic catalog. Every struct receiver
+    /// that fails stops here: the error is reported once and the call does not
+    /// also produce a catalog diagnostic.
+    fn user_method_target(&self, receiver_ty: TyId, name: Symbol, name_span: Span) -> UserLookup {
         let mut base = receiver_ty;
         while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(base) {
             base = pointee;
         }
         let TyKind::Adt(adt) = self.hir.ty_ctxt().kind(base) else {
-            return None;
+            return UserLookup::NotAStruct;
         };
         let type_def = self.hir.ty_ctxt().adt(adt).def;
-        let Some(function) = self.hir.method(type_def, name) else {
-            self.report_missing_method(receiver_ty, name, name_span);
-            return Some((type_def, ReceiverKind::Value));
-        };
-        let Some(kind) = self.hir.receiver(function) else {
-            self.error(
-                codes::E2019,
-                name_span,
-                format!(
-                    "`{}` is an associated function, not a method",
-                    self.interner.resolve(name)
-                ),
-            )
-            .help(format!(
-                "call it as `{}::{}()`, or give it a `self` receiver",
-                self.ty_text(base),
-                self.interner.resolve(name)
-            ))
-            .emit();
-            return Some((type_def, ReceiverKind::Value));
-        };
-        Some((type_def, kind))
+
+        if let Some(function) = self.hir.method(type_def, name) {
+            return match self.hir.receiver(function) {
+                Some(receiver) => UserLookup::Method(UserMethod {
+                    type_def,
+                    function,
+                    receiver,
+                    source: MethodSource::Inherent,
+                }),
+                None => {
+                    self.report_associated_as_method(base, name, name_span);
+                    UserLookup::Rejected
+                }
+            };
+        }
+
+        match self.hir.trait_method(type_def, name) {
+            TraitMethodLookup::Missing => {
+                self.report_missing_method(receiver_ty, name, name_span);
+                UserLookup::Rejected
+            }
+            TraitMethodLookup::Ambiguous(traits) => {
+                self.report_ambiguous_trait_method(base, name, name_span, &traits);
+                UserLookup::Rejected
+            }
+            TraitMethodLookup::Found {
+                trait_def,
+                function,
+            } => match self.hir.receiver(function) {
+                Some(receiver) => UserLookup::Method(UserMethod {
+                    type_def,
+                    function,
+                    receiver,
+                    source: MethodSource::Trait(trait_def),
+                }),
+                None => {
+                    self.report_associated_as_method(base, name, name_span);
+                    UserLookup::Rejected
+                }
+            },
+        }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn check_user_method(
-        &mut self,
-        expr: HirExprId,
-        receiver: HirExprId,
-        receiver_ty: TyId,
-        receiver_place: Option<&ResolvedPlace>,
-        type_def: seal_def::DefId,
-        receiver_kind: ReceiverKind,
+    fn report_associated_as_method(&self, base: TyId, name: Symbol, span: Span) {
+        self.error(
+            codes::E2019,
+            span,
+            format!(
+                "`{}` is an associated function, not a method",
+                self.interner.resolve(name)
+            ),
+        )
+        .help(format!(
+            "call it as `{}::{}()`, or give it a `self` receiver",
+            self.ty_text(base),
+            self.interner.resolve(name)
+        ))
+        .emit();
+    }
+
+    fn report_ambiguous_trait_method(
+        &self,
+        base: TyId,
         name: Symbol,
-        args: &[HirExprId],
         span: Span,
-        flow: &mut Flow,
-    ) -> TyId {
-        let Some(function) = self.hir.method(type_def, name) else {
-            for arg in args {
-                self.infer_expr(*arg, None, flow);
-            }
-            return self.error_ty();
-        };
-        let Some(declared) = self.hir.receiver(function) else {
-            for arg in args {
-                self.infer_expr(*arg, None, flow);
-            }
-            return self.error_ty();
-        };
-        debug_assert_eq!(declared, receiver_kind);
+        traits: &[DefId],
+    ) {
+        let traits = traits
+            .iter()
+            .map(|definition| {
+                format!(
+                    "`{}`",
+                    self.interner
+                        .resolve(self.hir.definitions().name(*definition))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.error(
+            codes::E2028,
+            span,
+            format!(
+                "the method `{}` on `{}` is declared by more than one trait",
+                self.interner.resolve(name),
+                self.ty_text(base)
+            ),
+        )
+        .help(format!(
+            "the traits are {traits}; rename the method in one of them, or add an inherent method"
+        ))
+        .emit();
+    }
+
+    fn check_user_method(&mut self, call: UserCall<'_>, flow: &mut Flow) -> TyId {
+        let UserCall {
+            expr,
+            receiver,
+            receiver_ty,
+            receiver_place,
+            target,
+            name,
+            args,
+            span,
+        } = call;
+        let type_def = target.type_def;
+        let function = target.function;
+        let receiver_kind = target.receiver;
 
         let signature = self
             .results
@@ -244,6 +307,16 @@ impl Checker<'_> {
                 ReceiverKind::Shared => ReceiverAdjust::SharedBorrow,
                 ReceiverKind::Exclusive => ReceiverAdjust::ExclusiveBorrow,
             }
+        } else if receiver_kind == ReceiverKind::Shared
+            && matches!(
+                self.hir.ty_ctxt().kind(receiver_ty),
+                TyKind::Ref {
+                    kind: RefKind::Exclusive,
+                    pointee,
+                } if pointee == base_ty
+            )
+        {
+            ReceiverAdjust::SharedReborrow
         } else {
             self.error(
                 codes::E3031,
@@ -255,13 +328,15 @@ impl Checker<'_> {
                     self.ty_text(receiver_ty)
                 ),
             )
-            .help("adjust the receiver to match the method signature")
+            .help(
+                "adjust the receiver to match the method signature; a `*mut T` receiver can be reborrowed as `*T` for a read-only method",
+            )
             .emit();
             ReceiverAdjust::None
         };
 
         if adjust == ReceiverAdjust::ExclusiveBorrow
-            && !self.receiver_place_is_writable(receiver_place)
+            && !self.receiver_place_is_writable(receiver_place.as_ref())
         {
             self.error(
                 codes::E3029,
@@ -306,13 +381,21 @@ impl Checker<'_> {
 
         let ret_ty = signature.ret;
         if !self.is_error(ret_ty) {
+            let kind = match target.source {
+                MethodSource::Inherent => MethodKind::User {
+                    function,
+                    receiver: receiver_kind,
+                },
+                MethodSource::Trait(trait_def) => MethodKind::Trait {
+                    function,
+                    receiver: receiver_kind,
+                    trait_def,
+                },
+            };
             self.results.record_method(
                 expr,
                 ResolvedMethod {
-                    kind: MethodKind::User {
-                        function,
-                        receiver: receiver_kind,
-                    },
+                    kind,
                     receiver_adjust: adjust,
                     receiver_ty: base_ty,
                     receiver_form: ReceiverForm::Place,
@@ -525,6 +608,45 @@ impl Checker<'_> {
             ReturnKind::Unit => self.unit(),
         }
     }
+}
+
+/// The user-defined resolution chosen for a method call.
+struct UserMethod {
+    type_def: DefId,
+    function: DefId,
+    receiver: ReceiverKind,
+    source: MethodSource,
+}
+
+/// Where a user method was declared.
+#[derive(Clone, Copy)]
+enum MethodSource {
+    /// An inherent `impl Type` block.
+    Inherent,
+    /// An `impl Trait for Type` block, with the trait definition.
+    Trait(DefId),
+}
+
+/// The result of looking for a user method before the intrinsic catalog.
+enum UserLookup {
+    /// The receiver is not a struct, so intrinsic lookup applies.
+    NotAStruct,
+    /// The call resolved to a user method.
+    Method(UserMethod),
+    /// The receiver is a struct and the error was already reported.
+    Rejected,
+}
+
+/// The checked pieces of a user method call.
+struct UserCall<'a> {
+    expr: HirExprId,
+    receiver: HirExprId,
+    receiver_ty: TyId,
+    receiver_place: Option<ResolvedPlace>,
+    target: UserMethod,
+    name: Symbol,
+    args: &'a [HirExprId],
+    span: Span,
 }
 
 struct Resolution {

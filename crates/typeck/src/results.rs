@@ -114,6 +114,30 @@ pub enum MethodKind {
         /// How the method declares its receiver.
         receiver: ReceiverKind,
     },
+    /// An instance method declared by a trait the receiver's type implements.
+    ///
+    /// Dispatch is still static: the call lowers to the concrete function of
+    /// the implementation, exactly like an inherent method.
+    Trait {
+        /// The impl function to call.
+        function: DefId,
+        /// How the method declares its receiver.
+        receiver: ReceiverKind,
+        /// The trait that declares the method.
+        trait_def: DefId,
+    },
+}
+
+impl MethodKind {
+    /// Returns the impl function a user or trait call reaches.
+    ///
+    /// `None` means the call resolves to the intrinsic catalog instead.
+    pub fn function(self) -> Option<DefId> {
+        match self {
+            Self::Intrinsic(_) => None,
+            Self::User { function, .. } | Self::Trait { function, .. } => Some(function),
+        }
+    }
 }
 
 /// How MIR must adjust the receiver expression before a call.
@@ -125,6 +149,11 @@ pub enum ReceiverAdjust {
     SharedBorrow,
     /// Borrow the receiver as `*mut T` for an exclusive user method.
     ExclusiveBorrow,
+    /// Reborrow a `*mut T` receiver as `*T` for a method that only reads.
+    ///
+    /// The reference is dereferenced first, so the loan covers the pointee the
+    /// original reference already reaches instead of the pointer variable.
+    SharedReborrow,
 }
 
 /// A method call resolved by type checking.

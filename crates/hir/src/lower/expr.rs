@@ -1,10 +1,14 @@
 //! Expression lowering.
 
 use seal_ast::{ExprId as AstExprId, ExprKind as AstExprKind};
+use seal_def::DefId;
 use seal_error_codes as codes;
 use seal_hash::FxHashSet;
+use seal_span::Span;
+use seal_symbol::Symbol;
 
 use super::Lowering;
+use crate::TraitMethodLookup;
 use crate::expr::{Expr, ExprKind};
 use crate::id::HirExprId;
 
@@ -191,25 +195,36 @@ impl Lowering<'_> {
         self.hir.push_expr(Expr { kind, span })
     }
 
-    /// Resolves `Type::name` to an associated function declared in an impl.
+    /// Resolves `Type::name` to an associated function declared by the type.
     ///
-    /// The resulting node is a normal function path, so calls, arguments, and
-    /// code generation need no additional case. Instance methods are rejected
-    /// here: they require a receiver and are only reachable through `.`.
+    /// Inherent functions are tried first, then the traits the type implements,
+    /// which is what makes `Type::name()` work for an associated function a
+    /// trait declares. The resulting node is a normal function path, so calls,
+    /// arguments, and code generation need no additional case. Instance methods
+    /// are rejected in both lookups: they need a receiver and are only reachable
+    /// through `.`.
     fn lower_qualified_path(
         &mut self,
-        type_name: seal_symbol::Symbol,
-        type_span: seal_span::Span,
-        name: seal_symbol::Symbol,
-        name_span: seal_span::Span,
+        type_name: Symbol,
+        type_span: Span,
+        name: Symbol,
+        name_span: Span,
     ) -> ExprKind {
         let Some(&type_def) = self.types.get(&type_name) else {
-            let name = self.interner.resolve(type_name);
-            if self.globals.contains_key(&type_name) {
+            let missing = self.interner.resolve(type_name);
+            if self.traits.contains_key(&type_name) {
+                self.error(
+                    codes::E2027,
+                    type_span,
+                    format!("`{missing}` is a trait, not a type"),
+                )
+                .help("call an associated function through the struct that implements it")
+                .emit();
+            } else if self.globals.contains_key(&type_name) {
                 self.error(
                     codes::E2015,
                     type_span,
-                    format!("`{name}` is a value, not a type"),
+                    format!("`{missing}` is a value, not a type"),
                 )
                 .help("a qualified path starts with a struct name")
                 .emit();
@@ -217,7 +232,7 @@ impl Lowering<'_> {
                 self.error(
                     codes::E2002,
                     type_span,
-                    format!("cannot find type `{name}` in this scope"),
+                    format!("cannot find type `{missing}` in this scope"),
                 )
                 .help("declare it with `struct`, or check the spelling")
                 .emit();
@@ -225,21 +240,62 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
-        let Some(function) = self.hir.method(type_def, name) else {
-            self.error(
-                codes::E2018,
-                name_span,
-                format!(
-                    "the type `{}` has no associated function `{}`",
-                    self.interner.resolve(type_name),
-                    self.interner.resolve(name)
-                ),
-            )
-            .help("declare it in an `impl` block for the type")
-            .emit();
-            return ExprKind::Error;
-        };
+        if let Some(function) = self.hir.method(type_def, name) {
+            return self.qualified_function(function, name, name_span);
+        }
 
+        match self.hir.trait_method(type_def, name) {
+            TraitMethodLookup::Found { function, .. } => {
+                self.qualified_function(function, name, name_span)
+            }
+            TraitMethodLookup::Ambiguous(traits) => {
+                let traits = traits
+                    .iter()
+                    .map(|definition| {
+                        format!(
+                            "`{}`",
+                            self.interner
+                                .resolve(self.hir.definitions().name(*definition))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.error(
+                    codes::E2028,
+                    name_span,
+                    format!(
+                        "`{}` is declared by more than one trait implemented for `{}`",
+                        self.interner.resolve(name),
+                        self.interner.resolve(type_name)
+                    ),
+                )
+                .help(format!(
+                    "the traits are {traits}; rename the method in one of them"
+                ))
+                .emit();
+                ExprKind::Error
+            }
+            TraitMethodLookup::Missing => {
+                self.error(
+                    codes::E2018,
+                    name_span,
+                    format!(
+                        "the type `{}` has no associated function `{}`",
+                        self.interner.resolve(type_name),
+                        self.interner.resolve(name)
+                    ),
+                )
+                .help(
+                    "declare it in an `impl` block for the type, or in a trait the type implements",
+                )
+                .emit();
+                ExprKind::Error
+            }
+        }
+    }
+
+    /// Turns a resolved associated function into a callable path.
+    fn qualified_function(&mut self, function: DefId, name: Symbol, name_span: Span) -> ExprKind {
         if self.hir.receiver(function).is_some() {
             let function_name = self.interner.resolve(name);
             self.error(
@@ -286,6 +342,16 @@ impl Lowering<'_> {
 
         let Some(definition) = self.types.get(&name).copied() else {
             let struct_name = self.interner.resolve(name);
+            if self.traits.contains_key(&name) {
+                self.error(
+                    codes::E2027,
+                    name_span,
+                    format!("`{struct_name}` is a trait, not a struct"),
+                )
+                .help("build a value of a struct that implements it")
+                .emit();
+                return ExprKind::Error;
+            }
             if self.globals.contains_key(&name) {
                 self.error(
                     codes::E2011,

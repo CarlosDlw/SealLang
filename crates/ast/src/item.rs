@@ -21,8 +21,13 @@ pub enum ItemKind {
     Func(FnDecl),
     /// A struct declaration.
     Struct(StructDecl),
-    /// An inherent implementation block for a nominal struct.
+    /// An inherent implementation block for a nominal struct, or a trait
+    /// implementation for one.
     Impl(ImplDecl),
+    /// A trait declaration.
+    Trait(TraitDecl),
+    /// One method signature inside a trait declaration.
+    TraitMethod(TraitMethodDecl),
     /// Syntax the parser could not turn into an item.
     Error,
 }
@@ -51,19 +56,55 @@ pub struct FieldDecl {
     pub span: Span,
 }
 
-/// An inherent implementation block.
+/// An implementation block.
 ///
-/// Seal has no traits yet, so an implementation only attaches functions to one
-/// nominal struct. A function whose first parameter is named `self` is an
-/// instance method; every other function is an associated function.
+/// `impl Type { ... }` attaches functions directly to a nominal struct, while
+/// `impl Trait for Type { ... }` implements a trait declared in the same file.
+/// A function whose first parameter is named `self` is an instance method;
+/// every other function is an associated function.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplDecl {
     /// The struct receiving the functions.
     pub type_name: Symbol,
     /// The span of the type name, for diagnostics.
     pub type_span: Span,
+    /// The trait being implemented, when the block has the `Trait for Type`
+    /// form. It holds the trait name and the span of that name.
+    pub trait_name: Option<(Symbol, Span)>,
     /// The functions declared in source order.
     pub functions: Vec<ItemId>,
+}
+
+/// A trait declaration.
+///
+/// A trait is a list of method signatures. Seal resolves every call statically:
+/// implementing the trait attaches one concrete function per signature, and
+/// there is no vtable or trait object. A signature writes `Self` wherever the
+/// implementing type appears, including in the receiver type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TraitDecl {
+    /// The trait name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// Method signatures in declaration order.
+    pub methods: Vec<ItemId>,
+}
+
+/// One method signature inside a trait declaration.
+///
+/// Trait methods declare no body: the implementation supplies it. The parser
+/// stores them as items so the arena and its reachability invariants cover them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TraitMethodDecl {
+    /// The method name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// Parameters in source order, including the receiver when present.
+    pub params: Vec<ParamId>,
+    /// The declared return type; `None` means unit.
+    pub ret: Option<TypeId>,
 }
 
 /// A function declaration.
