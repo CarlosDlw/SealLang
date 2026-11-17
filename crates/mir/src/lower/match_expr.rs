@@ -54,6 +54,7 @@ enum FlatPatternKind {
         adt: AdtId,
         fields: Vec<(DefId, FlatPattern)>,
     },
+    Tuple(Vec<FlatPattern>),
     Array {
         prefix: Vec<FlatPattern>,
         suffix: Vec<FlatPattern>,
@@ -233,6 +234,11 @@ impl BodyLowering<'_> {
                     self.collect_binding_defs(*field, out);
                 }
             }
+            PatternKind::Tuple(elements) => {
+                for element in elements {
+                    self.collect_binding_defs(*element, out);
+                }
+            }
             PatternKind::Array { prefix, suffix, .. } => {
                 for element in prefix.iter().chain(suffix) {
                     self.collect_binding_defs(*element, out);
@@ -319,6 +325,14 @@ impl BodyLowering<'_> {
                     })
                     .collect()
             }
+            PatternKind::Tuple(elements) => self
+                .expand_sequence(elements)
+                .into_iter()
+                .map(|fields| FlatPattern {
+                    kind: FlatPatternKind::Tuple(fields),
+                    span,
+                })
+                .collect(),
             PatternKind::Array {
                 prefix,
                 suffix,
@@ -493,6 +507,30 @@ impl BodyLowering<'_> {
                     let field_ty = field_def.ty;
                     let field_place = place.clone().field(*field);
                     self.lower_flat_pattern(child, field_place, field_ty, fail, bindings);
+                }
+            }
+            FlatPatternKind::Tuple(fields) => {
+                let mut place = place;
+                let mut ty = ty;
+                while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(ty) {
+                    place = place.deref();
+                    ty = pointee;
+                }
+                let elements = match self.hir.ty_ctxt().kind(ty) {
+                    TyKind::Tuple(tuple) => self.hir.ty_ctxt().tuple_elements(tuple),
+                    TyKind::Unit => Vec::new(),
+                    _ => {
+                        self.current = Some(fail);
+                        return;
+                    }
+                };
+                if elements.len() != fields.len() {
+                    self.current = Some(fail);
+                    return;
+                }
+                for (index, (child, element_ty)) in fields.iter().zip(elements).enumerate() {
+                    let field_place = place.clone().tuple_field(index as u32);
+                    self.lower_flat_pattern(child, field_place, element_ty, fail, bindings);
                 }
             }
             FlatPatternKind::Array {

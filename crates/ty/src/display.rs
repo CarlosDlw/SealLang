@@ -63,6 +63,20 @@ impl fmt::Display for TyDisplay<'_> {
                 Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name)),
                 None => write!(f, "<struct#{}>", adt.index()),
             },
+            TyKind::Tuple(tuple) => {
+                let elements = self.ctxt.tuple_elements(tuple);
+                f.write_str("(")?;
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", self.display(*element))?;
+                }
+                if elements.len() == 1 {
+                    f.write_str(",")?;
+                }
+                f.write_str(")")
+            }
             TyKind::Unit => f.write_str("()"),
             TyKind::Never => f.write_str("!"),
             TyKind::Error => f.write_str("<error>"),
@@ -146,6 +160,19 @@ mod tests {
             ctxt.display(ctxt.ref_ty(ctxt.slice_ty(int))).to_string(),
             "*[i32]"
         );
+    }
+
+    #[test]
+    fn tuples_render_with_source_syntax_and_a_trailing_comma() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let bool_ty = ctxt.bool_ty();
+        assert_eq!(
+            ctxt.display(ctxt.tuple_ty(&[int, bool_ty])).to_string(),
+            "(i32, bool)"
+        );
+        assert_eq!(ctxt.display(ctxt.tuple_ty(&[int])).to_string(), "(i32,)");
+        assert_eq!(ctxt.display(ctxt.tuple_ty(&[])).to_string(), "()");
     }
 
     #[test]

@@ -409,12 +409,23 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Slice { .. }
             | ExprKind::Deref { .. }
             | ExprKind::Field { .. }
+            | ExprKind::TupleField { .. }
             | ExprKind::Index { .. } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(expr);
                     let ty = self.expr_ty(expr);
                     let operand = self.place_operand(place, ty);
                     self.assign_operand(dest, operand, span);
+                }
+            }
+            ExprKind::Tuple { elements } => {
+                let ty = self.expr_ty(expr);
+                let elements: Vec<Operand> = elements
+                    .iter()
+                    .map(|element| self.lower_operand(*element))
+                    .collect();
+                if let Some(dest) = dest {
+                    self.assign_rvalue(dest, Rvalue::Tuple { elements, ty }, span);
                 }
             }
             ExprKind::Array { elements } => {
@@ -992,6 +1003,16 @@ impl<'a> BodyLowering<'a> {
                     }
                     slice_reference = None;
                     projections.push(Projection::Field(*field));
+                }
+                PlaceProjection::TupleField(index) => {
+                    if let TyKind::Tuple(tuple) = self.hir.ty_ctxt().kind(ty)
+                        && let Some(element) =
+                            self.hir.ty_ctxt().tuple_element(tuple, *index as usize)
+                    {
+                        ty = element;
+                    }
+                    slice_reference = None;
+                    projections.push(Projection::TupleField(*index));
                 }
                 PlaceProjection::Index {
                     index,

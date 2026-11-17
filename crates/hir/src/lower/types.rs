@@ -13,7 +13,7 @@ impl Lowering<'_> {
     /// Every occurrence of the same type returns the same [`TyId`], so the
     /// checker can compare types by identity.
     pub(super) fn lower_type(&mut self, ty: TypeId) -> TyId {
-        match self.ast.ty(ty).kind {
+        match self.ast.ty(ty).kind.clone() {
             TypeKind::Primitive(primitive) => {
                 self.hir.ty_ctxt_mut().intern(primitive_kind(primitive))
             }
@@ -30,6 +30,13 @@ impl Lowering<'_> {
             } => {
                 let element = self.lower_type(element);
                 self.hir.ty_ctxt_mut().array_ty(element, length)
+            }
+            TypeKind::Tuple(elements) => {
+                let elements: Vec<TyId> = elements
+                    .into_iter()
+                    .map(|element| self.lower_type(element))
+                    .collect();
+                self.hir.ty_ctxt_mut().tuple_ty(&elements)
             }
             TypeKind::Slice { element } => {
                 let element = self.lower_type(element);

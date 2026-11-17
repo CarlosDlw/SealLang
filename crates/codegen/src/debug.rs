@@ -347,6 +347,56 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                     )
                     .as_type()
             }
+            TyKind::Tuple(tuple) => {
+                let layout = self.mapper.layout(ty)?;
+                let size_bits = layout.size().checked_mul(8).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "tuple type {ty:?} is too large for debug information"
+                    ))
+                })?;
+                let scope = self.unit.as_debug_info_scope();
+                let element_layouts = self.mapper.tuple_field_layouts(ty)?;
+                let mut members = Vec::with_capacity(element_layouts.len());
+                for (index, (element, element_layout)) in self
+                    .tcx
+                    .tuple_elements(tuple)
+                    .into_iter()
+                    .zip(&element_layouts)
+                    .enumerate()
+                {
+                    let member_type = self.di_type(element)?;
+                    let name = index.to_string();
+                    let member = self.builder.create_member_type(
+                        scope,
+                        &name,
+                        self.unit_file,
+                        0,
+                        element_layout.layout.size() * 8,
+                        bits_u32(element_layout.layout.align() * 8)?,
+                        element_layout.offset * 8,
+                        DIFlags::ZERO,
+                        member_type,
+                    );
+                    members.push(member.as_type());
+                }
+                let name = self.tcx.display(ty).to_string();
+                self.builder
+                    .create_struct_type(
+                        scope,
+                        &name,
+                        self.unit_file,
+                        0,
+                        size_bits,
+                        bits_u32(layout.align() * 8)?,
+                        DIFlags::ZERO,
+                        None,
+                        &members,
+                        0,
+                        None,
+                        "",
+                    )
+                    .as_type()
+            }
             TyKind::Adt(adt) => self.adt_type(adt)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,

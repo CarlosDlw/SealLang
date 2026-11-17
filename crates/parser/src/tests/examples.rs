@@ -40,6 +40,7 @@ fn all_examples_parse_without_diagnostics() {
         ("023_for.sl", 9),
         ("024_if_let.sl", 9),
         ("025_while_let.sl", 6),
+        ("026_tuples.sl", 6),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

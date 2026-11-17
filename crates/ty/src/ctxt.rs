@@ -8,7 +8,7 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
-use crate::id::{AdtId, InferTyId, TyId, VariantIdx};
+use crate::id::{AdtId, InferTyId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
 
 /// Interns types and answers structural queries about them.
@@ -26,6 +26,8 @@ pub struct TyCtxt {
     kinds: RefCell<IndexVec<TyId, TyKind>>,
     interner: RefCell<FxHashMap<TyKind, TyId>>,
     adts: RefCell<IndexVec<AdtId, AdtDef>>,
+    tuples: RefCell<IndexVec<TupleId, Vec<TyId>>>,
+    tuple_interner: RefCell<FxHashMap<Vec<TyId>, TupleId>>,
 }
 
 impl TyCtxt {
@@ -140,6 +142,53 @@ impl TyCtxt {
     /// Returns the type naming `adt`.
     pub fn adt_ty(&self, adt: AdtId) -> TyId {
         self.intern(TyKind::Adt(adt))
+    }
+
+    /// Returns the tuple type `(elements...)`.
+    ///
+    /// The empty tuple is the unit type, so `tuple_ty(&[])` returns `()`.  Tuple
+    /// types are structural: the element list is interned once and every
+    /// occurrence of the same list shares one [`TupleId`].
+    pub fn tuple_ty(&self, elements: &[TyId]) -> TyId {
+        if elements.is_empty() {
+            return self.unit_ty();
+        }
+        if let Some(&tuple) = self.tuple_interner.borrow().get(elements) {
+            return self.intern(TyKind::Tuple(tuple));
+        }
+        let tuple = self.tuples.borrow_mut().push(elements.to_vec());
+        self.tuple_interner
+            .borrow_mut()
+            .insert(elements.to_vec(), tuple);
+        self.intern(TyKind::Tuple(tuple))
+    }
+
+    /// Returns the tuple id of `ty` when it is a non-unit tuple.
+    pub fn tuple_id(&self, ty: TyId) -> Option<TupleId> {
+        match self.kind(ty) {
+            TyKind::Tuple(tuple) => Some(tuple),
+            _ => None,
+        }
+    }
+
+    /// Returns the element types of a tuple in declaration order.
+    pub fn tuple_elements(&self, tuple: TupleId) -> Vec<TyId> {
+        self.tuples.borrow()[tuple].clone()
+    }
+
+    /// Returns the number of elements of a tuple.
+    pub fn tuple_len(&self, tuple: TupleId) -> usize {
+        self.tuples.borrow()[tuple].len()
+    }
+
+    /// Returns one element type of a tuple, if the index is in range.
+    pub fn tuple_element(&self, tuple: TupleId, index: usize) -> Option<TyId> {
+        self.tuples.borrow()[tuple].get(index).copied()
+    }
+
+    /// Returns the number of interned tuple element lists.
+    pub fn tuple_len_total(&self) -> usize {
+        self.tuples.borrow().len()
     }
 
     /// Returns the struct field with the given definition in `adt`.
@@ -271,6 +320,13 @@ impl TyCtxt {
             // it gains nothing from an explicit opt-in: its elements already
             // decide whether a bitwise copy is safe.
             TyKind::Array { element, .. } => self.is_copy(element),
+            // A tuple is a structural product of independent values, so it is
+            // `Copy` exactly when every element is. This mirrors arrays and is
+            // what makes `(i32, bool)` usable in a loop without a move.
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .all(|element| self.is_copy(*element)),
             // A user-defined aggregate owns its fields; it becomes `Copy` only
             // through an explicit opt-in, which the language does not have yet.
             // Its fields remain individually copyable.
@@ -292,6 +348,10 @@ impl TyCtxt {
         match self.kind(ty) {
             TyKind::Str | TyKind::Slice { .. } | TyKind::Infer(_) => false,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .all(|element| self.is_sized_inner(*element, visiting)),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     // A by-value cycle has no finite size; type checking reports
@@ -323,6 +383,10 @@ impl TyCtxt {
     fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<AdtId>) -> bool {
         match self.kind(ty) {
             TyKind::Array { element, .. } => self.needs_drop_inner(element, visiting),
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .any(|element| self.needs_drop_inner(*element, visiting)),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -352,6 +416,10 @@ impl TyCtxt {
             TyKind::Slice { element } | TyKind::Array { element, .. } => {
                 self.contains_reference_inner(element, visiting)
             }
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .any(|element| self.contains_reference_inner(*element, visiting)),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;
@@ -387,6 +455,10 @@ impl TyCtxt {
             TyKind::Slice { element } | TyKind::Array { element, .. } => {
                 self.contains_exclusive_reference_inner(element, visiting)
             }
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .any(|element| self.contains_exclusive_reference_inner(*element, visiting)),
             TyKind::Adt(adt) => {
                 if !visiting.insert(adt) {
                     return false;

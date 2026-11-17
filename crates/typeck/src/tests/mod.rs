@@ -21,5 +21,6 @@ mod slices;
 mod structs;
 mod support;
 mod traits;
+mod tuples;
 mod user_methods;
 mod while_let;

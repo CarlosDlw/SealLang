@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::id::{AdtId, InferTyId, TyId};
+use crate::id::{AdtId, InferTyId, TupleId, TyId};
 
 /// A signed integer type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -238,6 +238,12 @@ pub enum TyKind {
     },
     /// A nominal aggregate type, such as a struct.
     Adt(AdtId),
+    /// A structural tuple type `(T, U, ...)`.
+    ///
+    /// The tuple's element types live in [`TyCtxt`](crate::TyCtxt)'s tuple
+    /// arena. The empty tuple is represented as [`TyKind::Unit`], not as a
+    /// zero-element tuple, so `()` has one canonical meaning everywhere.
+    Tuple(TupleId),
     /// The unit type `()`.
     Unit,
     /// The never type `!`, the type of expressions that do not return.

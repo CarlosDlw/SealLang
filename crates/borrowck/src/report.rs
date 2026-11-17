@@ -288,6 +288,7 @@ impl<'a> Reporter<'a> {
                             .resolve(self.hir.definitions().get(*field).name),
                     );
                 }
+                Projection::TupleField(index) => text.push_str(&format!(".{index}")),
                 Projection::Index {
                     constant: Some(index),
                     ..

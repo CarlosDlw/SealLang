@@ -262,7 +262,7 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
             }
             Ok(())
         }
-        Rvalue::Array { elements, .. } => {
+        Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
             for element in elements {
                 check_operand(body, block, element)?;
             }

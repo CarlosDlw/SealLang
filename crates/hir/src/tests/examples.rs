@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 24] = [
+const EXAMPLES: [&str; 25] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -32,6 +32,7 @@ const EXAMPLES: [&str; 24] = [
     "023_for.sl",
     "024_if_let.sl",
     "025_while_let.sl",
+    "026_tuples.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -111,7 +112,14 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
         ExprKind::Unary { operand, .. }
         | ExprKind::Borrow { operand, .. }
         | ExprKind::Deref { operand } => collect_expr(hir, *operand, stmts, exprs),
-        ExprKind::Field { base, .. } => collect_expr(hir, *base, stmts, exprs),
+        ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
+            collect_expr(hir, *base, stmts, exprs)
+        }
+        ExprKind::Tuple { elements } => {
+            for element in elements {
+                collect_expr(hir, *element, stmts, exprs);
+            }
+        }
         ExprKind::Array { elements } => {
             for element in elements {
                 collect_expr(hir, *element, stmts, exprs);

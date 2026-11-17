@@ -185,6 +185,10 @@ impl Checker<'_> {
                     text.push('.');
                     text.push_str(self.def_name(*field));
                 }
+                PlaceProjection::TupleField(index) => {
+                    text.push('.');
+                    text.push_str(&index.to_string());
+                }
                 PlaceProjection::Index {
                     constant: Some(index),
                     ..

@@ -31,3 +31,12 @@ newtype_index! {
     /// different places.
     pub struct AdtId;
 }
+
+newtype_index! {
+    /// Index of a structural tuple type in a [`TyCtxt`](crate::TyCtxt).
+    ///
+    /// Tuples have no declaration site, so they are interned by their element
+    /// list. Two tuple types are equal exactly when their `TupleId`s are equal,
+    /// which makes the arity and every element part of type identity.
+    pub struct TupleId;
+}

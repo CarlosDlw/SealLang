@@ -353,7 +353,14 @@ impl Reachability<'_> {
             ExprKind::Unary { operand, .. }
             | ExprKind::Borrow { operand, .. }
             | ExprKind::Deref { operand } => self.check_expr(operand),
-            ExprKind::Field { base, .. } => self.check_expr(base),
+            ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
+                self.check_expr(base)
+            }
+            ExprKind::Tuple { elements } => {
+                for element in elements {
+                    self.check_expr(element);
+                }
+            }
             ExprKind::Array { elements } => {
                 for element in elements {
                     self.check_expr(element);
@@ -514,6 +521,11 @@ impl Reachability<'_> {
                     assert_eq!(field_data.kind, DefKind::Field);
                     assert_eq!(field_data.parent, Some(adt));
                     self.check_pattern(pattern);
+                }
+            }
+            PatternKind::Tuple(elements) => {
+                for element in elements {
+                    self.check_pattern(element);
                 }
             }
             PatternKind::Array { prefix, suffix, .. } => {

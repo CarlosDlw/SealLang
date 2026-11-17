@@ -59,13 +59,22 @@ two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
 
-`match` is an expression over enum variants, structs, arrays, and scalar values.
-A braced block is an ordinary expression, so an arm body can run statements and
-produce a value. Patterns nest: they match unit, positional, and named variants,
-destructure structs (a trailing `..` ignores the fields an arm does not use),
-follow a reference to a struct or variant without an
-explicit dereference, match every element of a fixed-size array or a slice, bind
-fields, compare integer, float, character, and boolean literals, range over
+Tuples are structural product types: `(i32, bool)` is the same type wherever it
+is written, and elements are accessed by position with `.0`, `.1`, and so on.
+`(T,)` is a one-element tuple, `(T)` only groups, and `()` is the unit type. A
+tuple is `Copy` exactly when every element is; otherwise it moves as a whole,
+while a single element can still be moved, borrowed, or initialized on its own.
+Tuple patterns write one subpattern per element and follow references like
+struct patterns do.
+
+`match` is an expression over enum variants, structs, tuples, arrays, and scalar
+values. A braced block is an ordinary expression, so an arm body can run
+statements and produce a value. Patterns nest: they match unit, positional, and
+named variants, destructure structs (a trailing `..` ignores the fields an arm
+does not use), destructure tuples by position, follow a reference to a struct,
+variant, or tuple without an explicit dereference, match every element of a
+fixed-size array or a slice, bind fields, compare integer, float, character, and
+boolean literals, range over
 integers and characters (`0..=9`, `'a'..='z'`), bind a whole value while narrowing it
 (`name @ 0..=9`), and combine alternatives with `|`. An arm may carry an `if`
 guard, which sees only `Copy` bindings because a failed guard must leave the
@@ -131,6 +140,7 @@ isolation check on its own.
 | Floating point | `f32`, `f64` | IEEE 754 binary32 and binary64 |
 | Text | `bool`, `char`, `str`, `*str` | `char` is a Unicode scalar value; `str` is unsized and only usable behind a reference |
 | References | `*T`, `*mut T` | Non-null, non-owning, and `Copy`; shared or exclusive |
+| Tuples | `(T, U)`, `(T,)`, `()` | Structural product types; fields are `.0`, `.1`, …; `Copy` when every element is |
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
@@ -157,7 +167,7 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 ## Status
 
 The current language surface is functions, nominal structs and enums,
-fixed-size arrays, slices, shared and exclusive references, `let` bindings with
+structural tuples, fixed-size arrays, slices, shared and exclusive references, `let` bindings with
 definite initialization, `if`, `if let`, `while`, `while let`, `for` over integer ranges and sequences,
 `break`, `continue`, `return`, `match`
 expressions with structural patterns, guards, and exhaustiveness checking, the

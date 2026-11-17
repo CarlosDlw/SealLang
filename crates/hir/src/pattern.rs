@@ -65,6 +65,8 @@ pub enum PatternKind {
         /// One entry per declared field: the field definition and its pattern.
         fields: Vec<(DefId, HirPatternId)>,
     },
+    /// A tuple pattern, with one subpattern per element.
+    Tuple(Vec<HirPatternId>),
     /// A fixed-size array pattern.
     Array {
         /// Patterns for the first elements, in index order.

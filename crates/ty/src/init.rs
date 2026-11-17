@@ -23,14 +23,16 @@ use crate::kind::TyKind;
 
 /// One step of a move path inside a local.
 ///
-/// Fields are selected by definition and array elements by their constant
-/// index. A dynamic index cannot name one element at compile time, so callers
-/// use the parent array path instead; the state of the whole array then covers
-/// the access conservatively.
+/// Fields are selected by definition, tuple elements by their position, and
+/// array elements by their constant index. A dynamic index cannot name one
+/// element at compile time, so callers use the parent array path instead; the
+/// state of the whole array then covers the access conservatively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PathElem {
     /// A named struct field.
     Field(DefId),
+    /// A tuple element, named by its zero-based position.
+    TupleField(u32),
     /// A constant array index.
     Index(u64),
 }
@@ -108,8 +110,10 @@ impl<K: Copy + Eq + Hash> InitPaths<K> {
             }
             None => {
                 let ty = place_type(tcx, root_ty, path).unwrap_or_else(|| tcx.error_ty());
-                if matches!(tcx.kind(ty), TyKind::Adt(_) | TyKind::Array { .. })
-                    && self.fully_initialized(root, path, tcx, ty, &mut FxHashSet::default())
+                if matches!(
+                    tcx.kind(ty),
+                    TyKind::Adt(_) | TyKind::Array { .. } | TyKind::Tuple(_)
+                ) && self.fully_initialized(root, path, tcx, ty, &mut FxHashSet::default())
                 {
                     InitState::Initialized
                 } else if self.descendant_moved(root, path) {
@@ -258,6 +262,16 @@ impl<K: Copy + Eq + Hash> InitPaths<K> {
                     self.fully_initialized(root, &nested, tcx, element, visiting)
                 })
             }
+            TyKind::Tuple(tuple) => {
+                tcx.tuple_elements(tuple)
+                    .iter()
+                    .enumerate()
+                    .all(|(index, element)| {
+                        let mut nested = path.to_vec();
+                        nested.push(PathElem::TupleField(index as u32));
+                        self.fully_initialized(root, &nested, tcx, *element, visiting)
+                    })
+            }
             _ => false,
         }
     }
@@ -270,6 +284,9 @@ pub fn place_type(tcx: &TyCtxt, root_ty: TyId, path: &[PathElem]) -> Option<TyId
         match (tcx.kind(ty), element) {
             (TyKind::Adt(adt), PathElem::Field(field)) => {
                 ty = tcx.field(adt, *field)?.ty;
+            }
+            (TyKind::Tuple(tuple), PathElem::TupleField(index)) => {
+                ty = tcx.tuple_element(tuple, *index as usize)?;
             }
             (TyKind::Array { element, length }, PathElem::Index(index)) => {
                 if *index >= length {

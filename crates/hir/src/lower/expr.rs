@@ -79,6 +79,33 @@ impl Lowering<'_> {
                     }
                 }
             }
+            AstExprKind::TupleField {
+                base,
+                index,
+                index_span,
+            } => {
+                let base = self.lower_expr(base);
+                if self.hir.place(base).is_none() {
+                    self.error(codes::E2012, index_span, "tuple access requires a place")
+                        .help(
+                            "store the tuple in a `let` binding and access the element through it",
+                        )
+                        .emit();
+                    ExprKind::Error
+                } else {
+                    ExprKind::TupleField {
+                        base,
+                        index,
+                        index_span,
+                    }
+                }
+            }
+            AstExprKind::Tuple { elements } => ExprKind::Tuple {
+                elements: elements
+                    .iter()
+                    .map(|element| self.lower_expr(*element))
+                    .collect(),
+            },
             AstExprKind::Struct {
                 name,
                 name_span,

@@ -1621,6 +1621,27 @@ array or slice. Other values have no elements to visit, so the loop cannot run.\
 slice reference. A custom type needs its own loop over one of these forms.",
 };
 
+/// A tuple element index is outside the tuple.
+pub const E3036: ErrorCode = ErrorCode {
+    code: "E3036",
+    title: "tuple index out of bounds",
+    explanation: "\
+Tuple elements are numbered from zero, in the order they appear in the tuple
+type. Accessing an element that the tuple does not have is rejected, because
+the resulting type would not exist.\n\nCheck the tuple's arity and use an index below it. For example, `(a, b)` has
+fields `0` and `1`, not `2`.",
+};
+
+/// A tuple pattern has the wrong number of element patterns.
+pub const E3037: ErrorCode = ErrorCode {
+    code: "E3037",
+    title: "tuple pattern has the wrong arity",
+    explanation: "\
+A tuple pattern must describe every element of the tuple exactly once. Unlike a
+struct pattern, a tuple has no field names and no `..` shorthand: omitting an
+element would leave its value unaccounted for.\n\nWrite one pattern per tuple element, using `_` for elements the arm ignores.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -1631,8 +1652,8 @@ pub static ALL: &[ErrorCode] = &[
     E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E3001, E3002, E3003, E3004,
     E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
     E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
-    E3031, E3032, E3033, E3034, E3035, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008,
-    E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E3031, E3032, E3033, E3034, E3035, E3036, E3037, E5001, E5002, E5003, E5004, E5005, E5006,
+    E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1765,7 +1786,8 @@ mod tests {
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
-                "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035",
+                "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
+                "E3037",
             ]
         );
     }

@@ -13,6 +13,8 @@ pub enum PlaceProjection {
     Deref,
     /// Selects a struct field by its definition.
     Field(DefId),
+    /// Selects a tuple element by its zero-based position.
+    TupleField(u32),
     /// Selects an array or slice element.
     Index {
         /// The index expression, evaluated by MIR lowering.
@@ -73,6 +75,7 @@ impl ResolvedPlace {
             match projection {
                 PlaceProjection::Deref => break,
                 PlaceProjection::Field(field) => path.push(PathElem::Field(*field)),
+                PlaceProjection::TupleField(index) => path.push(PathElem::TupleField(*index)),
                 PlaceProjection::Index {
                     constant: Some(index),
                     ..

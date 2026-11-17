@@ -27,6 +27,8 @@ pub enum Projection {
     Deref,
     /// Selects a named field of a struct place.
     Field(Symbol),
+    /// Selects a tuple element by its zero-based position.
+    TupleField(usize),
     /// Selects an array element by an index expression.
     Index(crate::id::HirExprId),
 }
@@ -58,6 +60,13 @@ impl Place {
     #[inline]
     pub fn field(mut self, name: Symbol) -> Self {
         self.projections.push(Projection::Field(name));
+        self
+    }
+
+    /// Returns the place reached by selecting tuple element `index`.
+    #[inline]
+    pub fn tuple_field(mut self, index: usize) -> Self {
+        self.projections.push(Projection::TupleField(index));
         self
     }
 
@@ -123,6 +132,20 @@ pub enum ExprKind {
         name: Symbol,
         /// The span of the field name.
         name_span: Span,
+    },
+    /// A positional tuple access on a place, written `base.0`.
+    TupleField {
+        /// The place the element is projected from.
+        base: HirExprId,
+        /// The zero-based element position.
+        index: u32,
+        /// The span of the numeric index.
+        index_span: Span,
+    },
+    /// A tuple literal, including the unit value `()`.
+    Tuple {
+        /// Elements in source order.
+        elements: Vec<HirExprId>,
     },
     /// A struct literal with resolved fields.
     Struct {

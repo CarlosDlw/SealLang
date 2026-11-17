@@ -20,8 +20,10 @@ Seal is a **value-semantics language with moves**. Every value has exactly one
 owner. Assignment, argument passing, and return move the value unless its type is
 `Copy`, in which case it is duplicated bitwise. A `struct` is a **nominal**
 aggregate that owns its fields; the aggregate itself is never `Copy` in v0.1,
-which makes every whole-value transfer a visible move. A `Copy` field is still
-copied when it is read by name. `*T` is a **shared, non-owning,
+which makes every whole-value transfer a visible move. A tuple is a structural
+aggregate that owns its elements and is `Copy` exactly when every element is, so
+copying a tuple never hides a move of a non-`Copy` element. A `Copy` field or
+element is still copied when it is read. `*T` is a **shared, non-owning,
 non-null reference**; exclusive access requires `*mut T`. References are checked
 statically by a borrow checker that computes regions from liveness, so no
 lifetime syntax exists. Values live on the stack, in static read-only memory, or
@@ -42,11 +44,11 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 ### D2 — `Copy` is a property of the type
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
-`*T`/`*mut T`, and an array whose element type is `Copy`. Not copied: `str` and
-slices (unsized) and every struct or enum value, even one whose fields are all
-`Copy`. Arrays
-gain nothing from an explicit opt-in because their elements already decide
-whether a bitwise copy is safe. Keeping structs non-`Copy` means ownership is
+`*T`/`*mut T`, an array whose element type is `Copy`, and a tuple whose elements
+are all `Copy`. Not copied: `str` and slices (unsized) and every struct or enum
+value, even one whose fields are all `Copy`. Arrays and tuples gain nothing from
+an explicit opt-in because their elements already decide whether a bitwise copy
+is safe. Keeping structs non-`Copy` means ownership is
 explicit at every aggregate boundary; field reads still copy `Copy` fields
 individually. `Copy` and `Drop` are mutually exclusive, and v0.1 has no
 user-defined copy hooks. A future opt-in `Copy` for structs derives the property
@@ -168,11 +170,12 @@ uninitialized again. The checker performs definite-initialization analysis over
 the control-flow graph, so `let x: i32; if c { x = 1 } else { x = 2 } x` is
 accepted and a path that skips both assignments is not.
 
-Initialization is tracked per **move path**, not per local: fields of a struct
-and constant elements of an array initialize independently. `let mut p: Point;
-p.x = 1; p.y = 2;` initializes `p` field by field, reading `p.x` before assigning
-it is an error even after `p.y` is set, and a whole assignment `p = Point { … }`
-initializes every field at once. The same rule applies to `a[0]` and `a[1]`; a
+Initialization is tracked per **move path**, not per local: fields of a struct,
+elements of a tuple, and constant elements of an array initialize independently.
+`let mut p: Point; p.x = 1; p.y = 2;` initializes `p` field by field, reading
+`p.x` before assigning it is an error even after `p.y` is set, and a whole
+assignment `p = Point { … }` initializes every field at once. The same rule
+applies to `pair.0`, `pair.1`, `a[0]`, and `a[1]`; a
 write through a runtime index is more conservative and requires the whole array
 to be initialized, because the compiler cannot prove which element is written.
 Writing a field or element requires the binding to be `mut`, because it does not
@@ -182,10 +185,11 @@ field or element out marks that path moved and leaves its siblings usable.
 
 ### D10 — Values are sized
 
-Locals, parameters, return values, by-value operands, struct fields, and enum
-variant fields must have a size known at compile time. `str` and slices are unsized and can only appear
-behind a reference. An array is sized when its element is, and its size must fit
-the target address space (`E3023`). Recursive types are only possible through a
+Locals, parameters, return values, by-value operands, struct fields, enum
+variant fields, tuple elements, and array elements must have a size known at
+compile time. `str` and slices are unsized and can only appear behind a
+reference. A tuple is sized when every element is, an array when its element is,
+and its size must fit the target address space (`E3023`). Recursive types are only possible through a
 reference, which indirection makes finite; a struct or enum that contains
 itself by value is `E3016`.
 
@@ -203,7 +207,15 @@ types only unify when they are identical. Mixed-width arithmetic is an error.
 Widening and narrowing require explicit casts (added with the cast syntax), so
 no silent truncation or sign change can happen.
 
-### D13 — Nominal aggregates and deterministic layout
+### D13 — Nominal aggregates, structural tuples, and deterministic layout
+
+`(i32, bool)` is a structural product type: its identity is its ordered element
+types, so the same spelling means the same type everywhere. It has no name,
+declaration, or fields, and its elements are addressed by position. A tuple is
+`Copy` exactly when every element is, which keeps move visibility identical to
+the element level. Its elements initialize, move, and borrow independently, and
+`.0`/`.1` are places. A tuple pattern writes one subpattern per element and
+follows references exactly like a struct pattern.
 
 `struct Point { x: i32, y: i32 }` declares a nominal product type: two structs
 with the same fields are distinct and never unify.
@@ -220,7 +232,8 @@ separate visibility in v0.1, and adding visibility later does not change the
 layout.
 
 `seal-layout` assigns offsets in declaration order with natural alignment and no
-reordering, so the layout is deterministic and reproducible. An enum starts with
+reordering, so the layout is deterministic and reproducible for structs and
+tuples alike. An enum starts with
 the smallest unsigned tag that addresses every variant, followed by a payload at
 the next multiple of the widest variant field alignment; the payload is as large
 as the largest variant and the whole value is padded to its alignment. The
@@ -307,16 +320,19 @@ call.
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
   `Float`, `Ref { kind: RefKind, pointee }`, `Array { element, length }`,
-  `Adt(AdtId)`, `Unit`, `Never`, `Error`, and `Infer`. `RefKind` is `Shared`
+  `Adt(AdtId)`, `Tuple(TupleId)`, `Unit`, `Never`, `Error`, and `Infer`.
+  Tuple IDs come from a structural interner, so equal element lists share one
+  `TupleId`. `RefKind` is `Shared`
   (`*T`) or `Exclusive` (`*mut T`); the kind is part of the type, so the two
   never unify. There is no nullable reference kind, because nullability is not a
   type.
 - Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
   so `AdtId` identifies a nominal declaration while the definition holds the
-  ordered fields, their `DefId`s, names, and types.
+  ordered fields, their `DefId`s, names, and types. Tuples live in a separate
+  structural arena keyed by their ordered `TyId`s, with no names or `DefId`s.
 - `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
-  aggregate fields and array elements with a cycle guard; no query can loop on a
-  malformed declaration.
+  aggregate fields, tuple elements, and array elements with a cycle guard; no
+  query can loop on a malformed declaration.
 - `Str` and `Slice` are distinct kinds, not aliases for `*u8`, because they are
   unsized and their references carry a length (D7, D14).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
@@ -325,8 +341,8 @@ call.
   `Copy` in v0.1 (D2), so the query returns `false` for `TyKind::Adt`.
 - `seal_ty::InitPaths` is the shared definite-initialization lattice; type
   checking keys it by `DefId`, borrow checking by MIR `LocalId`, and both query
-  the same nearest-entry state over paths of struct fields and constant array
-  indices.
+  the same nearest-entry state over paths of struct fields, tuple elements, and
+  constant array indices.
 - Types are interned: two types are equal exactly when their `TyId`s are equal.
   During inference, equality is not enough, so `InferCtxt::unify` is the only
   comparison that decides assignability; `==` on IDs is for canonical types.
@@ -369,9 +385,11 @@ call.
    positional variant receives exactly one argument per field in declaration
    order (`E2038`).
 9. A struct or enum value is never `Copy` in v0.1; moving one field out leaves
-   its siblings initialized and usable.
+   its siblings initialized and usable. A tuple is `Copy` exactly when every
+   element is, and moving one element leaves its siblings initialized.
 10. A struct or enum cannot contain itself by value (`E3016`), and every field
-    is `Sized` (`E3010`). An enum is sized when every field of every variant is.
+    and tuple element is `Sized` (`E3010`). An enum is sized when every field of
+    every variant is; a tuple when every element is.
 11. Layout is deterministic: declaration order, natural alignment, no
     reordering, so offsets are stable across phases and targets with the same
     data model. An enum adds a tag followed by an aligned payload, and the tag

@@ -69,7 +69,7 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
                 operand_uses(operand, uses);
             }
         }
-        Rvalue::Array { elements, .. } => {
+        Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
             for element in elements {
                 operand_uses(element, uses);
             }

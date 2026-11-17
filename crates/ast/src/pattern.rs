@@ -96,6 +96,11 @@ pub enum PatternKind {
         /// Whether the pattern ends with `..`, ignoring the other fields.
         has_rest: bool,
     },
+    /// A tuple pattern such as `(first, second)`, `(value,)`, or `()`.
+    ///
+    /// The pattern must name exactly one subpattern per tuple element. The empty
+    /// tuple pattern matches the unit value.
+    Tuple(Vec<PatternId>),
     /// A fixed-size array pattern such as `[first, second]` or `[first, .., last]`.
     Array {
         /// Patterns before the `..`, if any.

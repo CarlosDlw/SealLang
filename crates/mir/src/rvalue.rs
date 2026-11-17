@@ -229,6 +229,16 @@ pub enum Rvalue {
         /// Field initializers in evaluation order.
         fields: Vec<(DefId, Operand)>,
     },
+    /// Builds a tuple from its elements.
+    ///
+    /// Elements are evaluated in source order. A non-`Copy` element is moved
+    /// into the new tuple, exactly as in a struct literal.
+    Tuple {
+        /// Elements in source order.
+        elements: Vec<Operand>,
+        /// The tuple type, which carries the arity and element types.
+        ty: seal_ty::TyId,
+    },
     /// Builds a fixed-size array from its elements.
     Array {
         /// Elements in source order.

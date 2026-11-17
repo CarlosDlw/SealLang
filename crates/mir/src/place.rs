@@ -12,6 +12,8 @@ pub enum Projection {
     Deref,
     /// Selects a struct field by its definition.
     Field(DefId),
+    /// Selects a tuple element by its zero-based position.
+    TupleField(u32),
     /// Selects an array element by a runtime index.
     Index {
         /// The local holding the evaluated `usize` index.
@@ -72,6 +74,13 @@ impl Place {
     #[inline]
     pub fn field(mut self, field: DefId) -> Self {
         self.projections.push(Projection::Field(field));
+        self
+    }
+
+    /// Returns the place reached by selecting tuple element `index`.
+    #[inline]
+    pub fn tuple_field(mut self, index: u32) -> Self {
+        self.projections.push(Projection::TupleField(index));
         self
     }
 

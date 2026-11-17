@@ -84,6 +84,40 @@ impl Parser<'_> {
 
             if self.at(TokenKind::Dot) {
                 self.bump();
+                if let TokenKind::Int {
+                    value,
+                    base,
+                    suffix,
+                } = self.current_kind()
+                {
+                    let index_span = self.current_span();
+                    if base != seal_lexer::NumericBase::Decimal || suffix.is_some() {
+                        self.error(
+                            codes::E1002,
+                            index_span,
+                            "a tuple index is a decimal integer without a suffix",
+                        )
+                        .help("write `.0`, `.1`, and so on")
+                        .emit();
+                    }
+                    let index = u32::try_from(value).ok();
+                    if index.is_none() {
+                        self.error(codes::E1002, index_span, "this tuple index is too large")
+                            .help("tuple indices are 32-bit unsigned integers")
+                            .emit();
+                    }
+                    self.bump();
+                    let span = self.builder.ast().expr(lhs).span.cover(index_span);
+                    lhs = self.builder.push_expr(
+                        ExprKind::TupleField {
+                            base: lhs,
+                            index: index.unwrap_or(0),
+                            index_span,
+                        },
+                        span,
+                    );
+                    continue;
+                }
                 let (name, name_span) = self.expect_ident("a field name after `.`");
                 if self.at(TokenKind::LParen) {
                     let (args, end) = self.parse_call_arguments();
@@ -301,11 +335,52 @@ impl Parser<'_> {
                 let allowed = self.struct_literal_allowed;
                 self.struct_literal_allowed = true;
                 self.bump();
-                let inner = self.parse_expr(0);
-                self.struct_literal_allowed = allowed;
-                let _ = self.expect(TokenKind::RParen, "`)`");
-                let span = token.span.cover(self.previous_span());
-                self.builder.push_expr(ExprKind::Paren(inner), span)
+                if self.eat(TokenKind::RParen) {
+                    self.struct_literal_allowed = allowed;
+                    let span = token.span.cover(self.previous_span());
+                    self.builder.push_expr(
+                        ExprKind::Tuple {
+                            elements: Vec::new(),
+                        },
+                        span,
+                    )
+                } else {
+                    let first = self.parse_expr(0);
+                    if self.eat(TokenKind::Comma) {
+                        let mut elements = vec![first];
+                        while !self.at(TokenKind::RParen) && !self.is_eof() {
+                            let before = self.index;
+                            elements.push(self.parse_expr(0));
+                            if self.eat(TokenKind::Comma) {
+                                continue;
+                            }
+                            if self.at(TokenKind::RParen) || self.is_eof() {
+                                break;
+                            }
+                            let found = self.describe(self.current_kind());
+                            self.error(
+                                codes::E1002,
+                                self.current_span(),
+                                format!("expected `,` or `)` in the tuple literal, found {found}"),
+                            )
+                            .help("separate tuple elements with `,`")
+                            .emit();
+                            if !can_start_expr(self.current_kind()) {
+                                break;
+                            }
+                            self.ensure_progress(before);
+                        }
+                        let _ = self.expect(TokenKind::RParen, "`)` to close the tuple literal");
+                        self.struct_literal_allowed = allowed;
+                        let span = token.span.cover(self.previous_span());
+                        self.builder.push_expr(ExprKind::Tuple { elements }, span)
+                    } else {
+                        let _ = self.expect(TokenKind::RParen, "`)`");
+                        self.struct_literal_allowed = allowed;
+                        let span = token.span.cover(self.previous_span());
+                        self.builder.push_expr(ExprKind::Paren(first), span)
+                    }
+                }
             }
             TokenKind::LBracket => self.parse_array_literal(token.span),
             TokenKind::If => self.parse_if_expr(token.span),
@@ -697,6 +772,7 @@ impl Parser<'_> {
             ExprKind::Path(_)
             | ExprKind::Deref { .. }
             | ExprKind::Field { .. }
+            | ExprKind::TupleField { .. }
             | ExprKind::Index { .. } => true,
             ExprKind::Paren(inner) => self.is_assignable(*inner),
             _ => false,

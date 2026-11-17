@@ -95,6 +95,8 @@ pub enum LayoutError {
     NotAStruct(AdtId),
     /// The aggregate is a struct, but an enum layout was requested.
     NotAnEnum(AdtId),
+    /// A tuple field list was requested for a non-tuple type.
+    NotATuple(TyId),
     /// The enum declares more variants than a `u32` discriminant can address.
     TooManyVariants(AdtId),
 }
@@ -111,6 +113,7 @@ impl fmt::Display for LayoutError {
             Self::TooLarge(ty) => write!(f, "type {ty:?} is too large to lay out"),
             Self::NotAStruct(adt) => write!(f, "aggregate {adt:?} is not a struct"),
             Self::NotAnEnum(adt) => write!(f, "aggregate {adt:?} is not an enum"),
+            Self::NotATuple(ty) => write!(f, "type {ty:?} is not a tuple"),
             Self::TooManyVariants(adt) => {
                 write!(f, "enum {adt:?} has more variants than a `u32` can address")
             }
@@ -161,6 +164,25 @@ impl<'a> LayoutCtxt<'a> {
             .ok_or(LayoutError::UnknownField(adt, index))
     }
 
+    /// Returns the layouts of every element of the tuple `ty`, in order.
+    pub fn tuple_field_layouts(&self, ty: TyId) -> Result<Vec<FieldLayout>, LayoutError> {
+        let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
+            return Err(LayoutError::NotATuple(ty));
+        };
+        let elements = self.tcx.tuple_elements(tuple);
+        let mut offset = 0;
+        let mut fields = Vec::with_capacity(elements.len());
+        for element in elements {
+            let layout = self.layout_inner(element, &mut Vec::new())?;
+            offset = round_up(offset, layout.align);
+            fields.push(FieldLayout { offset, layout });
+            offset = offset
+                .checked_add(layout.size)
+                .ok_or(LayoutError::TooLarge(ty))?;
+        }
+        Ok(fields)
+    }
+
     fn layout_inner(&self, ty: TyId, stack: &mut Vec<AdtId>) -> Result<Layout, LayoutError> {
         let pointer = u64::from(self.pointer_width) / 8;
         let layout = match self.tcx.kind(ty) {
@@ -187,6 +209,19 @@ impl<'a> LayoutCtxt<'a> {
                     .checked_mul(length)
                     .ok_or(LayoutError::TooLarge(ty))?;
                 Layout::new(size, element_layout.align)
+            }
+            TyKind::Tuple(tuple) => {
+                let mut offset = 0;
+                let mut align = 1;
+                for element in self.tcx.tuple_elements(tuple) {
+                    let element_layout = self.layout_inner(element, stack)?;
+                    offset = round_up(offset, element_layout.align);
+                    offset = offset
+                        .checked_add(element_layout.size)
+                        .ok_or(LayoutError::TooLarge(ty))?;
+                    align = align.max(element_layout.align);
+                }
+                Layout::new(round_up(offset, align), align)
             }
             TyKind::Str | TyKind::Slice { .. } => return Err(LayoutError::Unsized(ty)),
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
@@ -528,6 +563,37 @@ mod tests {
         let ctxt = TyCtxt::new();
         assert_eq!(ctxt.adt_len(), 0);
         assert_eq!(ctxt.kind(ctxt.int_ty(IntTy::I32)), TyKind::Int(IntTy::I32));
+    }
+
+    #[test]
+    fn tuple_fields_follow_declaration_order_without_reordering() {
+        let ctxt = TyCtxt::new();
+        let tuple = ctxt.tuple_ty(&[
+            ctxt.bool_ty(),
+            ctxt.int_ty(IntTy::I32),
+            ctxt.int_ty(IntTy::I8),
+        ]);
+        let layout = LayoutCtxt::new(&ctxt, 64);
+        let fields = layout.tuple_field_layouts(tuple).expect("tuple is sized");
+        assert_eq!(fields[0].offset, 0);
+        assert_eq!(fields[1].offset, 4);
+        assert_eq!(fields[2].offset, 8);
+        assert_eq!(layout.layout_of(tuple), Ok(Layout::new(12, 4)));
+        assert_eq!(
+            layout.tuple_field_layouts(ctxt.int_ty(IntTy::I32)),
+            Err(LayoutError::NotATuple(ctxt.int_ty(IntTy::I32)))
+        );
+    }
+
+    #[test]
+    fn the_unit_tuple_is_zero_sized() {
+        let ctxt = TyCtxt::new();
+        let tuple = ctxt.tuple_ty(&[]);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(tuple),
+            Ok(Layout::new(0, 1))
+        );
+        assert_eq!(tuple, ctxt.unit_ty());
     }
 
     #[test]

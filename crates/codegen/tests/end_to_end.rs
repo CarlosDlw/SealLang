@@ -32,6 +32,7 @@ const REFERENCE_MATCH: &str = include_str!("../../../examples/022_match_referenc
 const FOR_LOOP: &str = include_str!("../../../examples/023_for.sl");
 const IF_LET: &str = include_str!("../../../examples/024_if_let.sl");
 const WHILE_LET: &str = include_str!("../../../examples/025_while_let.sl");
+const TUPLES: &str = include_str!("../../../examples/026_tuples.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -926,6 +927,29 @@ fn while_let_produces_the_language_result_in_debug_and_release() {
         assert_eq!(
             run(output.path()).code(),
             Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn tuples_produce_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "tuples-debug"),
+        (OptLevel::O2, false, "tuples-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            TUPLES,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the tuple example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(130),
             "wrong result for {suffix}"
         );
     }

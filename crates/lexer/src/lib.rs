@@ -19,6 +19,8 @@
 //!   [`Token::preceded_by_newline`] on the next token.
 //! - No global state: interning and diagnostics come from the caller, so two
 //!   files can be lexed concurrently.
+//! - A number directly after `.` is a tuple index. This one-token lookbehind
+//!   keeps `pair.0.1` as two indices instead of a single float.
 //!
 //! # Literals
 //!

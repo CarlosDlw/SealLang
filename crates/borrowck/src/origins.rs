@@ -20,6 +20,19 @@ use seal_mir::{
 };
 use seal_ty::{TyId, TyKind};
 
+/// One owned-storage component below a local.
+///
+/// Unlike an aggregate field, a tuple element has no definition, so it is
+/// addressed by position. Keeping both forms in one path is what lets two
+/// references to different tuple elements stay disjoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum StorageField {
+    /// A named struct or enum field.
+    Field(DefId),
+    /// A tuple element by zero-based position.
+    TupleField(u32),
+}
+
 /// A storage location a reference may point at.
 ///
 /// A key either names storage this frame owns (`Frame`) or the pointee of a
@@ -33,14 +46,14 @@ pub(crate) enum StorageKey {
         /// The local that owns the storage.
         local: LocalId,
         /// The field path below the local; empty for the whole local.
-        fields: Vec<DefId>,
+        fields: Vec<StorageField>,
     },
     /// Storage reachable through a reference whose target is outside this frame.
     Pointee {
         /// The reference local that names the storage.
         local: LocalId,
         /// The field path below the pointee.
-        fields: Vec<DefId>,
+        fields: Vec<StorageField>,
     },
 }
 
@@ -75,7 +88,7 @@ impl OriginSet {
         }
     }
 
-    fn frame(local: LocalId, fields: Vec<DefId>) -> Self {
+    fn frame(local: LocalId, fields: Vec<StorageField>) -> Self {
         let mut set = Self::default();
         set.insert(StorageKey::Frame { local, fields });
         set
@@ -316,6 +329,17 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
                 }
             }
         }
+        Rvalue::Tuple { elements, .. } => {
+            state.clear(place);
+            if destination_holds_references {
+                for (index, operand) in elements.iter().enumerate() {
+                    let origins = operand_origins(hir, body, state, operand);
+                    if !origins.is_empty() {
+                        state.assign(&place.clone().tuple_field(index as u32), origins);
+                    }
+                }
+            }
+        }
         Rvalue::Array { elements, .. } => {
             state.clear(place);
             if destination_holds_references {
@@ -391,7 +415,10 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place) -> OriginSet {
             StorageKey::Frame { local, fields } => {
                 let mut projections: Vec<Projection> = fields
                     .iter()
-                    .map(|field| Projection::Field(*field))
+                    .map(|field| match field {
+                        StorageField::Field(field) => Projection::Field(*field),
+                        StorageField::TupleField(index) => Projection::TupleField(*index),
+                    })
                     .collect();
                 projections.extend_from_slice(rest);
                 let storage = Place::with_projections(*local, projections);
@@ -465,7 +492,7 @@ fn key_overlap(left: &StorageKey, right: &StorageKey) -> bool {
     }
 }
 
-fn paths_overlap(left: &[DefId], right: &[DefId]) -> bool {
+fn paths_overlap(left: &[StorageField], right: &[StorageField]) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
 
@@ -473,13 +500,14 @@ fn overlaps(left: &[Projection], right: &[Projection]) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
 
-fn field_path(projections: &[Projection]) -> Vec<DefId> {
+fn field_path(projections: &[Projection]) -> Vec<StorageField> {
     projections
         .iter()
         .filter_map(|projection| match projection {
-            Projection::Field(field) => Some(*field),
+            Projection::Field(field) => Some(StorageField::Field(*field)),
             // A variant field is still a field of the enum's storage.
-            Projection::VariantField { field, .. } => Some(*field),
+            Projection::VariantField { field, .. } => Some(StorageField::Field(*field)),
+            Projection::TupleField(index) => Some(StorageField::TupleField(*index)),
             // Array indices are intentionally absent from storage keys: any
             // element may alias any other when only the runtime value is known,
             // so treating the whole array as one storage key is conservative.
@@ -509,6 +537,13 @@ pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
                     .ty_ctxt()
                     .variant_field(adt, *variant, *field)
                     .map_or(ty, |field| field.ty),
+                _ => ty,
+            },
+            Projection::TupleField(index) => match hir.ty_ctxt().kind(ty) {
+                TyKind::Tuple(tuple) => hir
+                    .ty_ctxt()
+                    .tuple_element(tuple, *index as usize)
+                    .unwrap_or(ty),
                 _ => ty,
             },
             Projection::Index { .. } => match hir.ty_ctxt().kind(ty) {

@@ -115,6 +115,19 @@ impl InferCtxt {
                     element: found_element,
                 },
             ) => self.unify(ctxt, expected_element, found_element),
+            (TyKind::Tuple(expected_tuple), TyKind::Tuple(found_tuple)) => {
+                let expected_elements = ctxt.tuple_elements(expected_tuple);
+                let found_elements = ctxt.tuple_elements(found_tuple);
+                if expected_elements.len() != found_elements.len() {
+                    return Err(UnifyError::Mismatch { expected, found });
+                }
+                for (expected_element, found_element) in
+                    expected_elements.into_iter().zip(found_elements)
+                {
+                    self.unify(ctxt, expected_element, found_element)?;
+                }
+                Ok(())
+            }
             _ => Err(UnifyError::Mismatch { expected, found }),
         }
     }
@@ -143,6 +156,21 @@ impl InferCtxt {
                 let resolved = self.resolve_deep(ctxt, element);
                 if resolved != element {
                     return ctxt.slice_ty(resolved);
+                }
+            }
+            TyKind::Tuple(tuple) => {
+                let elements = ctxt.tuple_elements(tuple);
+                let mut changed = false;
+                let resolved: Vec<TyId> = elements
+                    .iter()
+                    .map(|element| {
+                        let resolved = self.resolve_deep(ctxt, *element);
+                        changed |= resolved != *element;
+                        resolved
+                    })
+                    .collect();
+                if changed {
+                    return ctxt.tuple_ty(&resolved);
                 }
             }
             _ => {}
@@ -183,6 +211,10 @@ impl InferCtxt {
             TyKind::Array { element, .. } | TyKind::Slice { element } => {
                 self.occurs(ctxt, var, element)
             }
+            TyKind::Tuple(tuple) => ctxt
+                .tuple_elements(tuple)
+                .into_iter()
+                .any(|element| self.occurs(ctxt, var, element)),
             _ => false,
         }
     }
@@ -428,6 +460,53 @@ mod tests {
         let unit = ctxt.unit_ty();
         infer.unify(&ctxt, int, int).expect("identical types unify");
         infer.unify(&ctxt, unit, unit).expect("unit unifies");
+    }
+
+    #[test]
+    fn tuples_unify_element_wise_and_keep_their_arity() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer
+            .unify(
+                &ctxt,
+                ctxt.tuple_ty(&[var, ctxt.bool_ty()]),
+                ctxt.tuple_ty(&[int, ctxt.bool_ty()]),
+            )
+            .expect("elements unify");
+        assert_eq!(infer.resolve_shallow(&ctxt, var), int);
+
+        let error = infer
+            .unify(&ctxt, ctxt.tuple_ty(&[int]), ctxt.tuple_ty(&[int, int]))
+            .expect_err("arity is part of the type");
+        assert!(matches!(error, UnifyError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn the_occurs_check_looks_through_tuples() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let tuple = ctxt.tuple_ty(&[ctxt.bool_ty(), var]);
+        assert!(matches!(
+            infer.unify(&ctxt, var, tuple),
+            Err(UnifyError::Occurs { .. })
+        ));
+    }
+
+    #[test]
+    fn deep_resolution_rebuilds_tuple_types() {
+        let mut ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&mut ctxt);
+        let tuple = ctxt.tuple_ty(&[var, ctxt.bool_ty()]);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer.unify(&ctxt, var, int).expect("variable binds");
+        assert_eq!(
+            infer.resolve_deep(&mut ctxt, tuple),
+            ctxt.tuple_ty(&[int, ctxt.bool_ty()])
+        );
     }
 
     #[test]

@@ -188,6 +188,12 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= operand_unknown(slice, context);
             check_operand(statement, slice, context);
         }
+        Rvalue::Tuple { elements, .. } => {
+            for element in elements {
+                unknown |= operand_unknown(element, context);
+                check_operand(statement, element, context);
+            }
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             unknown |= operand_unknown(lhs, context) || operand_unknown(rhs, context);
             check_operand(statement, lhs, context);

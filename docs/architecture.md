@@ -26,14 +26,14 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, aggregates, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
-| `seal-layout` | Deterministic struct, enum, and array layout: field offsets, alignment, tag and payload layout, and size derived from `TyCtxt` types. |
+| `seal-layout` | Deterministic struct, enum, tuple, and array layout: field offsets, alignment, tag and payload layout, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index and variant projections, bounds checks, match dispatch, terminators, and structural validation. |
-| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, array element paths, escaping references, `E5xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, bounds checks, match dispatch, terminators, and structural validation. |
+| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, escaping references, `E5xxx` diagnostics. |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
@@ -223,12 +223,14 @@ allowed to depend only on crates below it in the list.
     after type checking reported no errors, so every place, operand, and edge is
     well formed; `seal-mir` validation runs first, and a structural failure is
     an internal compiler error rather than a user diagnostic.
-44. **Aggregates are nominal and structural.** A struct or enum declaration
-    interns an `AdtId`; its type is `TyKind::Adt`, never a structural tuple. Two
-    aggregates with identical members are different types, and `Copy`, `Sized`,
-    `Drop`, and `contains_reference` are derived by walking struct fields and
-    every variant field, with a cycle guard so a malformed declaration cannot
-    hang a query.
+44. **Nominal aggregates and structural tuples are separate kinds.** A struct or
+    enum declaration interns an `AdtId`, so two aggregates with identical
+    members are different types. A tuple interns its ordered element types in a
+    structural `TupleId`, so equal spellings denote the same type; `()` remains
+    `TyKind::Unit` and is not a distinct empty tuple. `Copy`, `Sized`, `Drop`,
+    and `contains_reference` derive from struct fields, variant fields, tuple
+    elements, and array elements, with a cycle guard so a malformed declaration
+    cannot hang a query.
 45. **Struct and variant literals are complete.** Every field of the chosen
     struct or variant appears exactly once, every named field exists, every
     initializer has the declared field type, and a literal in value position is
@@ -237,15 +239,17 @@ allowed to depend only on crates below it in the list.
     arguments bind in declaration order, so names and parentheses cannot be
     mixed (`E2036`–`E2039`). Duplicate aggregate, variant, and field names are
     rejected at declaration, and enum-specific mistakes use `E2029`–`E2039`.
-46. **Fields are places, not accessors.** `p.x` denotes storage: it needs a
-    place base (`E2012`), never autodereferences a `*T` (`E3015` tells the user
-    to write `(*p).x`), and selects a field whose resolved `DefId` is recorded
-    once by the checker for MIR. Reading a field reads only that field's move
-    path; it does not require sibling fields to be initialized. An enum value
+46. **Fields are places, not accessors.** `p.x` and `pair.0` denote storage:
+    each needs a place base (`E2012`), never autodereferences a `*T` (`E3015`
+    tells the user to write `(*p).x` or `(*pair).0`), and records the selected
+    field's `DefId` or tuple position once for MIR. Reading one field or element
+    reads only that move path; it does not require sibling fields to be
+    initialized. An enum value
     has no field place until `match` proves its variant: the `VariantField`
     projection is valid only after the discriminant test selected it.
-47. **Aggregates own their fields and are not `Copy`.** A struct or enum value
-    moves as a whole; a `Copy` field still copies when read. Field writes
+47. **Aggregates own their fields.** A struct or enum value moves as a whole
+    and is never `Copy`; a tuple is `Copy` exactly when every element is. A
+    `Copy` field or element still copies when read. Field writes
     require the root binding to be `mut` (`E3004`), because a field write does
     not initialize the binding as a whole. Field-by-field initialization needs
     a declared type and `mut`, and a whole assignment initializes every field at
@@ -253,24 +257,26 @@ allowed to depend only on crates below it in the list.
 48. **Recursion needs indirection.** A struct or enum cannot contain itself by
     value (`E3016`); a reference field breaks the cycle. Every struct field and
     every enum variant field must be `Sized` (`E3010`).
-49. **Layout is deterministic.** `seal-layout` assigns offsets in declaration
-    order with natural alignment and no reordering, so the same types produce
-    the same layout in every phase and on every target with the same data model.
+49. **Layout is deterministic.** `seal-layout` assigns struct fields and tuple
+    elements offsets in declaration order with natural alignment and no
+    reordering, so the same types produce the same layout in every phase and on
+    every target with the same data model.
     An enum adds a tag sized by its variant count and a payload at the widest
     variant alignment; variant offsets are absolute.
 50. **MIR places carry projections.** A `Place` is a local plus
-    `Projection::{Deref, Field(DefId), Index, VariantField}`; a struct literal lowers to
-    `Rvalue::Aggregate` with `AggregateKind::Struct`, a variant literal lowers
-    with `AggregateKind::Variant { adt, variant }`, and a non-`Copy` field read
-    is a `Move`. Validation checks every projected place's local. A
+    `Projection::{Deref, Field(DefId), TupleField(u32), Index, VariantField}`; a
+    struct literal lowers to `Rvalue::Aggregate` with `AggregateKind::Struct`, a
+    variant literal lowers with `AggregateKind::Variant { adt, variant }`, a
+    tuple literal lowers to `Rvalue::Tuple`, and a non-`Copy` field or tuple
+    element read is a `Move`. Validation checks every projected place's local. A
     dereference of a reference value (`*identity(&v)`, `*&x`) has no local to
     project from, so lowering stores the reference in a temporary and projects
     through it; the read still copies, because the place is reached through a
     reference.
 51. **Move paths reach into aggregates.** Type checking and borrow checking
-    share `seal_ty::InitPaths`: a field assignment initializes only that path,
-    reading an uninitialized field is `E3011`/`E5003`, and a read of a field
-    whose sibling moved is allowed. Borrow conflicts compare path prefixes, so
+    share `seal_ty::InitPaths`: a field or tuple-element assignment initializes
+    only that path, reading an uninitialized field is `E3011`/`E5003`, and a
+    read of a field whose sibling moved is allowed. Borrow conflicts compare path prefixes, so
     borrowing `p.x` leaves `p.y` writable and borrowing `p` blocks both. A
     whole-place borrow with a moved field is `E5006`.
 52. **Code generation consumes only checked MIR.** The driver calls the backend
@@ -280,8 +286,9 @@ allowed to depend only on crates below it in the list.
 53. **Every local has storage.** Locals, parameters, and the return place are
     `alloca` slots; reads and writes are loads and stores, and calls use the
     checked signature. Aggregates are built with `insertvalue` in declaration
-    order, struct fields are projected with struct GEPs, and arrays and slices
-    with a bounds-checked element offset, so evaluation order and layout agree.
+    order, struct fields and tuple elements are projected with struct GEPs, and
+    arrays and slices with a bounds-checked element offset, so evaluation order
+    and layout agree.
     A slice range is lowered to explicit checks followed by a fat-pointer
     construction; `len` reads the length member.
 54. **The ABI is compiler-owned.** A free function uses the `seal.<name>`
@@ -365,7 +372,8 @@ allowed to depend only on crates below it in the list.
     moves the scrutinee into a temporary, reads the tag with
     `Rvalue::Discriminant`, and dispatches with `SwitchInt`; a literal pattern
     compares with `BinOp::Eq`, a range pattern compares with `Ge` and `Le`/`Lt`,
-    and struct and array patterns project fields and constant indices without
+    and struct, tuple, and array patterns project fields, positions, and
+    constant indices without
     testing anything else. Or-patterns expand into one test chain per
     alternative, bindings are stored only after the whole pattern matched, and
     `Copy` bindings are stored before a guard while non-`Copy` ones follow it
@@ -464,13 +472,16 @@ allowed to depend only on crates below it in the list.
   liveness, may-hold, and initialization, and report through the `E5xxx` range;
   `check` walks every body in block order, so a new pass slots in without
   changing the driver.
-- **New aggregate kind.** Structs use the `AdtDef`/`FieldDef` arena and
-  `TyKind::Adt`; an enum or tuple adds an `AdtKind`, reuses the same arena, and
-  extends `seal-layout` with its discriminant. Structural queries must keep
-  their cycle guard, because declarations can refer to each other.
+- **New aggregate kind.** Structs and enums use the `AdtDef`/`FieldDef` arena
+  and `TyKind::Adt`; a new nominal form adds an `AdtKind`, reuses the same
+  arena, and extends `seal-layout` with its discriminant. A structural form
+  such as a tuple adds a kind plus a structural interner and extends the same
+  layout, query, and move-path rules. Structural queries must keep their cycle
+  guard, because declarations can refer to each other.
 - **New type.** Add the `TyKind` variant, a constructor on `TyCtxt`, an
   unification arm, its `Copy`/`Sized`/`Drop` classification, its display form,
-  and tests. Variants must stay `Copy`, `Eq`, and `Hash`, because they are both
+  and tests. A structural type also needs an interner so equality stays
+  `TyId` equality (tuples are the reference implementation). Variants must stay `Copy`, `Eq`, and `Hash`, because they are both
   arena elements and interning keys.
 - **New token or keyword.** Add the variant to `TokenKind`, classify it in the
   scanner (keywords live in `seal-lexer`'s keyword table), and add a maximal

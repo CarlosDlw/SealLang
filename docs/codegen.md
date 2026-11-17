@@ -18,9 +18,9 @@ assembly output do not require an entry point; executables do.
    same-named methods on different types stay distinct. Declaring first lets a
    body call a function declared later.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
-   block, and explicit loads/stores for places. Field projections use struct
-   GEPs; array indices use a byte offset after the MIR bounds check; dereferences
-   load the reference and continue from its pointee.
+   block, and explicit loads/stores for places. Struct field and tuple element
+   projections use struct GEPs; array indices use a byte offset after the MIR
+   bounds check; dereferences load the reference and continue from its pointee.
 3. **Debug information.** When requested, a `DISubprogram`, parameter and binding
    variables, aggregate types, and a `DILocation` per statement and terminator
    are emitted alongside the IR.
@@ -79,13 +79,15 @@ The ABI is defined by the language, not by a C header:
 - Locals, parameters, and the return place live in `alloca` slots. Reading and
   writing a place is a load or store; moving is a bitwise transfer because no
   current type has a destructor.
-- Structs are LLVM structs with fields in declaration order, natural alignment,
-  and no reordering. Arrays are LLVM arrays of their element type: the element
-  size already includes its trailing padding, so the array stride matches
-  `seal-layout`. Scalars use their size as alignment, references use the target
-  pointer width, `bool` is one byte, and `()`/`!` are zero-sized structs. The
-  layout comes from `seal-layout`, so code generation and semantic layout cannot
-  disagree.
+- Structs and tuples are LLVM structs with fields or elements in declaration
+  order, natural alignment, and no reordering. Arrays are LLVM arrays of their
+  element type: the element size already includes its trailing padding, so the
+  array stride matches `seal-layout`. Scalars use their size as alignment,
+  references use the target pointer width, `bool` is one byte, and `()`/`!` are
+  zero-sized structs. Tuple literals lower to `Rvalue::Tuple`, which inserts each
+  evaluated element into its declared position, and `Projection::TupleField`
+  selects storage with a struct GEP. The layout comes from `seal-layout`, so
+  code generation and semantic layout cannot disagree.
 - An enum is an LLVM struct `{ tag, anchor, payload }`: the tag is the smallest
   integer that addresses every variant, a zero-length array of payload-aligned
   integers contributes the payload alignment without occupying storage, and the
@@ -101,9 +103,10 @@ The ABI is defined by the language, not by a C header:
   tests selects the arm; a literal pattern compares with `Rvalue::Binary`
   `Eq` and switches on the boolean result, a range pattern compares twice (`Ge`
   on the start and `Le` or `Lt` on the end), a struct pattern projects each
-  field with `Projection::Field`, and an array pattern projects each fixed
-  element with `Projection::Index` at a constant position; the patterns after
-  `..` use positions measured from the array length. A slice pattern reads the
+  field with `Projection::Field`, a tuple pattern projects each element with
+  `Projection::TupleField`, and an array pattern projects each fixed element
+  with `Projection::Index` at a constant position; the patterns after `..` use
+  positions measured from the array length. A slice pattern reads the
   runtime length with `Rvalue::Len`, switches on it (equality without `..`, a
   `>=` test with `..`), then indexes the dereferenced slice; suffix positions
   are computed as `length - k`, and the length test proves every index in
@@ -187,7 +190,8 @@ The ABI is defined by the language, not by a C header:
 - `DW_TAG_formal_parameter` for parameters and `DW_TAG_variable` for bindings,
   declared at their stack slots with source line and column;
 - `DW_TAG_structure_type` for every struct, with member names, bit offsets, and
-  sizes from `seal-layout`;
+  sizes from `seal-layout`; a tuple uses the same structure type with member
+  names `0`, `1`, and so on;
 - `DW_TAG_structure_type` for every enum with its discriminant member and a
   payload byte-array member at the layout offset. Variant parts are not emitted
   yet, so a debugger shows the tag and raw payload rather than the active
@@ -306,15 +310,18 @@ cargo build --workspace
 The end-to-end tests compile and run `examples/006_structs.sl`,
 `examples/009_arrays.sl`, `examples/010_slices.sl`,
 `examples/011_methods.sl`, `examples/012_user_methods.sl`,
-`examples/013_method_borrows.sl`, and `examples/014_method_namespaces.sl` in
-debug and release, check DWARF sections and names, exercise object and assembly
+`examples/013_method_borrows.sl`, `examples/014_method_namespaces.sl`, and
+`examples/026_tuples.sl` in debug and release, check DWARF sections and names, exercise object and assembly
 output without `main`, verify entry-point diagnostics, confirm panic messages
 and status 101 for zero divisors, signed overflow in both `/` and `%`, and
 out-of-range array indices, and reject executable linking when the embedded
 runtime does not match the target. `examples/007_runtime_panic.sl` pins the
 user-visible panic message and location. `examples/019_match.sl` exercises unit,
 positional, and named variant patterns, alternatives, a guard, and bindings in
-debug and release. Array tests also cover literals,
+debug and release. Tuple tests cover literals, positional access, nested access,
+partial moves, borrows of one element, patterns through references, tuples in
+struct fields, arrays, and enum payloads, and tuple debug information in debug
+and release. Array tests also cover literals,
 repeats, zero-length arrays, copy semantics, arrays in structs, structs in
 arrays, function parameters, dynamic writes, and repeats inside loops. Slice
 tests cover array-to-slice coercion, every range form, mutable views,

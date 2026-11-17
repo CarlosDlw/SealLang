@@ -163,6 +163,9 @@ impl Checker<'_> {
                     self.report_reference_pattern_moves(pattern, span);
                 }
             }
+            PatternKind::Tuple(elements) => {
+                self.check_tuple_pattern(&elements, expected, flow, span);
+            }
             PatternKind::Array {
                 prefix,
                 has_rest,
@@ -256,6 +259,69 @@ impl Checker<'_> {
         }
     }
 
+    fn check_tuple_pattern(
+        &mut self,
+        elements: &[HirPatternId],
+        expected: TyId,
+        flow: &mut Flow,
+        span: Span,
+    ) {
+        let (expected, through_reference) = self.deref_pattern_expected(expected);
+        let declared = match self.hir.ty_ctxt().kind(expected) {
+            TyKind::Tuple(tuple) => self.hir.ty_ctxt().tuple_elements(tuple),
+            TyKind::Unit => Vec::new(),
+            TyKind::Error => {
+                let error = self.error_ty();
+                for element in elements {
+                    self.check_pattern(*element, error, flow);
+                }
+                return;
+            }
+            _ => {
+                self.error(
+                    codes::E3037,
+                    span,
+                    format!(
+                        "a tuple pattern needs a tuple, found `{}`",
+                        self.ty_text(expected)
+                    ),
+                )
+                .help("match a tuple value, or use `_`")
+                .emit();
+                let error = self.error_ty();
+                for element in elements {
+                    self.check_pattern(*element, error, flow);
+                }
+                return;
+            }
+        };
+
+        if declared.len() != elements.len() {
+            self.error(
+                codes::E3037,
+                span,
+                format!(
+                    "this tuple pattern has {} element(s), but the tuple has {}",
+                    elements.len(),
+                    declared.len()
+                ),
+            )
+            .help("write one pattern per tuple element, using `_` for ignored values")
+            .emit();
+        }
+
+        for (position, element) in elements.iter().enumerate() {
+            let element_ty = declared
+                .get(position)
+                .copied()
+                .unwrap_or_else(|| self.error_ty());
+            self.check_pattern(*element, element_ty, flow);
+        }
+        if through_reference {
+            self.report_reference_moves_in_patterns(elements, span);
+        }
+    }
+
     /// Unwraps the references a struct or variant pattern matches through.
     fn deref_pattern_expected(&self, mut ty: TyId) -> (TyId, bool) {
         let mut through_reference = false;
@@ -269,8 +335,14 @@ impl Checker<'_> {
     /// Rejects bindings that would move a non-`Copy` value out of a reference
     /// reached by a struct or variant pattern.
     fn report_reference_pattern_moves(&mut self, pattern: HirPatternId, span: Span) {
+        self.report_reference_moves_in_patterns(&[pattern], span);
+    }
+
+    fn report_reference_moves_in_patterns(&mut self, patterns: &[HirPatternId], span: Span) {
         let mut bindings = FxHashSet::default();
-        self.collect_noncopy_bindings(pattern, &mut bindings);
+        for pattern in patterns {
+            self.collect_noncopy_bindings(*pattern, &mut bindings);
+        }
         if let Some(definition) = bindings.into_iter().next() {
             let ty = self.local_type(definition);
             self.error(
@@ -294,6 +366,9 @@ impl Checker<'_> {
             PatternKind::Variant { fields, .. } | PatternKind::Struct { fields, .. } => fields
                 .iter()
                 .any(|(_, pattern)| self.pattern_binds_anything(*pattern)),
+            PatternKind::Tuple(elements) => elements
+                .iter()
+                .any(|pattern| self.pattern_binds_anything(*pattern)),
             PatternKind::Array { prefix, suffix, .. } => prefix
                 .iter()
                 .chain(suffix.iter())
@@ -440,6 +515,11 @@ impl Checker<'_> {
             PatternKind::Variant { fields, .. } | PatternKind::Struct { fields, .. } => {
                 for (_, field) in fields {
                     self.collect_noncopy_bindings(*field, out);
+                }
+            }
+            PatternKind::Tuple(elements) => {
+                for element in elements {
+                    self.collect_noncopy_bindings(*element, out);
                 }
             }
             PatternKind::Array { prefix, suffix, .. } => {

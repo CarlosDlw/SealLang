@@ -52,6 +52,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             } => self.emit_intrinsic(*method, receiver, args, *span),
             Rvalue::Call { func, args, .. } => self.call(*func, args),
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
+            Rvalue::Tuple { elements, ty } => self.tuple_aggregate(elements, *ty),
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
             Rvalue::Repeat { value, count, ty } => self.array_repeat(value, *count, *ty),
         }
@@ -199,6 +200,53 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             self.builder.build_extract_value(fat, 1, "slice length"),
             "slice length",
         )
+    }
+
+    fn tuple_aggregate(
+        &self,
+        elements: &[seal_mir::Operand],
+        ty: seal_ty::TyId,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        if matches!(self.tcx.kind(ty), TyKind::Unit) {
+            if !elements.is_empty() {
+                return Err(CodegenError::internal(
+                    "a non-empty tuple literal cannot have the unit type".to_owned(),
+                ));
+            }
+            return Ok(self.mapper.basic(ty)?.into_struct_type().get_undef().into());
+        }
+        let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
+            return Err(CodegenError::internal(format!(
+                "tuple construction has non-tuple type `{ty:?}`"
+            )));
+        };
+        let element_types = self.tcx.tuple_elements(tuple);
+        if elements.len() != element_types.len() {
+            return Err(CodegenError::internal(format!(
+                "tuple construction has {} elements for an arity of {}",
+                elements.len(),
+                element_types.len()
+            )));
+        }
+        let tuple_type = self.mapper.basic(ty)?.into_struct_type();
+        let mut aggregate = tuple_type.get_undef();
+        for (index, element) in elements.iter().enumerate() {
+            let value = self.load_operand(element)?;
+            let next = self.build(
+                self.builder
+                    .build_insert_value(aggregate, value, index as u32, "tuple element"),
+                "tuple element",
+            )?;
+            aggregate = match next {
+                inkwell::values::AggregateValueEnum::StructValue(value) => value,
+                other => {
+                    return Err(CodegenError::internal(format!(
+                        "tuple construction produced {other:?}"
+                    )));
+                }
+            };
+        }
+        Ok(aggregate.into())
     }
 
     fn array_aggregate(

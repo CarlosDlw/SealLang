@@ -50,6 +50,7 @@ enum RawPatternKind {
         adt: DefId,
         fields: Vec<(DefId, RawPattern)>,
     },
+    Tuple(Vec<RawPattern>),
     Array {
         prefix: Vec<RawPattern>,
         has_rest: bool,
@@ -131,6 +132,12 @@ impl Lowering<'_> {
                 fields,
                 has_rest,
             } => self.build_raw_struct(name, name_span, &fields, has_rest),
+            AstPatternKind::Tuple(elements) => RawPatternKind::Tuple(
+                elements
+                    .into_iter()
+                    .map(|element| self.build_raw_pattern(element))
+                    .collect(),
+            ),
             AstPatternKind::Array {
                 prefix,
                 has_rest,
@@ -639,6 +646,11 @@ impl Lowering<'_> {
                     self.collect_pattern_bindings(field, out, seen);
                 }
             }
+            RawPatternKind::Tuple(elements) => {
+                for element in elements {
+                    self.collect_pattern_bindings(element, out, seen);
+                }
+            }
             RawPatternKind::Array { prefix, suffix, .. } => {
                 for element in prefix.iter().chain(suffix) {
                     self.collect_pattern_bindings(element, out, seen);
@@ -740,6 +752,12 @@ impl Lowering<'_> {
                     .map(|(field, pattern)| (*field, self.instantiate_pattern(pattern, bindings)))
                     .collect(),
             },
+            RawPatternKind::Tuple(elements) => PatternKind::Tuple(
+                elements
+                    .iter()
+                    .map(|element| self.instantiate_pattern(element, bindings))
+                    .collect(),
+            ),
             RawPatternKind::Array {
                 prefix,
                 has_rest,

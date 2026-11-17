@@ -15,5 +15,6 @@ mod slice_patterns;
 mod slices;
 mod straight_line;
 mod support;
+mod tuples;
 mod validation;
 mod while_let;

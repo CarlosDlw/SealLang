@@ -103,6 +103,12 @@ impl Checker<'_> {
                 flow,
                 mode,
             ),
+            ExprKind::TupleField {
+                base,
+                index,
+                index_span,
+            } => self.check_tuple_field(expr, base, index, index_span, flow, mode),
+            ExprKind::Tuple { elements } => self.check_tuple(&elements, expected, flow),
             ExprKind::Struct { adt, fields } => self.check_struct_literal(adt, &fields, flow, span),
             ExprKind::Variant {
                 adt,
@@ -302,6 +308,130 @@ impl Checker<'_> {
             self.require_initialized(expr, flow, span);
         }
         ty
+    }
+
+    fn check_tuple_field(
+        &mut self,
+        expr: HirExprId,
+        base: HirExprId,
+        index: u32,
+        index_span: Span,
+        flow: &mut Flow,
+        mode: PlaceMode,
+    ) -> TyId {
+        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        let (ty, projected) = match self.hir.ty_ctxt().kind(base_ty) {
+            TyKind::Tuple(tuple) => {
+                let arity = self.hir.ty_ctxt().tuple_len(tuple);
+                match self.hir.ty_ctxt().tuple_element(tuple, index as usize) {
+                    Some(element) => (element, true),
+                    None => {
+                        self.report_tuple_index(index, arity, index_span);
+                        (self.error_ty(), false)
+                    }
+                }
+            }
+            TyKind::Unit => {
+                self.error(
+                    seal_error_codes::E3036,
+                    index_span,
+                    "the unit value `()` has no tuple elements",
+                )
+                .help("the empty tuple cannot be indexed")
+                .emit();
+                (self.error_ty(), false)
+            }
+            TyKind::Ref { .. } => {
+                self.error(
+                    seal_error_codes::E3015,
+                    index_span,
+                    "cannot access a tuple element through a reference",
+                )
+                .help("dereference it first, as in `(*value).0`")
+                .emit();
+                (self.error_ty(), false)
+            }
+            TyKind::Error => (base_ty, false),
+            _ => {
+                self.error(
+                    seal_error_codes::E3015,
+                    index_span,
+                    format!(
+                        "a value of type `{}` has no tuple elements",
+                        self.ty_text(base_ty)
+                    ),
+                )
+                .help("numeric field access is only valid on tuples")
+                .emit();
+                (self.error_ty(), false)
+            }
+        };
+
+        if projected && let Some(mut place) = self.results.place(base).cloned() {
+            place.projections.push(PlaceProjection::TupleField(index));
+            place.ty = ty;
+            self.results.record_place(expr, place);
+        }
+        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
+            self.require_initialized(expr, flow, index_span);
+        }
+        ty
+    }
+
+    fn report_tuple_index(&self, index: u32, arity: usize, span: Span) {
+        self.error(
+            seal_error_codes::E3036,
+            span,
+            format!("tuple index `.{index}` is out of bounds for a tuple with {arity} element(s)"),
+        )
+        .help(if arity == 0 {
+            "the unit value `()` has no elements".to_owned()
+        } else {
+            format!("valid indices are `0` through `{}`", arity - 1)
+        })
+        .emit();
+    }
+
+    fn check_tuple(
+        &mut self,
+        elements: &[HirExprId],
+        expected: Option<TyId>,
+        flow: &mut Flow,
+    ) -> TyId {
+        let expected_elements =
+            expected.and_then(|expected| match self.hir.ty_ctxt().kind(expected) {
+                TyKind::Tuple(tuple) => {
+                    let declared = self.hir.ty_ctxt().tuple_elements(tuple);
+                    (declared.len() == elements.len()).then_some(declared)
+                }
+                TyKind::Unit if elements.is_empty() => Some(Vec::new()),
+                _ => None,
+            });
+
+        for (position, element) in elements.iter().enumerate() {
+            match expected_elements
+                .as_ref()
+                .and_then(|types| types.get(position))
+            {
+                Some(expected) => self.check_expr(*element, *expected, flow),
+                None => {
+                    self.infer_expr(*element, None, flow);
+                }
+            }
+        }
+
+        if elements.is_empty() {
+            return self.unit();
+        }
+        let types: Vec<TyId> = elements
+            .iter()
+            .map(|element| {
+                self.results.expr_ty(*element).unwrap_or_else(|| {
+                    panic!("a checked tuple element has no type; this is a compiler bug")
+                })
+            })
+            .collect();
+        self.hir.ty_ctxt().tuple_ty(&types)
     }
 
     fn check_array(

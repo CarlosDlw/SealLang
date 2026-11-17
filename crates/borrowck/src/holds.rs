@@ -275,6 +275,23 @@ fn transfer(
                 }
             }
         }
+        Rvalue::Tuple { elements, .. } => {
+            // Like a struct literal, each tuple element owns its loans. Writing
+            // one element later must not drop another element's loan.
+            state.clear(place);
+            if destination_has_reference {
+                for (index, operand) in elements.iter().enumerate() {
+                    let loans = match operand.place() {
+                        Some(source) if source.is_deref() => all_loans.clone(),
+                        Some(source) => state.at(&source),
+                        None => LoanSet::default(),
+                    };
+                    if !loans.is_empty() {
+                        state.assign(&place.clone().tuple_field(index as u32), loans);
+                    }
+                }
+            }
+        }
         Rvalue::Array { elements, .. } => {
             state.clear(place);
             if destination_has_reference {

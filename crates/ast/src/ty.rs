@@ -121,6 +121,12 @@ pub enum TypeKind {
     },
     /// A named type, resolved against the type namespace during lowering.
     Path(Symbol),
+    /// A tuple type, written `(A, B, ...)`.
+    ///
+    /// The empty list is the unit type `()`. A one-element tuple must keep its
+    /// trailing comma, so `(A,)` is a tuple while `(A)` is just a parenthesized
+    /// type.
+    Tuple(Vec<TypeId>),
     /// A fixed-size array, written `[T; N]`.
     Array {
         /// The type of each element.

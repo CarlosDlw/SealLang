@@ -252,6 +252,25 @@ pub enum ExprKind {
         /// The span of the field name.
         name_span: Span,
     },
+    /// A positional tuple access, written `base.0` or `base.1`.
+    ///
+    /// Tuple fields are numbered from zero in declaration order. The index is
+    /// checked against the tuple's arity by type checking, not by the parser.
+    TupleField {
+        /// The expression the tuple element is projected from.
+        base: ExprId,
+        /// The zero-based element position.
+        index: u32,
+        /// The span of the numeric index, for diagnostics.
+        index_span: Span,
+    },
+    /// A tuple literal, written `(a, b)` or `(a,)`.
+    ///
+    /// The empty tuple is the unit value `()`.
+    Tuple {
+        /// Elements in source order.
+        elements: Vec<ExprId>,
+    },
     /// A struct literal, written `Name { field: value, ... }`.
     Struct {
         /// The struct name.

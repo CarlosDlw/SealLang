@@ -39,6 +39,7 @@ fn all_examples_lex_cleanly() {
         "023_for.sl",
         "024_if_let.sl",
         "025_while_let.sl",
+        "026_tuples.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

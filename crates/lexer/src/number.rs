@@ -31,6 +31,39 @@ impl Scanner<'_> {
         let mut base = NumericBase::Decimal;
         let mut is_float = false;
 
+        // A number immediately after `.` is a tuple index, not the start of a
+        // float. Without this rule `pair.0.1` would lex the second field as
+        // `0.1`, making chained tuple access impossible to parse. The previous
+        // token is enough context: an ordinary decimal float is consumed by the
+        // number scanner that starts at its integer part, so a `Dot` token here
+        // can only be field access.
+        if self.after_dot() {
+            self.scan_decimal_digits(&mut cleaned, &mut had_error, true);
+            let suffix = self.scan_suffix(&mut had_error);
+            if had_error {
+                return TokenKind::Error;
+            }
+            let value = match cleaned.parse::<u128>() {
+                Ok(value) => value,
+                Err(_) => {
+                    let span = self.span(start, self.cursor.position());
+                    self.report_once(
+                        &mut had_error,
+                        codes::E0009,
+                        span,
+                        "integer literal is too large for any integer type",
+                        "the largest literal is `340282366920938463463374607431768211455`",
+                    );
+                    return TokenKind::Error;
+                }
+            };
+            return TokenKind::Int {
+                value,
+                base: NumericBase::Decimal,
+                suffix,
+            };
+        }
+
         if let Some(prefixed) = self.base_prefix(start, &mut had_error) {
             base = prefixed;
             cleaned.clear();
@@ -154,6 +187,13 @@ impl Scanner<'_> {
                 suffix,
             }
         }
+    }
+
+    /// Returns `true` when the previous significant token is `.`.
+    fn after_dot(&self) -> bool {
+        self.tokens
+            .last()
+            .is_some_and(|token| token.kind == TokenKind::Dot)
     }
 
     /// Consumes a `0b`/`0o`/`0x` prefix and returns its base.

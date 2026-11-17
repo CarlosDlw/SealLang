@@ -72,6 +72,28 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     )?;
                     ty = definition.fields[index].ty;
                 }
+                Projection::TupleField(index) => {
+                    let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
+                        return Err(CodegenError::internal(format!(
+                            "cannot project a tuple element from `{ty:?}` during code generation"
+                        )));
+                    };
+                    let element =
+                        self.tcx
+                            .tuple_element(tuple, *index as usize)
+                            .ok_or_else(|| {
+                                CodegenError::internal(format!(
+                                    "tuple element {index} is outside {ty:?}"
+                                ))
+                            })?;
+                    let tuple_type = self.mapper.basic(ty)?.into_struct_type();
+                    pointer = self.build(
+                        self.builder
+                            .build_struct_gep(tuple_type, pointer, *index, "tuple element"),
+                        "tuple element projection",
+                    )?;
+                    ty = element;
+                }
                 Projection::VariantField { variant, field } => {
                     let TyKind::Adt(adt) = self.tcx.kind(ty) else {
                         return Err(CodegenError::internal(format!(
@@ -236,6 +258,21 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                             ))
                         })?;
                     ty = definition.fields[index].ty;
+                }
+                Projection::TupleField(index) => {
+                    let TyKind::Tuple(tuple) = self.tcx.kind(ty) else {
+                        return Err(CodegenError::internal(format!(
+                            "cannot project a tuple element from `{ty:?}` during code generation"
+                        )));
+                    };
+                    ty = self
+                        .tcx
+                        .tuple_element(tuple, *index as usize)
+                        .ok_or_else(|| {
+                            CodegenError::internal(format!(
+                                "tuple element {index} is outside {ty:?}"
+                            ))
+                        })?;
                 }
                 Projection::VariantField { variant, field } => {
                     let TyKind::Adt(adt) = self.tcx.kind(ty) else {

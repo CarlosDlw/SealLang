@@ -181,6 +181,9 @@ impl Hir {
             ExprKind::Path(Res::Local(def)) => Some(Place::local(def)),
             ExprKind::Deref { operand } => self.place(operand).map(Place::deref),
             ExprKind::Field { base, name, .. } => self.place(base).map(|place| place.field(name)),
+            ExprKind::TupleField { base, index, .. } => self
+                .place(base)
+                .map(|place| place.tuple_field(index as usize)),
             ExprKind::Index { base, index } => self.place(base).map(|place| place.index(index)),
             _ => None,
         }

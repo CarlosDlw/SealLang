@@ -11,13 +11,16 @@
 //! their size as alignment, references use the target pointer width, and `bool`
 //! is a one-byte `i1`.
 
+use std::cell::RefCell;
+
 use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType};
+use seal_hash::FxHashMap;
 use seal_index::Idx;
 use seal_layout::{Layout, LayoutCtxt, LayoutError};
 use seal_symbol::Interner;
-use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, TyCtxt, TyId, TyKind, UintTy};
+use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, TupleId, TyCtxt, TyId, TyKind, UintTy};
 
 use crate::error::CodegenError;
 
@@ -30,6 +33,7 @@ pub(crate) struct TypeMapper<'ctx> {
     empty: StructType<'ctx>,
     fat_pointer: StructType<'ctx>,
     adts: Vec<StructType<'ctx>>,
+    tuples: RefCell<FxHashMap<TupleId, StructType<'ctx>>>,
 }
 
 impl<'ctx> TypeMapper<'ctx> {
@@ -70,6 +74,7 @@ impl<'ctx> TypeMapper<'ctx> {
             empty,
             fat_pointer,
             adts,
+            tuples: RefCell::new(FxHashMap::default()),
         };
         mapper.fill_aggregates()?;
         Ok(mapper)
@@ -146,6 +151,22 @@ impl<'ctx> TypeMapper<'ctx> {
                 BasicTypeEnum::ArrayType(self.basic(element)?.array_type(length))
             }
             TyKind::Adt(adt) => BasicTypeEnum::StructType(self.adt(adt)),
+            TyKind::Tuple(tuple) => {
+                let cached = self.tuples.borrow().get(&tuple).copied();
+                let tuple_type = match cached {
+                    Some(tuple_type) => tuple_type,
+                    None => {
+                        let mut fields = Vec::new();
+                        for element in self.tcx.tuple_elements(tuple) {
+                            fields.push(self.basic(element)?);
+                        }
+                        let created = self.context.struct_type(&fields, false);
+                        self.tuples.borrow_mut().insert(tuple, created);
+                        created
+                    }
+                };
+                BasicTypeEnum::StructType(tuple_type)
+            }
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
             TyKind::Str | TyKind::Slice { .. } => {
                 return Err(CodegenError::internal(
@@ -203,6 +224,14 @@ impl<'ctx> TypeMapper<'ctx> {
         adt: AdtId,
     ) -> Result<Vec<seal_layout::FieldLayout>, CodegenError> {
         self.layouts.field_layouts(adt).map_err(layout_error)
+    }
+
+    /// Returns the layout of every tuple element, in declaration order.
+    pub(crate) fn tuple_field_layouts(
+        &self,
+        ty: TyId,
+    ) -> Result<Vec<seal_layout::FieldLayout>, CodegenError> {
+        self.layouts.tuple_field_layouts(ty).map_err(layout_error)
     }
 
     /// Returns the zero-sized struct used for `()`, `!`, and the error type.

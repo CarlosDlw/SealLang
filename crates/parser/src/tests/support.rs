@@ -456,6 +456,17 @@ impl Reachability<'_> {
                 self.assert_span(name_span);
                 self.check_expr(base);
             }
+            ExprKind::TupleField {
+                base, index_span, ..
+            } => {
+                self.assert_span(index_span);
+                self.check_expr(base);
+            }
+            ExprKind::Tuple { elements } => {
+                for element in elements {
+                    self.check_expr(element);
+                }
+            }
             ExprKind::Array { elements } => {
                 for element in elements {
                     self.check_expr(element);
@@ -630,6 +641,11 @@ impl Reachability<'_> {
                     self.check_pattern(alternative);
                 }
             }
+            PatternKind::Tuple(elements) => {
+                for element in elements {
+                    self.check_pattern(element);
+                }
+            }
             PatternKind::Array { prefix, suffix, .. } => {
                 for element in prefix.iter().chain(suffix.iter()) {
                     self.check_pattern(*element);
@@ -662,6 +678,11 @@ impl Reachability<'_> {
                 self.check_type(element);
             }
             TypeKind::Slice { element } => self.check_type(element),
+            TypeKind::Tuple(elements) => {
+                for element in elements {
+                    self.check_type(element);
+                }
+            }
             _ => {}
         }
     }

@@ -121,7 +121,7 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
                 move_operand(operand, state);
             }
         }
-        Rvalue::Array { elements, .. } => {
+        Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
             for element in elements {
                 move_operand(element, state);
             }
@@ -154,6 +154,7 @@ fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
             | seal_mir::Projection::VariantField { field, .. } => {
                 path.push(PathElem::Field(*field))
             }
+            seal_mir::Projection::TupleField(index) => path.push(PathElem::TupleField(*index)),
             seal_mir::Projection::Index {
                 constant: Some(index),
                 ..
@@ -182,6 +183,7 @@ pub(crate) fn state_of(
             | seal_mir::Projection::VariantField { field, .. } => {
                 path.push(PathElem::Field(*field))
             }
+            seal_mir::Projection::TupleField(index) => path.push(PathElem::TupleField(*index)),
             seal_mir::Projection::Index {
                 constant: Some(index),
                 ..

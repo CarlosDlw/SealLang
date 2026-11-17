@@ -38,8 +38,9 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | Slice pointee | `[T]` | unsized | unsized | no | no | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | Enum | `E` | computed | computed | no | yes, if every variant field is | no |
+| Tuple | `(T, U)`, `(T,)` | computed | computed | yes, if every element is | yes, if every element is | no |
 | Array | `[T; N]` | N × size(T) | align(T) | yes, if `T` is | yes, if `T` is | no |
-| Unit | not writable | 0 | 1 | yes | yes | no |
+| Unit | `()` | 0 | 1 | yes | yes | no |
 | Never | not writable | 0 | 1 | yes | yes | no |
 | Error | internal | 0 | 1 | yes | yes | no |
 | Inference variable | internal | unknown | unknown | no | no | no |
@@ -286,6 +287,7 @@ func classify(command: Command) -> i32 {
 | `Enum::Variant(p, q)` | a positional variant, one pattern per field |
 | `Enum::Variant { field: p, other }` | a named variant; a bare name is shorthand for `other: other` |
 | `Struct { field: p, other, .. }` | a struct; a bare name is shorthand for `other: other`, and `..` ignores the remaining fields |
+| `(p, q)`, `()` | a tuple; one pattern per element, in positional order |
 | `a..=b`, `a..b` | an integer or `char` value inside the range |
 | `name @ p` | any value matching `p`, also bound as `name` |
 | `[p, q]`, `[first, .., last]` | a fixed-size array; `..` skips the elements between the fixed patterns |
@@ -306,7 +308,8 @@ is `E2048` unless the pattern ends with `..`, which ignores every field it did
 not name. A named variant follows the same rule (`E2043` without `..`). An
 array pattern writes one pattern per element, or uses a single
 `..` to skip the elements between its fixed patterns; a pattern with more fixed
-elements than the array has is `E2049`. On a slice reference (`*[T]` or
+elements than the array has is `E2049`. A tuple pattern writes exactly one
+subpattern per element and has no rest form, so a different arity is `E3037`. On a slice reference (`*[T]` or
 `*mut [T]`) the same forms test a runtime length: without `..` the length must
 match exactly, and with `..` it must be at least the number of fixed patterns.
 The length itself is not part of the type, so coverage partitions the length
@@ -319,10 +322,10 @@ shape. An `@` binding is a binding with a subpattern: the subpattern must match
 before the name is stored, and the name is available in the arm body and guard
 under the same rules as any other binding.
 
-A struct or variant pattern also matches through any number of references
-(`*T`, `*mut T`): the pattern reads the tag and the fields through the
-reference, so a field bound by name must be `Copy`, and binding a non-`Copy`
-field is `E3018`. Literal, range, and binding patterns still match the reference
+A struct, tuple, or variant pattern also matches through any number of
+references (`*T`, `*mut T`): the pattern reads the tag and the fields or
+elements through the reference, so a field or element bound by name must be
+`Copy`, and binding a non-`Copy` field or element is `E3018`. Literal, range, and binding patterns still match the reference
 value itself, so dereference explicitly when the value you compare is behind it.
 
 A guard is an `if` expression after the pattern. It must have type `bool`
@@ -334,8 +337,9 @@ bindings are assigned before the guard and the rest after it succeeds.
 Coverage uses the usefulness algorithm from the pattern literature: an arm is
 reachable when some value matches it and no earlier unguarded arm, and a match is
 exhaustive when no value escapes every arm. `bool` and enums have finitely many
-constructors, so covering every variant is enough; a struct or array is a single
-constructor, so its fields decide coverage, and an unnamed field left by `..` is
+constructors, so covering every variant is enough; a struct, tuple, or array is
+a single constructor, so its fields or elements decide coverage, and an unnamed
+field left by `..` is
 a wildcard for that purpose. Integer and character ranges
 partition the value domain at every observed endpoint, which makes adjacent
 ranges exhaustive without a catch-all and reports an uncovered gap as a concrete
@@ -383,6 +387,45 @@ branches must agree on the result type. Matching moves a non-`Copy` field into
 its binding exactly as a match arm does, which means the scrutinee is partially
 or wholly moved afterward. A pattern on a reference follows the reference and
 can bind only fields whose type is `Copy` (`E3018`).
+
+## Tuples
+
+A tuple is a **structural** product type: its identity is the ordered list of
+element types, so `(i32, bool)` written in two places is the same type. It is
+not nominal and has no declaration, name, or fields. Tuples are written with
+parentheses and commas:
+
+```seal
+let pair: (i32, bool) = (1, true);
+let single: (i32,) = (7,);
+let grouped = (pair.0);   // parentheses, not a tuple
+let unit: () = ();
+```
+
+`(T)` groups a type and `(value)` groups an expression; a one-element tuple
+requires the trailing comma. `()` is the unit type, not a distinct empty tuple,
+so a tuple with no elements *is* `()`. There is no tuple rest pattern: a tuple
+pattern writes exactly one pattern per element.
+
+Elements are accessed by position with `.0`, `.1`, and so on. A tuple field is a
+place, so it can be read, written, borrowed, moved, or projected further
+(`nested.0.1`). Access requires a place base and does not autodereference a
+reference; write `(*reference).0`. An index outside the arity is `E3036`, and
+positional access on a non-tuple is `E3015`. Elements are evaluated in source
+order, and construction initializes every element exactly once.
+
+A tuple pattern is written `(p, q)` and follows the same rules as other
+structural patterns: every element gets one subpattern, it may follow references
+without an explicit dereference, and binding a non-`Copy` element through a
+reference is `E3018`. A tuple is a single constructor for exhaustiveness, so
+coverage depends on its element patterns.
+
+The layout keeps declaration order with natural alignment and no reordering.
+The size is the end of the last element rounded up to the tuple's alignment; a
+one-element tuple has the same size and alignment as its element, and `()` is
+zero-sized with alignment 1. A tuple is `Copy` when every element is, and
+`Sized` when every element is. It has no destructor of its own; its elements
+decide whether a future destructor is needed.
 
 ## Arrays
 
@@ -719,11 +762,11 @@ checker tracks the receiver's storage for the duration of the call.
 
 ## Unit, never, and internal types
 
-`()` is the unit type: it is the result of a function with no `->` clause and of
-expressions that produce no value. `!` is the never type, the type of expressions
-that do not return, such as `return`, `break`, and `continue`. Neither type has a
-source spelling in type position in v0.1; they appear in inferred signatures and
-diagnostics. Both are zero-sized, aligned to 1, `Copy`, and `Sized`.
+`()` is the unit type: it is the result of a function with no `->` clause, the
+empty tuple literal, and the type written `()` in a signature or annotation.
+`!` is the never type, the type of expressions that do not return, such as
+`return`, `break`, and `continue`; it has no source spelling in type position in
+v0.1. Both are zero-sized, aligned to 1, `Copy`, and `Sized`.
 
 Two more kinds exist only inside the compiler:
 
@@ -741,9 +784,9 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is. `str`, slices, and every struct or enum are not, even when a slice's elements are `Copy`. |
-| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is. |
-| `needs_drop` | No current type runs a destructor. An array, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. |
+| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, and every struct or enum are not, even when all their fields are `Copy`. |
+| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
+| `needs_drop` | No current type runs a destructor. An array, tuple, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the
@@ -757,8 +800,9 @@ Layout is deterministic and defined by the language, not by the host C ABI:
    `char` is 4 bytes, and every integer and float has its width.
 2. Every reference uses the target pointer width. `*str` is two words: data and
    length, both pointer-sized.
-3. Fields keep declaration order; there is no reordering, packing, or
-   overlapping. Each field starts at the next multiple of its alignment.
+3. Fields and tuple elements keep declaration order; there is no reordering,
+   packing, or overlapping. Each field starts at the next multiple of its
+   alignment.
 4. A struct's alignment is the maximum of its fields' alignments, or 1 when it
    has no fields. Its size is the end of its last field rounded up to its own
    alignment, so trailing padding belongs to the value.
@@ -768,9 +812,11 @@ Layout is deterministic and defined by the language, not by the host C ABI:
    is as large as the largest variant, and the whole value is padded to its
    maximum alignment. Variant field offsets are measured from the start of the
    enum, which is what code generation and debug information use.
-6. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
+6. A tuple is laid out exactly like a struct with positional fields: natural
+alignment, no reordering, and trailing padding rounded to its alignment.
+7. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
    its own.
-7. An array has the element's alignment and `length × size(element)` bytes. It
+8. An array has the element's alignment and `length × size(element)` bytes. It
    adds no padding between elements beyond the element's own size, which already
    includes its trailing padding.
 
@@ -781,15 +827,16 @@ Layout is deterministic and defined by the language, not by the host C ABI:
 | `Segment { start: Point, end: Point }` | 16 | 4 | `start` at 0, `end` at 8 |
 | `Empty {}` | 0 | 1 | none |
 | `enum Number { Small { value: u8 }, Large { value: u64 } }` | 16 | 8 | tag at 0, payload at 8 |
+| `(i32, bool)` | 8 | 4 | first at 0, second at 4 |
 | `[i32; 4]` | 16 | 4 | elements at 0, 4, 8, 12 |
 | `[u8; 0]` | 0 | 1 | none |
 | `*i32` on a 64-bit target | 8 | 8 | none |
 | `*str` on a 64-bit target | 16 | 8 | data at 0, length at 8 |
 
 Code generation materializes one stack slot per local, uses struct GEPs for
-fields, indexes arrays with a bounds-checked byte offset, and passes references
-as pointers — or as a `{ data, length }` pair for `*str`. `()` and `!` are
-zero-sized structs in the ABI.
+struct fields and tuple elements, indexes arrays with a bounds-checked byte
+offset, and passes references as pointers — or as a `{ data, length }` pair for
+`*str`. `()` and `!` are zero-sized structs in the ABI.
 
 ## Loops
 

@@ -261,6 +261,35 @@ fn lexing_continues_after_a_bad_literal() {
 }
 
 #[test]
+fn chained_tuple_indices_are_integer_tokens_after_dots() {
+    let fixture = Fixture::new("pair.0.1");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    let kinds = fixture.kinds(&lexed);
+    assert_eq!(kinds.len(), 6);
+    assert!(matches!(kinds[0], TokenKind::Ident(_)));
+    assert_eq!(kinds[1], TokenKind::Dot);
+    assert_eq!(
+        kinds[2],
+        TokenKind::Int {
+            value: 0,
+            base: NumericBase::Decimal,
+            suffix: None
+        }
+    );
+    assert_eq!(kinds[3], TokenKind::Dot);
+    assert_eq!(
+        kinds[4],
+        TokenKind::Int {
+            value: 1,
+            base: NumericBase::Decimal,
+            suffix: None
+        }
+    );
+    assert_eq!(fixture.token_texts(&lexed), ["pair", ".", "0", ".", "1"]);
+}
+
+#[test]
 fn leading_dot_is_not_a_float() {
     let fixture = Fixture::new(".5");
     let lexed = fixture.lex();

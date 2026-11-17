@@ -13,7 +13,7 @@ use seal_ast::PatternLiteral;
 use seal_error_codes as codes;
 use seal_hir::{HirPatternId, MatchArm, PatternKind};
 use seal_span::Span;
-use seal_ty::{AdtId, FloatTy, TyCtxt, TyId, TyKind, VariantIdx};
+use seal_ty::{AdtId, FloatTy, TupleId, TyCtxt, TyId, TyKind, VariantIdx};
 
 use super::Checker;
 
@@ -61,6 +61,9 @@ pub(super) enum Cover {
         adt: AdtId,
         fields: Vec<Cover>,
     },
+    Tuple {
+        fields: Vec<Cover>,
+    },
     Array {
         fields: Vec<Cover>,
     },
@@ -75,6 +78,7 @@ enum Ctor {
     Float(u64),
     Variant { adt: AdtId, variant: VariantIdx },
     Struct { adt: AdtId },
+    Tuple { tuple: Option<TupleId> },
     Array { element: TyId, length: u64 },
     SliceLength { element: TyId, length: u64 },
 }
@@ -280,6 +284,36 @@ impl Checker<'_> {
                         adt: adt_id,
                         fields,
                     })
+                    .collect()
+            }
+            PatternKind::Tuple(elements) => {
+                let mut base = ty;
+                while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(base) {
+                    base = pointee;
+                }
+                let declared = match self.hir.ty_ctxt().kind(base) {
+                    TyKind::Tuple(tuple) => self.hir.ty_ctxt().tuple_elements(tuple),
+                    TyKind::Unit => Vec::new(),
+                    _ => return vec![Cover::Wildcard],
+                };
+                if declared.len() != elements.len() {
+                    // Type checking already reported the arity mismatch.
+                    return vec![Cover::Wildcard];
+                }
+                let mut combinations: Vec<Vec<Cover>> = vec![Vec::new()];
+                for (element, element_ty) in elements.iter().zip(declared) {
+                    let options = self.cover_pattern(*element, element_ty, budget);
+                    if budget.exhausted || options.is_empty() {
+                        return Vec::new();
+                    }
+                    combinations = combine(combinations, options, budget);
+                    if budget.exhausted {
+                        return Vec::new();
+                    }
+                }
+                combinations
+                    .into_iter()
+                    .map(|fields| Cover::Tuple { fields })
                     .collect()
             }
             PatternKind::Array {
@@ -513,6 +547,17 @@ impl Checker<'_> {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
+            Cover::Tuple { fields } => {
+                let rendered: Vec<String> =
+                    fields.iter().map(|field| self.cover_text(field)).collect();
+                if rendered.is_empty() {
+                    "()".to_owned()
+                } else if rendered.len() == 1 {
+                    format!("({},)", rendered[0])
+                } else {
+                    format!("({})", rendered.join(", "))
+                }
+            }
             Cover::Array { fields } => {
                 let rendered: Vec<String> =
                     fields.iter().map(|field| self.cover_text(field)).collect();
@@ -607,11 +652,15 @@ fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) ->
     match tcx.kind(ty) {
         TyKind::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
         TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
+        TyKind::Tuple(tuple) => Some(vec![Ctor::Tuple { tuple: Some(tuple) }]),
+        TyKind::Unit => Some(vec![Ctor::Tuple { tuple: None }]),
         TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
         TyKind::Ref { pointee, .. } => match tcx.kind(pointee) {
             TyKind::Slice { element } => Some(slice_constructors(element, covers)),
             TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
-            TyKind::Ref { .. } => constructors(tcx, pointee, covers, pointer_width),
+            TyKind::Ref { .. } | TyKind::Tuple(_) | TyKind::Unit => {
+                constructors(tcx, pointee, covers, pointer_width)
+            }
             _ => None,
         },
         TyKind::Int(_) | TyKind::Uint(_) => Some(interval_ctors(ty, covers, tcx, pointer_width)),
@@ -760,6 +809,9 @@ fn ctor_fields(tcx: &TyCtxt, ctor: Ctor) -> Vec<TyId> {
             .map(|variant| variant.fields.iter().map(|field| field.ty).collect())
             .unwrap_or_default(),
         Ctor::Struct { adt } => tcx.adt(adt).fields.iter().map(|field| field.ty).collect(),
+        Ctor::Tuple { tuple } => tuple
+            .map(|tuple| tcx.tuple_elements(tuple))
+            .unwrap_or_default(),
         Ctor::Array { element, length } => vec![element; length as usize],
         Ctor::SliceLength { element, length } => vec![element; length as usize],
     }
@@ -796,6 +848,7 @@ fn ctor_matches(cover: &Cover, ctor: Ctor) -> bool {
             },
         ) => *left_adt == right_adt && *left_variant == right_variant,
         (Cover::Struct { adt: left, .. }, Ctor::Struct { adt: right }) => *left == right,
+        (Cover::Tuple { .. }, Ctor::Tuple { .. }) => true,
         (Cover::Array { .. }, Ctor::Array { .. }) => true,
         (
             Cover::Slice {
@@ -823,9 +876,10 @@ fn ctor_matches(cover: &Cover, ctor: Ctor) -> bool {
 
 fn cover_fields(cover: &Cover) -> &[Cover] {
     match cover {
-        Cover::Variant { fields, .. } | Cover::Struct { fields, .. } | Cover::Array { fields } => {
-            fields
-        }
+        Cover::Variant { fields, .. }
+        | Cover::Struct { fields, .. }
+        | Cover::Tuple { fields }
+        | Cover::Array { fields } => fields,
         _ => &[],
     }
 }
@@ -846,6 +900,7 @@ fn cover_from_ctor(ctor: Ctor, fields: Vec<Cover>, ty: Option<TyId>) -> Cover {
             fields,
         },
         Ctor::Struct { adt } => Cover::Struct { adt, fields },
+        Ctor::Tuple { .. } => Cover::Tuple { fields },
         Ctor::Array { .. } | Ctor::SliceLength { .. } => Cover::Array { fields },
     }
 }
@@ -967,7 +1022,10 @@ pub(super) fn is_useful(
     is_useful(&specialized, &nested, &nested_types, tcx, pointer_width)
 }
 
-fn cover_ctor(cover: &Cover, ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
+fn cover_ctor(cover: &Cover, mut ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
+    while let TyKind::Ref { pointee, .. } = tcx.kind(ty) {
+        ty = pointee;
+    }
     match cover {
         Cover::Bool(value) => Some(Ctor::Bool(*value)),
         Cover::IntRange { start, end, .. } => Some(Ctor::IntRange {
@@ -985,6 +1043,11 @@ fn cover_ctor(cover: &Cover, ty: TyId, tcx: &TyCtxt) -> Option<Ctor> {
             variant: *variant,
         }),
         Cover::Struct { adt, .. } => Some(Ctor::Struct { adt: *adt }),
+        Cover::Tuple { .. } => match tcx.kind(ty) {
+            TyKind::Tuple(tuple) => Some(Ctor::Tuple { tuple: Some(tuple) }),
+            TyKind::Unit => Some(Ctor::Tuple { tuple: None }),
+            _ => None,
+        },
         Cover::Array { .. } => match tcx.kind(ty) {
             TyKind::Array { element, length } => Some(Ctor::Array { element, length }),
             _ => None,

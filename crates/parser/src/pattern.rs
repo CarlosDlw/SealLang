@@ -268,9 +268,46 @@ impl Parser<'_> {
             }
             TokenKind::LParen => {
                 self.bump();
-                let inner = self.parse_match_pattern();
-                let _ = self.expect(TokenKind::RParen, "`)` after the pattern");
-                inner
+                if self.eat(TokenKind::RParen) {
+                    let span = token.span.cover(self.previous_span());
+                    self.builder
+                        .push_pattern(PatternKind::Tuple(Vec::new()), span)
+                } else {
+                    let first = self.parse_match_pattern();
+                    if self.eat(TokenKind::Comma) {
+                        let mut elements = vec![first];
+                        while !self.at(TokenKind::RParen) && !self.is_eof() {
+                            let before = self.index;
+                            elements.push(self.parse_match_pattern());
+                            if self.eat(TokenKind::Comma) {
+                                continue;
+                            }
+                            if self.at(TokenKind::RParen) || self.is_eof() {
+                                break;
+                            }
+                            let found = self.describe(self.current_kind());
+                            self.error(
+                                codes::E1001,
+                                self.current_span(),
+                                format!("expected `,` or `)` in the tuple pattern, found {found}"),
+                            )
+                            .help("separate tuple element patterns with `,`")
+                            .emit();
+                            if !can_start_pattern(self.current_kind()) {
+                                break;
+                            }
+                            self.ensure_progress(before);
+                        }
+                        let _ = self.expect(TokenKind::RParen, "`)` to close the tuple pattern");
+                        let span = token.span.cover(self.previous_span());
+                        self.builder
+                            .push_pattern(PatternKind::Tuple(elements), span)
+                    } else {
+                        // `(pattern)` groups; it is not a one-element tuple.
+                        let _ = self.expect(TokenKind::RParen, "`)` after the pattern");
+                        first
+                    }
+                }
             }
             TokenKind::LBracket => self.parse_array_pattern(token.span),
             TokenKind::Str(_) => {
