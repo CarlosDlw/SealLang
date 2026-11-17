@@ -30,7 +30,7 @@ allowed to depend only on crates below it in the list.
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct and array layout: field offsets, alignment, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
-| `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
+| `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, resolved paths and places, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, index projections and bounds checks, terminators, and structural validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, array element paths, escaping references, `E5xxx` diagnostics. |
@@ -261,11 +261,13 @@ allowed to depend only on crates below it in the list.
     with a bounds-checked element offset, so evaluation order and layout agree.
     A slice range is lowered to explicit checks followed by a fat-pointer
     construction; `len` reads the length member.
-54. **The ABI is compiler-owned.** Seal functions use the `seal.<name>` symbol;
-    the C `main` wrapper is the only `main`. A user `main` takes no parameters
-    and returns `i32` or `()`. `*str`, `*[T]`, and `*mut [T]` are
-    `{ data, length }`; `()`/`!` are zero-sized structs; the object is position
-    independent.
+54. **The ABI is compiler-owned.** A free function uses the `seal.<name>`
+    symbol and an impl function uses `seal.<Type>.<name>`, so same-named methods
+    on different types cannot collide. The C `main` wrapper is the only `main`,
+    and only a free function can be the language entry point. A user `main`
+    takes no parameters and returns `i32` or `()`. `*str`, `*[T]`, and
+    `*mut [T]` are `{ data, length }`; `()`/`!` are zero-sized structs; the
+    object is position independent.
 55. **Debug information describes the generated IR.** `-g` emits a Rust compile
     unit, subprograms, parameters, bindings, aggregate types with layout
     offsets, and a source location per statement and terminator, all finalized
@@ -316,14 +318,18 @@ allowed to depend only on crates below it in the list.
     remains correct; the attribute never decides whether a program is accepted.
     A shared `*T` parameter is always `readonly`, because the type system
     forbids writing through it.
-63. **Methods are static catalog entries.** A method call is a dedicated AST and
-    HIR node, not a desugared field access. Type checking resolves `(owner,
-    name)` in `seal-methods` after following the receiver's reference layers,
-    validates the signature and writability, and records the receiver form,
-    dereference count, and resolved operation. MIR lowers the call to
-    `Rvalue::Intrinsic`; code generation implements the operation. No phase
-    re-infers ownership or the receiver shape, and adding a user method table
-    later adds a lookup source without changing intrinsic calls.
+63. **Methods resolve statically through per-type and catalog lookup.** A method
+    call is a dedicated AST and HIR node, not a desugared field access. Type
+    checking first looks up `(struct, name)` in the inherent impl registry and
+    then, for non-struct receivers, the intrinsic catalog after following the
+    receiver's reference layers. It validates the signature and writability and
+    records whether the call is a user function or an intrinsic, the receiver
+    adjustment, dereference count, and result type. A user method lowers to a
+    direct `Rvalue::Call` whose first argument is the receiver, with an explicit
+    `Rvalue::Ref` when the receiver is borrowed automatically; an intrinsic
+    lowers to `Rvalue::Intrinsic`. Code generation consumes the recorded form
+    and never re-infers ownership or the receiver shape. The two lookups are
+    ordered, so a struct method shadows an intrinsic with the same name.
 
 ## Extension points
 
@@ -358,6 +364,14 @@ allowed to depend only on crates below it in the list.
   types, and MIR validation must not duplicate its data. Add a catalog test, a
   type-checking test for each accepted and rejected receiver, and an end-to-end
   test for observable behavior and panics.
+- **New inherent method or associated function.** Parse it inside `impl` as a
+  normal `FnDecl`, then register it in `seal-hir`'s per-type method map and, when
+  its first parameter is `self`, record its receiver kind. Type checking
+  resolves the receiver before MIR; MIR passes the receiver as the first
+  argument, materializing `Rvalue::Ref` for an automatic borrow. No codegen
+  case is needed because the call is an ordinary `Rvalue::Call`, but the
+  per-type symbol name must stay unique. Add parser, HIR, typeck, MIR, borrowck,
+  and end-to-end coverage.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is

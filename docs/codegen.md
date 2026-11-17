@@ -12,9 +12,11 @@ assembly output do not require an entry point; executables do.
 
 ## Pipeline
 
-1. **Declare.** Every MIR body becomes a `seal.<name>` LLVM function with
-   external linkage and the signature derived from its argument and return
-   types. Declaring first lets a body call a function declared later.
+1. **Declare.** Every MIR body becomes an LLVM function with external linkage
+   and the signature derived from its argument and return types. A free
+   function is `seal.<name>`; an impl function is `seal.<Type>.<name>`, so
+   same-named methods on different types stay distinct. Declaring first lets a
+   body call a function declared later.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
    block, and explicit loads/stores for places. Field projections use struct
    GEPs; array indices use a byte offset after the MIR bounds check; dereferences
@@ -67,8 +69,9 @@ the linker's stderr.
 
 The ABI is defined by the language, not by a C header:
 
-- Seal functions have external visibility and the symbol `seal.<name>`; the C
-  `main` wrapper is the only symbol named `main`.
+- A free Seal function has external visibility and the symbol `seal.<name>`;
+  an impl function uses `seal.<Type>.<name>`. The C `main` wrapper is the only
+  symbol named `main`, and only a free function can be the language entry point.
 - A user `main` must take no parameters and return `i32` or `()`. The wrapper
   always returns `i32`, using the returned value or zero for unit. A missing or
   invalid entry point is `E6001`.
@@ -96,6 +99,11 @@ The ABI is defined by the language, not by a C header:
 - Slice indexing reloads the data member of the fat pointer and checks the
   runtime index against the length member before the element offset. `len`
   extracts the length member directly; both operations are O(1).
+- User methods lower from `Rvalue::Call`; the receiver is the first argument.
+  An automatic shared or exclusive receiver borrow is an explicit
+  `Rvalue::Ref` in MIR, so code generation emits the ordinary address and load
+  for the call. Associated functions are ordinary calls reached through a
+  resolved function path.
 - Intrinsic methods lower from `Rvalue::Intrinsic`. Scalar methods use LLVM
   instructions and target intrinsics: `llvm.abs`, `llvm.ctpop`, `llvm.ctlz`,
   `llvm.cttz`, `llvm.fshl`/`llvm.fshr`, `llvm.bswap`, `llvm.fabs`,
@@ -260,21 +268,24 @@ cargo build --workspace
 ```
 
 The end-to-end tests compile and run `examples/006_structs.sl`,
-`examples/009_arrays.sl`, `examples/010_slices.sl`, and
-`examples/011_methods.sl` in debug and release,
-check DWARF sections and names, exercise object and assembly output without
-`main`, verify entry-point
-diagnostics, and confirm panic messages and status 101 for zero divisors, signed
-overflow in both `/` and `%`, and out-of-range array indices, and reject
-executable linking when the embedded runtime does not match the target.
-`examples/007_runtime_panic.sl` pins the user-visible panic message and location.
-Array tests also cover literals, repeats, zero-length arrays, copy semantics,
-arrays in structs, structs in arrays, function parameters, dynamic writes, and
-repeats inside loops. Slice tests cover array-to-slice coercion, every range
-form, mutable views, sub-slicing, struct elements, runtime length reads, bounds
-panics, reborrow conflicts, and `len` shadowing. Method tests cover every
-catalog family, chaining, statement-valued calls, empty sequences, non-`Copy`
-elements, exclusive references, saturating `i128`, NaN-aware float selection,
-integer clamp contracts, and `swap` bounds panics. The driver tests export the
-embedded archive with
+`examples/009_arrays.sl`, `examples/010_slices.sl`,
+`examples/011_methods.sl`, `examples/012_user_methods.sl`,
+`examples/013_method_borrows.sl`, and `examples/014_method_namespaces.sl` in
+debug and release, check DWARF sections and names, exercise object and assembly
+output without `main`, verify entry-point diagnostics, confirm panic messages
+and status 101 for zero divisors, signed overflow in both `/` and `%`, and
+out-of-range array indices, and reject executable linking when the embedded
+runtime does not match the target. `examples/007_runtime_panic.sl` pins the
+user-visible panic message and location. Array tests also cover literals,
+repeats, zero-length arrays, copy semantics, arrays in structs, structs in
+arrays, function parameters, dynamic writes, and repeats inside loops. Slice
+tests cover array-to-slice coercion, every range form, mutable views,
+sub-slicing, struct elements, runtime length reads, bounds panics, reborrow
+conflicts, and `len` shadowing. Intrinsic-method tests cover every catalog
+family, chaining, statement-valued calls, empty sequences, non-`Copy` elements,
+exclusive references, saturating `i128`, NaN-aware float selection, integer
+clamp contracts, and `swap` bounds panics. User-method tests cover associated
+constructors, shared, exclusive, and value receivers, automatic borrowing,
+method/associated-function namespaces, symbol uniqueness across types, and
+receiver borrow conflicts. The driver tests export the embedded archive with
 `--emit-runtime` and reuse it with `--runtime-archive` to link that example.

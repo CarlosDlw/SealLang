@@ -11,8 +11,8 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
    synchronization; every cost is visible in the source.
 3. **No lifetime annotations.** Users never write region parameters; regions are
    inferred from liveness.
-4. **Room to grow.** Adding generics, user-defined methods, visibility, and an
-   `unsafe` layer must not require redesigning the type system.
+4. **Room to grow.** Adding traits, generics, visibility, and an `unsafe` layer
+   must not require redesigning the type system.
 
 ## Model
 
@@ -109,10 +109,11 @@ cases stay beyond the analysis: a reference read out of memory has an unknown
 target and conservatively conflicts with any live loan of storage it might name,
 and distinct parameters are assumed not to alias, which is part of the
 exclusive-reference contract. Diagnostics label the live borrow and its last
-active use, so the reordering that fixes a conflict is visible. Two-phase
-borrows (reserve, then activate) are reserved for user-defined methods that
-reborrow their receiver during argument evaluation; intrinsic methods resolve
-their receiver before checking arguments and do not need a reservation.
+active use, so the reordering that fixes a conflict is visible. Receiver
+borrows follow source order: an automatic receiver borrow is created before the
+arguments are evaluated, and there is no two-phase reserve/activate step. A
+receiver borrow that conflicts with an argument is therefore rejected rather
+than postponed, for both intrinsic and user methods.
 
 A call is an access through every reference argument: an exclusive argument
 (`*mut T`, or an aggregate carrying one) gives the callee sole access to its
@@ -239,15 +240,26 @@ conversion, not a copy: it keeps the same data address, derives the length from
 the array type, and records the same loan. A slice is neither `Copy`, `Sized`,
 nor owning; its reference is `Copy` and carries the loan.
 
-### D15 — Intrinsic methods are static and borrow through their receiver
+### D15 — Methods are static and borrow through their receiver
 
-Methods are a closed compiler catalog, not user-declared code. Lookup is a
-`(owner, name)` query over integers, floats, `bool`, `char`, arrays, and slices;
-the owner is the receiver's type after every reference layer is followed. There
-is no vtable, dynamic dispatch, or method value: a call lowers to a semantic
-`Rvalue::Intrinsic` whose operation the backend chooses. This keeps the memory
-model independent of implementation details and leaves user `impl` methods as an
-additive lookup layer rather than a redesign.
+Method lookup has two sources. An inherent method declared in an `impl` block
+is found on the receiver's nominal struct; intrinsic methods are a closed
+compiler catalog over integers, floats, `bool`, `char`, arrays, and slices. In
+both cases the owner is the receiver's type after every reference layer is
+followed. There is no vtable, dynamic dispatch, or method value: a user method
+lowers to a direct `Rvalue::Call` with the receiver as its first argument, and
+an intrinsic lowers to a semantic `Rvalue::Intrinsic` whose operation the
+backend chooses. This keeps the memory model independent of implementation
+details and leaves traits as an additive lookup layer rather than a redesign.
+
+A user method declares its receiver explicitly. `self: T` moves or copies the
+receiver, `self: *T` borrows it shared, and `self: *mut T` borrows it exclusive.
+When the receiver expression is a `T` place and the method expects a reference,
+the compiler creates the same loan a written `&receiver` or `&mut receiver`
+would create; the borrow checker therefore sees no special case. An exclusive
+automatic borrow still requires a writable place, and an unrelated receiver type
+is rejected before MIR. Associated functions have no receiver and are called as
+`T::name(...)`, which resolves to an ordinary function item.
 
 A scalar method receives a copy. A sequence method borrows its receiver: `len`
 and `is_empty` take a shared loan, while `swap`, `reverse`, `fill`, and

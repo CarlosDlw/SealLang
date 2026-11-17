@@ -291,12 +291,15 @@ like any other reference.
 
 ## Methods
 
-Methods are compiler-owned intrinsics, not user declarations. The syntax is a
-postfix `.name(arguments)` on an expression, and lookup uses the receiver's
-type. Every reference layer is followed before lookup, so `(*reference).abs()`
-and `reference.abs()` resolve to the same scalar method. The catalog is closed in
-v0.1: a name outside it is `E3027`, and there is no `impl`, trait, generic, or
-user method yet.
+A method call has the postfix form `.name(arguments)` and resolves from the
+receiver's type. On a struct, an inherent method declared in an `impl` block is
+tried first; on scalars, sequences, and references to them, lookup uses the
+closed compiler-owned intrinsic catalog. Every reference layer is followed
+before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
+scalar method, and a `*Point` can call a `Point` method written for `*Point`.
+There is no vtable, dynamic dispatch, method value, trait, or generic method.
+An unknown name is `E3027`, an associated function written as a method is
+`E2019`, and a method written as `Type::name` is `E2019` as well.
 
 ```seal
 func main() -> i32 {
@@ -308,13 +311,64 @@ func main() -> i32 {
 ```
 
 A method call evaluates its receiver first, then its arguments left to right, and
-then performs the operation. Arguments must match the catalog signature exactly;
-the wrong count is `E3028`. Methods chain without temporaries in the syntax, and
-an array or slice expression may be a temporary receiver. A modifying method
-requires a writable place: a `mut` binding, a field reached through one, or a
-`*mut T` reference. A shared reference, a shared slice, or an immutable binding
-is `E3029`. Calling a modifying method on a temporary is accepted because the
-temporary's storage does not outlive the call.
+then performs the operation. Arguments must match the selected signature
+exactly; the wrong count is `E3028`. Methods chain without temporaries in the
+syntax, and an array, slice, or struct expression may be a temporary receiver. A
+modifying method requires a writable place: a `mut` binding, a field reached
+through one, or a `*mut T` reference. A shared reference, a shared slice, or an
+immutable binding is `E3029`. Calling a modifying method on a temporary is
+accepted because the temporary's storage does not outlive the call.
+
+### User-defined inherent methods
+
+An `impl` block attaches functions to one nominal struct declared in the same
+module. A function whose first parameter is named `self` is an instance method;
+its receiver type is written explicitly and must be the struct, `*Struct`, or
+`*mut Struct`. A function without `self` is associated and is called through the
+type with `Struct::name(...)`.
+
+```seal
+struct Point {
+  x: i32,
+  y: i32,
+}
+
+impl Point {
+  func new(x: i32, y: i32) -> Point {
+    Point { x: x, y: y }
+  }
+
+  func sum(self: *Point) -> i32 {
+    (*self).x + (*self).y
+  }
+
+  func shift(self: *mut Point, dx: i32, dy: i32) {
+    (*self).x += dx;
+    (*self).y += dy;
+  }
+}
+
+func main() -> i32 {
+  let mut point = Point::new(19, 22);
+  point.shift(1, 2);
+  point.sum()
+}
+```
+
+A value receiver (`self: Point`) moves or copies the receiver as an ordinary
+argument. A shared receiver (`self: *Point`) borrows it shared; an exclusive
+receiver (`self: *mut Point`) borrows it exclusively and requires a writable
+place. When the receiver expression already has the declared reference type it
+is passed unchanged; otherwise a receiver of the struct type is borrowed
+automatically. A receiver of another type is `E3031`.
+
+Methods and associated functions share one namespace per type, so two impls may
+not define the same name and a function may not be both associated and an
+instance method (`E2017`). Different types may use the same method names; the
+receiver's type selects the impl, and the generated symbol includes the type.
+`self` must be the first parameter (`E2016`), and the impl target must be a
+struct (`E2015`). The ordinary borrow checker sees the automatic receiver borrow
+as a real loan, so a live conflicting loan is `E5008`.
 
 ### Signed and unsigned integers
 
