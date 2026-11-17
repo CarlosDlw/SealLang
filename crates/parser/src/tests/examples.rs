@@ -41,6 +41,11 @@ fn all_examples_parse_without_diagnostics() {
         ("024_if_let.sl", 9),
         ("025_while_let.sl", 6),
         ("026_tuples.sl", 6),
+        ("027_generic_functions.sl", 3),
+        ("028_generic_structs.sl", 4),
+        ("029_generic_enums.sl", 5),
+        ("030_generic_traits.sl", 7),
+        ("031_generic_recursion.sl", 5),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

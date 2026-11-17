@@ -44,10 +44,93 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | Never | not writable | 0 | 1 | yes | yes | no |
 | Error | internal | 0 | 1 | yes | yes | no |
 | Inference variable | internal | unknown | unknown | no | no | no |
+| Type parameter | `T` | after instantiation | after instantiation | by bound | yes | no |
 
 No current type runs a destructor: scalars, references, `str`, `()`, and `!` are
 trivially disposable, and an aggregate inherits destructors from its fields once
 owning heap types exist.
+
+## Generic types
+
+A generic declaration introduces type parameters and is checked once, against
+those parameters treated as rigid types. Every use then instantiates it with
+concrete arguments, and code generation emits one instance per reachable
+`(definition, type arguments)` pair.
+
+### Declarations and bounds
+
+```seal
+struct Pair<T, U> {
+  first: T,
+  second: U,
+}
+
+func read<T, U>(value: *T) -> U where T: Convert<U> {
+  value.convert()
+}
+
+trait Convert<T> {
+  func convert(self: *Self) -> T;
+}
+
+impl<T: Copy> Convert<T> for Labeled<T> {
+  func convert(self: *Labeled<T>) -> T {
+    (*self).label
+  }
+}
+```
+
+- Parameters are declared as `<T, U: Bound>` after an item, impl, or method
+  name. A `where` clause after the header declares the same bounds.
+- Bounds are `Copy` (structural, checked against the concrete type) or a trait
+  reference such as `Convert<U>` (closed-world: the program must contain one
+  matching impl).
+- `Self` is the implicit first parameter of a trait and the concrete self type
+  in an impl; it is rejected in a free function.
+- A method inside an impl or trait inherits its parent's parameters; it may
+  declare its own after them.
+- Type parameters are `Sized` by default. There is no `?Sized`, no default type
+  argument, no specialization, no associated type, and no const generic in this
+  version.
+
+### Inference and explicit arguments
+
+- A type annotation must spell every argument: `Pair<i32, bool>`. A bare `Pair`
+  is an error.
+- An expression may omit arguments; they are inferred from argument types,
+  struct field initializers, an enum variant payload, the receiver type, and the
+  expected return or binding type. Inference runs both directions, so
+  `let x: i32 = make();` instantiates `make<T>` with `i32`.
+- Turbofish makes an argument explicit: `identity::<i32>(value)`,
+  `Pair::<i32, bool> { … }`, `Option::<i32>::None`, `value.method::<u8>(…)`.
+- If no source determines a parameter, the program is rejected naming it; it is
+  never defaulted or erased.
+
+### Layout and cost
+
+Each instantiation is a distinct concrete type. `Pair<i32, bool>` and
+`Pair<u8, i32>` have their own field types, sizes, alignments, and offsets;
+`Option<Pair<i32, bool>>` gets a payload sized for that pair. Recursion must go
+through a reference (`*Node<T>` or an enum holding one), so every layout stays
+finite. Type arguments have no runtime representation: they cost nothing at run
+time and are not stored in the value.
+
+The costs are compile time and binary size. Every reachable instance is emitted
+once, calls are direct, and no allocation, boxing, dictionary, or vtable is
+introduced. Monomorphization is bounded: a recursive instantiation chain deeper
+than 64 (`E7001`) or more than 4096 distinct instances (`E7004`) is rejected
+with the instance chain. As a reference measurement, the five generic examples
+link to about 16 KiB each at `-O2` on 64-bit Linux, and a stress program with
+100 distinct instances stays under 1 MiB; the test suite enforces that bound.
+
+### Compatibility with non-generic code
+
+Generics are additive. A program without type parameters keeps its symbols
+(`seal.<name>` and `seal.<Type>.<name>`), ABI, layouts, diagnostics, and
+output; no instance suffix is added and no extra MIR body or LLVM function is
+emitted. A generic definition that is never instantiated is not emitted at all.
+Existing non-generic code needs no migration; adding a type parameter changes
+only that item's symbol, which is internal to one compilation.
 
 ## Scalar types
 

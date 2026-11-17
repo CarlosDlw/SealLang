@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::support::check_clean;
 
-const EXAMPLES: [&str; 25] = [
+const EXAMPLES: [&str; 30] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -30,6 +30,11 @@ const EXAMPLES: [&str; 25] = [
     "024_if_let.sl",
     "025_while_let.sl",
     "026_tuples.sl",
+    "027_generic_functions.sl",
+    "028_generic_structs.sl",
+    "029_generic_enums.sl",
+    "030_generic_traits.sl",
+    "031_generic_recursion.sl",
 ];
 
 fn source(name: &str) -> String {

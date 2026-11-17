@@ -147,6 +147,7 @@ isolation check on its own.
 | Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is not `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls, no vtable |
 | Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch: each call binds to the concrete implementation of the receiver's type |
+| Generics | `func f<T>(…)`, `struct S<T>`, `enum E<T>`, `impl<T> S<T>` | Monomorphized: one concrete body and layout per type argument; bounds are static and closed-world |
 
 There are no implicit numeric conversions: every arithmetic and comparison
 operand must already have the expected type, and an unsuffixed integer literal
@@ -181,6 +182,11 @@ User methods declare their receiver explicitly as `self: S`, `self: *S`, or
 method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
 read-only method. A trait writes `Self` for the implementing type and every
 `impl Trait for S` binds one concrete function per method, so a trait call is an
-ordinary direct call. Generics, trait objects, and an `unsafe` layer are not part
-of the surface yet; the memory model records how they fit without redesigning the
-type system.
+ordinary direct call. Generic functions, structs, enums, inherent impls,
+associated functions, traits, trait methods, and trait impls accept type
+parameters with inline or `where` bounds; every reachable instance is
+monomorphized, so a generic call is still one direct call with no dictionary or
+runtime type metadata. Trait objects and an `unsafe` layer are not part of the
+surface yet; the memory model records how they fit without redesigning the type
+system. The generic examples in `examples/027_generic_functions.sl` through
+`examples/031_generic_recursion.sl` show the feature end to end.

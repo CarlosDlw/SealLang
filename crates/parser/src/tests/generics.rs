@@ -613,6 +613,27 @@ fn specified_recovery_cases_report_and_keep_the_tree_well_formed() {
 }
 
 #[test]
+fn generated_unclosed_generic_forms_recover_without_panicking() {
+    for depth in 1..=8 {
+        let params = "T, ".repeat(depth);
+        let arguments = "i32, ".repeat(depth);
+        for source in [
+            format!("func f<{params}(value: i32) -> i32 {{ value }}"),
+            format!("struct S<{params} {{ value: i32 }}"),
+            format!("func f() {{ let value: Pair<{arguments} = 0; }}"),
+        ] {
+            let fixture = Fixture::new(&source);
+            let ast = fixture.parse();
+            assert_invariants(&fixture, &ast);
+            assert!(
+                !fixture.diagnostics().is_empty(),
+                "an unclosed generic form must report a diagnostic: {source:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn generic_forms_terminate_on_hostile_combinations() {
     for source in [
         "func f<T",

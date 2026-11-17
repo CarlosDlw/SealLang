@@ -294,9 +294,11 @@ monomorphization; the eventual concrete call owns and borrows exactly what the
 selected impl declares. Moves and copies consult the body's parameter
 environment: a `T: Copy` parameter is copied and stays usable, while an
 unbounded `T` is moved. A declared parameter is conservatively treated as
-containing a reference, so a generic aggregate never drops a loan it may carry,
-and `noalias` is withheld for a parameter whose type mentions a declared
-parameter until each instantiation proves the contract.
+containing a reference, so a generic aggregate never drops a loan it may carry.
+The `noalias` proof runs once on the generic body and is independent of the
+instantiation; because an exclusive reference to a declared parameter is
+treated conservatively, such a parameter never receives the attribute, while a
+concrete reference type that closes the proof does.
 
 A user method declares its receiver explicitly. `self: T` moves or copies the
 receiver, `self: *T` borrows it shared, and `self: *mut T` borrows it exclusive.
@@ -330,7 +332,10 @@ call.
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
   `Float`, `Ref { kind: RefKind, pointee }`, `Array { element, length }`,
-  `Adt(AdtId)`, `Tuple(TupleId)`, `Unit`, `Never`, `Error`, and `Infer`.
+  `Adt { adt, args }`, `Tuple(TupleId)`, `Param(ParamTyId)`, `Unit`, `Never`,
+  `Error`, and `Infer`.
+  `AdtId` always names the declaration and `args` is the interned, structural
+  list of type arguments; `Param` is a rigid parameter of one generic body.
   Tuple IDs come from a structural interner, so equal element lists share one
   `TupleId`. `RefKind` is `Shared`
   (`*T`) or `Exclusive` (`*mut T`); the kind is part of the type, so the two
@@ -342,7 +347,16 @@ call.
   structural arena keyed by their ordered `TyId`s, with no names or `DefId`s.
 - `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
   aggregate fields, tuple elements, and array elements with a cycle guard; no
-  query can loop on a malformed declaration.
+  query can loop on a malformed declaration. On a declared parameter the
+  structural queries are conservative: `is_copy` is false without a `Copy`
+  bound, `is_sized` is true, `needs_drop` is false, and both reference
+  predicates are true. The environment-aware `is_copy_in` answers from the
+  body's bounds instead.
+- `SubstsId` is an interned ordered argument list. `substitute(ty, args)`
+  rewrites parameters through references, arrays, slices, tuples, and aggregate
+  arguments without expanding a recursive definition. `Instance { def, args }`
+  is the monomorphization key, and `MonoMir` bodies contain no `Param`, no
+  `Infer`, and no symbolic trait call.
 - `Str` and `Slice` are distinct kinds, not aliases for `*u8`, because they are
   unsized and their references carry a length (D7, D14).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
@@ -375,6 +389,10 @@ call.
   explicit statement in a control-flow graph; regions are inferred from the
   liveness of those statements, and place conflicts compare path prefixes so
   field borrows are as precise as the moves they guard.
+- **Monomorphization** collects every reachable `(definition, arguments)` pair,
+  substitutes the body, resolves a trait-bound call to the unique impl method,
+  and validates that no parameter or inference variable survives. It is the
+  only phase that turns a generic body into concrete code.
 - **Codegen** may assume that no safe reference is null or dangling and that a
   `Copy` value has no destructor. It marks an exclusive-reference parameter
   `noalias` only for a function whose body never reaches storage through an

@@ -526,6 +526,42 @@ fn a_missing_impl_is_reported_not_an_ice() {
 }
 
 #[test]
+fn one_hundred_distinct_instances_are_collected_once_each() {
+    let mut source =
+        String::from("func mark<T>() -> i32 { 1 }\nfunc main() -> i32 {\n  let mut total = 0;\n");
+    for length in 1..=100 {
+        source.push_str(&format!("  total = total + mark::<[i32; {length}]>();\n"));
+    }
+    source.push_str("  total\n}\n");
+    let (fixture, hir, _mir, program) = collect_clean(&source);
+    let rendered = names(&fixture, &hir, &program);
+    assert_eq!(
+        rendered.len(),
+        101,
+        "one `main` plus one instance per distinct array length"
+    );
+    assert_eq!(
+        rendered
+            .iter()
+            .filter(|name| name.starts_with("mark<"))
+            .count(),
+        100
+    );
+}
+
+#[test]
+fn many_repeated_calls_still_collect_one_instance() {
+    let mut source =
+        String::from("func mark<T>() -> i32 { 1 }\nfunc main() -> i32 {\n  let mut total = 0;\n");
+    for _ in 0..100 {
+        source.push_str("  total = total + mark::<i32>();\n");
+    }
+    source.push_str("  total\n}\n");
+    let (fixture, hir, _mir, program) = collect_clean(&source);
+    assert_eq!(names(&fixture, &hir, &program), ["main", "mark<i32>"]);
+}
+
+#[test]
 fn a_symbolic_instance_keeps_its_trait_method_definition() {
     let (fixture, hir, _mir, program) = collect_clean(
         "trait Show { func show(self: *Self) -> i32; }\
