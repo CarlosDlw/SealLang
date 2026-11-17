@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 21] = [
+const EXAMPLES: [&str; 22] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -29,6 +29,7 @@ const EXAMPLES: [&str; 21] = [
     "020_match_advanced.sl",
     "021_match_slice.sl",
     "022_match_reference.sl",
+    "023_for.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -78,6 +79,16 @@ fn collect_stmt(
         StmtKind::Return(Some(value)) => collect_expr(hir, *value, stmts, exprs),
         StmtKind::While { condition, body } => {
             collect_expr(hir, *condition, stmts, exprs);
+            collect_block(hir, *body, stmts, exprs);
+        }
+        StmtKind::For { source, body, .. } => {
+            match source {
+                crate::ForSource::Range { start, end, .. } => {
+                    collect_expr(hir, *start, stmts, exprs);
+                    collect_expr(hir, *end, stmts, exprs);
+                }
+                crate::ForSource::Expr(expr) => collect_expr(hir, *expr, stmts, exprs),
+            }
             collect_block(hir, *body, stmts, exprs);
         }
         StmtKind::Expr(expr) => collect_expr(hir, *expr, stmts, exprs),

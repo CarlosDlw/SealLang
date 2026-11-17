@@ -1600,6 +1600,27 @@ usually makes the rest disappear.
 Fix the errors above and rebuild. The limit can be raised with `--max-errors`.",
 };
 
+/// A `for` loop pattern does not match every element.
+pub const E3034: ErrorCode = ErrorCode {
+    code: "E3034",
+    title: "refutable pattern in for loop",
+    explanation: "\
+A for loop runs its body only when the iteration value matches the pattern. A
+pattern that does not match every value of the element type would silently skip
+iterations, so it is rejected.\n\nWrite an irrefutable pattern, such as a binding, `_`, or a destructuring pattern
+whose fields are all irrefutable.",
+};
+
+/// A `for` loop source has no iteration protocol.
+pub const E3035: ErrorCode = ErrorCode {
+    code: "E3035",
+    title: "value is not iterable",
+    explanation: "\
+A for loop iterates an integer range, an array by value, or a reference to an
+array or slice. Other values have no elements to visit, so the loop cannot run.\n\nIterate an integer range such as `0..len(values)`, an array, `&array`, or a
+slice reference. A custom type needs its own loop over one of these forms.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -1610,8 +1631,8 @@ pub static ALL: &[ErrorCode] = &[
     E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E3001, E3002, E3003, E3004,
     E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
     E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
-    E3031, E3032, E3033, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E6001, E6002, E6003, E9001, E9002,
+    E3031, E3032, E3033, E3034, E3035, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008,
+    E5009, E5010, E6001, E6002, E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1744,7 +1765,7 @@ mod tests {
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
-                "E3028", "E3029", "E3030", "E3031", "E3032", "E3033",
+                "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035",
             ]
         );
     }

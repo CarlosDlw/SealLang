@@ -94,7 +94,7 @@ impl Checker<'_> {
     }
 
     /// Checks a pattern against the scrutinee type and records its bindings.
-    fn check_pattern(&mut self, pattern: HirPatternId, expected: TyId, flow: &mut Flow) {
+    pub(super) fn check_pattern(&mut self, pattern: HirPatternId, expected: TyId, flow: &mut Flow) {
         let (span, kind) = {
             let pattern = self.hir.pattern(pattern);
             (pattern.span, pattern.kind.clone())

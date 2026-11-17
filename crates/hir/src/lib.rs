@@ -38,7 +38,7 @@ mod traits;
 #[cfg(test)]
 mod tests;
 
-pub use body::{Block, Body, ParamData, Stmt, StmtKind};
+pub use body::{Block, Body, ForSource, ParamData, Stmt, StmtKind};
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};

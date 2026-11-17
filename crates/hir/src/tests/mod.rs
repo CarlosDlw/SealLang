@@ -5,6 +5,7 @@ mod borrows;
 mod control_flow;
 mod enums;
 mod examples;
+mod for_loop;
 mod match_advanced;
 mod match_expr;
 mod methods;

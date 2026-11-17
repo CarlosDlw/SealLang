@@ -5,6 +5,7 @@ mod call;
 mod exhaustive;
 mod expr;
 mod flow;
+mod for_loop;
 mod literal;
 mod method;
 mod operators;

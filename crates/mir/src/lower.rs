@@ -1,5 +1,6 @@
 //! HIR-to-MIR lowering.
 
+mod for_loop;
 mod match_expr;
 
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
@@ -270,6 +271,11 @@ impl<'a> BodyLowering<'a> {
                 self.terminate(TerminatorKind::Return, return_span);
             }
             StmtKind::While { condition, body } => self.lower_while(condition, body, span),
+            StmtKind::For {
+                pattern,
+                source,
+                body,
+            } => self.lower_for(pattern, source, body, span),
             StmtKind::Break => {
                 let target = self
                     .loops

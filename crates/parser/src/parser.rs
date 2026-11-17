@@ -804,6 +804,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Impl => "impl",
         TokenKind::Trait => "trait",
         TokenKind::For => "for",
+        TokenKind::In => "in",
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::Let => "let",

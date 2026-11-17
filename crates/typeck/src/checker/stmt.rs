@@ -107,6 +107,13 @@ fn check_stmt(checker: &mut Checker<'_>, statement: HirStmtId, mut flow: Flow) -
             checker.check_condition(condition, &mut flow);
             let _body = checker.check_block(body, None, flow.clone());
         }
+        StmtKind::For {
+            pattern,
+            source,
+            body,
+        } => {
+            flow = checker.check_for(pattern, source, body, span, flow);
+        }
         StmtKind::Break | StmtKind::Continue => {
             flow.diverges = true;
         }

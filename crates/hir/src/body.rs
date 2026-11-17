@@ -39,6 +39,22 @@ pub struct Block {
     pub span: Span,
 }
 
+/// What a lowered `for` loop iterates.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForSource {
+    /// An integer range. Both bounds have the same integer type.
+    Range {
+        /// The first value, included.
+        start: HirExprId,
+        /// The end value, excluded or included according to `inclusive`.
+        end: HirExprId,
+        /// `true` for `..=`, `false` for `..`.
+        inclusive: bool,
+    },
+    /// An array, or a reference to an array or slice.
+    Expr(HirExprId),
+}
+
 /// A lowered statement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stmt {
@@ -69,6 +85,16 @@ pub enum StmtKind {
     While {
         /// Evaluated before every iteration; it must have type `bool`.
         condition: HirExprId,
+        /// The loop body.
+        body: HirBlockId,
+    },
+    /// A `for` loop over an iterable value.
+    For {
+        /// Matched against each element; type checking requires it to be
+        /// irrefutable.
+        pattern: crate::id::HirPatternId,
+        /// What the loop iterates.
+        source: ForSource,
         /// The loop body.
         body: HirBlockId,
     },

@@ -742,4 +742,51 @@ impl BodyLowering<'_> {
             PatternLiteral::Bool(value) => Constant::Bool(value),
         }
     }
+
+    /// Declares the binding locals of a `for` pattern once, before the loop.
+    pub(super) fn declare_for_pattern(&mut self, pattern: HirPatternId) {
+        self.declare_pattern_bindings(pattern);
+    }
+
+    /// Lowers one iteration's pattern, jumping to `success` when it matches and
+    /// to `fail` when an alternative does not.
+    ///
+    /// Type checking proves the pattern irrefutable, but a failed alternative
+    /// still has a defined destination: the increment block skips the body, so
+    /// error recovery cannot produce an invalid loop.
+    pub(super) fn lower_for_pattern(
+        &mut self,
+        pattern: HirPatternId,
+        place: Place,
+        ty: TyId,
+        fail: BasicBlockId,
+        success: BasicBlockId,
+        span: Span,
+    ) {
+        let alternatives = self.expand_pattern(pattern);
+        if alternatives.is_empty() {
+            self.terminate_goto(fail, span);
+            return;
+        }
+        let mut entries = Vec::new();
+        for _ in 0..alternatives.len().saturating_sub(1) {
+            entries.push(self.new_block());
+        }
+        for (index, alternative) in alternatives.iter().enumerate() {
+            if index > 0 {
+                self.current = entries.get(index - 1).copied();
+            }
+            let alternative_fail = entries.get(index).copied().unwrap_or(fail);
+            let mut bindings = Vec::new();
+            self.lower_flat_pattern(
+                alternative,
+                place.clone(),
+                ty,
+                alternative_fail,
+                &mut bindings,
+            );
+            self.bind_all(&bindings, span);
+            self.terminate_goto(success, span);
+        }
+    }
 }

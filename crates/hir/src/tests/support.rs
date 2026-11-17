@@ -304,6 +304,21 @@ impl Reachability<'_> {
                 self.check_expr(condition);
                 self.check_block(body);
             }
+            StmtKind::For {
+                pattern,
+                source,
+                body,
+            } => {
+                self.check_pattern(pattern);
+                match source {
+                    crate::ForSource::Range { start, end, .. } => {
+                        self.check_expr(start);
+                        self.check_expr(end);
+                    }
+                    crate::ForSource::Expr(expr) => self.check_expr(expr),
+                }
+                self.check_block(body);
+            }
             StmtKind::Expr(expr) => self.check_expr(expr),
             StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
         }

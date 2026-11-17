@@ -1,6 +1,6 @@
 //! Blocks and statements.
 
-use seal_ast::{BlockId, ExprKind, StmtId};
+use seal_ast::{BlockId, ExprKind, ForSource, StmtId};
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
 use seal_span::Span;
@@ -35,6 +35,9 @@ impl Parser<'_> {
                 statements.push(statement);
             } else if self.at(TokenKind::While) {
                 let statement = self.parse_while();
+                statements.push(statement);
+            } else if self.at(TokenKind::For) {
+                let statement = self.parse_for();
                 statements.push(statement);
             } else if self.at(TokenKind::Break) {
                 let statement = self.parse_break();
@@ -150,6 +153,62 @@ impl Parser<'_> {
         self.builder.push_while(span, condition, body)
     }
 
+    fn parse_for(&mut self) -> StmtId {
+        let keyword = self.bump();
+        let pattern = self.parse_match_pattern();
+        if !self.eat(TokenKind::In) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `in` after the loop pattern, found {found}"),
+            )
+            .help("write `for value in iterable { ... }`")
+            .emit();
+        }
+        let source = self.parse_for_source();
+        let body = self.parse_block();
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_for(span, pattern, source, body)
+    }
+
+    /// Parses the iterable of a `for` loop.
+    ///
+    /// A `{` after the iterable starts the loop body, not a struct literal, so
+    /// struct literals in the header need parentheses exactly as in a condition.
+    fn parse_for_source(&mut self) -> ForSource {
+        let allowed = self.struct_literal_allowed;
+        self.struct_literal_allowed = false;
+        let start = self.parse_expr(0);
+        let source = if self.at(TokenKind::DotDot) || self.at(TokenKind::DotDotEq) {
+            let inclusive = self.eat(TokenKind::DotDotEq);
+            if !inclusive {
+                self.bump();
+            }
+            let end = if self.at(TokenKind::LBrace) || self.is_eof() {
+                self.error(
+                    codes::E1011,
+                    self.current_span(),
+                    "expected an end expression after the range operator",
+                )
+                .help("write `for value in start..end { ... }`")
+                .emit();
+                self.builder.push_expr(ExprKind::Error, self.current_span())
+            } else {
+                self.parse_expr(0)
+            };
+            ForSource::Range {
+                start,
+                end,
+                inclusive,
+            }
+        } else {
+            ForSource::Expr(start)
+        };
+        self.struct_literal_allowed = allowed;
+        source
+    }
+
     fn parse_break(&mut self) -> StmtId {
         let span = self.finish_loop_control("break");
         self.builder.push_break(span)
@@ -206,6 +265,7 @@ impl Parser<'_> {
             && !self.at(TokenKind::Let)
             && !self.at(TokenKind::Return)
             && !self.at(TokenKind::While)
+            && !self.at(TokenKind::For)
             && !self.at(TokenKind::Break)
             && !self.at(TokenKind::Continue)
             && !self.at(TokenKind::If)

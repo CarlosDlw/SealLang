@@ -6,6 +6,7 @@ mod calls;
 mod enums;
 mod examples;
 mod flow;
+mod for_loop;
 mod init;
 mod literals;
 mod match_advanced;

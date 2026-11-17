@@ -758,6 +758,34 @@ fields, indexes arrays with a bounds-checked byte offset, and passes references
 as pointers — or as a `{ data, length }` pair for `*str`. `()` and `!` are
 zero-sized structs in the ABI.
 
+## Loops
+
+`while condition { ... }` repeats while the condition is `bool`. `for pattern
+in source { ... }` evaluates `source` once and repeats for each element, with
+`break` and `continue` acting on the innermost loop. A `for` source is one of:
+
+| Source | Element bound by the pattern |
+|--------|------------------------------|
+| `start..end`, `start..=end` | the integer counter |
+| `[T; N]` | `T`; the array is moved unless it is `Copy` |
+| `&[T; N]`, `&mut [T; N]` | `*T`, `*mut T` |
+| `*[T]`, `*mut [T]` | `*T`, `*mut T` |
+
+The two bounds of a range must have the same integer type; an unsuffixed integer
+literal on one side adopts the type of the other, so `0..len(values)` uses the
+`usize` that `len` returns. Both bounds are evaluated once. The exclusive range
+runs while `counter < end`, and the inclusive range while `counter <= end`;
+the inclusive form exits before incrementing when the counter equals `end`, so
+`0u8..=255u8` visits every value without overflowing.
+
+The pattern must be irrefutable, because a refutable one would silently skip
+elements (`E3034`). The iterable is copied or moved once before the loop; a
+borrowed array or slice is reborrowed element by element with the same shared or
+exclusive kind, so writing through `*mut T` elements is allowed while the source
+is exclusively borrowed. An unsupported source is `E3035`. A `continue` in the
+body goes to the increment step, never directly to the test, so it always makes
+progress.
+
 ## Growth
 
 Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,

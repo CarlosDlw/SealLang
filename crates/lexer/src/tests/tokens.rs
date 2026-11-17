@@ -111,6 +111,21 @@ fn ambiguous_runs_split_by_maximal_munch() {
 }
 
 #[test]
+fn in_is_a_keyword_but_a_prefixed_name_is_not() {
+    let fixture = Fixture::new("in inx");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    assert_eq!(
+        fixture.kinds(&lexed),
+        [
+            TokenKind::In,
+            TokenKind::Ident(fixture.interner.intern("inx")),
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
         "func funcx struct structx enum enumx impl implx trait traitx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",

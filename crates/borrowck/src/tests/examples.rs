@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::support::check_clean;
 
-const EXAMPLES: [&str; 21] = [
+const EXAMPLES: [&str; 22] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -26,6 +26,7 @@ const EXAMPLES: [&str; 21] = [
     "020_match_advanced.sl",
     "021_match_slice.sl",
     "022_match_reference.sl",
+    "023_for.sl",
 ];
 
 fn source(name: &str) -> String {

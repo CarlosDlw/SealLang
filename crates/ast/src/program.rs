@@ -312,6 +312,24 @@ impl AstBuilder {
         })
     }
 
+    /// Adds a `for` statement and returns its ID.
+    pub fn push_for(
+        &mut self,
+        span: Span,
+        pattern: crate::id::PatternId,
+        source: crate::block::ForSource,
+        body: BlockId,
+    ) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::For {
+                pattern,
+                source,
+                body,
+            },
+            span,
+        })
+    }
+
     /// Adds a `break` statement and returns its ID.
     pub fn push_break(&mut self, span: Span) -> StmtId {
         self.ast.stmts.push(Stmt {

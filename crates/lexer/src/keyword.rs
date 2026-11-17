@@ -16,6 +16,7 @@ pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
         "impl" => TokenKind::Impl,
         "trait" => TokenKind::Trait,
         "for" => TokenKind::For,
+        "in" => TokenKind::In,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
         "let" => TokenKind::Let,

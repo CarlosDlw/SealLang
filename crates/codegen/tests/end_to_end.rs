@@ -29,6 +29,7 @@ const MATCH: &str = include_str!("../../../examples/019_match.sl");
 const ADVANCED_MATCH: &str = include_str!("../../../examples/020_match_advanced.sl");
 const SLICE_MATCH: &str = include_str!("../../../examples/021_match_slice.sl");
 const REFERENCE_MATCH: &str = include_str!("../../../examples/022_match_reference.sl");
+const FOR_LOOP: &str = include_str!("../../../examples/023_for.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -854,6 +855,29 @@ fn slice_match_produces_the_language_result_in_debug_and_release() {
         assert_eq!(
             run(output.path()).code(),
             Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn for_loops_produce_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "for-loop-debug"),
+        (OptLevel::O2, false, "for-loop-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            FOR_LOOP,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the for-loop example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(89),
             "wrong result for {suffix}"
         );
     }

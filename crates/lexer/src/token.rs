@@ -174,6 +174,8 @@ pub enum TokenKind {
     Trait,
     /// `for`
     For,
+    /// `in`
+    In,
     /// `if`
     If,
     /// `else`

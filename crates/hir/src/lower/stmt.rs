@@ -1,11 +1,11 @@
 //! Statement lowering.
 
-use seal_ast::{StmtId as AstStmtId, StmtKind as AstStmtKind};
+use seal_ast::{ForSource as AstForSource, StmtId as AstStmtId, StmtKind as AstStmtKind};
 use seal_def::{DefData, DefKind};
 use seal_error_codes as codes;
 
 use super::Lowering;
-use crate::body::{Stmt, StmtKind};
+use crate::body::{ForSource, Stmt, StmtKind};
 use crate::id::HirStmtId;
 
 impl Lowering<'_> {
@@ -43,10 +43,41 @@ impl Lowering<'_> {
                 self.loop_depth -= 1;
                 StmtKind::While { condition, body }
             }
+            AstStmtKind::For {
+                pattern,
+                source,
+                body,
+            } => {
+                // The iterable is evaluated before the pattern is in scope, so
+                // a bound such as `limit` does not see the loop binding.
+                let source = match source {
+                    AstForSource::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => ForSource::Range {
+                        start: self.lower_expr(start),
+                        end: self.lower_expr(end),
+                        inclusive,
+                    },
+                    AstForSource::Expr(expr) => ForSource::Expr(self.lower_expr(expr)),
+                };
+                self.scopes.push();
+                let pattern = self.lower_arm_pattern(pattern);
+                self.loop_depth += 1;
+                let body = self.lower_block(body);
+                self.loop_depth -= 1;
+                self.scopes.pop();
+                StmtKind::For {
+                    pattern,
+                    source,
+                    body,
+                }
+            }
             AstStmtKind::Break => {
                 if self.loop_depth == 0 {
                     self.error(codes::E2003, span, "`break` outside of a loop")
-                        .help("`break` can only be used inside a `while` loop")
+                        .help("`break` can only be used inside a loop")
                         .emit();
                 }
                 StmtKind::Break
@@ -54,7 +85,7 @@ impl Lowering<'_> {
             AstStmtKind::Continue => {
                 if self.loop_depth == 0 {
                     self.error(codes::E2004, span, "`continue` outside of a loop")
-                        .help("`continue` can only be used inside a `while` loop")
+                        .help("`continue` can only be used inside a loop")
                         .emit();
                 }
                 StmtKind::Continue

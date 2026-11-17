@@ -110,9 +110,9 @@ allowed to depend only on crates below it in the list.
     end of file. The same token stream always produces the same tree, and a
     malformed construct costs one error rather than a cascade.
 22. **Control flow is structured.** `if` is an expression with block branches,
-    `else if` is a block whose tail is another `if`, `while` is a statement with
-    a block body, and `break`/`continue` target the innermost loop. A block-like
-    expression used as a statement needs no semicolon.
+    `else if` is a block whose tail is another `if`, `while` and `for` are
+    statements with a block body, and `break`/`continue` target the innermost
+    loop. A block-like expression used as a statement needs no semicolon.
 23. **Every HIR name is resolved.** A `Path` holds a `Res` (a `DefId`), never a
     `Symbol`; a name that does not resolve becomes an `Error` node after `E2002`
     was reported, so no consumer performs a textual lookup.
@@ -125,7 +125,8 @@ allowed to depend only on crates below it in the list.
     keeps the statement so later phases still see the shape that was written.
 26. **Scopes follow the source.** Resolution walks ribs from the innermost
     outwards; a `let` inserts after its initializer, so a binding is not visible
-    in its own initializer, and `if`/`while` bodies never leak bindings.
+    in its own initializer, and `if`/`while`/`for` bodies never leak bindings;
+    a `for` pattern is scoped to its body.
 27. **Types are assigned without coercion.** Checked types are exactly equal, or
     one side is `!`/`Error`; there is no implicit numeric conversion (D12). A
     literal adopts the expected type only when that type belongs to the same
@@ -138,8 +139,8 @@ allowed to depend only on crates below it in the list.
     `bool`; there is no truthiness.
 30. **Initialization is definite.** A local read requires initialization on
     every path that reaches it. Assignments in both `if` branches count only at
-    the join; a branch that diverges does not participate; a `while` restores
-    the state from before the loop. An uninitialized immutable binding may be
+    the join; a branch that diverges does not participate; a `while` or `for`
+    restores the state from before the loop. An uninitialized immutable binding may be
     initialized once by assignment; reassigning it needs `let mut`.
 31. **Stored values are sized.** Locals, parameters, and return values cannot
     have `str` or `[T]`; a slice is only usable through `*[T]`/`*mut [T]`, an
@@ -160,9 +161,11 @@ allowed to depend only on crates below it in the list.
     graphs whose short-circuit block stores the constant result, so the right
     operand is evaluated only on the path that needs it. MIR has no `BinOp` for
     them.
-35. **Loops and branches are explicit.** `if`, `while`, `break`, and `continue`
-    lower to blocks and edges; boolean conditions use `SwitchInt` with `1` for
-    true, `continue` jumps to the condition block, and `break` to the loop exit.
+35. **Loops and branches are explicit.** `if`, `while`, `for`, `break`, and
+    `continue` lower to blocks and edges; boolean conditions use `SwitchInt` with
+    `1` for true, `while` continues to the condition block, `for` continues to
+    the increment block so an index or counter always advances, and `break`
+    jumps to the loop exit.
     A condition is always evaluated in its own block, once per test.
 36. **Lowering assumes a clean check.** MIR is produced only from a HIR tree
     that type checking accepted without errors, so every value expression has a

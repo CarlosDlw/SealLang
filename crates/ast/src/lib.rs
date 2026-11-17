@@ -28,7 +28,7 @@ mod pattern;
 mod program;
 mod ty;
 
-pub use block::{Block, LetStmt, Stmt, StmtKind};
+pub use block::{Block, ForSource, LetStmt, Stmt, StmtKind};
 pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
 pub use id::{
     BlockId, ExprId, FieldDeclId, ItemId, ParamId, PatternId, StmtId, TupleFieldDeclId, TypeId,

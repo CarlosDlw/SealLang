@@ -75,6 +75,11 @@ integer and character ranges partition their domain so adjacent ranges can be
 exhaustive, slice patterns partition the runtime length domain the same way,
 floats need a catch-all, and an arm that no value can reach is `E3033`.
 
+`for` loops iterate an integer range (`0..n` or `0..=n`), an array by value, or
+a borrowed array or slice. The loop pattern must be irrefutable, and `continue`
+advances the range or index before the next test, so a skipped iteration still
+makes progress.
+
 ## Command line
 
 ```text
@@ -143,7 +148,8 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 The current language surface is functions, nominal structs and enums,
 fixed-size arrays, slices, shared and exclusive references, `let` bindings with
-definite initialization, `if`, `while`, `break`, `continue`, `return`, `match`
+definite initialization, `if`, `while`, `for` over integer ranges and sequences,
+`break`, `continue`, `return`, `match`
 expressions with structural patterns, guards, and exhaustiveness checking, the
 usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
 methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`

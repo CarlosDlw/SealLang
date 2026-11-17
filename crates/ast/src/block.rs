@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::id::{BlockId, ExprId, StmtId, TypeId};
+use crate::id::{BlockId, ExprId, PatternId, StmtId, TypeId};
 
 /// A braced block.
 ///
@@ -42,6 +42,15 @@ pub enum StmtKind {
         /// The loop body.
         body: BlockId,
     },
+    /// A `for` loop over an iterable value.
+    For {
+        /// Matched against each element; it must be irrefutable.
+        pattern: PatternId,
+        /// What the loop iterates.
+        source: ForSource,
+        /// The loop body.
+        body: BlockId,
+    },
     /// A `break`, which exits the innermost loop.
     Break,
     /// A `continue`, which starts the next iteration of the innermost loop.
@@ -51,6 +60,22 @@ pub enum StmtKind {
     Expr(ExprId),
     /// Syntax the parser could not turn into a statement.
     Error,
+}
+
+/// What a `for` loop iterates.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForSource {
+    /// An integer range, written `start..end` or `start..=end`.
+    Range {
+        /// The first value, included.
+        start: ExprId,
+        /// The end value, excluded or included according to `inclusive`.
+        end: ExprId,
+        /// `true` for `..=`, `false` for `..`.
+        inclusive: bool,
+    },
+    /// An array or a reference to an array or slice.
+    Expr(ExprId),
 }
 
 /// A `let` binding.

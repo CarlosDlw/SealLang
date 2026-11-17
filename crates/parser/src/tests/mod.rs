@@ -5,6 +5,7 @@ mod enums;
 mod errors;
 mod examples;
 mod exprs;
+mod for_loop;
 mod impls;
 mod items;
 mod match_advanced;

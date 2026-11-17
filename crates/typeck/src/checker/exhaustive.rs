@@ -164,6 +164,24 @@ impl Checker<'_> {
         false
     }
 
+    /// Returns whether `pattern` matches every value of `ty`.
+    ///
+    /// A `for` loop repeats its body only when the element matches, so its
+    /// pattern must be irrefutable; proving that is the same usefulness
+    /// question as match exhaustiveness with one arm.
+    pub(super) fn for_pattern_is_irrefutable(&self, pattern: HirPatternId, ty: TyId) -> bool {
+        let mut budget = Budget {
+            remaining: MAX_ALTERNATIVES,
+            exhausted: false,
+        };
+        let alternatives = self.cover_pattern(pattern, ty, &mut budget);
+        if budget.exhausted || alternatives.is_empty() {
+            return true;
+        }
+        let covered: Vec<Vec<Cover>> = alternatives.into_iter().map(|cover| vec![cover]).collect();
+        witness(&covered, &[ty], self.hir.ty_ctxt(), self.pointer_width).is_none()
+    }
+
     /// Expands a pattern into constructor shapes, distributing or-patterns.
     pub(super) fn cover_pattern(
         &self,

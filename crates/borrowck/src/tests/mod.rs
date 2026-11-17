@@ -5,6 +5,7 @@ mod borrows;
 mod calls;
 mod constructed;
 mod examples;
+mod for_loop;
 mod match_expr;
 mod methods;
 mod returns;
