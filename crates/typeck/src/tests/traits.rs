@@ -176,3 +176,14 @@ func take(p: *mut Token) -> i32 { (*p).consume() }";
     let (fixture, _, _) = check_errors(source);
     fixture.expect("E3018", "cannot move out of a reference");
 }
+
+#[test]
+fn a_value_receiver_cannot_move_out_of_a_slice() {
+    let source = "\
+struct Token { value: i32 } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func first(tokens: *[Token]) -> i32 { tokens[0].consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3018", "cannot move out of a reference");
+}

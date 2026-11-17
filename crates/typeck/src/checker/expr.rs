@@ -41,6 +41,23 @@ impl Checker<'_> {
         self.infer_expr_mode(expr, None, flow, PlaceMode::Write)
     }
 
+    /// Rejects reading a non-`Copy` pointee by value through a reference.
+    ///
+    /// A move would leave the storage the reference reaches without a value,
+    /// and this function does not own that storage.
+    fn report_move_out_of_reference(&mut self, pointee: TyId, span: Span) {
+        self.error(
+            seal_error_codes::E3018,
+            span,
+            format!(
+                "cannot move out of a reference to `{}`",
+                self.ty_text(pointee)
+            ),
+        )
+        .help("borrow the pointee instead, as in `&*reference`, or read its fields one by one")
+        .emit();
+    }
+
     pub(super) fn infer_expr_mode(
         &mut self,
         expr: HirExprId,
@@ -67,19 +84,7 @@ impl Checker<'_> {
                     self.results.record_place(expr, place);
                 }
                 if mode == PlaceMode::Read && !self.is_error(ty) && !self.is_copy(ty) {
-                    self.error(
-                        seal_error_codes::E3018,
-                        span,
-                        format!(
-                            "cannot move out of a reference to `{}`",
-                            self.ty_text(ty)
-                        ),
-                    )
-                    .help(
-                        "borrow the pointee instead, as in `&*reference`, or read its fields one by \
-                         one",
-                    )
-                    .emit();
+                    self.report_move_out_of_reference(ty, span);
                 }
                 ty
             }
@@ -395,6 +400,14 @@ impl Checker<'_> {
         } else {
             self.constant_index(index, length)
         };
+
+        if mode == PlaceMode::Read
+            && auto_deref.is_some()
+            && !self.is_error(element)
+            && !self.is_copy(element)
+        {
+            self.report_move_out_of_reference(element, span);
+        }
 
         if let Some(mut place) = self.results.place(base).cloned() {
             if let Some(kind) = auto_deref {
