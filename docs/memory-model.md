@@ -11,8 +11,8 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
    synchronization; every cost is visible in the source.
 3. **No lifetime annotations.** Users never write region parameters; regions are
    inferred from liveness.
-4. **Room to grow.** Adding generics, methods, visibility, and an `unsafe`
-   layer must not require redesigning the type system.
+4. **Room to grow.** Adding generics, user-defined methods, visibility, and an
+   `unsafe` layer must not require redesigning the type system.
 
 ## Model
 
@@ -110,8 +110,9 @@ target and conservatively conflicts with any live loan of storage it might name,
 and distinct parameters are assumed not to alias, which is part of the
 exclusive-reference contract. Diagnostics label the live borrow and its last
 active use, so the reordering that fixes a conflict is visible. Two-phase
-borrows (reserve, then activate) are reserved for nested method-style calls once
-methods exist.
+borrows (reserve, then activate) are reserved for user-defined methods that
+reborrow their receiver during argument evaluation; intrinsic methods resolve
+their receiver before checking arguments and do not need a reservation.
 
 A call is an access through every reference argument: an exclusive argument
 (`*mut T`, or an aggregate carrying one) gives the callee sole access to its
@@ -238,6 +239,31 @@ conversion, not a copy: it keeps the same data address, derives the length from
 the array type, and records the same loan. A slice is neither `Copy`, `Sized`,
 nor owning; its reference is `Copy` and carries the loan.
 
+### D15 — Intrinsic methods are static and borrow through their receiver
+
+Methods are a closed compiler catalog, not user-declared code. Lookup is a
+`(owner, name)` query over integers, floats, `bool`, `char`, arrays, and slices;
+the owner is the receiver's type after every reference layer is followed. There
+is no vtable, dynamic dispatch, or method value: a call lowers to a semantic
+`Rvalue::Intrinsic` whose operation the backend chooses. This keeps the memory
+model independent of implementation details and leaves user `impl` methods as an
+additive lookup layer rather than a redesign.
+
+A scalar method receives a copy. A sequence method borrows its receiver: `len`
+and `is_empty` take a shared loan, while `swap`, `reverse`, `fill`, and
+`bool::toggle` take an exclusive loan. Borrow checking sees exactly those
+accesses, in receiver-then-arguments order, so a modifying method conflicts with
+a live shared or exclusive loan of the same storage under the ordinary rules
+(`E5007`/`E5008`). A `*mut [T]` receiver is a value that already carries its
+exclusive loan; a `*[T]` receiver cannot support a modifying method (`E3029`).
+
+A temporary receiver is allowed because its storage exists only for the call.
+The MIR lowering stores a statement-valued method result in a temporary, so a
+method whose result is ignored still executes; no side effect is optimized away
+by the front end. Sequence methods check every runtime index against the length
+before access, and no method allocates or changes a loan's lifetime beyond the
+call.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -316,8 +342,10 @@ nor owning; its reference is `Copy` and carries the loan.
 These are layers above v0.1, not gaps in it: each has its semantics defined
 above and only waits for the surrounding features.
 
-- Generics, methods, visibility, and `Drop` for aggregates — layers on the
-  nominal struct and array foundation, not redesigns of it.
+- Generics, user-defined `impl` methods, visibility, and `Drop` for aggregates
+  — layers on the nominal struct and array foundation, not redesigns of it.
+  Intrinsic methods already use the static lookup and receiver-borrow model
+  that user methods will share.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

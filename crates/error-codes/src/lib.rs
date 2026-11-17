@@ -888,6 +888,38 @@ the compiler reports it instead of leaving a guaranteed runtime panic.
 Write a range whose start is at most its end, or swap the bounds.",
 };
 
+/// A method name is not available for the receiver type.
+pub const E3027: ErrorCode = ErrorCode {
+    code: "E3027",
+    title: "no such method",
+    explanation: "\
+Seal methods are compiler-owned and are selected from the receiver's scalar,\narray, or slice family. A name the catalog does not define for that family\ncannot be called, and there are no user-defined methods yet.\n\nCheck the spelling, or dereference the receiver until it reaches the type that\ndefines the method. The catalog documents every available name.",
+};
+
+/// A method call supplies the wrong number of arguments.
+pub const E3028: ErrorCode = ErrorCode {
+    code: "E3028",
+    title: "wrong number of method arguments",
+    explanation: "\
+Intrinsic methods have fixed signatures, like functions. A call must supply one\nargument for each parameter after the receiver; there are no defaults or\noverloads.\n\nPass exactly the documented number of arguments. Collecting arguments into an\narray is not needed for methods that take one value.",
+};
+
+/// A modifying method has a receiver that cannot be written.
+pub const E3029: ErrorCode = ErrorCode {
+    code: "E3029",
+    title: "method receiver is not writable",
+    explanation: "\
+Methods such as `reverse`, `fill`, and `toggle` modify their receiver. They\nrequire a mutable binding, or a place reached through a `*mut T` reference. A\nshared reference and an immutable binding do not permit the write.\n\nDeclare the binding with `let mut`, or call the method through a mutable\nreference.",
+};
+
+/// `fill` is called on a sequence whose element type is not `Copy`.
+pub const E3030: ErrorCode = ErrorCode {
+    code: "E3030",
+    title: "`fill` requires a `Copy` element",
+    explanation: "\
+`fill(value)` writes the same value into every element. Writing a non-`Copy`\nvalue into several elements would duplicate ownership, which Seal forbids.\n\nUse a `Copy` element type, or assign each element separately. `swap` and\n`reverse` move elements between positions and do not require `Copy`.",
+};
+
 /// A place is assigned while a shared reference to it is live.
 pub const E5001: ErrorCode = ErrorCode {
     code: "E5001",
@@ -1107,8 +1139,9 @@ pub static ALL: &[ErrorCode] = &[
     E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E2001, E2002, E2003, E2004,
     E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E3001, E3002, E3003,
     E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
-    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E5001, E5002, E5003,
-    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E9001, E9002,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
+    E3030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002,
+    E6003, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -1235,7 +1268,8 @@ mod tests {
             [
                 "E3001", "E3002", "E3003", "E3004", "E3005", "E3006", "E3007", "E3008", "E3009",
                 "E3010", "E3011", "E3012", "E3013", "E3014", "E3015", "E3016", "E3017", "E3018",
-                "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026",
+                "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
+                "E3028", "E3029", "E3030",
             ]
         );
     }

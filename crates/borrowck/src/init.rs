@@ -108,6 +108,14 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
                 move_operand(arg, state);
             }
         }
+        Rvalue::Intrinsic { receiver, args, .. } => {
+            if let seal_mir::IntrinsicReceiver::Value(operand) = receiver {
+                move_operand(operand, state);
+            }
+            for arg in args {
+                move_operand(arg, state);
+            }
+        }
         Rvalue::Aggregate { fields, .. } => {
             for (_, operand) in fields {
                 move_operand(operand, state);

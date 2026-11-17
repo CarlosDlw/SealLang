@@ -17,6 +17,7 @@ const RUNTIME_PANIC: &str = include_str!("../../../examples/007_runtime_panic.sl
 const EXCLUSIVE: &str = include_str!("../../../examples/008_exclusive_references.sl");
 const ARRAYS: &str = include_str!("../../../examples/009_arrays.sl");
 const SLICES: &str = include_str!("../../../examples/010_slices.sl");
+const METHODS: &str = include_str!("../../../examples/011_methods.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -619,6 +620,117 @@ fn slices_coerce_range_index_and_measure_length() {
             "wrong result for {suffix}"
         );
     }
+}
+
+#[test]
+fn methods_produce_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "methods-debug"),
+        (OptLevel::O2, false, "methods-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            METHODS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("method example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(89),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn swap_reverse_and_fill_handle_non_copy_elements() {
+    let source = "struct Point { x: i32 }\n\
+                  func main() -> i32 {\n\
+                    let mut points = [Point { x: 1 }, Point { x: 2 }, Point { x: 3 }];\n\
+                    points.reverse();\n\
+                    points.swap(0, 2);\n\
+                    points[0].x + points[1].x + points[2].x\n\
+                  }\n";
+    let output = TempOutput::new("methods-non-copy");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("non-Copy sequence methods compile");
+    assert_eq!(run(output.path()).code(), Some(6));
+}
+
+#[test]
+fn empty_sequences_accept_reverse_and_fill() {
+    let source = "func main() -> i32 {\n    let mut values: [i32; 0] = [];\n    values.reverse();\n    values.fill(9);\n    if values.len() == 0usize { 0 } else { 1 }\n}\n";
+    let output = TempOutput::new("methods-empty");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("empty sequence methods compile");
+    assert_eq!(run(output.path()).code(), Some(0));
+}
+
+#[test]
+fn swap_checks_both_indices_before_writing() {
+    let output = TempOutput::new("methods-swap-bounds");
+    compile(
+        "func main() {\n    let mut values = [1, 2, 3];\n    let index: usize = 3;\n    values.swap(0, index);\n}\n",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the swap bounds check compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("index out of bounds"), "{stderr}");
+    assert!(stderr.contains("at <test.sl>:4:5"), "{stderr}");
+}
+
+#[test]
+fn clamp_reports_an_inverted_range() {
+    let output = TempOutput::new("methods-clamp-bounds");
+    compile(
+        "func main() -> i32 { 1.clamp(5, 2) }",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O2,
+        false,
+    )
+    .expect("the clamp check compiles");
+    let result = run_captured(output.path());
+    assert_eq!(result.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("minimum <= maximum"), "{stderr}");
+}
+
+#[test]
+fn toggle_through_an_exclusive_reference_writes_the_pointee() {
+    let source = "func main() -> i32 {\n\
+                    let mut flag = false;\n\
+                    let reference: *mut bool = &mut flag;\n\
+                    reference.toggle();\n\
+                    if flag { 42 } else { 7 }\n\
+                  }\n";
+    let output = TempOutput::new("methods-toggle-reference");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("toggle through a reference compiles");
+    assert_eq!(run(output.path()).code(), Some(42));
+}
+
+#[test]
+fn saturating_i128_and_nan_aware_float_methods_run() {
+    let source = "func main() -> i32 {\n\
+                    let maximum: i128 = 170141183460469231731687303715884105727i128;\n\
+                    let nan = 0.0 / 0.0;\n\
+                    if maximum.saturating_add(1i128) == maximum\n\
+                       && nan.min(3.0) == 3.0\n\
+                       && 3.0.max(nan) == 3.0 { 0 } else { 1 }\n\
+                  }\n";
+    let output = TempOutput::new("methods-edge-values");
+    compile(source, output.path(), Emit::Executable, OptLevel::O2, false)
+        .expect("edge-value methods compile");
+    assert_eq!(run(output.path()).code(), Some(0));
 }
 
 #[test]

@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 9] = [
+const EXAMPLES: [&str; 10] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -17,6 +17,7 @@ const EXAMPLES: [&str; 9] = [
     "007_runtime_panic.sl",
     "008_exclusive_references.sl",
     "010_slices.sl",
+    "011_methods.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -122,6 +123,12 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
         ExprKind::Update { target, .. } => collect_expr(hir, *target, stmts, exprs),
         ExprKind::Call { callee, args } => {
             collect_expr(hir, *callee, stmts, exprs);
+            for arg in args {
+                collect_expr(hir, *arg, stmts, exprs);
+            }
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            collect_expr(hir, *receiver, stmts, exprs);
             for arg in args {
                 collect_expr(hir, *arg, stmts, exprs);
             }

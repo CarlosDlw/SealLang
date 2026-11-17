@@ -49,20 +49,34 @@ impl Parser<'_> {
             if self.at(TokenKind::Dot) {
                 self.bump();
                 let (name, name_span) = self.expect_ident("a field name after `.`");
-                let span = self
-                    .builder
-                    .ast()
-                    .expr(lhs)
-                    .span
-                    .cover(self.previous_span());
-                lhs = self.builder.push_expr(
-                    ExprKind::Field {
-                        base: lhs,
-                        name,
-                        name_span,
-                    },
-                    span,
-                );
+                if self.at(TokenKind::LParen) {
+                    let (args, end) = self.parse_call_arguments();
+                    let span = self.builder.ast().expr(lhs).span.cover(end);
+                    lhs = self.builder.push_expr(
+                        ExprKind::MethodCall {
+                            receiver: lhs,
+                            name,
+                            name_span,
+                            args,
+                        },
+                        span,
+                    );
+                } else {
+                    let span = self
+                        .builder
+                        .ast()
+                        .expr(lhs)
+                        .span
+                        .cover(self.previous_span());
+                    lhs = self.builder.push_expr(
+                        ExprKind::Field {
+                            base: lhs,
+                            name,
+                            name_span,
+                        },
+                        span,
+                    );
+                }
                 continue;
             }
 
@@ -472,6 +486,14 @@ impl Parser<'_> {
     }
 
     fn parse_call(&mut self, callee: ExprId) -> ExprId {
+        let (args, end) = self.parse_call_arguments();
+        let span = self.builder.ast().expr(callee).span.cover(end);
+        self.builder
+            .push_expr(ExprKind::Call { callee, args }, span)
+    }
+
+    /// Parses a parenthesized argument list, including both parentheses.
+    fn parse_call_arguments(&mut self) -> (Vec<ExprId>, seal_span::Span) {
         self.bump();
         let allowed = self.struct_literal_allowed;
         self.struct_literal_allowed = true;
@@ -505,14 +527,7 @@ impl Parser<'_> {
         }
         self.struct_literal_allowed = allowed;
         let _ = self.expect(TokenKind::RParen, "`)` to close the call");
-        let span = self
-            .builder
-            .ast()
-            .expr(callee)
-            .span
-            .cover(self.previous_span());
-        self.builder
-            .push_expr(ExprKind::Call { callee, args }, span)
+        (args, self.previous_span())
     }
 
     fn unary(&mut self, op: UnaryOp, operator: seal_span::Span, operand: ExprId) -> ExprId {

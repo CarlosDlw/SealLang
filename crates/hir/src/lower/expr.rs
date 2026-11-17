@@ -158,6 +158,17 @@ impl Lowering<'_> {
                     }
                 }
             }
+            AstExprKind::MethodCall {
+                receiver,
+                name,
+                name_span,
+                args,
+            } => ExprKind::MethodCall {
+                receiver: self.lower_expr(receiver),
+                name,
+                name_span,
+                args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
+            },
             AstExprKind::If {
                 condition,
                 then_branch,

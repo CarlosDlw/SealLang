@@ -5,6 +5,7 @@ mod call;
 mod expr;
 mod flow;
 mod literal;
+mod method;
 mod operators;
 mod place;
 mod slice;

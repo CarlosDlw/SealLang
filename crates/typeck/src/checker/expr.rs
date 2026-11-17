@@ -127,6 +127,22 @@ impl Checker<'_> {
                 postfix: _,
             } => self.check_update(op, target, flow, span),
             ExprKind::Call { callee, args } => self.check_call(callee, &args, flow, span),
+            ExprKind::MethodCall {
+                receiver,
+                name,
+                name_span,
+                args,
+            } => self.check_method_call(
+                super::method::MethodCall {
+                    expr,
+                    receiver,
+                    name,
+                    name_span,
+                    args: &args,
+                    span,
+                },
+                flow,
+            ),
             ExprKind::If {
                 condition,
                 then_branch,

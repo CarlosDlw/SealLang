@@ -58,7 +58,7 @@ pub use lower::lower;
 pub use mir::Mir;
 pub use operand::{Constant, Operand};
 pub use place::{Place, Projection};
-pub use rvalue::{AggregateKind, BinOp, Rvalue, UnOp};
+pub use rvalue::{AggregateKind, BinOp, IntrinsicReceiver, Rvalue, UnOp};
 pub use statement::{Statement, StatementKind};
 pub use terminator::{SwitchTarget, Terminator, TerminatorKind};
 pub use validate::ValidationError;

@@ -96,6 +96,28 @@ The ABI is defined by the language, not by a C header:
 - Slice indexing reloads the data member of the fat pointer and checks the
   runtime index against the length member before the element offset. `len`
   extracts the length member directly; both operations are O(1).
+- Intrinsic methods lower from `Rvalue::Intrinsic`. Scalar methods use LLVM
+  instructions and target intrinsics: `llvm.abs`, `llvm.ctpop`, `llvm.ctlz`,
+  `llvm.cttz`, `llvm.fshl`/`llvm.fshr`, `llvm.bswap`, `llvm.fabs`,
+  `llvm.sqrt`, and `llvm.powi`, with explicit comparisons and `select` for
+  min/max/clamp, signum, bit tests, character classes, and NaN-aware float
+  selection. Saturating arithmetic uses `llvm.{s,u}{add,sub,mul}.with.overflow`
+  and selects the type's bound on overflow; wrapping arithmetic uses plain
+  integer instructions. Float rounding is implemented without libm: `trunc`
+  converts to an integer and back with guards for NaN, infinity, signed zero,
+  and values too large for the integer, and `floor`/`ceil`/`round` adjust that
+  result by one when needed. `fract` subtracts the truncated value.
+- Sequence methods split an array or slice receiver into its elements pointer and
+  runtime length. `len` and `is_empty` use the length directly. `swap` checks
+  both indices before either load, then exchanges elements through temporary
+  storage sized for the element type. `reverse` walks two indices toward each
+  other; an empty sequence starts both at zero so the loop does not run.
+  `fill` loads the value once and stores it into every element. None of these
+  loops allocates, and their storage lives in the function entry block.
+- `clamp` checks `minimum <= maximum` at run time and calls `seal_panic` with a
+  contract message when the ordering fails; `swap` reports an out-of-range
+  index through the same path. A panic exits with status 101 and names the call
+  site.
 - `[value; N]` evaluates `value` once and fills a temporary array in a loop. The
   temporary is allocated in the entry block, so a repeat inside a loop does not
   grow the stack on every iteration.
@@ -238,7 +260,8 @@ cargo build --workspace
 ```
 
 The end-to-end tests compile and run `examples/006_structs.sl`,
-`examples/009_arrays.sl`, and `examples/010_slices.sl` in debug and release,
+`examples/009_arrays.sl`, `examples/010_slices.sl`, and
+`examples/011_methods.sl` in debug and release,
 check DWARF sections and names, exercise object and assembly output without
 `main`, verify entry-point
 diagnostics, and confirm panic messages and status 101 for zero divisors, signed
@@ -249,6 +272,9 @@ Array tests also cover literals, repeats, zero-length arrays, copy semantics,
 arrays in structs, structs in arrays, function parameters, dynamic writes, and
 repeats inside loops. Slice tests cover array-to-slice coercion, every range
 form, mutable views, sub-slicing, struct elements, runtime length reads, bounds
-panics, reborrow conflicts, and `len` shadowing. The driver tests export the
+panics, reborrow conflicts, and `len` shadowing. Method tests cover every
+catalog family, chaining, statement-valued calls, empty sequences, non-`Copy`
+elements, exclusive references, saturating `i128`, NaN-aware float selection,
+integer clamp contracts, and `swap` bounds panics. The driver tests export the
 embedded archive with
 `--emit-runtime` and reuse it with `--runtime-archive` to link that example.

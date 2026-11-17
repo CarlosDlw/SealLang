@@ -11,6 +11,7 @@ seal-def.workspace = true
 seal-hash.workspace = true
 seal-hir.workspace = true
 seal-index.workspace = true
+seal-methods.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
 seal-ty.workspace = true

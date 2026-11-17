@@ -43,6 +43,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 let value = self.load_operand(operand)?;
                 self.unary(*op, value)
             }
+            Rvalue::Intrinsic {
+                method,
+                receiver,
+                args,
+                span,
+            } => self.emit_intrinsic(*method, receiver, args, *span),
             Rvalue::Call { func, args, .. } => self.call(*func, args),
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),

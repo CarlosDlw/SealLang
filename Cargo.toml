@@ -23,6 +23,7 @@ seal-def = { path = "crates/def" }
 seal-hir = { path = "crates/hir" }
 seal-typeck = { path = "crates/typeck" }
 seal-mir = { path = "crates/mir" }
+seal-methods = { path = "crates/methods" }
 seal-borrowck = { path = "crates/borrowck" }
 seal-codegen = { path = "crates/codegen" }
 seal-layout = { path = "crates/layout" }

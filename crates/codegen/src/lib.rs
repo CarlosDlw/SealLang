@@ -48,6 +48,7 @@ mod debug;
 mod entry;
 mod error;
 mod function;
+mod intrinsic;
 mod linker;
 mod names;
 mod operand;

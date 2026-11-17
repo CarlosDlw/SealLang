@@ -323,6 +323,17 @@ pub enum ExprKind {
         /// Arguments in source order.
         args: Vec<ExprId>,
     },
+    /// A method call, written `receiver.name(args)`.
+    MethodCall {
+        /// The receiver expression.
+        receiver: ExprId,
+        /// The method name.
+        name: Symbol,
+        /// The span of the method name.
+        name_span: Span,
+        /// Arguments in source order, excluding the receiver.
+        args: Vec<ExprId>,
+    },
     /// A parenthesized expression. Kept so formatting and spans stay faithful.
     Paren(ExprId),
     /// A conditional expression.

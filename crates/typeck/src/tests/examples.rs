@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::support::{check_clean, expect_ty, function, let_binding, local_ty, statements};
 
-const EXAMPLES: [&str; 9] = [
+const EXAMPLES: [&str; 10] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -14,6 +14,7 @@ const EXAMPLES: [&str; 9] = [
     "007_runtime_panic.sl",
     "008_exclusive_references.sl",
     "010_slices.sl",
+    "011_methods.sl",
 ];
 
 fn source(name: &str) -> String {

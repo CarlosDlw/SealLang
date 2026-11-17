@@ -305,7 +305,9 @@ fn transfer(
                 state.clear(place);
             }
         }
-        Rvalue::Binary { .. } | Rvalue::Unary { .. } => state.clear(place),
+        Rvalue::Intrinsic { .. } | Rvalue::Binary { .. } | Rvalue::Unary { .. } => {
+            state.clear(place)
+        }
     }
 }
 

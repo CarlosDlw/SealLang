@@ -24,6 +24,7 @@ fn all_examples_lex_cleanly() {
         "007_runtime_panic.sl",
         "008_exclusive_references.sl",
         "010_slices.sl",
+        "011_methods.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

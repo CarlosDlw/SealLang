@@ -380,6 +380,18 @@ impl Reachability<'_> {
                     self.check_expr(arg);
                 }
             }
+            ExprKind::MethodCall {
+                receiver,
+                name_span,
+                args,
+                ..
+            } => {
+                self.assert_span(name_span);
+                self.check_expr(receiver);
+                for arg in args {
+                    self.check_expr(arg);
+                }
+            }
             ExprKind::If {
                 condition,
                 then_branch,

@@ -29,6 +29,10 @@ impl Checker<'_> {
         self.interned(primitive_kind(PrimitiveType::I32))
     }
 
+    pub(super) fn u32_ty(&self) -> TyId {
+        self.interned(primitive_kind(PrimitiveType::U32))
+    }
+
     pub(super) fn f64_ty(&self) -> TyId {
         self.interned(primitive_kind(PrimitiveType::F64))
     }

@@ -6,7 +6,7 @@ use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::operand::Operand;
 use crate::place::Place;
-use crate::rvalue::Rvalue;
+use crate::rvalue::{IntrinsicReceiver, Rvalue};
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 
@@ -231,6 +231,16 @@ fn check_rvalue(body: &Body, block: BasicBlockId, rvalue: &Rvalue) -> Result<(),
             check_operand(body, block, rhs)
         }
         Rvalue::Unary { operand, .. } => check_operand(body, block, operand),
+        Rvalue::Intrinsic { receiver, args, .. } => {
+            match receiver {
+                IntrinsicReceiver::Place(place) => check_place(body, block, place.clone())?,
+                IntrinsicReceiver::Value(operand) => check_operand(body, block, operand)?,
+            }
+            for arg in args {
+                check_operand(body, block, arg)?;
+            }
+            Ok(())
+        }
         Rvalue::Call {
             args, arg_spans, ..
         } => {

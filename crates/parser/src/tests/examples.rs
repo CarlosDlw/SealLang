@@ -25,6 +25,7 @@ fn all_examples_parse_without_diagnostics() {
         ("007_runtime_panic.sl", 1),
         ("008_exclusive_references.sl", 2),
         ("010_slices.sl", 3),
+        ("011_methods.sl", 1),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

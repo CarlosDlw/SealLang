@@ -5,6 +5,7 @@ mod borrows;
 mod calls;
 mod constructed;
 mod examples;
+mod methods;
 mod returns;
 mod slices;
 mod structs;

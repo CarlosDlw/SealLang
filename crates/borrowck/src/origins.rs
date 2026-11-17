@@ -334,7 +334,9 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
                 state.clear(place);
             }
         }
-        Rvalue::Binary { .. } | Rvalue::Unary { .. } => state.clear(place),
+        Rvalue::Intrinsic { .. } | Rvalue::Binary { .. } | Rvalue::Unary { .. } => {
+            state.clear(place)
+        }
     }
 }
 

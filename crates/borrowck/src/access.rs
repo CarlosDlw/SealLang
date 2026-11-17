@@ -54,6 +54,15 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
                 operand_uses(arg, uses);
             }
         }
+        Rvalue::Intrinsic { receiver, args, .. } => {
+            match receiver {
+                seal_mir::IntrinsicReceiver::Place(place) => place_uses(place, uses),
+                seal_mir::IntrinsicReceiver::Value(operand) => operand_uses(operand, uses),
+            }
+            for arg in args {
+                operand_uses(arg, uses);
+            }
+        }
         Rvalue::Aggregate { fields, .. } => {
             for (_, operand) in fields {
                 operand_uses(operand, uses);

@@ -193,6 +193,32 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= operand_unknown(operand, context);
             check_operand(statement, operand, context);
         }
+        Rvalue::Intrinsic {
+            method,
+            receiver,
+            args,
+            ..
+        } => {
+            let exclusive = method.def().receiver == seal_methods::ReceiverMode::Exclusive;
+            match receiver {
+                seal_mir::IntrinsicReceiver::Place(place) => {
+                    unknown |= origins::keys_of(context.origins, place).is_unknown();
+                    if exclusive {
+                        check_borrow(place, RefKind::Exclusive, statement.span, context);
+                    } else {
+                        check_read(place, statement.span, context);
+                    }
+                }
+                seal_mir::IntrinsicReceiver::Value(operand) => {
+                    unknown |= operand_unknown(operand, context);
+                    check_operand(statement, operand, context);
+                }
+            }
+            for arg in args {
+                unknown |= operand_unknown(arg, context);
+                check_operand(statement, arg, context);
+            }
+        }
         Rvalue::Call {
             func,
             args,

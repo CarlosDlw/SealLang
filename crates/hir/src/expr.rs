@@ -221,6 +221,18 @@ pub enum ExprKind {
         /// Arguments in source order.
         args: Vec<HirExprId>,
     },
+    /// A method call on an intrinsic receiver.
+    MethodCall {
+        /// The receiver expression; it need not be a place, so a temporary can
+        /// be borrowed for the duration of the call.
+        receiver: HirExprId,
+        /// The method name, resolved against the receiver type by type checking.
+        name: Symbol,
+        /// The span of the method name.
+        name_span: Span,
+        /// Arguments in source order, excluding the receiver.
+        args: Vec<HirExprId>,
+    },
     /// A conditional expression.
     If {
         /// The condition, which must have type `bool`.

@@ -283,9 +283,139 @@ reason.
 
 `len(slice)` is the built-in length operator. It takes exactly one `*[T]` or
 `*mut [T]` and returns `usize`; other types are `E3025`, and the wrong argument
-count is `E2014`. A user function named `len` shadows the built-in. A slice is
-neither `Copy` nor `Sized` nor owning: the reference is `Copy`, and creating or
-copying it extends the loan of the underlying storage like any other reference.
+count is `E2014`. A user function named `len` shadows the built-in. `slice.len()`
+is the method form and returns the same value from the fat pointer's length
+member. A slice is neither `Copy` nor `Sized` nor owning: the reference is
+`Copy`, and creating or copying it extends the loan of the underlying storage
+like any other reference.
+
+## Methods
+
+Methods are compiler-owned intrinsics, not user declarations. The syntax is a
+postfix `.name(arguments)` on an expression, and lookup uses the receiver's
+type. Every reference layer is followed before lookup, so `(*reference).abs()`
+and `reference.abs()` resolve to the same scalar method. The catalog is closed in
+v0.1: a name outside it is `E3027`, and there is no `impl`, trait, generic, or
+user method yet.
+
+```seal
+func main() -> i32 {
+  let mut values = [3, -1, 2];
+  values.reverse();
+  values.fill(7);
+  (-5).abs().clamp(0, 3) + values.len().to_i32()
+}
+```
+
+A method call evaluates its receiver first, then its arguments left to right, and
+then performs the operation. Arguments must match the catalog signature exactly;
+the wrong count is `E3028`. Methods chain without temporaries in the syntax, and
+an array or slice expression may be a temporary receiver. A modifying method
+requires a writable place: a `mut` binding, a field reached through one, or a
+`*mut T` reference. A shared reference, a shared slice, or an immutable binding
+is `E3029`. Calling a modifying method on a temporary is accepted because the
+temporary's storage does not outlive the call.
+
+### Signed and unsigned integers
+
+Both families share these methods; `Self` is the receiver's exact integer type.
+
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `min` | `(other: Self) -> Self` | Smaller value, signed comparison for `Int` |
+| `max` | `(other: Self) -> Self` | Larger value, signed comparison for `Int` |
+| `clamp` | `(min: Self, max: Self) -> Self` | Panics unless `min <= max` |
+| `wrapping_add` | `(other: Self) -> Self` | Addition modulo 2^N |
+| `wrapping_sub` | `(other: Self) -> Self` | Subtraction modulo 2^N |
+| `wrapping_mul` | `(other: Self) -> Self` | Multiplication modulo 2^N |
+| `saturating_add` | `(other: Self) -> Self` | Clamps overflow to the type's bounds |
+| `saturating_sub` | `(other: Self) -> Self` | Clamps underflow to the type's bounds |
+| `saturating_mul` | `(other: Self) -> Self` | Clamps overflow to the type's bounds |
+| `count_ones` | `() -> u32` | Population count |
+| `leading_zeros` | `() -> u32` | Zero bits before the highest set bit; the width for zero |
+| `trailing_zeros` | `() -> u32` | Zero bits after the lowest set bit; the width for zero |
+| `rotate_left` | `(amount: u32) -> Self` | Rotates left by `amount` modulo the bit width |
+| `rotate_right` | `(amount: u32) -> Self` | Rotates right by `amount` modulo the bit width |
+| `swap_bytes` | `() -> Self` | Reverses byte order; a no-op below 16 bits |
+
+Signed integers add:
+
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `abs` | `() -> Self` | Absolute value; `MIN.abs()` returns `MIN` (wrapping) |
+| `signum` | `() -> Self` | `-1`, `0`, or `1` according to the sign |
+
+Integer methods receive the value by copy. No method can change its receiver.
+
+### Floating point
+
+`Self` is `f32` or `f64`; predicates return `bool` and every other method returns
+`Self` unless noted.
+
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `abs` | `() -> Self` | IEEE absolute value |
+| `min` | `(other: Self) -> Self` | Smaller value, choosing the non-NaN operand |
+| `max` | `(other: Self) -> Self` | Larger value, choosing the non-NaN operand |
+| `clamp` | `(min: Self, max: Self) -> Self` | Panics unless `min <= max` |
+| `is_nan` | `() -> bool` | True for either NaN |
+| `is_finite` | `() -> bool` | True for non-NaN, non-infinite values |
+| `is_infinite` | `() -> bool` | True for either infinity |
+| `sqrt` | `() -> Self` | Square root, following IEEE rounding |
+| `floor` | `() -> Self` | Rounds toward negative infinity |
+| `ceil` | `() -> Self` | Rounds toward positive infinity |
+| `round` | `() -> Self` | Nearest integer, halfway away from zero |
+| `trunc` | `() -> Self` | Rounds toward zero |
+| `fract` | `() -> Self` | `self - trunc(self)` |
+| `powi` | `(exponent: i32) -> Self` | Raises to an integer power |
+
+NaN and infinity propagate according to IEEE semantics. `min` and `max` return
+the non-NaN operand when exactly one is NaN and NaN when both are; `clamp` panics
+when either bound is NaN because the required ordering is not provable.
+`floor`, `ceil`, `round`, and `trunc` preserve NaN, infinity, and signed zero.
+
+### Boolean and character
+
+| Owner | Method | Signature | Behavior |
+|-------|--------|-----------|----------|
+| `bool` | `not` | `() -> bool` | Logical negation |
+| `bool` | `to_i32` | `() -> i32` | `false` becomes `0`, `true` becomes `1` |
+| `bool` | `toggle` | `() -> ()` | Flips the receiver in place; requires an exclusive receiver |
+| `char` | `is_ascii` | `() -> bool` | True for `U+0000..=U+007F` |
+| `char` | `is_ascii_alphabetic` | `() -> bool` | True for `A..=Z` and `a..=z` |
+| `char` | `is_ascii_digit` | `() -> bool` | True for `0..=9` |
+| `char` | `is_ascii_whitespace` | `() -> bool` | Space, tab, newline, form feed, or carriage return |
+| `char` | `to_ascii_uppercase` | `() -> char` | Uppercases ASCII letters, leaves every other char unchanged |
+| `char` | `to_ascii_lowercase` | `() -> char` | Lowercases ASCII letters, leaves every other char unchanged |
+| `char` | `len_utf8` | `() -> usize` | UTF-8 encoding length, from 1 through 4 |
+| `char` | `to_u32` | `() -> u32` | The Unicode scalar value |
+
+`toggle` is the only scalar method with an observable effect. It writes through
+its receiver, so the borrow checker sees an exclusive access to that place: no
+shared loan may be live at the call.
+
+### Arrays and slices
+
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `len` | `() -> usize` | Number of elements; O(1) |
+| `is_empty` | `() -> bool` | True when `len() == 0` |
+| `swap` | `(first: usize, second: usize) -> ()` | Swaps two elements; panics if either index is out of range |
+| `reverse` | `() -> ()` | Reverses the elements in place; accepts an empty sequence |
+| `fill` | `(value: Element) -> ()` | Copies `value` into every element; requires `Element: Copy` |
+
+Arrays use the array's compile-time length; slices read the runtime length from
+the fat pointer. `len` and `is_empty` borrow the receiver shared, while `swap`,
+`reverse`, and `fill` borrow it exclusively. For an array, the receiver may be a
+`mut` binding or reach the array through a `*mut [T; N]`. For a slice, modifying
+methods require `*mut [T]`; a `*[T]` is `E3029`. `fill` on a non-`Copy` element
+is `E3030` even when the length is zero.
+
+`swap` checks both indices before either write, so a panic never leaves one
+element overwritten. `reverse` and `fill` are loops over the sequence and do no
+allocation; an empty sequence performs no operation. Indexing, bounds checks,
+and temporary storage follow the array and slice rules above, and the borrow
+checker tracks the receiver's storage for the duration of the call.
 
 ## Unit, never, and internal types
 

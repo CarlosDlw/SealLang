@@ -7,6 +7,7 @@ mod examples;
 mod flow;
 mod init;
 mod literals;
+mod methods;
 mod operators;
 mod sized;
 mod slices;

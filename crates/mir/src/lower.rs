@@ -14,7 +14,7 @@ use crate::id::{BasicBlockId, LocalId};
 use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
 use crate::place::{Place, Projection};
-use crate::rvalue::{AggregateKind, BinOp, Rvalue, UnOp};
+use crate::rvalue::{AggregateKind, BinOp, IntrinsicReceiver, Rvalue, UnOp};
 use crate::statement::Statement;
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
 
@@ -488,6 +488,12 @@ impl<'a> BodyLowering<'a> {
                 let result_ty = self.expr_ty(expr);
                 self.lower_call(callee, &args, dest, result_ty, span);
             }
+            ExprKind::MethodCall {
+                receiver,
+                name_span,
+                args,
+                ..
+            } => self.lower_method(expr, receiver, name_span, &args, dest, span),
             ExprKind::If {
                 condition,
                 then_branch,
@@ -669,6 +675,56 @@ impl<'a> BodyLowering<'a> {
                 func: function,
                 args,
                 arg_spans,
+            },
+            span,
+        );
+    }
+
+    fn lower_method(
+        &mut self,
+        expr: HirExprId,
+        receiver: HirExprId,
+        name_span: Span,
+        args: &[HirExprId],
+        dest: Option<Place>,
+        span: Span,
+    ) {
+        let resolved = self.typeck.method(expr).cloned().unwrap_or_else(|| {
+            panic!("method call at {name_span:?} was not resolved; this is a compiler bug")
+        });
+        let receiver = match resolved.receiver_form {
+            seal_typeck::ReceiverForm::Value => {
+                IntrinsicReceiver::Value(self.lower_operand(receiver))
+            }
+            seal_typeck::ReceiverForm::Place => {
+                let mut place = if let Some(place) = self.typeck.place(receiver) {
+                    let place = place.clone();
+                    self.resolved_place(&place)
+                } else {
+                    let ty = self.expr_ty(receiver);
+                    let temp = self.new_temp(ty, name_span);
+                    self.lower_expr_into(receiver, Some(temp.clone()));
+                    temp
+                };
+                for _ in 0..resolved.receiver_derefs {
+                    place = place.deref();
+                }
+                IntrinsicReceiver::Place(place)
+            }
+        };
+        let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
+        // A method call always runs, even when its result is discarded. A
+        // modifying method such as `fill` or `toggle` has its whole effect in
+        // the intrinsic, so dropping it because the statement has no value
+        // would silently remove the mutation.
+        let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
+        self.assign_rvalue(
+            dest,
+            Rvalue::Intrinsic {
+                method: resolved.method,
+                receiver,
+                args,
+                span,
             },
             span,
         );

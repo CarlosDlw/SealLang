@@ -1,6 +1,7 @@
 //! Values computed by statements.
 
 use seal_def::DefId;
+use seal_methods::MethodId;
 use seal_span::Span;
 
 use crate::operand::Operand;
@@ -94,6 +95,17 @@ impl UnOp {
     }
 }
 
+/// How an intrinsic method receives its subject.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IntrinsicReceiver {
+    /// A place holding a scalar, array, or aggregate. The method definition
+    /// decides whether the call reads it or writes it.
+    Place(Place),
+    /// A slice fat pointer. The pointee is unsized, so the value itself is the
+    /// receiver and the data pointer and length are extracted at codegen.
+    Value(Operand),
+}
+
 /// The aggregate being built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AggregateKind {
@@ -157,6 +169,22 @@ pub enum Rvalue {
         op: UnOp,
         /// The operand.
         operand: Operand,
+    },
+    /// Calls a compiler-owned intrinsic method.
+    ///
+    /// The receiver is part of the call, not a preceding borrow: a shared
+    /// method reads it and an exclusive method writes it for the duration of
+    /// the statement. No reference escapes, so the borrow checker checks the
+    /// access directly instead of creating a loan.
+    Intrinsic {
+        /// The resolved catalog entry.
+        method: MethodId,
+        /// The receiver, by place or as a slice fat pointer.
+        receiver: IntrinsicReceiver,
+        /// Arguments in evaluation order, excluding the receiver.
+        args: Vec<Operand>,
+        /// The source range of the whole method call.
+        span: Span,
     },
     /// Calls a function.
     ///

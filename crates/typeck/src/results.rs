@@ -3,6 +3,7 @@
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::HirExprId;
+use seal_methods::MethodId;
 use seal_ty::{PathElem, RefKind, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
@@ -90,6 +91,37 @@ impl ResolvedPlace {
     }
 }
 
+/// How a method receives its receiver at the MIR level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverForm {
+    /// The receiver is storage addressed by a place, with `derefs` explicit
+    /// dereferences applied before the method runs.
+    Place,
+    /// The receiver is a slice fat pointer, represented by its value; the
+    /// pointee is unsized, so it has no place of its own.
+    Value,
+}
+
+/// A method call resolved by type checking.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedMethod {
+    /// The catalog entry that defines the call.
+    pub method: MethodId,
+    /// The receiver type after any reference dereferences, capped at the owned
+    /// family: scalar, array, or the slice reference itself.
+    pub receiver_ty: TyId,
+    /// How the receiver reaches MIR.
+    pub receiver_form: ReceiverForm,
+    /// Number of dereferences between the source receiver and `receiver_ty`.
+    pub receiver_derefs: usize,
+    /// Whether an array receiver is viewed as a slice for this call.
+    pub array_to_slice: bool,
+    /// Argument types after the receiver.
+    pub arg_tys: Vec<TyId>,
+    /// The result type, or the unit type.
+    pub ret_ty: TyId,
+}
+
 /// A function signature as seen by callers.
 ///
 /// Parameters whose declared type is unsized are normalized to the error type,
@@ -115,6 +147,7 @@ pub struct TypeckResults {
     local_ty: FxHashMap<DefId, TyId>,
     signatures: FxHashMap<DefId, Signature>,
     places: FxHashMap<HirExprId, ResolvedPlace>,
+    methods: FxHashMap<HirExprId, ResolvedMethod>,
 }
 
 impl TypeckResults {
@@ -138,6 +171,11 @@ impl TypeckResults {
         self.places.get(&expr)
     }
 
+    /// Returns the method resolved for a method-call expression.
+    pub fn method(&self, expr: HirExprId) -> Option<&ResolvedMethod> {
+        self.methods.get(&expr)
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -149,6 +187,7 @@ impl TypeckResults {
             local_ty: FxHashMap::default(),
             signatures: FxHashMap::default(),
             places: FxHashMap::default(),
+            methods: FxHashMap::default(),
         }
     }
 
@@ -166,5 +205,9 @@ impl TypeckResults {
 
     pub(crate) fn insert_signature(&mut self, function: DefId, signature: Signature) {
         self.signatures.insert(function, signature);
+    }
+
+    pub(crate) fn record_method(&mut self, expr: HirExprId, method: ResolvedMethod) {
+        self.methods.insert(expr, method);
     }
 }

@@ -114,7 +114,11 @@ syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 The current language surface is functions, nominal structs, fixed-size arrays,
 slices, shared and exclusive references, `let` bindings with definite
-initialization, `if`, `while`, `break`, `continue`, `return`, and the usual
-arithmetic, comparison, logical, and bitwise operators. Generics, methods,
-enums, and an `unsafe` layer are not part of the surface yet; the memory model
-records how they fit without redesigning the type system.
+initialization, `if`, `while`, `break`, `continue`, `return`, the usual
+arithmetic, comparison, logical, and bitwise operators, and compiler-owned
+intrinsic methods on integers, floats, `bool`, `char`, arrays, and slices.
+Methods resolve statically from a closed catalog: there is no vtable, no hidden
+allocation, and modifying methods borrow the receiver exclusively. Generics,
+user-defined `impl` methods, enums, and an `unsafe` layer are not part of the
+surface yet; the memory model records how they fit without redesigning the type
+system.

@@ -239,6 +239,7 @@ dependencies = [
  "seal-hir",
  "seal-index",
  "seal-lexer",
+ "seal-methods",
  "seal-mir",
  "seal-parser",
  "seal-span",
@@ -265,6 +266,7 @@ dependencies = [
  "seal-layout",
  "seal-lexer",
  "seal-llvm-debug",
+ "seal-methods",
  "seal-mir",
  "seal-parser",
  "seal-session",
@@ -390,6 +392,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-methods"
+version = "0.1.0"
+
+[[package]]
 name = "seal-mir"
 version = "0.1.0"
 dependencies = [
@@ -400,6 +406,7 @@ dependencies = [
  "seal-hir",
  "seal-index",
  "seal-lexer",
+ "seal-methods",
  "seal-parser",
  "seal-span",
  "seal-symbol",
@@ -488,6 +495,7 @@ dependencies = [
  "seal-hir",
  "seal-layout",
  "seal-lexer",
+ "seal-methods",
  "seal-parser",
  "seal-span",
  "seal-symbol",

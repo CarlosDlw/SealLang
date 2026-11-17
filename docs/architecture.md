@@ -27,6 +27,7 @@ allowed to depend only on crates below it in the list.
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
 | `seal-ty` | Interned semantic types, aggregates, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct and array layout: field offsets, alignment, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, resolved paths and places, `E2xxx` diagnostics. |
@@ -315,6 +316,14 @@ allowed to depend only on crates below it in the list.
     remains correct; the attribute never decides whether a program is accepted.
     A shared `*T` parameter is always `readonly`, because the type system
     forbids writing through it.
+63. **Methods are static catalog entries.** A method call is a dedicated AST and
+    HIR node, not a desugared field access. Type checking resolves `(owner,
+    name)` in `seal-methods` after following the receiver's reference layers,
+    validates the signature and writability, and records the receiver form,
+    dereference count, and resolved operation. MIR lowers the call to
+    `Rvalue::Intrinsic`; code generation implements the operation. No phase
+    re-infers ownership or the receiver shape, and adding a user method table
+    later adds a lookup source without changing intrinsic calls.
 
 ## Extension points
 
@@ -342,6 +351,13 @@ allowed to depend only on crates below it in the list.
   operands; a mixed-type use is `E3002` or `E3001`. Finally add the matching
   `BinOp` or `UnOp` variant in `seal-mir` and lower it in `lower.rs`'s operator
   tables.
+- **New intrinsic method.** Add its entry to `seal-methods`, then handle the
+  new `IntrinsicOp` in `seal-typeck`'s signature checks if it needs a special
+  receiver rule, in `seal-codegen`, and in any borrow-check rule the operation
+  requires. The catalog is the single source of truth: lookup, arity, return
+  types, and MIR validation must not duplicate its data. Add a catalog test, a
+  type-checking test for each accepted and rejected receiver, and an end-to-end
+  test for observable behavior and panics.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is
