@@ -20,6 +20,7 @@ seal-diagnostics.workspace = true
 seal-hir.workspace = true
 seal-lexer.workspace = true
 seal-mir.workspace = true
+seal-mono.workspace = true
 seal-parser.workspace = true
 seal-error-codes.workspace = true
 seal-fs.workspace = true

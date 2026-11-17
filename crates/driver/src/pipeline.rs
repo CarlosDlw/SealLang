@@ -104,6 +104,20 @@ fn compile_input(session: &Session, cli: &Cli, requested: RequestedOutput, input
         return;
     }
 
+    // Collection runs even for `--emit=check`: it resolves symbolic trait calls
+    // and proves the program has a finite, fully concrete instance set.
+    let mono = session.profiler().time("mono", || {
+        seal_mono::collect(&hir, &mir, session.diag(), session.interner())
+    });
+    if session.diag().error_count() != errors {
+        return;
+    }
+    if let Err(error) = mono.validate(&hir) {
+        session.diag().bug(format!(
+            "monomorphization produced an invalid instance: {error}"
+        ));
+    }
+
     let Some(emit) = requested.artifact() else {
         return;
     };

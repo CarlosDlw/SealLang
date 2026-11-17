@@ -15,6 +15,7 @@
 //! | `E4xxx` | const evaluation / patterns |
 //! | `E5xxx` | MIR / ownership |
 //! | `E6xxx` | code generation / linking |
+//! | `E7xxx` | monomorphization |
 //! | `E9xxx` | compiler internals |
 //!
 //! Warnings are identified by lint name, not by code.
@@ -1715,6 +1716,66 @@ installed, and that the target's linker and sysroot are available. Nothing is
 left behind: artifacts are written through a temporary file.",
 };
 
+/// Monomorphization exceeded its recursion depth.
+pub const E7001: ErrorCode = ErrorCode {
+    code: "E7001",
+    title: "monomorphization recursion limit reached",
+    explanation: "\
+Monomorphization expands a generic function once per distinct set of type
+arguments. A function that calls itself with a growing instantiation, such as
+`f<T>` calling `f<[T; 1]>`, creates a new instance at every level and would
+never finish. Seal stops at a fixed depth and reports the instance chain that
+reached it.
+
+Rewrite the recursion so every recursive call uses the same type arguments, or
+move the growing part to a non-generic helper. The limit is high enough for any
+ordinary program; hitting it usually means generated code.",
+};
+
+/// A trait implementation needed during monomorphization does not exist.
+pub const E7002: ErrorCode = ErrorCode {
+    code: "E7002",
+    title: "missing trait implementation during monomorphization",
+    explanation: "\
+A call through a trait bound keeps the trait method symbolic until
+monomorphization selects the implementation for the concrete type arguments. The
+selection failed: no implementation of the trait matches the concrete self type
+and trait arguments, or the selected implementation requires a bound the
+arguments do not satisfy.
+
+Type checking usually reports this at the call site. If it reaches
+monomorphization, check that an `impl Trait for Type` exists for every concrete
+instantiation the program uses and that its own bounds hold.",
+};
+
+/// The entry point declares generic parameters.
+pub const E7003: ErrorCode = ErrorCode {
+    code: "E7003",
+    title: "entry point cannot be generic",
+    explanation: "\
+`main` is the root of monomorphization: there is no caller to supply its type
+arguments. A generic `main` has no concrete instance and no command-line syntax
+would choose one.
+
+Remove the type parameters from `main` and let it call generic functions with
+concrete arguments.",
+};
+
+/// Monomorphization produced too many instances.
+pub const E7004: ErrorCode = ErrorCode {
+    code: "E7004",
+    title: "monomorphization instance limit reached",
+    explanation: "\
+Each distinct set of type arguments creates one function instance. A program that
+instantiates generic functions with very many combinations can exhaust the
+collection limit before code generation starts.
+
+Reduce the number of distinct instantiations, for example by using one type
+argument per generic function, or split the program so each part uses fewer
+combinations. The limit exists so such a program reports an error instead of
+consuming unbounded memory.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -1879,7 +1940,7 @@ pub static ALL: &[ErrorCode] = &[
     E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
     E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
     E3043, E3044, E3045, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E6001, E6002, E6003, E9001, E9002,
+    E6001, E6002, E6003, E7001, E7002, E7003, E7004, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2044,6 +2105,16 @@ mod tests {
             .filter(|code| code.starts_with("E60"))
             .collect();
         assert_eq!(codes, ["E6001", "E6002", "E6003"]);
+    }
+
+    #[test]
+    fn mono_codes_are_contiguous() {
+        let codes: Vec<&str> = ALL
+            .iter()
+            .map(|entry| entry.code())
+            .filter(|code| code.starts_with("E70"))
+            .collect();
+        assert_eq!(codes, ["E7001", "E7002", "E7003", "E7004"]);
     }
 
     #[test]

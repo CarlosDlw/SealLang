@@ -307,6 +307,7 @@ dependencies = [
  "seal-hir",
  "seal-lexer",
  "seal-mir",
+ "seal-mono",
  "seal-parser",
  "seal-session",
  "seal-target",
@@ -407,6 +408,26 @@ dependencies = [
  "seal-index",
  "seal-lexer",
  "seal-methods",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+ "seal-ty",
+ "seal-typeck",
+]
+
+[[package]]
+name = "seal-mono"
+version = "0.1.0"
+dependencies = [
+ "seal-ast",
+ "seal-def",
+ "seal-diagnostics",
+ "seal-error-codes",
+ "seal-hash",
+ "seal-hir",
+ "seal-index",
+ "seal-lexer",
+ "seal-mir",
  "seal-parser",
  "seal-span",
  "seal-symbol",

@@ -25,6 +25,7 @@ seal-typeck = { path = "crates/typeck" }
 seal-mir = { path = "crates/mir" }
 seal-methods = { path = "crates/methods" }
 seal-borrowck = { path = "crates/borrowck" }
+seal-mono = { path = "crates/mono" }
 seal-codegen = { path = "crates/codegen" }
 seal-layout = { path = "crates/layout" }
 seal-llvm-debug = { path = "crates/llvm-debug" }

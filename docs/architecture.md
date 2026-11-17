@@ -34,6 +34,7 @@ allowed to depend only on crates below it in the list.
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct and symbolic call targets, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, escaping references, `E5xxx` diagnostics. |
+| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types and aggregate arguments, resolution of trait calls to impl methods, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
 | `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |

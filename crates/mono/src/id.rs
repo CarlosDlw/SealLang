@@ -1,0 +1,12 @@
+//! Dense handles for collected instances.
+
+use seal_index::newtype_index;
+
+newtype_index! {
+    /// Position of a [`MonoMir`](crate::MonoMir) in a
+    /// [`MonoProgram`](crate::MonoProgram).
+    ///
+    /// IDs follow discovery order, so two collections of the same source assign
+    /// the same ID to the same instance.
+    pub struct InstanceId;
+}
