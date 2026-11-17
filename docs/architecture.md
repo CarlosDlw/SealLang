@@ -189,7 +189,10 @@ allowed to depend only on crates below it in the list.
     authorized it and does not conflict with them. A conflict labels the live
     borrow's last active use, naming where the access would have to move.
     `&mut place` requires a writable place (`E3017`), and reading a non-`Copy`
-    pointee by value is `E3018`.
+    pointee by value is `E3018`. A method receiver is a place as well: it is
+    typed without reading its value, an expected reference is satisfied by
+    borrowing it, and `E3018` applies only when the call passes a non-`Copy`
+    receiver by value.
 40. **Loans are tracked per point, not per region union.** A local's may-hold
     set is a forward dataflow fact: overwriting a reference drops the loans it
     carried, and a loan is active only while a live local may hold it. This

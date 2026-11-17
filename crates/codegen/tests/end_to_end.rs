@@ -963,6 +963,41 @@ fn a_shared_receiver_borrows_through_a_slice_and_an_explicit_dereference() {
 }
 
 #[test]
+fn shared_and_exclusive_receivers_borrow_mutable_array_elements() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "receiver-mutable-element-debug"),
+        (OptLevel::O2, false, "receiver-mutable-element-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Counter { value: i32 }\n\
+             trait ReadValue { func read(self: *Self) -> i32; }\n\
+             trait Bump { func bump(self: *mut Self); }\n\
+             impl ReadValue for Counter { func read(self: *Counter) -> i32 { (*self).value } }\n\
+             impl Bump for Counter { func bump(self: *mut Counter) { (*self).value += 1; } }\n\
+             func peek(counters: *mut [Counter; 1]) -> i32 {\n\
+               counters[0].bump();\n\
+               counters[0].read()\n\
+             }\n\
+             func main() -> i32 {\n\
+               let mut counters = [Counter { value: 20 }];\n\
+               peek(&mut counters) * 2\n\
+             }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("mutable element receivers compile");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\

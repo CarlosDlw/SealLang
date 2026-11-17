@@ -207,3 +207,114 @@ fn a_shared_receiver_borrows_an_explicit_dereference_instead_of_moving_it() {
          func peek(token: *mut Token) -> i32 { (*token).view() }",
     );
 }
+
+#[test]
+fn a_value_receiver_cannot_move_out_of_an_array_behind_a_reference() {
+    for reference in ["*[Token; 2]", "*mut [Token; 2]"] {
+        let source = "struct Token { value: i32 } \
+             trait Consume { func consume(self: Self) -> i32; } \
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+             func first(tokens: REF) -> i32 { tokens[0].consume() }";
+        let (fixture, _, _) = check_errors(&source.replace("REF", reference));
+        fixture.expect("E3018", "cannot move out of a reference");
+    }
+}
+
+#[test]
+fn a_shared_receiver_borrows_an_array_element_behind_a_reference() {
+    for reference in ["*[Token; 2]", "*mut [Token; 2]"] {
+        let source = "struct Token { value: i32 } \
+             trait View { func view(self: *Self) -> i32; } \
+             impl View for Token { func view(self: *Token) -> i32 { (*self).value } } \
+             func first(tokens: REF) -> i32 { tokens[0].view() }";
+        check_clean(&source.replace("REF", reference));
+    }
+}
+
+#[test]
+fn a_value_receiver_cannot_move_a_field_out_of_a_dereference() {
+    let source = "\
+struct Token { value: i32 } \
+struct Holder { token: Token } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func take(holder: *mut Holder) -> i32 { (*holder).token.consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3018", "cannot move out of a reference");
+}
+
+#[test]
+fn a_shared_receiver_borrows_a_field_of_a_dereference() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         struct Holder { token: Token }\n\
+         trait View { func view(self: *Self) -> i32; }\n\
+         impl View for Token { func view(self: *Token) -> i32 { (*self).value } }\n\
+         func peek(holder: *mut Holder) -> i32 { (*holder).token.view() }",
+    );
+}
+
+#[test]
+fn a_value_receiver_cannot_move_out_of_a_nested_dereference() {
+    let source = "\
+struct Token { value: i32 } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func take(token: *mut *mut Token) -> i32 { (**token).consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3018", "cannot move out of a reference");
+}
+
+#[test]
+fn a_shared_receiver_borrows_through_a_nested_dereference() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         trait View { func view(self: *Self) -> i32; }\n\
+         impl View for Token { func view(self: *Token) -> i32 { (*self).value } }\n\
+         func peek(token: *mut *mut Token) -> i32 { (**token).view() }",
+    );
+}
+
+#[test]
+fn a_value_receiver_cannot_move_a_field_out_of_a_slice_element() {
+    let source = "\
+struct Token { value: i32 } \
+struct Holder { token: Token } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func first(holders: *[Holder]) -> i32 { holders[0].token.consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3018", "cannot move out of a reference");
+}
+
+#[test]
+fn a_shared_receiver_borrows_a_field_of_a_slice_element() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         struct Holder { token: Token }\n\
+         trait View { func view(self: *Self) -> i32; }\n\
+         impl View for Token { func view(self: *Token) -> i32 { (*self).value } }\n\
+         func first(holders: *[Holder]) -> i32 { holders[0].token.view() }",
+    );
+}
+
+#[test]
+fn an_exclusive_receiver_borrows_a_mutable_slice_element() {
+    check_clean(
+        "struct Token { value: i32 }\n\
+         trait Bump { func bump(self: *mut Self); }\n\
+         impl Bump for Token { func bump(self: *mut Token) { (*self).value += 1; } }\n\
+         func first(tokens: *mut [Token]) { tokens[0].bump() }",
+    );
+}
+
+#[test]
+fn an_exclusive_receiver_cannot_write_through_a_shared_slice() {
+    let source = "\
+struct Token { value: i32 } \
+trait Bump { func bump(self: *mut Self); } \
+impl Bump for Token { func bump(self: *mut Token) { (*self).value += 1; } } \
+func first(tokens: *[Token]) { tokens[0].bump() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3029", "needs to modify");
+}

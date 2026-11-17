@@ -141,6 +141,23 @@ fn borrowing_an_element_of_a_slice_is_accepted() {
 }
 
 #[test]
+fn moving_an_element_out_of_an_array_behind_a_reference_is_rejected() {
+    for reference in ["*[P; 2]", "*mut [P; 2]"] {
+        let source = "struct P { x: i32 }\nfunc f(p: REF) -> P { p[0] }";
+        let (fixture, _, _) = check_errors(&source.replace("REF", reference));
+        fixture.expect("E3018", "cannot move out of a reference");
+    }
+}
+
+#[test]
+fn borrowing_an_element_of_an_array_behind_a_reference_is_accepted() {
+    for reference in ["*[P; 2]", "*mut [P; 2]"] {
+        let source = "struct P { x: i32 }\nfunc f(p: REF) -> *P { &p[0] }";
+        check_clean(&source.replace("REF", reference));
+    }
+}
+
+#[test]
 fn mutably_borrowing_a_field_of_a_mutable_binding_is_accepted() {
     check_clean(
         "struct P { x: i32, y: i32 }\n\
