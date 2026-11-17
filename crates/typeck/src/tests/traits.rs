@@ -154,3 +154,14 @@ func main() -> i32 { Circle::unit() }";
     );
     assert!(results.signature(function).is_some());
 }
+
+#[test]
+fn a_value_receiver_rejects_a_reference_receiver() {
+    let source = "\
+struct Token { value: i32 } \
+trait Consume { func consume(self: Self) -> i32; } \
+impl Consume for Token { func consume(self: Token) -> i32 { self.value } } \
+func main() -> i32 { let token = Token { value: 1 }; let view = &token; view.consume() }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3031", "expects `Token`");
+}

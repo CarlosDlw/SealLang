@@ -788,6 +788,32 @@ fn a_free_main_takes_precedence_over_a_method_named_main() {
 }
 
 #[test]
+fn a_trait_method_with_a_value_receiver_moves_the_value() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "trait-value-debug"),
+        (OptLevel::O2, false, "trait-value-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            "struct Token { value: i32 }\n\
+             trait Consume { func consume(self: Self) -> i32; }\n\
+             impl Consume for Token { func consume(self: Token) -> i32 { self.value } }\n\
+             func main() -> i32 { let token = Token { value: 42 }; token.consume() }\n",
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("a value receiver compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
 fn swap_reverse_and_fill_handle_non_copy_elements() {
     let source = "struct Point { x: i32 }\n\
                   func main() -> i32 {\n\
