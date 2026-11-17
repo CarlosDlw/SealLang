@@ -62,7 +62,8 @@ safe code into undefined behavior.
 `match` is an expression over enum variants, structs, arrays, and scalar values.
 A braced block is an ordinary expression, so an arm body can run statements and
 produce a value. Patterns nest: they match unit, positional, and named variants,
-destructure structs, match every element of a fixed-size array or a slice, bind
+destructure structs, follow a reference to a struct or variant without an
+explicit dereference, match every element of a fixed-size array or a slice, bind
 fields, compare integer, float, character, and boolean literals, range over
 integers and characters (`0..=9`, `'a'..='z'`), bind a whole value while narrowing it
 (`name @ 0..=9`), and combine alternatives with `|`. An arm may carry an `if`

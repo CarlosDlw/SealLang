@@ -28,6 +28,7 @@ const TUPLE_VARIANTS: &str = include_str!("../../../examples/018_tuple_variants.
 const MATCH: &str = include_str!("../../../examples/019_match.sl");
 const ADVANCED_MATCH: &str = include_str!("../../../examples/020_match_advanced.sl");
 const SLICE_MATCH: &str = include_str!("../../../examples/021_match_slice.sl");
+const REFERENCE_MATCH: &str = include_str!("../../../examples/022_match_reference.sl");
 
 static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 
@@ -850,6 +851,29 @@ fn slice_match_produces_the_language_result_in_debug_and_release() {
             debug_info,
         )
         .expect("the slice match example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(42),
+            "wrong result for {suffix}"
+        );
+    }
+}
+
+#[test]
+fn reference_match_produces_the_language_result_in_debug_and_release() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "reference-match-debug"),
+        (OptLevel::O2, false, "reference-match-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            REFERENCE_MATCH,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the reference match example compiles");
         assert_eq!(
             run(output.path()).code(),
             Some(42),

@@ -317,6 +317,12 @@ shape. An `@` binding is a binding with a subpattern: the subpattern must match
 before the name is stored, and the name is available in the arm body and guard
 under the same rules as any other binding.
 
+A struct or variant pattern also matches through any number of references
+(`*T`, `*mut T`): the pattern reads the tag and the fields through the
+reference, so a field bound by name must be `Copy`, and binding a non-`Copy`
+field is `E3018`. Literal, range, and binding patterns still match the reference
+value itself, so dereference explicitly when the value you compare is behind it.
+
 A guard is an `if` expression after the pattern. It must have type `bool`
 (`E3003`) and may read only bindings whose type is `Copy` (`E2045`): a failed
 guard continues with the next arm, so a value the guard moved could not be put

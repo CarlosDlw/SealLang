@@ -12,6 +12,7 @@ mod match_advanced;
 mod match_expr;
 mod methods;
 mod operators;
+mod reference_patterns;
 mod sized;
 mod slice_patterns;
 mod slices;

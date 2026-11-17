@@ -1206,7 +1206,9 @@ through a reference by value.
 
 Borrow the pointee instead, as in `&*reference`, or copy the fields you need into
 a new value. The same rule applies to an element bound by a slice pattern: only
-`Copy` elements may be bound, because the slice still owns its storage.",
+`Copy` elements may be bound, because the slice still owns its storage. Struct
+and variant patterns that match through a reference follow the same rule: only
+`Copy` fields may be bound by name.",
 };
 
 /// An empty array literal has no element type to infer.

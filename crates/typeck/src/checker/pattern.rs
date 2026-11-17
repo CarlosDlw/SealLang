@@ -123,6 +123,7 @@ impl Checker<'_> {
                 let Some(adt_id) = self.hir.adt(adt) else {
                     return;
                 };
+                let (expected, through_reference) = self.deref_pattern_expected(expected);
                 let pattern_ty = self.hir.ty_ctxt().adt_ty(adt_id);
                 if !self.is_compatible(expected, pattern_ty) {
                     self.mismatch(span, expected, pattern_ty);
@@ -137,11 +138,15 @@ impl Checker<'_> {
                     let field_ty = field.ty;
                     self.check_pattern(field_pattern, field_ty, flow);
                 }
+                if through_reference {
+                    self.report_reference_pattern_moves(pattern, span);
+                }
             }
             PatternKind::Struct { adt, fields } => {
                 let Some(adt_id) = self.hir.adt(adt) else {
                     return;
                 };
+                let (expected, through_reference) = self.deref_pattern_expected(expected);
                 let pattern_ty = self.hir.ty_ctxt().adt_ty(adt_id);
                 if !self.is_compatible(expected, pattern_ty) {
                     self.mismatch(span, expected, pattern_ty);
@@ -153,6 +158,9 @@ impl Checker<'_> {
                     };
                     let field_ty = field.ty;
                     self.check_pattern(field_pattern, field_ty, flow);
+                }
+                if through_reference {
+                    self.report_reference_pattern_moves(pattern, span);
                 }
             }
             PatternKind::Array {
@@ -245,6 +253,36 @@ impl Checker<'_> {
                     self.check_pattern(alternative, expected, flow);
                 }
             }
+        }
+    }
+
+    /// Unwraps the references a struct or variant pattern matches through.
+    fn deref_pattern_expected(&self, mut ty: TyId) -> (TyId, bool) {
+        let mut through_reference = false;
+        while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(ty) {
+            ty = pointee;
+            through_reference = true;
+        }
+        (ty, through_reference)
+    }
+
+    /// Rejects bindings that would move a non-`Copy` value out of a reference
+    /// reached by a struct or variant pattern.
+    fn report_reference_pattern_moves(&mut self, pattern: HirPatternId, span: Span) {
+        let mut bindings = FxHashSet::default();
+        self.collect_noncopy_bindings(pattern, &mut bindings);
+        if let Some(definition) = bindings.into_iter().next() {
+            let ty = self.local_type(definition);
+            self.error(
+                codes::E3018,
+                span,
+                format!(
+                    "cannot move a `{}` value out of a reference in a pattern",
+                    self.ty_text(ty)
+                ),
+            )
+            .help("match only `Copy` fields through a reference, or dereference the value first")
+            .emit();
         }
     }
 

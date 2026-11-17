@@ -442,6 +442,7 @@ impl BodyLowering<'_> {
                 variant,
                 fields,
             } => {
+                let place = self.deref_pattern_place(place, ty);
                 let Some(definition) = self.hir.ty_ctxt().variant(*adt, *variant) else {
                     self.current = Some(fail);
                     return;
@@ -482,6 +483,7 @@ impl BodyLowering<'_> {
                 }
             }
             FlatPatternKind::Struct { adt, fields } => {
+                let place = self.deref_pattern_place(place, ty);
                 let definition = self.hir.ty_ctxt().adt(*adt);
                 for (field, child) in fields {
                     let Some(field_def) = definition.field(*field) else {
@@ -521,6 +523,15 @@ impl BodyLowering<'_> {
                 }
             }
         }
+    }
+
+    /// Removes the references a struct or variant pattern matches through.
+    fn deref_pattern_place(&self, mut place: Place, mut ty: TyId) -> Place {
+        while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(ty) {
+            place = place.deref();
+            ty = pointee;
+        }
+        place
     }
 
     /// Lowers an array pattern over a fixed-size array value.

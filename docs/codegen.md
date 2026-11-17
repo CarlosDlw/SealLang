@@ -107,7 +107,9 @@ The ABI is defined by the language, not by a C header:
   runtime length with `Rvalue::Len`, switches on it (equality without `..`, a
   `>=` test with `..`), then indexes the dereferenced slice; suffix positions
   are computed as `length - k`, and the length test proves every index in
-  bounds. An or-pattern becomes one
+  bounds. A struct or variant pattern applied to a reference first dereferences
+  the scrutinee place, so its tag read and field projections go through the
+  pointer. An or-pattern becomes one
   such chain per alternative. Bindings are stores from the field or element
   places, emitted after the whole pattern matched, and a guard is another
   `SwitchInt` on its boolean result. Falling past the last arm enters an

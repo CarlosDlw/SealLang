@@ -366,7 +366,10 @@ allowed to depend only on crates below it in the list.
     tests the runtime length and then indexes the dereferenced slice; coverage
     partitions the length domain at every pattern boundary and reuses the array
     usefulness check per length, so exact, prefix, and suffix patterns can
-    exhaust a slice.
+    exhaust a slice. Struct and variant patterns follow references by
+    dereferencing the scrutinee place before the tag read or field projection;
+    coverage unwraps the same references, so exhaustive reasoning sees the
+    aggregate.
 
 ## Extension points
 

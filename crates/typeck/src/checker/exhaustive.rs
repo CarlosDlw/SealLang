@@ -577,36 +577,39 @@ pub(super) fn scalar_domain(ty: TyId, tcx: &TyCtxt, pointer_width: u8) -> Option
 fn constructors(tcx: &TyCtxt, ty: TyId, covers: &[&Cover], pointer_width: u8) -> Option<Vec<Ctor>> {
     match tcx.kind(ty) {
         TyKind::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
-        TyKind::Adt(adt) => {
-            let definition = tcx.adt(adt);
-            if definition.is_enum() {
-                Some(
-                    definition
-                        .variants
-                        .iter()
-                        .enumerate()
-                        .map(|(index, _)| Ctor::Variant {
-                            adt,
-                            variant: VariantIdx::from_u32(
-                                u32::try_from(index).expect("variant count fits in u32"),
-                            )
-                            .expect("enum variant index is in range"),
-                        })
-                        .collect(),
-                )
-            } else {
-                Some(vec![Ctor::Struct { adt }])
-            }
-        }
+        TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
         TyKind::Array { element, length } => Some(vec![Ctor::Array { element, length }]),
         TyKind::Ref { pointee, .. } => match tcx.kind(pointee) {
             TyKind::Slice { element } => Some(slice_constructors(element, covers)),
+            TyKind::Adt(adt) => Some(adt_constructors(tcx, adt)),
+            TyKind::Ref { .. } => constructors(tcx, pointee, covers, pointer_width),
             _ => None,
         },
         TyKind::Int(_) | TyKind::Uint(_) => Some(interval_ctors(ty, covers, tcx, pointer_width)),
         TyKind::Char => Some(char_ctors(covers)),
         TyKind::Never | TyKind::Error => Some(Vec::new()),
         _ => None,
+    }
+}
+
+/// Returns every constructor of an aggregate type.
+fn adt_constructors(tcx: &TyCtxt, adt: AdtId) -> Vec<Ctor> {
+    let definition = tcx.adt(adt);
+    if definition.is_enum() {
+        definition
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(index, _)| Ctor::Variant {
+                adt,
+                variant: VariantIdx::from_u32(
+                    u32::try_from(index).expect("variant count fits in u32"),
+                )
+                .expect("enum variant index is in range"),
+            })
+            .collect()
+    } else {
+        vec![Ctor::Struct { adt }]
     }
 }
 
