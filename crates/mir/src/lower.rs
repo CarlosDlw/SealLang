@@ -11,8 +11,11 @@ use seal_hash::FxHashMap;
 use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId, Res, StmtKind};
 use seal_index::IndexVec;
 use seal_span::Span;
-use seal_ty::{Instance, ParamEnv, SubstsId, TyId, TyKind};
-use seal_typeck::{MethodKind, PlaceProjection, ReceiverAdjust, ResolvedPlace, TypeckResults};
+use seal_ty::{Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
+use seal_typeck::{
+    Coercion, MethodKind, PlaceProjection, ReceiverAdjust, ResolvedMethod, ResolvedPlace,
+    TypeckResults,
+};
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -354,6 +357,97 @@ impl<'a> BodyLowering<'a> {
     }
 
     fn lower_expr_into(&mut self, expr: HirExprId, dest: Option<Place>) {
+        if let Some(coercion) = self.typeck.coercion(expr) {
+            self.lower_coerced_expr_into(expr, coercion, dest);
+            return;
+        }
+        self.lower_expr_into_uncoerced(expr, dest);
+    }
+
+    /// Lowers an expression whose type checker result selected a coercion.
+    ///
+    /// The source expression is lowered with its natural type and the recorded
+    /// conversion is emitted explicitly. No later phase re-infers why the
+    /// source and destination types differ.
+    fn lower_coerced_expr_into(
+        &mut self,
+        expr: HirExprId,
+        coercion: Coercion,
+        dest: Option<Place>,
+    ) {
+        let span = self.hir.expr(expr).span;
+        match coercion {
+            Coercion::TraitObject { source, target } => {
+                let source_place = self.new_temp(source, span);
+                self.lower_expr_into_uncoerced(expr, Some(source_place.clone()));
+                let target_place = dest.unwrap_or_else(|| self.new_temp(target, span));
+                self.assign_rvalue(
+                    target_place,
+                    Rvalue::MakeTraitObject {
+                        source: Operand::Copy(source_place),
+                        source_ty: source,
+                        target_ty: target,
+                    },
+                    span,
+                );
+            }
+            Coercion::TraitObjectReborrow { source, target } => {
+                let (place, pointer) = self.lower_reborrow_parts(expr, source, span);
+                let target_place = dest.unwrap_or_else(|| self.new_temp(target, span));
+                self.assign_rvalue(
+                    target_place,
+                    Rvalue::TraitObjectReborrow {
+                        source: pointer,
+                        place,
+                        from: source,
+                        to: target,
+                    },
+                    span,
+                );
+            }
+        }
+    }
+
+    /// Returns the pointee place and source pointer of a recorded dyn reborrow.
+    fn lower_reborrow_parts(
+        &mut self,
+        expr: HirExprId,
+        source_ty: TyId,
+        span: Span,
+    ) -> (Place, Operand) {
+        let ExprKind::Borrow { operand, .. } = self.hir.expr(expr).kind.clone() else {
+            panic!("a trait-object reborrow must be a borrow expression; this is a compiler bug")
+        };
+        let ExprKind::Deref { operand: pointer } = self.hir.expr(operand).kind.clone() else {
+            panic!("a trait-object reborrow must dereference a pointer; this is a compiler bug")
+        };
+        let (pointer_place, source) =
+            self.lower_pointer_place_and_operand(pointer, source_ty, span);
+        (pointer_place.deref(), source)
+    }
+
+    /// Lowers a pointer value as both storage and the operand read from it.
+    ///
+    /// A pointer with a resolved place is read directly; any other value is
+    /// materialized once in a temporary, so a reborrow never evaluates its
+    /// source pointer twice.
+    fn lower_pointer_place_and_operand(
+        &mut self,
+        expr: HirExprId,
+        ty: TyId,
+        span: Span,
+    ) -> (Place, Operand) {
+        if let Some(place) = self.typeck.place(expr).cloned() {
+            let place = self.resolved_place(&place);
+            let operand = self.place_operand(place.clone(), ty);
+            return (place, operand);
+        }
+        let temporary = self.new_temp(ty, span);
+        self.lower_expr_into(expr, Some(temporary.clone()));
+        (temporary.clone(), Operand::Copy(temporary))
+    }
+
+    fn lower_expr_into_uncoerced(&mut self, expr: HirExprId, dest: Option<Place>) {
         let (span, kind) = {
             let expr = self.hir.expr(expr);
             (expr.span, expr.kind.clone())
@@ -822,7 +916,7 @@ impl<'a> BodyLowering<'a> {
             }
             MethodKind::TraitBound { method, .. } => (method, true),
             MethodKind::Dynamic { .. } => {
-                panic!("dynamic dispatch lowering is not implemented; this is a compiler bug")
+                return self.lower_dynamic_call(receiver, args, dest, span, &resolved);
             }
         };
         let receiver_argument = match resolved.receiver_adjust {
@@ -865,6 +959,112 @@ impl<'a> BodyLowering<'a> {
             },
             span,
         );
+    }
+
+    /// Lowers a method call dispatched through a trait-object vtable.
+    fn lower_dynamic_call(
+        &mut self,
+        receiver: HirExprId,
+        args: &[HirExprId],
+        dest: Option<Place>,
+        span: Span,
+        resolved: &ResolvedMethod,
+    ) {
+        let MethodKind::Dynamic {
+            object_trait_ref,
+            method,
+            slot,
+            ..
+        } = resolved.kind
+        else {
+            panic!("a dynamic call must resolve to a vtable slot; this is a compiler bug")
+        };
+        let receiver_value = self.lower_dynamic_receiver(receiver, resolved);
+        let mut arg_spans = Vec::with_capacity(args.len() + 1);
+        arg_spans.push(self.hir.expr(receiver).span);
+        arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
+        let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
+        let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
+        self.assign_rvalue(
+            dest,
+            Rvalue::DynamicCall {
+                object_trait_ref,
+                method,
+                slot,
+                receiver: receiver_value,
+                args,
+                arg_spans,
+                arg_tys: resolved.arg_tys.clone(),
+                ret_ty: resolved.ret_ty,
+            },
+            span,
+        );
+    }
+
+    /// Produces the receiver value for a dynamic call.
+    fn lower_dynamic_receiver(
+        &mut self,
+        receiver: HirExprId,
+        resolved: &ResolvedMethod,
+    ) -> Operand {
+        let span = self.hir.expr(receiver).span;
+        match resolved.receiver_adjust {
+            ReceiverAdjust::None => self.lower_operand(receiver),
+            ReceiverAdjust::SharedReborrow => {
+                let source_ty = self.expr_ty(receiver);
+                let (pointer_place, source) =
+                    self.lower_pointer_place_and_operand(receiver, source_ty, span);
+                let place = pointer_place.deref();
+                let target = self
+                    .hir
+                    .ty_ctxt()
+                    .ref_ty_with(RefKind::Shared, resolved.receiver_ty);
+                self.materialize_reborrow(source, place, source_ty, target, span)
+            }
+            ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
+                let ExprKind::Deref { operand: pointer } = self.hir.expr(receiver).kind.clone()
+                else {
+                    panic!(
+                        "a dyn receiver adjustment requires an explicit dereference; this is a \
+                         compiler bug"
+                    )
+                };
+                let source_ty = self.expr_ty(pointer);
+                let (pointer_place, source) =
+                    self.lower_pointer_place_and_operand(pointer, source_ty, span);
+                let place = pointer_place.deref();
+                let kind = if resolved.receiver_adjust == ReceiverAdjust::ExclusiveBorrow {
+                    RefKind::Exclusive
+                } else {
+                    RefKind::Shared
+                };
+                let target = self.hir.ty_ctxt().ref_ty_with(kind, resolved.receiver_ty);
+                self.materialize_reborrow(source, place, source_ty, target, span)
+            }
+        }
+    }
+
+    /// Materializes one reborrow into a temporary and returns a copy of it.
+    fn materialize_reborrow(
+        &mut self,
+        source: Operand,
+        place: Place,
+        from: TyId,
+        to: TyId,
+        span: Span,
+    ) -> Operand {
+        let temporary = self.new_temp(to, span);
+        self.assign_rvalue(
+            temporary.clone(),
+            Rvalue::TraitObjectReborrow {
+                source,
+                place,
+                from,
+                to,
+            },
+            span,
+        );
+        Operand::Copy(temporary)
     }
 
     /// Lowers one intrinsic method call.
@@ -1025,6 +1225,12 @@ impl<'a> BodyLowering<'a> {
             (expr.span, expr.kind.clone())
         };
         let ty = self.expr_ty(expr);
+
+        if self.typeck.coercion(expr).is_some() {
+            let temporary = self.new_temp(ty, span);
+            self.lower_expr_into(expr, Some(temporary.clone()));
+            return self.place_operand(temporary, ty);
+        }
 
         match kind {
             ExprKind::Lit(literal) => Operand::Constant(self.constant(literal, ty)),

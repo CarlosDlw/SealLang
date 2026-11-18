@@ -150,6 +150,51 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= operand_unknown(operand, context);
             check_operand(statement, operand, context);
         }
+        Rvalue::MakeTraitObject { source, .. } => {
+            unknown |= operand_unknown(source, context);
+            check_operand(statement, source, context);
+        }
+        Rvalue::TraitObjectReborrow {
+            source, place, to, ..
+        } => {
+            unknown |= operand_unknown(source, context);
+            check_operand(statement, source, context);
+            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            check_borrow(
+                place,
+                loans::reborrow_kind(context.hir, *to),
+                statement.span,
+                context,
+            );
+        }
+        Rvalue::DynamicCall {
+            receiver,
+            args,
+            arg_spans,
+            ..
+        } => {
+            check_operand(statement, receiver, context);
+            check_shared_dynamic_receiver(receiver, statement.span, context);
+            for arg in args {
+                check_operand(statement, arg, context);
+            }
+            let mut all_args = Vec::with_capacity(args.len() + 1);
+            all_args.push(receiver.clone());
+            all_args.extend(args.iter().cloned());
+            let outcome = calls::check(calls::CallSite {
+                args: &all_args,
+                arg_spans,
+                span: statement.span,
+                origins: context.origins,
+                holds: context.holds_at,
+                loans: context.loans,
+                active: context.active,
+                hir: context.hir,
+                body: context.body,
+                reporter: context.reporter,
+            });
+            unknown |= outcome.unknown;
+        }
         Rvalue::Discriminant(place) => {
             unknown |= origins::keys_of(context.origins, place).is_unknown();
             check_read(place, statement.span, context);
@@ -406,6 +451,27 @@ fn moved_place(context: &Context<'_>, place: &Place) -> Place {
             matches!(state(context, &prefix), Init::Moved).then_some(prefix)
         })
         .unwrap_or_else(|| place.clone())
+}
+
+/// A shared dynamic call reads the pointee for the duration of the call.
+///
+/// The check is expressed as a read of the pointee place, so an exclusive loan
+/// of the same storage conflicts. An exclusive call is handled by the call-site
+/// argument rules instead.
+fn check_shared_dynamic_receiver(receiver: &Operand, span: seal_span::Span, context: &Context<'_>) {
+    let Some(place) = receiver.place() else {
+        return;
+    };
+    let ty = origins::place_ty(context.hir, context.body, &place);
+    if matches!(
+        context.hir.ty_ctxt().kind(ty),
+        TyKind::Ref {
+            kind: RefKind::Shared,
+            ..
+        }
+    ) {
+        check_read(&place.deref(), span, context);
+    }
 }
 
 fn state(context: &Context<'_>, place: &Place) -> Init {

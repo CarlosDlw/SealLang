@@ -36,6 +36,17 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
         Rvalue::Ref { place, .. } => {
             uses.insert(place.local);
         }
+        Rvalue::MakeTraitObject { source, .. } => operand_uses(source, uses),
+        Rvalue::TraitObjectReborrow { source, place, .. } => {
+            operand_uses(source, uses);
+            uses.insert(place.local);
+        }
+        Rvalue::DynamicCall { receiver, args, .. } => {
+            operand_uses(receiver, uses);
+            for arg in args {
+                operand_uses(arg, uses);
+            }
+        }
         Rvalue::SliceRef {
             base, start, end, ..
         } => {

@@ -37,6 +37,9 @@ pub(crate) fn collect(hir: &Hir, body: &Body) -> (Vec<Loan>, Vec<Vec<Option<Loan
                     };
                     (place, *kind)
                 }
+                Rvalue::TraitObjectReborrow { place, to, .. } => {
+                    (place.clone(), reborrow_kind(hir, *to))
+                }
                 _ => continue,
             };
             let id = LoanId::from_usize(loans.len());
@@ -57,6 +60,14 @@ pub(crate) fn collect(hir: &Hir, body: &Body) -> (Vec<Loan>, Vec<Vec<Option<Loan
     (loans, positions)
 }
 
+/// Returns the mutability of a trait-object reborrow's destination.
+pub(crate) fn reborrow_kind(hir: &Hir, ty: seal_ty::TyId) -> seal_ty::RefKind {
+    match hir.ty_ctxt().kind(ty) {
+        TyKind::Ref { kind, .. } => kind,
+        _ => panic!("a trait-object reborrow must target a pointer; this is a compiler bug"),
+    }
+}
+
 /// Fills in each loan's storage keys and authorizing loans.
 ///
 /// Keys are resolved with the origin state before the borrow statement, and
@@ -75,7 +86,10 @@ pub(crate) fn resolve(
                 continue;
             };
             let StatementKind::Assign { rvalue, .. } = &statement.kind;
-            if !matches!(rvalue, Rvalue::Ref { .. } | Rvalue::SliceRef { .. }) {
+            if !matches!(
+                rvalue,
+                Rvalue::Ref { .. } | Rvalue::SliceRef { .. } | Rvalue::TraitObjectReborrow { .. }
+            ) {
                 continue;
             }
             let loan = &loans[id.index() as usize];

@@ -4,6 +4,7 @@ mod arrays;
 mod borrows;
 mod calls;
 mod constructed;
+mod dyn_types;
 mod examples;
 mod for_loop;
 mod generics;

@@ -293,6 +293,31 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             let origins = keys_of(state, &effective);
             state.assign(place, origins);
         }
+        Rvalue::MakeTraitObject { source, .. } => {
+            let origins = operand_origins(hir, body, state, source);
+            if destination_holds_references {
+                state.assign(place, origins);
+            } else {
+                state.clear(place);
+            }
+        }
+        Rvalue::TraitObjectReborrow {
+            place: borrowed, ..
+        } => {
+            let origins = keys_of(state, borrowed);
+            state.assign(place, origins);
+        }
+        Rvalue::DynamicCall { receiver, args, .. } => {
+            if destination_holds_references {
+                let mut origins = operand_origins(hir, body, state, receiver);
+                for arg in args {
+                    origins.extend(&operand_origins(hir, body, state, arg));
+                }
+                state.assign(place, origins);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
         Rvalue::Use(operand) => {
             let origins = operand_origins(hir, body, state, operand);

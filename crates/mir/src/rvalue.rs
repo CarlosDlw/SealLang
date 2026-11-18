@@ -1,9 +1,10 @@
 //! Values computed by statements.
 
 use seal_def::DefId;
+use seal_layout::VtableSlot;
 use seal_methods::MethodId;
 use seal_span::Span;
-use seal_ty::{Instance, SubstsId, VariantIdx};
+use seal_ty::{Instance, SubstsId, TraitRef, TyId, VariantIdx};
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -185,6 +186,34 @@ pub enum AggregateKind {
 pub enum Rvalue {
     /// Copies or moves an operand.
     Use(Operand),
+    /// Converts a thin pointer to a trait-object pointer.
+    ///
+    /// `source` holds a pointer whose pointee is the concrete `source_ty`
+    /// pointee. Code generation replaces the thin pointer with a fat pointer
+    /// carrying the same data address and the vtable selected by `target_ty`.
+    MakeTraitObject {
+        /// The thin pointer value.
+        source: Operand,
+        /// The source pointer type, which selects the concrete vtable key.
+        source_ty: TyId,
+        /// The resulting trait-object pointer type.
+        target_ty: TyId,
+    },
+    /// Reborrows a trait-object place, copying its data and vtable pair.
+    ///
+    /// `source` is the fat pointer used by code generation. `place` is the
+    /// pointee place used by borrow checking, so the loan is registered on the
+    /// pointed-to storage and never on the pointer variable itself.
+    TraitObjectReborrow {
+        /// The source fat pointer.
+        source: Operand,
+        /// The pointee place the new loan covers.
+        place: Place,
+        /// The source pointer type.
+        from: TyId,
+        /// The resulting pointer type.
+        to: TyId,
+    },
     /// Borrows a place, written `&place` or `&mut place`.
     ///
     /// A shared reference (`*T`) keeps the borrowed place alive and permits
@@ -258,6 +287,30 @@ pub enum Rvalue {
         args: Vec<Operand>,
         /// The source range of the whole method call.
         span: Span,
+    },
+    /// Calls a method through the vtable embedded in a trait object.
+    ///
+    /// The receiver is separate from `args`: code generation extracts its data
+    /// pointer, while borrow checking analyzes it as the first call argument.
+    /// The call consumes the vtable already inside the receiver; it never looks
+    /// up a vtable by key.
+    DynamicCall {
+        /// The receiver's principal trait reference.
+        object_trait_ref: TraitRef,
+        /// The trait method declaration.
+        method: DefId,
+        /// The method's slot in the principal vtable.
+        slot: VtableSlot,
+        /// The trait-object receiver value.
+        receiver: Operand,
+        /// Arguments in evaluation order, excluding the receiver.
+        args: Vec<Operand>,
+        /// The source span of the receiver followed by each argument.
+        arg_spans: Vec<Span>,
+        /// The argument types after replacing the trait's `Self` and arguments.
+        arg_tys: Vec<TyId>,
+        /// The result type after the same replacement.
+        ret_ty: TyId,
     },
     /// Calls a function or a trait method.
     ///

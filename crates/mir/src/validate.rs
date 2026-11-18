@@ -4,7 +4,8 @@ use std::fmt;
 
 use seal_def::{DefId, DefKind};
 use seal_hir::Hir;
-use seal_ty::TyKind;
+use seal_layout::VtableLayout;
+use seal_ty::{RefKind, TraitRef, TyId, TyKind};
 
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -107,6 +108,73 @@ pub enum ValidationError {
         /// The block containing the call.
         block: BasicBlockId,
     },
+    /// A trait-object conversion does not start from a thin pointer.
+    TraitObjectSourceNotThin {
+        /// The block containing the conversion.
+        block: BasicBlockId,
+    },
+    /// A trait-object conversion does not produce a trait-object pointer.
+    TraitObjectTargetNotObject {
+        /// The block containing the conversion.
+        block: BasicBlockId,
+    },
+    /// A trait-object conversion changes sharedness of the pointer.
+    TraitObjectKindMismatch {
+        /// The block containing the conversion.
+        block: BasicBlockId,
+    },
+    /// An operand's type differs from the type recorded on its rvalue.
+    RvalueOperandTypeMismatch {
+        /// The block containing the rvalue.
+        block: BasicBlockId,
+    },
+    /// A dyn reborrow does not preserve the trait reference.
+    TraitObjectReborrowMismatch {
+        /// The block containing the reborrow.
+        block: BasicBlockId,
+    },
+    /// A dyn reborrow loans a place that is not the target pointee.
+    TraitObjectReborrowPlaceMismatch {
+        /// The block containing the reborrow.
+        block: BasicBlockId,
+    },
+    /// A dynamic call receiver is not a trait-object pointer.
+    DynamicReceiverNotObject {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A dynamic call receiver names a different principal trait.
+    DynamicReceiverTraitMismatch {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A dynamic call names a method or slot missing from its vtable.
+    DynamicSlotMismatch {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A dynamic call records a different number of argument types than values.
+    DynamicArityMismatch {
+        /// The number of arguments, excluding the receiver.
+        args: usize,
+        /// The number of recorded argument types.
+        arg_tys: usize,
+    },
+    /// A dynamic call does not match the trait method's signature.
+    DynamicSignatureMismatch {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A move reads an unsized place by value.
+    MoveFromUnsizedPlace {
+        /// The block containing the move.
+        block: BasicBlockId,
+    },
+    /// A trait-object rvalue keeps an inference-variable type.
+    InferredRvalueType {
+        /// The block containing the rvalue.
+        block: BasicBlockId,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -168,6 +236,57 @@ impl fmt::Display for ValidationError {
             Self::ParamReceiverOnDirectCall { block } => write!(
                 f,
                 "block {block:?} passes a type parameter by value to a known callee"
+            ),
+            Self::TraitObjectSourceNotThin { block } => write!(
+                f,
+                "block {block:?} builds a trait object from a non-thin pointer"
+            ),
+            Self::TraitObjectTargetNotObject { block } => write!(
+                f,
+                "block {block:?} coerces to a type that is not a trait-object pointer"
+            ),
+            Self::TraitObjectKindMismatch { block } => write!(
+                f,
+                "block {block:?} changes pointer sharedness in a trait-object conversion"
+            ),
+            Self::RvalueOperandTypeMismatch { block } => write!(
+                f,
+                "block {block:?} uses an operand whose type differs from the recorded rvalue type"
+            ),
+            Self::TraitObjectReborrowMismatch { block } => write!(
+                f,
+                "block {block:?} reborrows between different trait-object types"
+            ),
+            Self::TraitObjectReborrowPlaceMismatch { block } => write!(
+                f,
+                "block {block:?} reborrows a place that is not the target pointee"
+            ),
+            Self::DynamicReceiverNotObject { block } => write!(
+                f,
+                "block {block:?} dispatches on a receiver that is not a trait-object pointer"
+            ),
+            Self::DynamicReceiverTraitMismatch { block } => write!(
+                f,
+                "block {block:?} dispatches through a different principal trait"
+            ),
+            Self::DynamicSlotMismatch { block } => write!(
+                f,
+                "block {block:?} names a method or slot missing from the vtable"
+            ),
+            Self::DynamicArityMismatch { args, arg_tys } => write!(
+                f,
+                "dynamic call has {args} argument(s) but {arg_tys} argument type(s)"
+            ),
+            Self::DynamicSignatureMismatch { block } => write!(
+                f,
+                "block {block:?} has a dynamic call that does not match the trait method"
+            ),
+            Self::MoveFromUnsizedPlace { block } => {
+                write!(f, "block {block:?} moves out of an unsized place")
+            }
+            Self::InferredRvalueType { block } => write!(
+                f,
+                "block {block:?} holds a trait-object rvalue with an inference-variable type"
             ),
         }
     }
@@ -277,7 +396,12 @@ fn check_operand(
     hir: Option<&Hir>,
 ) -> Result<(), ValidationError> {
     if let Some(place) = operand.place() {
-        check_place(body, block, place)?;
+        check_place(body, block, place.clone())?;
+        if let (Some(hir), Operand::Move(_)) = (hir, operand)
+            && !hir.ty_ctxt().is_sized(place_ty(hir, body, &place))
+        {
+            return Err(ValidationError::MoveFromUnsizedPlace { block });
+        }
     }
     if let (Some(hir), Some(ty)) = (hir, constant_ty(operand))
         && contains_infer(hir, ty)
@@ -285,6 +409,207 @@ fn check_operand(
         return Err(ValidationError::InferredConstant { block });
     }
     Ok(())
+}
+
+fn check_trait_object_conversion(
+    body: &Body,
+    block: BasicBlockId,
+    source: &Operand,
+    source_ty: TyId,
+    target_ty: TyId,
+    hir: &Hir,
+) -> Result<(), ValidationError> {
+    let tcx = hir.ty_ctxt();
+    if contains_infer(hir, source_ty) || contains_infer(hir, target_ty) {
+        return Err(ValidationError::InferredRvalueType { block });
+    }
+    let Some((source_kind, pointee)) = tcx.ref_parts(source_ty) else {
+        return Err(ValidationError::TraitObjectSourceNotThin { block });
+    };
+    if !tcx.is_sized(pointee) || matches!(tcx.kind(pointee), TyKind::Dyn { .. }) {
+        return Err(ValidationError::TraitObjectSourceNotThin { block });
+    }
+    if operand_ty(tcx, body, source).is_some_and(|ty| ty != source_ty) {
+        return Err(ValidationError::RvalueOperandTypeMismatch { block });
+    }
+    let Some((target_kind, ..)) = dyn_pointer(tcx, target_ty) else {
+        return Err(ValidationError::TraitObjectTargetNotObject { block });
+    };
+    if source_kind != target_kind {
+        return Err(ValidationError::TraitObjectKindMismatch { block });
+    }
+    Ok(())
+}
+
+fn check_trait_object_reborrow(
+    body: &Body,
+    block: BasicBlockId,
+    source: &Operand,
+    place: &Place,
+    from: TyId,
+    to: TyId,
+    hir: &Hir,
+) -> Result<(), ValidationError> {
+    let tcx = hir.ty_ctxt();
+    if contains_infer(hir, from) || contains_infer(hir, to) {
+        return Err(ValidationError::InferredRvalueType { block });
+    }
+    if operand_ty(tcx, body, source).is_some_and(|ty| ty != from) {
+        return Err(ValidationError::RvalueOperandTypeMismatch { block });
+    }
+    let Some((from_kind, from_object, from_ref)) = dyn_pointer(tcx, from) else {
+        return Err(ValidationError::TraitObjectReborrowMismatch { block });
+    };
+    let Some((to_kind, to_object, to_ref)) = dyn_pointer(tcx, to) else {
+        return Err(ValidationError::TraitObjectReborrowMismatch { block });
+    };
+    if from_object != to_object
+        || from_ref != to_ref
+        || (from_kind == RefKind::Shared && to_kind == RefKind::Exclusive)
+    {
+        return Err(ValidationError::TraitObjectReborrowMismatch { block });
+    }
+    if place_ty(hir, body, place) != to_object {
+        return Err(ValidationError::TraitObjectReborrowPlaceMismatch { block });
+    }
+    Ok(())
+}
+
+/// The parts of a dynamic call that validation compares with the trait layout.
+struct DynamicCallParts<'a> {
+    receiver: &'a Operand,
+    args: &'a [Operand],
+    object_trait_ref: TraitRef,
+    method: DefId,
+    slot: seal_layout::VtableSlot,
+    arg_tys: &'a [TyId],
+    ret_ty: TyId,
+}
+
+fn check_dynamic_call(
+    body: &Body,
+    block: BasicBlockId,
+    call: DynamicCallParts<'_>,
+    hir: &Hir,
+) -> Result<(), ValidationError> {
+    let DynamicCallParts {
+        receiver,
+        args,
+        object_trait_ref,
+        method,
+        slot,
+        arg_tys,
+        ret_ty,
+    } = call;
+    let tcx = hir.ty_ctxt();
+    let Some(receiver_ty) = operand_ty(tcx, body, receiver) else {
+        return Err(ValidationError::DynamicReceiverNotObject { block });
+    };
+    let Some((_, _, receiver_ref)) = dyn_pointer(tcx, receiver_ty) else {
+        return Err(ValidationError::DynamicReceiverNotObject { block });
+    };
+    if receiver_ref != object_trait_ref {
+        return Err(ValidationError::DynamicReceiverTraitMismatch { block });
+    }
+    let layout = VtableLayout::new(tcx, object_trait_ref)
+        .map_err(|_| ValidationError::DynamicSlotMismatch { block })?;
+    let Some(entry) = layout.entries().iter().find(|entry| entry.slot == slot) else {
+        return Err(ValidationError::DynamicSlotMismatch { block });
+    };
+    if entry.method() != Some(method) || layout.slot_of(method) != Some(slot) {
+        return Err(ValidationError::DynamicSlotMismatch { block });
+    }
+    let Some(declaring_trait) = entry.declaring_trait() else {
+        return Err(ValidationError::DynamicSlotMismatch { block });
+    };
+    let Some(definition) = hir.trait_definition(declaring_trait.trait_def) else {
+        return Err(ValidationError::DynamicSlotMismatch { block });
+    };
+    let Some(method_def) = definition
+        .methods
+        .iter()
+        .find(|declared| declared.def == method)
+    else {
+        return Err(ValidationError::DynamicSlotMismatch { block });
+    };
+    if hir
+        .generics(method)
+        .is_some_and(|generics| !generics.params.is_empty())
+    {
+        return Err(ValidationError::DynamicSignatureMismatch { block });
+    }
+    let mut parameters = vec![declaring_trait.self_ty];
+    parameters.extend(tcx.substs_args(declaring_trait.args));
+    let substs = tcx.substs(&parameters);
+    let expected_params = &method_def.signature.params;
+    if expected_params.len() != arg_tys.len() {
+        return Err(ValidationError::DynamicSignatureMismatch { block });
+    }
+    for (expected, found) in expected_params.iter().zip(arg_tys) {
+        if tcx.substitute(*expected, substs) != *found {
+            return Err(ValidationError::DynamicSignatureMismatch { block });
+        }
+    }
+    if tcx.substitute(method_def.signature.ret, substs) != ret_ty {
+        return Err(ValidationError::DynamicSignatureMismatch { block });
+    }
+    for (expected, argument) in arg_tys.iter().zip(args) {
+        if operand_ty(tcx, body, argument).is_some_and(|ty| ty != *expected) {
+            return Err(ValidationError::RvalueOperandTypeMismatch { block });
+        }
+    }
+    Ok(())
+}
+
+fn dyn_pointer(tcx: &seal_ty::TyCtxt, ty: TyId) -> Option<(RefKind, TyId, TraitRef)> {
+    let (kind, pointee) = tcx.ref_parts(ty)?;
+    if !matches!(tcx.kind(pointee), TyKind::Dyn { .. }) {
+        return None;
+    }
+    let (trait_def, args) = tcx.dyn_parts(pointee)?;
+    Some((kind, pointee, TraitRef::new(trait_def, pointee, args)))
+}
+
+fn operand_ty(tcx: &seal_ty::TyCtxt, body: &Body, operand: &Operand) -> Option<TyId> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => Some(place_ty_mir(tcx, body, place)),
+        Operand::Constant(constant) => constant_ty(&Operand::Constant(*constant)),
+    }
+}
+
+fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
+    place_ty_mir(hir.ty_ctxt(), body, place)
+}
+
+fn place_ty_mir(tcx: &seal_ty::TyCtxt, body: &Body, place: &Place) -> TyId {
+    let mut ty = body.local(place.local).ty;
+    for projection in &place.projections {
+        ty = match projection {
+            crate::place::Projection::Deref => match tcx.kind(ty) {
+                TyKind::Ref { pointee, .. } => pointee,
+                _ => ty,
+            },
+            crate::place::Projection::Field(field) => match tcx.kind(ty) {
+                TyKind::Adt { adt, args } => tcx.field_ty(adt, args, *field).unwrap_or(ty),
+                _ => ty,
+            },
+            crate::place::Projection::VariantField { variant, field } => match tcx.kind(ty) {
+                TyKind::Adt { adt, args } => tcx
+                    .variant_field_ty(adt, args, *variant, *field)
+                    .unwrap_or(ty),
+                _ => ty,
+            },
+            crate::place::Projection::TupleField(index) => match tcx.kind(ty) {
+                TyKind::Tuple(tuple) => tcx.tuple_element(tuple, *index as usize).unwrap_or(ty),
+                _ => ty,
+            },
+            crate::place::Projection::Index { .. } => match tcx.kind(ty) {
+                TyKind::Array { element, .. } | TyKind::Slice { element } => element,
+                _ => ty,
+            },
+        };
+    }
+    ty
 }
 
 /// Returns the type of a literal operand, when it carries one.
@@ -307,6 +632,74 @@ fn check_rvalue(
 ) -> Result<(), ValidationError> {
     match rvalue {
         Rvalue::Use(operand) => check_operand(body, block, operand, hir),
+        Rvalue::MakeTraitObject {
+            source,
+            source_ty,
+            target_ty,
+        } => {
+            check_operand(body, block, source, hir)?;
+            if let Some(hir) = hir {
+                check_trait_object_conversion(body, block, source, *source_ty, *target_ty, hir)?;
+            }
+            Ok(())
+        }
+        Rvalue::TraitObjectReborrow {
+            source,
+            place,
+            from,
+            to,
+        } => {
+            check_operand(body, block, source, hir)?;
+            check_place(body, block, place.clone())?;
+            if let Some(hir) = hir {
+                check_trait_object_reborrow(body, block, source, place, *from, *to, hir)?;
+            }
+            Ok(())
+        }
+        Rvalue::DynamicCall {
+            object_trait_ref,
+            method,
+            slot,
+            receiver,
+            args,
+            arg_spans,
+            arg_tys,
+            ret_ty,
+        } => {
+            if args.len() + 1 != arg_spans.len() {
+                return Err(ValidationError::CallSpansMismatch {
+                    args: args.len() + 1,
+                    spans: arg_spans.len(),
+                });
+            }
+            if args.len() != arg_tys.len() {
+                return Err(ValidationError::DynamicArityMismatch {
+                    args: args.len(),
+                    arg_tys: arg_tys.len(),
+                });
+            }
+            check_operand(body, block, receiver, hir)?;
+            for arg in args {
+                check_operand(body, block, arg, hir)?;
+            }
+            if let Some(hir) = hir {
+                check_dynamic_call(
+                    body,
+                    block,
+                    DynamicCallParts {
+                        receiver,
+                        args,
+                        object_trait_ref: *object_trait_ref,
+                        method: *method,
+                        slot: *slot,
+                        arg_tys,
+                        ret_ty: *ret_ty,
+                    },
+                    hir,
+                )?;
+            }
+            Ok(())
+        }
         Rvalue::Discriminant(place) => check_place(body, block, place.clone()),
         Rvalue::Ref { place, .. } => check_place(body, block, place.clone()),
         Rvalue::SliceRef {
@@ -411,7 +804,7 @@ fn contains_infer(hir: &Hir, ty: seal_ty::TyId) -> bool {
             .tuple_elements(tuple)
             .iter()
             .any(|element| contains_infer(hir, *element)),
-        TyKind::Adt { args, .. } => tcx
+        TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => tcx
             .substs_args(args)
             .iter()
             .any(|argument| contains_infer(hir, *argument)),

@@ -128,6 +128,14 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
         }
         Rvalue::Repeat { value, .. } => move_operand(value, state),
         Rvalue::Len { slice } => move_operand(slice, state),
+        Rvalue::MakeTraitObject { source, .. } => move_operand(source, state),
+        Rvalue::TraitObjectReborrow { source, .. } => move_operand(source, state),
+        Rvalue::DynamicCall { receiver, args, .. } => {
+            move_operand(receiver, state);
+            for arg in args {
+                move_operand(arg, state);
+            }
+        }
         Rvalue::Discriminant(_) | Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
     }
     if let Some((local, fields)) = path_of(place) {

@@ -216,12 +216,41 @@ fn transfer(
     let destination_has_reference = hir.ty_ctxt().contains_reference(body.local(place.local).ty);
 
     match rvalue {
-        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {
+        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } | Rvalue::TraitObjectReborrow { .. } => {
             let mut loans = LoanSet::default();
             if let Some(loan) = loan {
                 loans.insert(loan);
             }
             state.assign(place, loans);
+        }
+        Rvalue::MakeTraitObject { source, .. } => {
+            let loans = match source.place() {
+                Some(source) if source.is_deref() => all_loans.clone(),
+                Some(source) => state.at(&source),
+                None => LoanSet::default(),
+            };
+            if destination_has_reference {
+                state.assign(place, loans);
+            } else {
+                state.clear(place);
+            }
+        }
+        Rvalue::DynamicCall { receiver, args, .. } => {
+            if destination_has_reference {
+                let mut loans = LoanSet::default();
+                for operand in std::iter::once(receiver).chain(args) {
+                    match operand.place() {
+                        Some(source) if source.is_deref() => {
+                            loans.extend(all_loans.iter().copied())
+                        }
+                        Some(source) => loans.extend(state.at(&source)),
+                        None => {}
+                    }
+                }
+                state.assign(place, loans);
+            } else {
+                state.clear(place);
+            }
         }
         Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
         Rvalue::Use(operand) => {

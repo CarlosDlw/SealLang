@@ -4,6 +4,7 @@ mod arrays;
 mod borrows;
 mod calls;
 mod control_flow;
+mod dyn_types;
 mod enums;
 mod examples;
 mod for_loop;

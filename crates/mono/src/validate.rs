@@ -100,6 +100,43 @@ fn check_rvalue(
 ) -> Result<(), MonoValidationError> {
     match rvalue {
         Rvalue::Use(operand) => check_operand(tcx, instance, operand),
+        Rvalue::MakeTraitObject {
+            source,
+            source_ty,
+            target_ty,
+        } => {
+            check_operand(tcx, instance, source)?;
+            check_type(tcx, instance, *source_ty)?;
+            check_type(tcx, instance, *target_ty)
+        }
+        Rvalue::TraitObjectReborrow {
+            source, from, to, ..
+        } => {
+            check_operand(tcx, instance, source)?;
+            check_type(tcx, instance, *from)?;
+            check_type(tcx, instance, *to)
+        }
+        Rvalue::DynamicCall {
+            object_trait_ref,
+            receiver,
+            args,
+            arg_tys,
+            ret_ty,
+            ..
+        } => {
+            check_type(tcx, instance, object_trait_ref.self_ty)?;
+            for argument in tcx.substs_args(object_trait_ref.args) {
+                check_type(tcx, instance, argument)?;
+            }
+            check_operand(tcx, instance, receiver)?;
+            for argument in args {
+                check_operand(tcx, instance, argument)?;
+            }
+            for ty in arg_tys {
+                check_type(tcx, instance, *ty)?;
+            }
+            check_type(tcx, instance, *ret_ty)
+        }
         Rvalue::Ref { .. } | Rvalue::Discriminant(_) => Ok(()),
         Rvalue::SliceRef { start, end, ty, .. } => {
             check_type(tcx, instance, *ty)?;

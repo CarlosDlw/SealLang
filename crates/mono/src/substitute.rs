@@ -285,6 +285,40 @@ fn has_impl(hir: &Hir, trait_def: seal_def::DefId, self_ty: TyId, arguments: &[T
 fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
     match rvalue {
         Rvalue::Use(operand) => substitute_operand(tcx, substs, operand),
+        Rvalue::MakeTraitObject {
+            source,
+            source_ty,
+            target_ty,
+        } => {
+            substitute_operand(tcx, substs, source);
+            *source_ty = tcx.substitute(*source_ty, substs);
+            *target_ty = tcx.substitute(*target_ty, substs);
+        }
+        Rvalue::TraitObjectReborrow {
+            source, from, to, ..
+        } => {
+            substitute_operand(tcx, substs, source);
+            *from = tcx.substitute(*from, substs);
+            *to = tcx.substitute(*to, substs);
+        }
+        Rvalue::DynamicCall {
+            object_trait_ref,
+            receiver,
+            args,
+            arg_tys,
+            ret_ty,
+            ..
+        } => {
+            *object_trait_ref = substitute_trait_ref(tcx, substs, *object_trait_ref);
+            substitute_operand(tcx, substs, receiver);
+            for argument in args {
+                substitute_operand(tcx, substs, argument);
+            }
+            for ty in arg_tys {
+                *ty = tcx.substitute(*ty, substs);
+            }
+            *ret_ty = tcx.substitute(*ret_ty, substs);
+        }
         Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
         Rvalue::SliceRef { start, end, ty, .. } => {
             if let Some(start) = start {
@@ -342,6 +376,18 @@ fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
             *ty = tcx.substitute(*ty, substs);
         }
     }
+}
+
+fn substitute_trait_ref(
+    tcx: &TyCtxt,
+    substs: SubstsId,
+    target: seal_ty::TraitRef,
+) -> seal_ty::TraitRef {
+    seal_ty::TraitRef::new(
+        target.trait_def,
+        tcx.substitute(target.self_ty, substs),
+        substitute_substs(tcx, substs, target.args),
+    )
 }
 
 fn substitute_target(tcx: &TyCtxt, substs: SubstsId, target: CallTarget) -> CallTarget {
