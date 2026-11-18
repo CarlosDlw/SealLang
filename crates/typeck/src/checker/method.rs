@@ -52,8 +52,8 @@ impl Checker<'_> {
         } = call;
         // A receiver is a place: the resolved receiver decides whether it is
         // moved or borrowed, so typing it must not read a non-`Copy` pointee.
-        let receiver_ty = self.infer_expr_mode(receiver, None, flow, PlaceMode::Borrow);
-        let receiver_place = self.results.place(receiver).cloned();
+        let mut receiver_ty = self.infer_expr_mode(receiver, None, flow, PlaceMode::Borrow);
+        let mut receiver_place = self.results.place(receiver).cloned();
 
         if let Some(ty) = self.check_dynamic_method_call(
             DynamicCall {
@@ -83,6 +83,13 @@ impl Checker<'_> {
             UserLookup::Method(target) => Some(target),
         };
         if let Some(target) = target {
+            if user_method_receiver(&target) == Some(ReceiverKind::Exclusive)
+                && receiver_place.as_ref().is_some_and(needs_exclusive_reindex)
+            {
+                receiver_ty =
+                    self.infer_expr_mode(receiver, None, flow, PlaceMode::BorrowExclusive);
+                receiver_place = self.results.place(receiver).cloned();
+            }
             return self.check_user_method(
                 UserCall {
                     expr,
@@ -114,6 +121,13 @@ impl Checker<'_> {
             }
             return self.error_ty();
         };
+
+        if resolution.def.receiver == ReceiverMode::Exclusive
+            && receiver_place.as_ref().is_some_and(needs_exclusive_reindex)
+        {
+            let _ = self.infer_expr_mode(receiver, None, flow, PlaceMode::BorrowExclusive);
+            receiver_place = self.results.place(receiver).cloned();
+        }
 
         if resolution.def.receiver == ReceiverMode::Value
             && receiver_place
@@ -1236,6 +1250,25 @@ struct BoundCall<'a> {
     args: &'a [HirExprId],
     span: Span,
     expected: Option<TyId>,
+}
+
+/// Returns `true` when the receiver read through `Index` must be resolved
+/// again through `IndexMut` because the selected method needs an exclusive
+/// receiver.
+fn needs_exclusive_reindex(place: &ResolvedPlace) -> bool {
+    place.projections.iter().any(|projection| {
+        matches!(
+            projection,
+            crate::results::PlaceProjection::CustomIndex { mutable: false, .. }
+        )
+    })
+}
+
+fn user_method_receiver(method: &UserMethod) -> Option<ReceiverKind> {
+    match method {
+        UserMethod::Concrete { receiver, .. } => Some(*receiver),
+        UserMethod::Bound { method, .. } => method.receiver.map(trait_receiver_kind),
+    }
 }
 
 pub(super) fn trait_receiver_kind(receiver: seal_ty::TraitMethodReceiver) -> ReceiverKind {

@@ -89,7 +89,9 @@ impl Checker<'_> {
         }
 
         self.check_expr(value, ty, flow);
-        if let Some(place) = resolved {
+        if let Some(place) = resolved
+            && !place.contains_custom_index()
+        {
             flow.assign(place.local, &place.path());
         }
         self.unit()
@@ -140,7 +142,9 @@ impl Checker<'_> {
         }
         self.check_update_numeric(op, ty, span);
 
-        if let Some(place) = resolved {
+        if let Some(place) = resolved
+            && !place.contains_custom_index()
+        {
             flow.assign(place.local, &place.path());
         }
         self.unit()
@@ -195,7 +199,8 @@ impl Checker<'_> {
                 } => {
                     text.push_str(&format!("[{index}]"));
                 }
-                PlaceProjection::Index { constant: None, .. } => text.push_str("[..]"),
+                PlaceProjection::Index { constant: None, .. }
+                | PlaceProjection::CustomIndex { .. } => text.push_str("[..]"),
                 PlaceProjection::Deref => {}
             }
         }

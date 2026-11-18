@@ -10,6 +10,7 @@ mod examples;
 mod for_loop;
 mod generics;
 mod if_let;
+mod indexing_protocol;
 mod match_expr;
 mod methods;
 mod returns;

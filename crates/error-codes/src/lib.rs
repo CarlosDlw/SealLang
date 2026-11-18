@@ -2072,6 +2072,18 @@ implementation, or wrap the base type in a newtype with a single indexing
 behavior.",
 };
 
+/// A write indexes a value that does not implement `IndexMut`.
+pub const E3054: ErrorCode = ErrorCode {
+    code: "E3054",
+    title: "indexing is not mutable",
+    explanation: "\
+Writes and exclusive borrows of an indexed value resolve through the `IndexMut`
+protocol, which returns an exclusive reference to the selected element. `Index`
+only returns a shared reference, and implementing it does not grant write
+access; the two protocols are independent.\n\nImplement `IndexMut` for the base type, or use the indexed value only in read
+positions. When both protocols are needed, implement both.",
+};
+
 /// A protocol type argument cannot be inferred.
 pub const E3055: ErrorCode = ErrorCode {
     code: "E3055",
@@ -2097,9 +2109,9 @@ pub static ALL: &[ErrorCode] = &[
     E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013,
     E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026,
     E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039,
-    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3053, E3055, E5001,
-    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E7001,
-    E7002, E7003, E7004, E7005, E7006, E9001, E9002,
+    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3053, E3054, E3055,
+    E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003,
+    E7001, E7002, E7003, E7004, E7005, E7006, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2193,7 +2205,11 @@ mod tests {
 
     #[test]
     fn protocol_codes_have_explanations() {
-        for (code, fragment) in [("E3053", "does not guess"), ("E3055", "remains unresolved")] {
+        for (code, fragment) in [
+            ("E3053", "does not guess"),
+            ("E3054", "protocols are independent"),
+            ("E3055", "remains unresolved"),
+        ] {
             let entry = lookup(code).expect("protocol code is registered");
             assert!(
                 entry.explanation().contains(fragment),
@@ -2266,7 +2282,7 @@ mod tests {
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
-                "E3046", "E3047", "E3048", "E3049", "E3053", "E3055",
+                "E3046", "E3047", "E3048", "E3049", "E3053", "E3054", "E3055",
             ]
         );
     }

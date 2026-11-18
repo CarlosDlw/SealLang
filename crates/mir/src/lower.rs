@@ -13,8 +13,8 @@ use seal_index::IndexVec;
 use seal_span::Span;
 use seal_ty::{Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
-    Coercion, MethodKind, PlaceProjection, ReceiverAdjust, ResolvedMethod, ResolvedPlace,
-    TypeckResults,
+    Coercion, IndexProtocol, MethodKind, PlaceProjection, ReceiverAdjust, ResolvedMethod,
+    ResolvedPlace, TypeckResults,
 };
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
@@ -965,6 +965,27 @@ impl<'a> BodyLowering<'a> {
         // modifying method has its whole effect in the call, so dropping it
         // because the statement has no value would remove the mutation.
         let instance = self.call_instance(expr, function);
+        self.lower_resolved_call(
+            &resolved, instance, symbolic, call_args, arg_spans, dest, span,
+        );
+    }
+
+    /// Emits a resolved function or method call.
+    ///
+    /// `symbolic` distinguishes a trait method reached through a bound from a
+    /// concrete impl. Both are ordinary calls, but monomorphization resolves the
+    /// former later.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_resolved_call(
+        &mut self,
+        resolved: &ResolvedMethod,
+        instance: Instance,
+        symbolic: bool,
+        args: Vec<Operand>,
+        arg_spans: Vec<Span>,
+        dest: Option<Place>,
+        span: Span,
+    ) {
         let parameters = resolved.arg_tys.len() + 1;
         let target = if symbolic {
             CallTarget::TraitMethod {
@@ -982,7 +1003,7 @@ impl<'a> BodyLowering<'a> {
             dest,
             Rvalue::Call {
                 target,
-                args: call_args,
+                args,
                 arg_spans,
             },
             span,
@@ -1012,6 +1033,33 @@ impl<'a> BodyLowering<'a> {
         arg_spans.push(self.hir.expr(receiver).span);
         arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
         let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
+        self.lower_dynamic_resolved_call(
+            object_trait_ref,
+            method,
+            slot,
+            resolved,
+            receiver_value,
+            args,
+            arg_spans,
+            dest,
+            span,
+        );
+    }
+
+    /// Emits a dynamic call whose receiver has already been lowered.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_dynamic_resolved_call(
+        &mut self,
+        object_trait_ref: seal_ty::TraitRef,
+        method: DefId,
+        slot: seal_layout::VtableSlot,
+        resolved: &ResolvedMethod,
+        receiver: Operand,
+        args: Vec<Operand>,
+        arg_spans: Vec<Span>,
+        dest: Option<Place>,
+        span: Span,
+    ) {
         let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
         self.assign_rvalue(
             dest,
@@ -1019,7 +1067,7 @@ impl<'a> BodyLowering<'a> {
                 object_trait_ref,
                 method,
                 slot,
-                receiver: receiver_value,
+                receiver,
                 args,
                 arg_spans,
                 arg_tys: resolved.arg_tys.clone(),
@@ -1247,6 +1295,134 @@ impl<'a> BodyLowering<'a> {
         Operand::Copy(shared)
     }
 
+    /// Lowers a custom index expression whose protocol was resolved by type
+    /// checking.
+    fn lower_custom_index_expr(&mut self, expr: HirExprId) -> Place {
+        let span = self.hir.expr(expr).span;
+        let ExprKind::Index { base, .. } = self.hir.expr(expr).kind.clone() else {
+            panic!("a recorded custom index is an index expression; this is a compiler bug")
+        };
+        let base_place = self.place_of_expr(base);
+        let base_ty = self.expr_ty(base);
+        self.lower_custom_index(expr, base_place, base_ty, span).0
+    }
+
+    /// Lowers the protocol call that selects a custom indexed element.
+    ///
+    /// The index operand is evaluated first and exactly once, before the
+    /// receiver is borrowed, so a call or mutation in the index does not get
+    /// reordered by the receiver adjustment.
+    fn lower_custom_index(
+        &mut self,
+        expr: HirExprId,
+        base_place: Place,
+        base_ty: TyId,
+        span: Span,
+    ) -> (Place, TyId) {
+        let protocol = self
+            .typeck
+            .index_protocol(expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!("custom index at {span:?} has no recorded protocol; this is a compiler bug")
+            });
+        let IndexProtocol::Custom {
+            element_ty, call, ..
+        } = protocol
+        else {
+            panic!("a custom index must use the custom protocol; this is a compiler bug")
+        };
+        let ExprKind::Index { base, index, .. } = self.hir.expr(expr).kind.clone() else {
+            panic!("a recorded custom index is an index expression; this is a compiler bug")
+        };
+        let index_value = self.lower_operand(index);
+        let receiver = self.lower_place_receiver(base_place, base_ty, &call.method, span);
+        let arg_spans = vec![self.hir.expr(base).span, self.hir.expr(index).span];
+        let destination = self.new_temp(call.method.ret_ty, span);
+
+        match call.method.kind {
+            MethodKind::Dynamic {
+                object_trait_ref,
+                method,
+                slot,
+                ..
+            } => self.lower_dynamic_resolved_call(
+                object_trait_ref,
+                method,
+                slot,
+                &call.method,
+                receiver,
+                vec![index_value],
+                arg_spans,
+                Some(destination.clone()),
+                span,
+            ),
+            MethodKind::Intrinsic(_) => {
+                panic!("indexing cannot resolve to an intrinsic method; this is a compiler bug")
+            }
+            MethodKind::User { .. } | MethodKind::Trait { .. } | MethodKind::TraitBound { .. } => {
+                let instance = call.lowering_instance.unwrap_or_else(|| {
+                    panic!(
+                        "custom index at {span:?} has no lowering instance; this is a compiler bug"
+                    )
+                });
+                let symbolic = matches!(call.method.kind, MethodKind::TraitBound { .. });
+                self.lower_resolved_call(
+                    &call.method,
+                    instance,
+                    symbolic,
+                    vec![receiver, index_value],
+                    arg_spans,
+                    Some(destination.clone()),
+                    span,
+                );
+            }
+        }
+
+        (destination.deref(), element_ty)
+    }
+
+    /// Lowers the receiver of a call whose base storage is already known.
+    fn lower_place_receiver(
+        &mut self,
+        place: Place,
+        place_ty: TyId,
+        resolved: &ResolvedMethod,
+        span: Span,
+    ) -> Operand {
+        match resolved.receiver_adjust {
+            ReceiverAdjust::None => self.place_operand(place, place_ty),
+            ReceiverAdjust::SharedBorrow | ReceiverAdjust::ExclusiveBorrow => {
+                let kind = if resolved.receiver_adjust == ReceiverAdjust::ExclusiveBorrow {
+                    RefKind::Exclusive
+                } else {
+                    RefKind::Shared
+                };
+                let reference_ty = self.hir.ty_ctxt().ref_ty_with(kind, resolved.receiver_ty);
+                let reference = self.new_temp(reference_ty, span);
+                self.assign_rvalue(reference.clone(), Rvalue::Ref { place, kind }, span);
+                Operand::Copy(reference)
+            }
+            ReceiverAdjust::SharedReborrow => {
+                let pointee = place.deref();
+                let shared_ty = self
+                    .hir
+                    .ty_ctxt()
+                    .ref_ty_with(RefKind::Shared, resolved.receiver_ty);
+                let shared = self.new_temp(shared_ty, span);
+                self.assign_rvalue(
+                    shared.clone(),
+                    Rvalue::Ref {
+                        place: pointee,
+                        kind: RefKind::Shared,
+                    },
+                    span,
+                );
+                Operand::Copy(shared)
+            }
+        }
+    }
+
     fn lower_operand(&mut self, expr: HirExprId) -> Operand {
         let (span, kind) = {
             let expr = self.hir.expr(expr);
@@ -1327,6 +1503,12 @@ impl<'a> BodyLowering<'a> {
     /// such as the array literal in `&[1, 2][0..1]`, is materialized the same
     /// way. The temporary owns the value for the rest of the frame.
     fn place_of_expr(&mut self, expr: HirExprId) -> Place {
+        if matches!(
+            self.typeck.index_protocol(expr),
+            Some(IndexProtocol::Custom { .. })
+        ) {
+            return self.lower_custom_index_expr(expr);
+        }
         if let Some(place) = self.typeck.place(expr).cloned() {
             return self.resolved_place(&place);
         }
@@ -1353,12 +1535,21 @@ impl<'a> BodyLowering<'a> {
     /// becomes an explicit two-block graph, so code generation never has to
     /// invent control flow while computing an address.
     fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
-        let local = self.place_of_local(place.local).local;
+        let mut local = self.place_of_local(place.local).local;
         let mut projections = Vec::with_capacity(place.projections.len());
         let mut ty = place.root_ty;
         let mut slice_reference: Option<Place> = None;
         for projection in &place.projections {
             match projection {
+                PlaceProjection::CustomIndex { expr, .. } => {
+                    let base = Place::with_projections(local, projections.clone());
+                    let span = self.hir.expr(*expr).span;
+                    let (custom, element_ty) = self.lower_custom_index(*expr, base, ty, span);
+                    local = custom.local;
+                    projections = custom.projections;
+                    ty = element_ty;
+                    slice_reference = None;
+                }
                 PlaceProjection::Deref => {
                     let pointee = match self.hir.ty_ctxt().kind(ty) {
                         TyKind::Ref { pointee, .. } => pointee,

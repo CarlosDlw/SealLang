@@ -46,6 +46,18 @@ pub(super) enum PlaceMode {
     /// The place is borrowed, so it must be initialized, but its value is not
     /// read: borrowing a non-`Copy` pointee does not move it.
     Borrow,
+    /// The place is borrowed exclusively, so it must be initialized and the
+    /// borrow must be writable. Like [`Self::Borrow`], this does not move the
+    /// place's value. Custom indexing selects `IndexMut` for this mode.
+    BorrowExclusive,
+}
+
+impl PlaceMode {
+    /// Returns whether the mode reads the selected storage, and therefore
+    /// requires it to be initialized.
+    pub(super) fn requires_initialized(self) -> bool {
+        !matches!(self, Self::Write)
+    }
 }
 
 /// One type-checking pass over a lowered file.
@@ -72,6 +84,10 @@ pub(crate) struct Checker<'a> {
     /// binding of the arm; a path removes its entry after reporting, so one
     /// diagnostic covers all uses of the same binding.
     pub(super) guard_moves: Option<FxHashSet<DefId>>,
+    /// Whether the current expression is the base of a field or tuple-field
+    /// projection. The base is not required to be initialized as a whole:
+    /// only the selected sub-place is read or written.
+    pub(super) checking_place_base: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -98,6 +114,7 @@ impl<'a> Checker<'a> {
             owner: None,
             ret: unit,
             guard_moves: None,
+            checking_place_base: false,
         };
         checker.validate_bound_arguments();
         checker.build_signatures();

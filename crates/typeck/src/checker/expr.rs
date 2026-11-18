@@ -123,7 +123,11 @@ impl Checker<'_> {
                     place.deref = deref;
                     self.results.record_place(expr, place);
                 }
-                if mode == PlaceMode::Read && !self.is_error(ty) && !self.is_copy(ty) {
+                if mode == PlaceMode::Read
+                    && !self.checking_place_base
+                    && !self.is_error(ty)
+                    && !self.is_copy(ty)
+                {
                     self.report_move_out_of_reference(ty, span);
                 }
                 ty
@@ -312,7 +316,7 @@ impl Checker<'_> {
                         deref: None,
                     },
                 );
-                if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
+                if !self.checking_place_base && mode.requires_initialized() && !self.is_error(ty) {
                     self.require_initialized(expr, flow, span);
                 }
                 ty
@@ -338,8 +342,13 @@ impl Checker<'_> {
             name_span,
         } = access;
         // The base of a field is a place, so infer it without requiring the
-        // whole place to be initialized: only the selected field is read.
-        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        // whole place to be initialized: only the selected field is read or
+        // written. The mode still propagates so custom indexing selects the
+        // protocol the field access needs.
+        let saved = self.checking_place_base;
+        self.checking_place_base = true;
+        let base_ty = self.infer_expr_mode(base, None, flow, mode);
+        self.checking_place_base = saved;
         let (ty, field) = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Adt { adt, args } => match self.hir.ty_ctxt().field_by_name(adt, name) {
                 Some(field) => (
@@ -389,7 +398,7 @@ impl Checker<'_> {
             place.ty = ty;
             self.results.record_place(expr, place);
         }
-        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
+        if mode.requires_initialized() && !self.is_error(ty) {
             self.require_initialized(expr, flow, span);
         }
         ty
@@ -404,7 +413,10 @@ impl Checker<'_> {
         flow: &mut Flow,
         mode: PlaceMode,
     ) -> TyId {
-        let base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        let saved = self.checking_place_base;
+        self.checking_place_base = true;
+        let base_ty = self.infer_expr_mode(base, None, flow, mode);
+        self.checking_place_base = saved;
         let (ty, projected) = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Tuple(tuple) => {
                 let arity = self.hir.ty_ctxt().tuple_len(tuple);
@@ -457,7 +469,7 @@ impl Checker<'_> {
             place.ty = ty;
             self.results.record_place(expr, place);
         }
-        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow) && !self.is_error(ty) {
+        if mode.requires_initialized() && !self.is_error(ty) {
             self.require_initialized(expr, flow, index_span);
         }
         ty
@@ -624,7 +636,14 @@ impl Checker<'_> {
             mode,
             expected,
         } = access;
-        let mut base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
+        // The base is a place, so indexing checks initialization on the
+        // selected element or through the protocol call, not on the whole base
+        // expression. The mode still propagates so nested custom indices use
+        // `Index` for reads and `IndexMut` for writes.
+        let saved = self.checking_place_base;
+        self.checking_place_base = true;
+        let mut base_ty = self.infer_expr_mode(base, None, flow, mode);
+        self.checking_place_base = saved;
         let mut auto_deref = None;
         if let TyKind::Ref { kind, pointee } = self.hir.ty_ctxt().kind(base_ty)
             && matches!(
@@ -640,20 +659,18 @@ impl Checker<'_> {
             TyKind::Array { element, length } => (element, length, false),
             TyKind::Slice { element } => (element, 0, true),
             _ => {
-                if matches!(mode, PlaceMode::Read | PlaceMode::Borrow)
-                    && let Some(ty) = self.resolve_index(
-                        IndexAccess {
-                            expr,
-                            base,
-                            base_ty,
-                            index,
-                            mode,
-                            span,
-                            expected,
-                        },
-                        flow,
-                    )
-                {
+                if let Some(ty) = self.resolve_index(
+                    IndexAccess {
+                        expr,
+                        base,
+                        base_ty,
+                        index,
+                        mode,
+                        span,
+                        expected,
+                    },
+                    flow,
+                ) {
                     return ty;
                 }
                 self.check_expr(index, self.usize_ty(), flow);
@@ -682,6 +699,7 @@ impl Checker<'_> {
         };
 
         if mode == PlaceMode::Read
+            && !self.checking_place_base
             && auto_deref.is_some()
             && !self.is_error(element)
             && !self.is_copy(element)
@@ -703,10 +721,7 @@ impl Checker<'_> {
             place.ty = element;
             self.results.record_place(expr, place);
         }
-        if matches!(mode, PlaceMode::Read | PlaceMode::Borrow)
-            && !self.is_error(element)
-            && index_ty == self.usize_ty()
-        {
+        if mode.requires_initialized() && !self.is_error(element) && index_ty == self.usize_ty() {
             self.require_initialized(expr, flow, span);
         }
         element

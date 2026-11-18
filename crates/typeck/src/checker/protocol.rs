@@ -21,7 +21,8 @@ use super::flow::Flow;
 use super::method::trait_receiver_kind;
 use super::trait_solver::match_type;
 use crate::results::{
-    IndexProtocol, MethodKind, ProtocolCall, ReceiverAdjust, ReceiverForm, ResolvedMethod,
+    IndexProtocol, MethodKind, PlaceProjection, ProtocolCall, ReceiverAdjust, ReceiverForm,
+    ResolvedMethod,
 };
 
 /// The checked pieces of one index expression.
@@ -74,7 +75,8 @@ struct ProtocolCandidate {
 }
 
 impl Checker<'_> {
-    /// Resolves a custom index expression for a read or shared borrow.
+    /// Resolves a custom index expression for a read, shared borrow, write, or
+    /// exclusive borrow.
     ///
     /// Returns `Some` when protocol resolution handled the expression, even
     /// when it reported an error. `None` is reserved for the built-in path;
@@ -91,7 +93,7 @@ impl Checker<'_> {
         } = access;
         let protocol = match mode {
             PlaceMode::Read | PlaceMode::Borrow => Protocol::Index,
-            PlaceMode::Write => return None,
+            PlaceMode::Write | PlaceMode::BorrowExclusive => Protocol::IndexMut,
         };
 
         // HIR already reported `E2013` for a non-place base. Type the index
@@ -106,7 +108,13 @@ impl Checker<'_> {
             return Some(self.error_ty());
         }
 
-        let method = ProtocolMethod::Index;
+        let method = match protocol {
+            Protocol::Index => ProtocolMethod::Index,
+            Protocol::IndexMut => ProtocolMethod::IndexMut,
+            Protocol::Iterator | Protocol::IntoIterator => {
+                unreachable!("index resolution only uses Index and IndexMut")
+            }
+        };
         let trait_def = self.hir.protocol_trait(protocol);
         let method_def = self.hir.protocol_defs().method(protocol, method);
         let method_name = self.hir.definitions().name(method_def);
@@ -117,7 +125,7 @@ impl Checker<'_> {
                 continue;
             }
             let Some((candidate, index_checked)) =
-                self.select_index_candidate(candidates, index, span, flow)
+                self.select_index_candidate(candidates, protocol, index, span, flow)
             else {
                 return Some(self.error_ty());
             };
@@ -130,11 +138,15 @@ impl Checker<'_> {
                 span,
                 expected,
             };
-            return Some(self.finish_index(access, candidate, index_checked, flow));
+            return Some(self.finish_index(access, candidate, protocol, index_checked, flow));
         }
 
         self.infer_expr(index, None, flow);
-        self.report_cannot_index(base_ty, span);
+        if protocol == Protocol::IndexMut {
+            self.report_index_not_mutable(base_ty, span);
+        } else {
+            self.report_cannot_index(base_ty, span);
+        }
         Some(self.error_ty())
     }
 
@@ -303,6 +315,7 @@ impl Checker<'_> {
     fn select_index_candidate(
         &mut self,
         mut candidates: Vec<ProtocolCandidate>,
+        protocol: Protocol,
         index: HirExprId,
         span: Span,
         flow: &mut Flow,
@@ -327,7 +340,7 @@ impl Checker<'_> {
         if all_same {
             self.infer_expr(index, None, flow);
             self.report_ambiguous_index(
-                Protocol::Index,
+                protocol,
                 self.candidate_base_ty(&candidates[0]),
                 span,
                 &candidates,
@@ -365,7 +378,7 @@ impl Checker<'_> {
                     self.mismatch(self.hir.expr(index).span, unique[0], actual);
                 } else {
                     self.report_ambiguous_index(
-                        Protocol::Index,
+                        protocol,
                         self.candidate_base_ty(&candidates[0]),
                         span,
                         &candidates,
@@ -375,7 +388,7 @@ impl Checker<'_> {
             }
             _ => {
                 self.report_ambiguous_index(
-                    Protocol::Index,
+                    protocol,
                     self.candidate_base_ty(&candidates[0]),
                     span,
                     &candidates,
@@ -400,6 +413,7 @@ impl Checker<'_> {
         &mut self,
         access: IndexAccess,
         candidate: ProtocolCandidate,
+        protocol: Protocol,
         index_checked: bool,
         flow: &mut Flow,
     ) -> TyId {
@@ -429,13 +443,7 @@ impl Checker<'_> {
         if (!self.is_error(resolved_index) && self.contains_infer(resolved_index))
             || (!self.is_error(resolved_element) && self.contains_infer(resolved_element))
         {
-            self.report_unresolved_index(
-                Protocol::Index,
-                base_ty,
-                span,
-                resolved_index,
-                resolved_element,
-            );
+            self.report_unresolved_index(protocol, base_ty, span, resolved_index, resolved_element);
             return self.error_ty();
         }
         if self.is_error(resolved_index) || self.is_error(resolved_element) {
@@ -447,15 +455,37 @@ impl Checker<'_> {
         };
 
         self.require_initialized(base, flow, span);
+        if protocol == Protocol::IndexMut
+            && call.method.receiver_adjust == ReceiverAdjust::ExclusiveBorrow
+            && !self.borrow_is_writable(base)
+        {
+            self.report_mutable_borrow(base);
+            return self.error_ty();
+        }
 
-        if mode == PlaceMode::Read && !self.is_copy(resolved_element) {
+        if mode == PlaceMode::Read && !self.checking_place_base && !self.is_copy(resolved_element) {
             self.report_move_out_of_reference(resolved_element, span);
+        }
+
+        if let Some(mut place) = self.results.place(base).cloned() {
+            place.projections.push(PlaceProjection::CustomIndex {
+                expr,
+                index,
+                mutable: protocol == Protocol::IndexMut,
+            });
+            place.ty = resolved_element;
+            place.deref = Some(if protocol == Protocol::IndexMut {
+                RefKind::Exclusive
+            } else {
+                RefKind::Shared
+            });
+            self.results.record_place(expr, place);
         }
 
         self.results.record_index_protocol(
             expr,
             IndexProtocol::Custom {
-                mutable: false,
+                mutable: protocol == Protocol::IndexMut,
                 element_ty: resolved_element,
                 call,
             },
@@ -493,6 +523,7 @@ impl Checker<'_> {
                     .map(|parameter| self.substitute(*parameter, substs))
                     .collect();
                 let ret_ty = self.substitute(signature.ret, substs);
+                let instance = seal_ty::Instance::new(*function, substs);
                 Some(ProtocolCall {
                     method: ResolvedMethod {
                         kind: MethodKind::Trait {
@@ -508,7 +539,8 @@ impl Checker<'_> {
                         arg_tys: params.into_iter().skip(1).collect(),
                         ret_ty,
                     },
-                    instance: Some(seal_ty::Instance::new(*function, substs)),
+                    instance: Some(instance),
+                    lowering_instance: Some(instance),
                 })
             }
             CandidateTarget::Bound { method, receiver } => {
@@ -524,6 +556,7 @@ impl Checker<'_> {
                     .map(|parameter| self.substitute(*parameter, substs))
                     .collect();
                 let ret_ty = self.substitute(method.signature.ret, substs);
+                let lowering_instance = seal_ty::Instance::new(method.def, substs);
                 Some(ProtocolCall {
                     method: ResolvedMethod {
                         kind: MethodKind::TraitBound {
@@ -540,6 +573,7 @@ impl Checker<'_> {
                         ret_ty,
                     },
                     instance: None,
+                    lowering_instance: Some(lowering_instance),
                 })
             }
             CandidateTarget::Dynamic {
@@ -576,6 +610,7 @@ impl Checker<'_> {
                         ret_ty,
                     },
                     instance: None,
+                    lowering_instance: None,
                 })
             }
         }
@@ -642,6 +677,19 @@ impl Checker<'_> {
             format!("cannot index a value of type `{}`", self.ty_text(base_ty)),
         )
         .help("only arrays, slices, and types implementing `Index` can be indexed")
+        .emit();
+    }
+
+    fn report_index_not_mutable(&self, base_ty: TyId, span: Span) {
+        self.error(
+            codes::E3054,
+            span,
+            format!(
+                "cannot write through an index of type `{}`",
+                self.ty_text(base_ty)
+            ),
+        )
+        .help("implement `IndexMut` for the base type, or use a read-only expression")
         .emit();
     }
 

@@ -27,6 +27,15 @@ pub enum PlaceProjection {
         /// Whether the length comes from a slice reference at run time.
         dynamic_length: bool,
     },
+    /// Selects an element through a custom `Index` or `IndexMut` call.
+    CustomIndex {
+        /// The complete index expression whose protocol call is recorded.
+        expr: HirExprId,
+        /// The index expression, evaluated once by MIR lowering.
+        index: HirExprId,
+        /// Whether the selected protocol is `IndexMut` rather than `Index`.
+        mutable: bool,
+    },
 }
 
 /// A place resolved by type checking.
@@ -55,8 +64,23 @@ pub struct ResolvedPlace {
 
 impl ResolvedPlace {
     /// Returns `true` if any projection reads through a reference.
+    ///
+    /// A custom index also dereferences the reference returned by the protocol
+    /// method, so it counts as a dereference for move and borrow checks.
     pub fn contains_deref(&self) -> bool {
-        self.projections.contains(&PlaceProjection::Deref)
+        self.projections.iter().any(|projection| {
+            matches!(
+                projection,
+                PlaceProjection::Deref | PlaceProjection::CustomIndex { .. }
+            )
+        })
+    }
+
+    /// Returns `true` if the place crosses a custom indexing protocol.
+    pub fn contains_custom_index(&self) -> bool {
+        self.projections
+            .iter()
+            .any(|projection| matches!(projection, PlaceProjection::CustomIndex { .. }))
     }
 
     /// Returns `true` if the place names the whole local.
@@ -81,7 +105,8 @@ impl ResolvedPlace {
                     constant: Some(index),
                     ..
                 } => path.push(PathElem::Index(*index)),
-                PlaceProjection::Index { constant: None, .. } => break,
+                PlaceProjection::Index { constant: None, .. }
+                | PlaceProjection::CustomIndex { .. } => break,
             }
         }
         path
@@ -232,6 +257,12 @@ pub struct ProtocolCall {
     /// The concrete instantiation, or `None` for a symbolic bound or dynamic
     /// dispatch.
     pub instance: Option<Instance>,
+    /// The instantiation MIR lowering uses for this call.
+    ///
+    /// A concrete impl and a symbolic trait bound are both lowered as calls to
+    /// a function, so both carry an instance for monomorphization. Dynamic
+    /// dispatch has none because the vtable selects the implementation.
+    pub lowering_instance: Option<Instance>,
 }
 
 /// The protocol selected for one index expression.

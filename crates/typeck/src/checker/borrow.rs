@@ -32,7 +32,12 @@ impl Checker<'_> {
     ) -> TyId {
         let is_place = self.hir.place(operand).is_some()
             || matches!(self.hir.expr(operand).kind, ExprKind::Deref { .. });
-        let ty = self.infer_expr_mode(operand, None, flow, PlaceMode::Borrow);
+        let mode = if kind.is_exclusive() {
+            PlaceMode::BorrowExclusive
+        } else {
+            PlaceMode::Borrow
+        };
+        let ty = self.infer_expr_mode(operand, None, flow, mode);
 
         if !is_place {
             if !self.is_error(ty) {
