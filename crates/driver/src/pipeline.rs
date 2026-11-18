@@ -260,6 +260,21 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
             .diag()
             .bug(format!("MIR lowering produced an invalid body: {error}"));
     }
+    // Constant evaluation runs before borrow checking: a constant that cannot
+    // be evaluated is an error in the initializer, not an ownership question.
+    // Later phases read the resulting program instead of evaluating again.
+    let _program = session.profiler().time("const-eval", || {
+        seal_const_eval::evaluate(
+            &hir,
+            &mir,
+            session.diag(),
+            session.interner(),
+            session.target().pointer_width(),
+        )
+    });
+    if session.diag().error_count() != errors {
+        return;
+    }
     let aliasing = session.profiler().time("borrowck", || {
         seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
     });

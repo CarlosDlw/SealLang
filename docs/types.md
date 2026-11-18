@@ -398,6 +398,28 @@ for division or remainder by zero (`E4002`, `E4003`), signed division overflow
 cycles (`E4007`), step, depth, allocation, and size limits (`E4008`–`E4010`,
 `E4025`), and forbidden operations in a constant context (`E4011`–`E4027`).
 
+### Constant evaluation
+
+The evaluator interprets each `const` and `static` initializer's MIR before
+borrow checking. A value is a typed tree, never a byte blob: integers keep their
+truncated width, floats keep their IEEE bits, and aggregates keep declaration
+order. A reference is an allocation index plus a byte offset and the pointee
+type; a slice adds its length and element type; a trait object adds its concrete
+type and principal trait reference. Byte offsets and layouts never decide the
+meaning of a value, because the evaluator walks the typed tree when it reads a
+projected place.
+
+Taking a reference to a temporary in a constant context preserves the value in
+a compiler-owned promoted allocation, so `&CONST` and `&[1, 2][..]` have program
+lifetime. Taking a reference to a binding instead points at the initializer's
+frame allocation; if the resulting value escapes, evaluation fails with
+`E4013`, because that storage dies with the frame. A static's allocation exists
+before its initializer runs, which is what makes address-only cycles between
+statics (`A` points at `B` and `B` points back at `A`) legal. Reading a value
+from an item still being evaluated is a value cycle and reports `E4007` with the
+chain of item names. Limits and step counting are deterministic, so the same
+program always produces the same diagnostics and the same allocation order.
+
 Array lengths remain integer literals. `const N: usize = 4; [i32; N]` is not part
 of this feature; const generics and type-level constants are a separate gap.
 Associated constants (`Type::VALUE`) and `extern` statics are also outside this

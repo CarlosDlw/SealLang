@@ -553,6 +553,16 @@ every call and every monomorphization of the enclosing function.
 21. A `const` or `static` initializer and a `const func` body run at compile
     time: they cannot call non-`const` functions, use dynamic dispatch or custom
     protocols, or carry `*mut T`.
+22. Every reference produced by constant evaluation names an allocation owned by
+    the compiler, with an offset inside that allocation and the referenced type.
+    A static owns exactly one allocation for the whole program; a promoted
+    temporary and an addressed const each own a program-lifetime allocation.
+23. A reference to a const-fn frame allocation never survives that frame
+    (`E4013`); promotion is the only way for a temporary's address to escape.
+24. Constant evaluation is deterministic: allocation order, dependency order,
+    step counting, and diagnostics do not depend on hash iteration. A value
+    dependency cycle is reported (`E4007`), while an address-only cycle is
+    accepted because every static allocation exists before evaluation.
 
 ## Reserved syntax
 

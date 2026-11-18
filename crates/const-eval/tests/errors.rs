@@ -1,0 +1,134 @@
+//! Failures reported by constant evaluation.
+
+mod support;
+
+use seal_const_eval::EvalLimits;
+use support::Fixture;
+
+#[test]
+fn division_and_remainder_by_zero_are_reported() {
+    let divide = Fixture::compile("const VALUE: i32 = 7 / 0;");
+    divide.expect_code("E4002");
+    let remainder = Fixture::compile("const VALUE: i32 = 7 % 0;");
+    remainder.expect_code("E4003");
+}
+
+#[test]
+fn dividing_the_signed_minimum_by_minus_one_is_reported() {
+    let fixture = Fixture::compile("const VALUE: i32 = -2147483648 / -1;");
+    fixture.expect_code("E4004");
+}
+
+#[test]
+fn a_value_cycle_is_reported_with_both_items() {
+    let fixture = Fixture::compile("const A: i32 = B; const B: i32 = A;");
+    fixture.expect_code("E4007");
+    let messages: Vec<String> = fixture
+        .diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message().to_owned())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("A") && message.contains("B")),
+        "cycle message lists both items: {messages:?}"
+    );
+}
+
+#[test]
+fn the_step_limit_stops_runaway_evaluation() {
+    let limits = EvalLimits {
+        steps: 1,
+        ..EvalLimits::default()
+    };
+    let fixture = Fixture::compile_with(
+        "static VALUES: [i32; 3] = [1, 2, 3]; static FIRST: i32 = VALUES[0];",
+        limits,
+    );
+    fixture.expect_code("E4008");
+}
+
+#[test]
+fn the_call_depth_limit_is_enforced() {
+    let limits = EvalLimits {
+        call_depth: 0,
+        ..EvalLimits::default()
+    };
+    let fixture = Fixture::compile_with("const VALUE: i32 = 1;", limits);
+    fixture.expect_code("E4009");
+}
+
+#[test]
+fn the_allocation_limit_is_enforced() {
+    let limits = EvalLimits {
+        allocations: 1,
+        ..EvalLimits::default()
+    };
+    let fixture = Fixture::compile_with("static FIRST: i32 = 1; static SECOND: i32 = 2;", limits);
+    fixture.expect_code("E4010");
+}
+
+#[test]
+fn the_value_size_limit_is_enforced() {
+    let limits = EvalLimits {
+        value_bytes: 0,
+        ..EvalLimits::default()
+    };
+    let fixture = Fixture::compile_with("static VALUE: i32 = 1;", limits);
+    fixture.expect_code("E4025");
+}
+
+#[test]
+fn a_reference_to_a_binding_cannot_escape() {
+    let fixture = Fixture::compile("const POINTER: *i32 = { let value = 5; &value };");
+    fixture.expect_code("E4013");
+}
+
+#[test]
+fn out_of_bounds_indexing_is_reported() {
+    let fixture = Fixture::compile(
+        "const INDEX: usize = 5; \
+         const VALUE: i32 = { let values = [1, 2, 3]; values[INDEX] };",
+    );
+    fixture.expect_code("E4027");
+    let messages: Vec<String> = fixture
+        .diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message().to_owned())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("index out of bounds")),
+        "bounds panic names the failure: {messages:?}"
+    );
+}
+
+#[test]
+fn a_reversed_slice_range_is_reported() {
+    let fixture = Fixture::compile(
+        "static VALUES: [i32; 3] = [1, 2, 3]; const SLICE: *[i32] = &VALUES[2..1];",
+    );
+    fixture.expect_code("E4027");
+    let messages: Vec<String> = fixture
+        .diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message().to_owned())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("slice range")),
+        "bounds panic names the failure: {messages:?}"
+    );
+}
+
+#[test]
+fn a_panic_terminator_is_reported() {
+    let fixture = Fixture::compile(
+        "const INDEX: usize = 9; \
+         const VALUE: i32 = { let values = [1]; values[INDEX] };",
+    );
+    fixture.expect_code("E4027");
+}

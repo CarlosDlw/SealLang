@@ -16,6 +16,7 @@ path = "src/main.rs"
 clap.workspace = true
 seal-borrowck.workspace = true
 seal-codegen.workspace = true
+seal-const-eval.workspace = true
 seal-diagnostics.workspace = true
 seal-hir.workspace = true
 seal-lexer.workspace = true

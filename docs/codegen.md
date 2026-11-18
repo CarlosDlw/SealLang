@@ -27,6 +27,11 @@ assembly output do not require an entry point; executables do.
    block, and explicit loads/stores for places. Struct field and tuple element
    projections use struct GEPs; array indices use a byte offset after the MIR
    bounds check; dereferences load the reference and continue from its pointee.
+   Constant evaluation runs before borrow checking and yields a
+   `ConstProgram`. Code generation will read that program instead of a source
+   initializer: a `const` use is materialized as its value, a static is one
+   global initialized from its allocation, and a promoted temporary or
+   addressed const becomes a private constant global.
 3. **Debug information.** When requested, a `DISubprogram`, parameter and binding
    variables, aggregate types, and a `DILocation` per statement and terminator
    are emitted alongside the IR.
