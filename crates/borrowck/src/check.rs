@@ -444,10 +444,13 @@ fn place_is_reported(context: &Context<'_>, place: &Place) -> bool {
 /// names the shortest prefix that is itself moved instead of reporting the
 /// read as if `a.x` had been moved on its own.
 fn moved_place(context: &Context<'_>, place: &Place) -> Place {
+    let Some(local) = place.local_id() else {
+        return place.clone();
+    };
     (0..=place.projections.len())
         .map(|length| place.projections[..length].to_vec())
         .find_map(|projections| {
-            let prefix = Place::with_projections(place.local, projections);
+            let prefix = Place::with_projections(local, projections);
             matches!(state(context, &prefix), Init::Moved).then_some(prefix)
         })
         .unwrap_or_else(|| place.clone())
@@ -475,12 +478,11 @@ fn check_shared_dynamic_receiver(receiver: &Operand, span: seal_span::Span, cont
 }
 
 fn state(context: &Context<'_>, place: &Place) -> Init {
-    init::state_of(
-        context.init,
-        place,
-        context.hir.ty_ctxt(),
-        context.body.local(place.local).ty,
-    )
+    let root_ty = match place.local_id() {
+        Some(local) => context.body.local(local).ty,
+        None => context.hir.ty_ctxt().error_ty(),
+    };
+    init::state_of(context.init, place, context.hir.ty_ctxt(), root_ty)
 }
 
 /// Collects the frame loans that escape with a returned loan.
@@ -505,8 +507,10 @@ fn escaping_loans(
         escaped.push(id);
         return;
     }
-    for held in holds.local_loans(loan.place.local) {
-        escaping_loans(holds, loans, held, visited, escaped);
+    if let Some(local) = loan.place.local_id() {
+        for held in holds.local_loans(local) {
+            escaping_loans(holds, loans, held, visited, escaped);
+        }
     }
 }
 

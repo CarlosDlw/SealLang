@@ -181,7 +181,7 @@ fn a_cast_reads_its_operand_and_writes_one_destination() {
         if let Rvalue::Cast { operand, .. } = rvalue {
             casts += 1;
             assert!(matches!(operand, Operand::Copy(_)));
-            assert_ne!(place.local, Body::return_local());
+            assert_ne!(place.expect_local(), Body::return_local());
         }
     }
     assert_eq!(casts, 1);

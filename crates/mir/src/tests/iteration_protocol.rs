@@ -233,14 +233,14 @@ fn a_non_copy_item_moves_into_the_pattern_binding() {
         .find(|(_, rvalue)| call_name(&fixture, &hir, rvalue).as_deref() == Some("next"))
         .expect("the loop calls next");
     assert_eq!(
-        fixture.ty_text(&hir, body.local(next_place.local).ty),
+        fixture.ty_text(&hir, body.local(next_place.expect_local()).ty),
         "Item"
     );
     assert!(
         values(body).into_iter().any(|(_, rvalue)| {
             matches!(
                 rvalue,
-                Rvalue::Use(Operand::Move(place)) if place.local == next_place.local
+                Rvalue::Use(Operand::Move(place)) if place.expect_local() == next_place.expect_local()
             )
         }),
         "the binding moves the non-Copy item out of the next temporary"

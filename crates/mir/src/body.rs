@@ -11,6 +11,23 @@ use crate::statement::Statement;
 use crate::terminator::Terminator;
 use crate::validate::ValidationError;
 
+/// What an executable body belongs to.
+///
+/// The kind is copied from HIR so later phases can treat a constant or static
+/// initializer differently from a function body without re-reading the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BodyKind {
+    /// A function body. It may have parameters.
+    Function,
+    /// A constant initializer. It has no parameters.
+    Const,
+    /// A static initializer. It has no parameters.
+    Static {
+        /// Whether the static is declared `mut`.
+        mutable: bool,
+    },
+}
+
 /// The role a local plays in its body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LocalKind {
@@ -55,8 +72,10 @@ pub struct BasicBlock {
 /// deliberately does not require reachability.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
-    /// The function this body implements.
+    /// The function, constant, or static this body implements.
     pub owner: DefId,
+    /// What kind of initializer or function the owner declares.
+    pub kind: BodyKind,
     /// The number of parameters, excluding the return place.
     pub arg_count: usize,
     /// All locals, indexable by [`LocalId`].

@@ -39,7 +39,7 @@ fn if_expressions_join_both_branches() {
 
     for block in [then_block, else_block] {
         let (place, _) = assignment(&body.block(block).statements[0]);
-        assert_eq!(place.local, Body::return_local());
+        assert_eq!(place.expect_local(), Body::return_local());
     }
 }
 
@@ -109,7 +109,7 @@ fn while_loops_lower_to_condition_body_and_exit_blocks() {
     let exit_block = body.block(exit);
     assert_eq!(exit_block.terminator.kind, TerminatorKind::Return);
     let (place, _) = assignment(exit_block.statements.last().expect("exit assigns the tail"));
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
 }
 
 #[test]

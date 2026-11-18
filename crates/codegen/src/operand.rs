@@ -12,6 +12,11 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     pub(crate) fn operand_type(&self, operand: &Operand) -> Result<TyId, CodegenError> {
         Ok(match operand {
             Operand::Copy(place) | Operand::Move(place) => self.place_type(place)?,
+            Operand::Const(def) => {
+                return Err(CodegenError::internal(format!(
+                    "constant operand {def:?} needs constant evaluation"
+                )));
+            }
             Operand::Constant(constant) => match constant {
                 Constant::Int { ty, .. }
                 | Constant::Float { ty, .. }
@@ -30,6 +35,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match operand {
             Operand::Constant(constant) => self.constants.emit(constant),
+            Operand::Const(def) => Err(CodegenError::internal(format!(
+                "constant operand {def:?} needs constant evaluation"
+            ))),
             Operand::Copy(place) | Operand::Move(place) => {
                 let pointer = self.place_ptr(place)?;
                 let ty = self.mapper.basic(self.place_type(place)?)?;

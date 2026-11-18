@@ -22,7 +22,7 @@ fn a_call_in_value_position_writes_to_its_destination() {
         "a call in return position needs no temporary"
     );
     let (place, rvalue) = assignment(&body.block(body.entry).statements[0]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
 
     let Rvalue::Call {
         target,
@@ -55,11 +55,11 @@ fn a_call_used_only_for_effects_gets_a_temporary() {
     assert_eq!(body.locals.len(), 2, "return place plus the call temporary");
     let block = body.block(body.entry);
     let (place, rvalue) = assignment(&block.statements[0]);
-    assert_eq!(body.local(place.local).kind, LocalKind::Temp);
+    assert_eq!(body.local(place.expect_local()).kind, LocalKind::Temp);
     assert!(matches!(rvalue, Rvalue::Call { .. }));
 
     let (place, rvalue) = assignment(&block.statements[1]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     assert!(matches!(
         rvalue,
         Rvalue::Use(Operand::Constant(Constant::Int { value: 0, .. }))
@@ -80,14 +80,17 @@ fn nested_calls_evaluate_arguments_before_the_call() {
         Rvalue::Call { args, .. }
             if matches!(args[0], Operand::Constant(Constant::Int { value: 2, .. }))
     ));
-    assert_eq!(body.local(inner_place.local).kind, LocalKind::Temp);
+    assert_eq!(body.local(inner_place.expect_local()).kind, LocalKind::Temp);
 
     let (outer_place, outer) = assignment(&block.statements[1]);
-    assert_eq!(outer_place.local, Body::return_local());
+    assert_eq!(outer_place.expect_local(), Body::return_local());
     let Rvalue::Call { args, .. } = outer else {
         panic!("expected a call, got {outer:?}");
     };
-    assert_eq!(args, &vec![Operand::Copy(Place::local(inner_place.local))]);
+    assert_eq!(
+        args,
+        &vec![Operand::Copy(Place::local(inner_place.expect_local()))]
+    );
 }
 
 #[test]
@@ -104,7 +107,7 @@ fn calls_without_results_still_lower() {
     let main = function(&fixture, &hir, &mir, "main");
     let block = main.block(main.entry);
     let (place, rvalue) = assignment(&block.statements[0]);
-    assert_eq!(main.local(place.local).kind, LocalKind::Temp);
+    assert_eq!(main.local(place.expect_local()).kind, LocalKind::Temp);
     let Rvalue::Call { args, .. } = rvalue else {
         panic!("expected a call, got {rvalue:?}");
     };

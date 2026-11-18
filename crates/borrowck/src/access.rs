@@ -13,8 +13,10 @@ pub(crate) type LocalSet = FxHashSet<LocalId>;
 /// value is moved. Writing a field does not read the base local as a value.
 pub(crate) fn statement_uses(statement: &Statement, uses: &mut LocalSet) {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
-    if place.is_deref() {
-        uses.insert(place.local);
+    if place.is_deref()
+        && let Some(local) = place.local_id()
+    {
+        uses.insert(local);
     }
     rvalue_uses(rvalue, uses);
 }
@@ -25,7 +27,10 @@ pub(crate) fn statement_uses(statement: &Statement, uses: &mut LocalSet) {
 /// not a definition for liveness.
 pub(crate) fn statement_def(statement: &Statement) -> Option<LocalId> {
     let StatementKind::Assign { place, .. } = &statement.kind;
-    (!place.is_deref() && place.is_whole()).then_some(place.local)
+    if place.is_deref() || !place.is_whole() {
+        return None;
+    }
+    place.local_id()
 }
 
 /// Adds the locals a value expression reads.
@@ -34,12 +39,16 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => operand_uses(operand, uses),
         Rvalue::Discriminant(place) => place_uses(place, uses),
         Rvalue::Ref { place, .. } => {
-            uses.insert(place.local);
+            if let Some(local) = place.local_id() {
+                uses.insert(local);
+            }
         }
         Rvalue::MakeTraitObject { source, .. } => operand_uses(source, uses),
         Rvalue::TraitObjectReborrow { source, place, .. } => {
             operand_uses(source, uses);
-            uses.insert(place.local);
+            if let Some(local) = place.local_id() {
+                uses.insert(local);
+            }
         }
         Rvalue::DynamicCall { receiver, args, .. } => {
             operand_uses(receiver, uses);
@@ -98,7 +107,9 @@ pub(crate) fn operand_uses(operand: &Operand, uses: &mut LocalSet) {
 
 /// Adds the root local and every local used to compute an index projection.
 fn place_uses(place: &seal_mir::Place, uses: &mut LocalSet) {
-    uses.insert(place.local);
+    if let Some(local) = place.local_id() {
+        uses.insert(local);
+    }
     for projection in &place.projections {
         if let seal_mir::Projection::Index { local, .. } = projection {
             uses.insert(*local);

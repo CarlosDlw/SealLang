@@ -10,6 +10,7 @@ mod enums;
 mod examples;
 mod for_loop;
 mod generics;
+mod globals;
 mod if_let;
 mod indexing_protocol;
 mod iteration_protocol;

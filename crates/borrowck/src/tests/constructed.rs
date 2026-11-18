@@ -41,6 +41,7 @@ fn body(
 ) -> Body {
     Body {
         owner,
+        kind: seal_mir::BodyKind::Function,
         arg_count,
         locals: IndexVec::from_raw(locals),
         blocks: IndexVec::from_raw(vec![BasicBlock {

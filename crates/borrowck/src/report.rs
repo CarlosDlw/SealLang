@@ -275,7 +275,13 @@ impl<'a> Reporter<'a> {
 
     /// Renders a place with source names, including field names.
     fn place_text(&self, place: &Place) -> String {
-        let mut text = self.name(place.local);
+        let mut text = match place.root {
+            seal_mir::PlaceRoot::Local(local) => self.name(local),
+            seal_mir::PlaceRoot::Static(def) | seal_mir::PlaceRoot::Const(def) => self
+                .interner
+                .resolve(self.hir.definitions().name(def))
+                .to_owned(),
+        };
         for projection in &place.projections {
             match projection {
                 Projection::Deref => {

@@ -61,12 +61,12 @@ mod terminator;
 mod tests;
 mod validate;
 
-pub use body::{BasicBlock, Body, LocalDecl, LocalKind};
+pub use body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
 pub use id::{BasicBlockId, BodyId, LocalId};
 pub use lower::lower;
 pub use mir::Mir;
 pub use operand::{Constant, Operand};
-pub use place::{Place, Projection};
+pub use place::{Place, PlaceRoot, Projection};
 pub use rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
 pub use statement::{Statement, StatementKind};
 pub use terminator::{SwitchTarget, Terminator, TerminatorKind};

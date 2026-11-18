@@ -19,7 +19,7 @@ fn tuple_literals_keep_elements_in_order_and_their_type() {
             if matches!(rvalue, Rvalue::Tuple { .. }) {
                 tuple = Some(rvalue);
             }
-            if place.local == Body::return_local() {
+            if place.expect_local() == Body::return_local() {
                 read = Some(rvalue);
             }
         }

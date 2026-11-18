@@ -170,7 +170,7 @@ fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
             seal_mir::Projection::Index { constant: None, .. } => break,
         }
     }
-    Some((place.local, path))
+    Some((place.local_id()?, path))
 }
 
 /// Returns the state of a place for message selection.
@@ -199,7 +199,10 @@ pub(crate) fn state_of(
             seal_mir::Projection::Index { constant: None, .. } => break,
         }
     }
-    match init.state(place.local, &path, tcx, root_ty) {
+    let Some(local) = place.local_id() else {
+        return Init::Initialized;
+    };
+    match init.state(local, &path, tcx, root_ty) {
         InitState::Initialized => Init::Initialized,
         InitState::Moved => Init::Moved,
         InitState::PartiallyMoved => Init::PartiallyMoved,

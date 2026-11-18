@@ -7,7 +7,7 @@ use seal_hir::Hir;
 use seal_layout::VtableLayout;
 use seal_ty::{NumericCastKind, RefKind, TraitRef, TyId, TyKind};
 
-use crate::body::{Body, LocalKind};
+use crate::body::{Body, BodyKind, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::operand::Operand;
 use crate::place::Place;
@@ -52,6 +52,18 @@ pub enum ValidationError {
     UnexpectedArg {
         /// The local.
         local: LocalId,
+    },
+    /// A constant or static body declares parameters.
+    ValueBodyHasArguments {
+        /// The recorded argument count.
+        arg_count: usize,
+    },
+    /// A place root names a definition of the wrong kind.
+    PlaceRootKindMismatch {
+        /// The block containing the place.
+        block: BasicBlockId,
+        /// The root definition.
+        def: DefId,
     },
     /// A place names a local that is not in the body.
     PlaceOutOfRange {
@@ -240,6 +252,14 @@ impl fmt::Display for ValidationError {
             Self::PlaceOutOfRange { block, local } => {
                 write!(f, "block {block:?} refers to missing local {local:?}")
             }
+            Self::ValueBodyHasArguments { arg_count } => write!(
+                f,
+                "a constant or static body declares {arg_count} argument(s)"
+            ),
+            Self::PlaceRootKindMismatch { block, def } => write!(
+                f,
+                "block {block:?} roots a place at {def:?}, which has the wrong kind"
+            ),
             Self::BlockTargetOutOfRange { block, target } => {
                 write!(f, "block {block:?} jumps to missing block {target:?}")
             }
@@ -377,6 +397,11 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
             locals: body.locals.len(),
         });
     }
+    if body.kind != BodyKind::Function && body.arg_count != 0 {
+        return Err(ValidationError::ValueBodyHasArguments {
+            arg_count: body.arg_count,
+        });
+    }
 
     for (local, declaration) in body.locals.iter_enumerated() {
         let index = local.index() as usize;
@@ -402,7 +427,7 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
     for (block, data) in body.blocks.iter_enumerated() {
         for statement in &data.statements {
             let StatementKind::Assign { place, rvalue } = &statement.kind;
-            check_place(body, block, place.clone())?;
+            check_place(hir, body, block, place.clone())?;
             check_rvalue(body, block, place, rvalue, hir)?;
         }
         match &data.terminator.kind {
@@ -426,12 +451,32 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
     Ok(())
 }
 
-fn check_place(body: &Body, block: BasicBlockId, place: Place) -> Result<(), ValidationError> {
-    if place.local.index() as usize >= body.locals.len() {
-        return Err(ValidationError::PlaceOutOfRange {
-            block,
-            local: place.local,
-        });
+fn check_place(
+    hir: Option<&Hir>,
+    body: &Body,
+    block: BasicBlockId,
+    place: Place,
+) -> Result<(), ValidationError> {
+    match place.root {
+        crate::place::PlaceRoot::Local(local) => {
+            if local.index() as usize >= body.locals.len() {
+                return Err(ValidationError::PlaceOutOfRange { block, local });
+            }
+        }
+        crate::place::PlaceRoot::Static(def) => {
+            if let Some(hir) = hir
+                && hir.definitions().kind(def) != DefKind::Static
+            {
+                return Err(ValidationError::PlaceRootKindMismatch { block, def });
+            }
+        }
+        crate::place::PlaceRoot::Const(def) => {
+            if let Some(hir) = hir
+                && hir.definitions().kind(def) != DefKind::Const
+            {
+                return Err(ValidationError::PlaceRootKindMismatch { block, def });
+            }
+        }
     }
     for projection in &place.projections {
         if let crate::place::Projection::Index { local, .. } = projection
@@ -453,7 +498,7 @@ fn check_operand(
     hir: Option<&Hir>,
 ) -> Result<(), ValidationError> {
     if let Some(place) = operand.place() {
-        check_place(body, block, place.clone())?;
+        check_place(hir, body, block, place.clone())?;
         if let (Some(hir), Operand::Move(_)) = (hir, operand)
             && !hir.ty_ctxt().is_sized(place_ty(hir, body, &place))
         {
@@ -486,7 +531,7 @@ fn check_trait_object_conversion(
     if !tcx.is_sized(pointee) || matches!(tcx.kind(pointee), TyKind::Dyn { .. }) {
         return Err(ValidationError::TraitObjectSourceNotThin { block });
     }
-    if operand_ty(tcx, body, source).is_some_and(|ty| ty != source_ty) {
+    if operand_ty(hir, body, source).is_some_and(|ty| ty != source_ty) {
         return Err(ValidationError::RvalueOperandTypeMismatch { block });
     }
     let Some((target_kind, ..)) = dyn_pointer(tcx, target_ty) else {
@@ -511,7 +556,7 @@ fn check_trait_object_reborrow(
     if contains_infer(hir, from) || contains_infer(hir, to) {
         return Err(ValidationError::InferredRvalueType { block });
     }
-    if operand_ty(tcx, body, source).is_some_and(|ty| ty != from) {
+    if operand_ty(hir, body, source).is_some_and(|ty| ty != from) {
         return Err(ValidationError::RvalueOperandTypeMismatch { block });
     }
     let Some((from_kind, from_object, from_ref)) = dyn_pointer(tcx, from) else {
@@ -559,7 +604,7 @@ fn check_dynamic_call(
         ret_ty,
     } = call;
     let tcx = hir.ty_ctxt();
-    let Some(receiver_ty) = operand_ty(tcx, body, receiver) else {
+    let Some(receiver_ty) = operand_ty(hir, body, receiver) else {
         return Err(ValidationError::DynamicReceiverNotObject { block });
     };
     let Some((_, _, receiver_ref)) = dyn_pointer(tcx, receiver_ty) else {
@@ -611,7 +656,7 @@ fn check_dynamic_call(
         return Err(ValidationError::DynamicSignatureMismatch { block });
     }
     for (expected, argument) in arg_tys.iter().zip(args) {
-        if operand_ty(tcx, body, argument).is_some_and(|ty| ty != *expected) {
+        if operand_ty(hir, body, argument).is_some_and(|ty| ty != *expected) {
             return Err(ValidationError::RvalueOperandTypeMismatch { block });
         }
     }
@@ -627,19 +672,27 @@ fn dyn_pointer(tcx: &seal_ty::TyCtxt, ty: TyId) -> Option<(RefKind, TyId, TraitR
     Some((kind, pointee, TraitRef::new(trait_def, pointee, args)))
 }
 
-fn operand_ty(tcx: &seal_ty::TyCtxt, body: &Body, operand: &Operand) -> Option<TyId> {
+fn operand_ty(hir: &Hir, body: &Body, operand: &Operand) -> Option<TyId> {
     match operand {
-        Operand::Copy(place) | Operand::Move(place) => Some(place_ty_mir(tcx, body, place)),
+        Operand::Copy(place) | Operand::Move(place) => Some(place_ty(hir, body, place)),
         Operand::Constant(constant) => constant_ty(&Operand::Constant(*constant)),
+        Operand::Const(def) => Some(
+            hir.body_of(*def)
+                .and_then(|body| body.ret)
+                .unwrap_or_else(|| hir.ty_ctxt().error_ty()),
+        ),
     }
 }
 
 fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
-    place_ty_mir(hir.ty_ctxt(), body, place)
-}
-
-fn place_ty_mir(tcx: &seal_ty::TyCtxt, body: &Body, place: &Place) -> TyId {
-    let mut ty = body.local(place.local).ty;
+    let tcx = hir.ty_ctxt();
+    let mut ty = match place.root {
+        crate::place::PlaceRoot::Local(local) => body.local(local).ty,
+        crate::place::PlaceRoot::Static(def) | crate::place::PlaceRoot::Const(def) => hir
+            .body_of(def)
+            .and_then(|body| body.ret)
+            .unwrap_or_else(|| tcx.error_ty()),
+    };
     for projection in &place.projections {
         ty = match projection {
             crate::place::Projection::Deref => match tcx.kind(ty) {
@@ -697,10 +750,10 @@ fn check_cast(body: &Body, cast: &CastCheck<'_>, hir: &Hir) -> Result<(), Valida
     if !is_concrete_numeric(tcx, cast.from) || !is_concrete_numeric(tcx, cast.to) {
         return Err(ValidationError::CastTypeNotConcrete { block });
     }
-    if operand_ty(tcx, body, cast.operand) != Some(cast.from) {
+    if operand_ty(hir, body, cast.operand) != Some(cast.from) {
         return Err(ValidationError::CastOperandTypeMismatch { block });
     }
-    if place_ty_mir(tcx, body, cast.destination) != cast.to {
+    if place_ty(hir, body, cast.destination) != cast.to {
         return Err(ValidationError::CastDestinationTypeMismatch { block });
     }
     if tcx.numeric_cast_kind(cast.from, cast.to) != Some(cast.kind) {
@@ -764,7 +817,7 @@ fn check_rvalue(
             to,
         } => {
             check_operand(body, block, source, hir)?;
-            check_place(body, block, place.clone())?;
+            check_place(hir, body, block, place.clone())?;
             if let Some(hir) = hir {
                 check_trait_object_reborrow(body, block, source, place, *from, *to, hir)?;
             }
@@ -814,12 +867,12 @@ fn check_rvalue(
             }
             Ok(())
         }
-        Rvalue::Discriminant(place) => check_place(body, block, place.clone()),
-        Rvalue::Ref { place, .. } => check_place(body, block, place.clone()),
+        Rvalue::Discriminant(place) => check_place(hir, body, block, place.clone()),
+        Rvalue::Ref { place, .. } => check_place(hir, body, block, place.clone()),
         Rvalue::SliceRef {
             base, start, end, ..
         } => {
-            check_place(body, block, base.clone())?;
+            check_place(hir, body, block, base.clone())?;
             if let Some(start) = start {
                 check_operand(body, block, start, hir)?;
             }
@@ -836,7 +889,7 @@ fn check_rvalue(
         Rvalue::Unary { operand, .. } => check_operand(body, block, operand, hir),
         Rvalue::Intrinsic { receiver, args, .. } => {
             match receiver {
-                IntrinsicReceiver::Place(place) => check_place(body, block, place.clone())?,
+                IntrinsicReceiver::Place(place) => check_place(hir, body, block, place.clone())?,
                 IntrinsicReceiver::Value(operand) => check_operand(body, block, operand, hir)?,
             }
             for arg in args {
@@ -951,10 +1004,9 @@ fn has_receiver(hir: &Hir, def: DefId) -> bool {
 fn first_argument_is_param(hir: &Hir, body: &Body, args: &[Operand]) -> bool {
     args.first().and_then(Operand::place).is_some_and(|place| {
         place.is_whole()
-            && matches!(
-                hir.ty_ctxt().kind(body.local(place.local).ty),
-                TyKind::Param(_)
-            )
+            && place.local_id().is_some_and(|local| {
+                matches!(hir.ty_ctxt().kind(body.local(local).ty), TyKind::Param(_))
+            })
     })
 }
 

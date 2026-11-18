@@ -22,7 +22,7 @@ fn arithmetic_tail_writes_the_return_place() {
     assert_eq!(block.terminator.kind, TerminatorKind::Return);
 
     let (place, rvalue) = assignment(&block.statements[2]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     let Rvalue::Binary {
         op: BinOp::Add,
         lhs,
@@ -42,7 +42,7 @@ fn literals_carry_the_type_chosen_by_the_checker() {
     let body = function(&fixture, &hir, &mir, "main");
     let (place, rvalue) = assignment(&body.block(body.entry).statements[0]);
 
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     let Rvalue::Use(Operand::Constant(Constant::Int { value, ty })) = rvalue else {
         panic!("expected an integer constant, got {rvalue:?}");
     };
@@ -59,7 +59,7 @@ fn copying_a_binding_reads_the_source_local() {
     let b = local_named(&fixture, body, "b");
 
     let (place, rvalue) = assignment(&body.block(body.entry).statements[1]);
-    assert_eq!(place.local, b);
+    assert_eq!(place.expect_local(), b);
     assert_eq!(rvalue, &Rvalue::Use(Operand::Copy(Place::local(a))));
 }
 
@@ -72,7 +72,7 @@ fn unit_functions_assign_unit_to_the_return_place() {
     let block = body.block(body.entry);
     assert_eq!(block.statements.len(), 1);
     let (place, rvalue) = assignment(&block.statements[0]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     assert_eq!(rvalue, &Rvalue::Use(Operand::Constant(Constant::Unit)));
     assert_eq!(block.terminator.kind, TerminatorKind::Return);
 }
@@ -85,7 +85,7 @@ fn return_statements_end_their_block() {
     let block = body.block(body.entry);
     assert_eq!(block.terminator.kind, TerminatorKind::Return);
     let (place, rvalue) = assignment(&block.statements[0]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     let Rvalue::Use(Operand::Constant(Constant::Int { value, .. })) = rvalue else {
         panic!("expected an integer constant, got {rvalue:?}");
     };
@@ -100,7 +100,7 @@ fn compound_assignment_reads_and_writes_the_same_place() {
     let a = local_named(&fixture, body, "a");
 
     let (place, rvalue) = assignment(&body.block(body.entry).statements[1]);
-    assert_eq!(place.local, a);
+    assert_eq!(place.expect_local(), a);
     let Rvalue::Binary {
         op: BinOp::Add,
         lhs,
@@ -130,7 +130,7 @@ fn updates_become_binary_operations_with_one() {
         .iter()
         .map(|statement| {
             let (place, rvalue) = assignment(statement);
-            assert_eq!(place.local, a);
+            assert_eq!(place.expect_local(), a);
             let Rvalue::Binary { op, lhs, rhs, .. } = rvalue else {
                 panic!("expected a binary operation, got {rvalue:?}");
             };
@@ -161,7 +161,7 @@ fn unary_operators_keep_their_operation() {
         let body = function(&fixture, &hir, &mir, name);
         let block = body.block(body.entry);
         let (place, rvalue) = assignment(&block.statements[1]);
-        assert_eq!(place.local, Body::return_local());
+        assert_eq!(place.expect_local(), Body::return_local());
         let operand = Place::local(local_named(&fixture, body, "a"));
         assert_eq!(
             rvalue,

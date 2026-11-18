@@ -52,7 +52,7 @@ fn is_call(
 }
 
 fn is_deref_of(place: &Place, local: crate::id::LocalId) -> bool {
-    place.local == local && place.projections() == [Projection::Deref]
+    place.expect_local() == local && place.projections() == [Projection::Deref]
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn a_custom_index_write_calls_index_mut_and_writes_through_its_pointer() {
         Operand::Constant(Constant::Int { value: 0, .. })
     ));
 
-    let deref = Place::with_projections(call_place.local, vec![Projection::Deref]);
+    let deref = Place::with_projections(call_place.expect_local(), vec![Projection::Deref]);
     assert!(
         values.iter().any(|(place, rvalue)| {
             *place == &deref
@@ -118,7 +118,7 @@ fn a_custom_index_read_dereferences_the_index_pointer() {
     );
     let (target, rvalue) = values
         .iter()
-        .find(|(place, _)| place.local == Body::return_local())
+        .find(|(place, _)| place.expect_local() == Body::return_local())
         .expect("the return place is written");
     assert!(target.is_whole());
     let Rvalue::Use(Operand::Copy(place)) = rvalue else {
@@ -208,14 +208,16 @@ fn a_compound_assignment_uses_the_indexed_place_for_bothsides() {
     let binary = values
         .iter()
         .find_map(|(place, rvalue)| match rvalue {
-            Rvalue::Binary { lhs, .. } if place.local == call_place.local => Some(lhs),
+            Rvalue::Binary { lhs, .. } if place.expect_local() == call_place.expect_local() => {
+                Some(lhs)
+            }
             _ => None,
         })
         .expect("the old value is read from the indexed place");
     assert_eq!(
         binary,
         &Operand::Copy(Place::with_projections(
-            call_place.local,
+            call_place.expect_local(),
             vec![Projection::Deref]
         ))
     );
@@ -256,7 +258,7 @@ fn nested_custom_indices_lower_each_protocol_call_once() {
     );
     let (target, rvalue) = values
         .iter()
-        .find(|(place, _)| place.local == Body::return_local())
+        .find(|(place, _)| place.expect_local() == Body::return_local())
         .expect("the return place is written");
     assert!(target.is_whole());
     let Rvalue::Use(Operand::Copy(place)) = rvalue else {
@@ -284,7 +286,7 @@ fn a_field_after_a_custom_index_keeps_the_deref_and_field_projection() {
     );
     let (target, rvalue) = values
         .iter()
-        .find(|(place, _)| place.local == Body::return_local())
+        .find(|(place, _)| place.expect_local() == Body::return_local())
         .expect("the return place is written");
     assert!(target.is_whole());
     let Rvalue::Use(Operand::Copy(place)) = rvalue else {
@@ -325,7 +327,7 @@ fn a_method_after_a_custom_index_borrows_the_dereferenced_element() {
         panic!("the receiver is a borrowed temporary");
     };
     assert_eq!(
-        body.local(reference.local).kind,
+        body.local(reference.expect_local()).kind,
         crate::body::LocalKind::Temp
     );
 }
@@ -349,7 +351,7 @@ fn an_exclusive_borrow_of_an_indexed_element_uses_index_mut() {
             Rvalue::Ref {
                 place,
                 kind: RefKind::Exclusive,
-            } if is_deref_of(place, call_place.local)
+            } if is_deref_of(place, call_place.expect_local())
         )),
         "the borrow covers the dereferenced element"
     );
@@ -380,7 +382,7 @@ fn a_dyn_index_mut_receiver_lowers_to_a_dynamic_call() {
             matches!(
                 rvalue,
                 Rvalue::Use(Operand::Constant(Constant::Int { value: 1, .. }))
-            ) && is_deref_of(place, call_place.local)
+            ) && is_deref_of(place, call_place.expect_local())
         }),
         "the assignment writes through the dynamic call result"
     );
@@ -419,5 +421,8 @@ fn an_outer_pointer_index_mut_borrows_the_pointer_binding() {
     assert!(values.iter().any(|(place, rvalue)| matches!(
         rvalue,
         Rvalue::Use(Operand::Constant(Constant::Int { value: 2, .. }))
-    ) && is_deref_of(place, call_place.local)));
+    ) && is_deref_of(
+        place,
+        call_place.expect_local()
+    )));
 }

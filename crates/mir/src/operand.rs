@@ -1,5 +1,6 @@
 //! Constants and operands.
 
+use seal_def::DefId;
 use seal_symbol::Symbol;
 use seal_ty::TyId;
 
@@ -46,6 +47,11 @@ pub enum Operand {
     Move(Place),
     /// Uses a literal directly.
     Constant(Constant),
+    /// Reads a constant item's value.
+    ///
+    /// The value is produced by constant evaluation, so this operand has no
+    /// place and cannot be written or borrowed.
+    Const(DefId),
 }
 
 impl Operand {
@@ -54,7 +60,7 @@ impl Operand {
     pub fn place(&self) -> Option<Place> {
         match self {
             Self::Copy(place) | Self::Move(place) => Some(place.clone()),
-            Self::Constant(_) => None,
+            Self::Constant(_) | Self::Const(_) => None,
         }
     }
 }

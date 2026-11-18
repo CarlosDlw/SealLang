@@ -34,15 +34,27 @@ pub enum Projection {
     },
 }
 
-/// A storage location: a local plus the projections applied to it.
+/// The storage a place starts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PlaceRoot {
+    /// A local slot in the body, including the return place and parameters.
+    Local(LocalId),
+    /// A static item. Its allocation has program lifetime.
+    Static(DefId),
+    /// A constant item used as a place. It is always materialized into a
+    /// temporary first, so a const root never survives into code generation.
+    Const(DefId),
+}
+
+/// A storage location: a root plus the projections applied to it.
 ///
 /// The place is a value with its own projection list. Assignments and borrows
 /// address any prefix of it, which is what move analysis needs to compare two
 /// places.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Place {
-    /// The local this place starts from.
-    pub local: LocalId,
+    /// The storage the place starts from.
+    pub root: PlaceRoot,
     /// The projections in application order.
     pub projections: Vec<Projection>,
 }
@@ -52,15 +64,63 @@ impl Place {
     #[inline]
     pub const fn local(local: LocalId) -> Self {
         Self {
-            local,
+            root: PlaceRoot::Local(local),
             projections: Vec::new(),
         }
     }
 
-    /// Creates an already-projected place.
+    /// Creates a place for a whole static.
+    #[inline]
+    pub const fn static_root(def: DefId) -> Self {
+        Self {
+            root: PlaceRoot::Static(def),
+            projections: Vec::new(),
+        }
+    }
+
+    /// Creates a place for a whole constant, before it is materialized.
+    #[inline]
+    pub const fn const_root(def: DefId) -> Self {
+        Self {
+            root: PlaceRoot::Const(def),
+            projections: Vec::new(),
+        }
+    }
+
+    /// Creates an already-projected place rooted at a local.
     #[inline]
     pub fn with_projections(local: LocalId, projections: Vec<Projection>) -> Self {
-        Self { local, projections }
+        Self {
+            root: PlaceRoot::Local(local),
+            projections,
+        }
+    }
+
+    /// Creates an already-projected place rooted at `root`.
+    #[inline]
+    pub fn with_root(root: PlaceRoot, projections: Vec<Projection>) -> Self {
+        Self { root, projections }
+    }
+
+    /// Returns the local root, or `None` for a const or static root.
+    #[inline]
+    pub const fn local_id(&self) -> Option<LocalId> {
+        match self.root {
+            PlaceRoot::Local(local) => Some(local),
+            PlaceRoot::Static(_) | PlaceRoot::Const(_) => None,
+        }
+    }
+
+    /// Returns the local root.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the place is rooted at a const or static. Phases that do not
+    /// yet model global storage use [`Self::local_id`] to skip such places.
+    #[inline]
+    pub fn expect_local(&self) -> LocalId {
+        self.local_id()
+            .unwrap_or_else(|| panic!("place is rooted at {:?}, not a local", self.root))
     }
 
     /// Returns the place reached by one dereference.
@@ -143,7 +203,7 @@ impl Place {
     /// prefix initializes every descendant, and a move out of a prefix
     /// invalidates every descendant.
     pub fn is_prefix_of(&self, other: &Place) -> bool {
-        self.local == other.local
+        self.root == other.root
             && other.projections.len() >= self.projections.len()
             && self
                 .projections

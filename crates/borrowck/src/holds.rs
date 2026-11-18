@@ -63,7 +63,10 @@ impl HoldState {
     /// wholesale-assigned aggregate conservatively includes the aggregate's set.
     pub(crate) fn at(&self, place: &Place) -> LoanSet {
         let mut set = LoanSet::default();
-        for (path, loans) in &self.locals[place.local.index() as usize].paths {
+        let Some(local) = place.local_id() else {
+            return set;
+        };
+        for (path, loans) in &self.locals[local.index() as usize].paths {
             if overlaps(path, &place.projections) {
                 set.extend(loans.iter().copied());
             }
@@ -79,7 +82,10 @@ impl HoldState {
         if place.is_deref() {
             return;
         }
-        let paths = &mut self.locals[place.local.index() as usize].paths;
+        let Some(local) = place.local_id() else {
+            return;
+        };
+        let paths = &mut self.locals[local.index() as usize].paths;
         paths.retain(|(path, _)| !path.starts_with(&place.projections));
         if !loans.is_empty() {
             paths.push((place.projections.clone(), loans));
@@ -91,7 +97,10 @@ impl HoldState {
         if place.is_deref() {
             return;
         }
-        self.locals[place.local.index() as usize]
+        let Some(local) = place.local_id() else {
+            return;
+        };
+        self.locals[local.index() as usize]
             .paths
             .retain(|(path, _)| !path.starts_with(&place.projections));
     }
@@ -213,7 +222,9 @@ fn transfer(
         // type checking and never reaches MIR.
         return;
     }
-    let destination_has_reference = hir.ty_ctxt().contains_reference(body.local(place.local).ty);
+    let destination_has_reference = place
+        .local_id()
+        .is_some_and(|local| hir.ty_ctxt().contains_reference(body.local(local).ty));
 
     match rvalue {
         Rvalue::Ref { .. } | Rvalue::SliceRef { .. } | Rvalue::TraitObjectReborrow { .. } => {

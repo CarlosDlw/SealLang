@@ -16,7 +16,7 @@ fn borrowing_a_local_creates_a_shared_reference() {
     let x = local_named(&fixture, body, "x");
     let (place, rvalue) = assignment(&body.block(body.entry).statements[1]);
 
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     assert_eq!(
         rvalue,
         &Rvalue::Ref {
@@ -33,7 +33,7 @@ fn dereference_reads_through_the_reference() {
     let p = local_named(&fixture, body, "p");
     let (place, rvalue) = assignment(&body.block(body.entry).statements[0]);
 
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     assert_eq!(rvalue, &Rvalue::Use(Operand::Copy(Place::local(p).deref())));
 }
 
@@ -62,13 +62,13 @@ fn reading_through_a_returned_reference_uses_a_temporary() {
     let block = body.block(body.entry);
     let (place, rvalue) = assignment(block.statements.last().expect("the read is a statement"));
 
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     let Rvalue::Use(Operand::Copy(read)) = rvalue else {
         panic!("expected a copy through the reference, got {rvalue:?}");
     };
     assert_eq!(read.projections(), [Projection::Deref]);
     assert_eq!(
-        body.local(read.local).kind,
+        body.local(read.expect_local()).kind,
         LocalKind::Temp,
         "a reference value has no binding, so lowering holds it in a temporary"
     );
@@ -80,11 +80,11 @@ fn dereferencing_a_borrow_reads_through_a_temporary() {
     let body = function(&fixture, &hir, &mir, "main");
     let block = body.block(body.entry);
     let (reference, borrow) = assignment(&block.statements[1]);
-    assert_eq!(body.local(reference.local).kind, LocalKind::Temp);
+    assert_eq!(body.local(reference.expect_local()).kind, LocalKind::Temp);
     assert!(matches!(borrow, Rvalue::Ref { .. }));
 
     let (place, rvalue) = assignment(&block.statements[2]);
-    assert_eq!(place.local, Body::return_local());
+    assert_eq!(place.expect_local(), Body::return_local());
     assert_eq!(
         rvalue,
         &Rvalue::Use(Operand::Copy(reference.clone().deref()))
@@ -112,8 +112,11 @@ fn borrowing_through_a_reference_value_borrows_its_temporary() {
             }
         })
         .expect("a borrow through a reference value is lowered");
-    assert_eq!(body.local(destination.local).kind, LocalKind::Binding);
-    assert_eq!(body.local(borrowed.local).kind, LocalKind::Temp);
+    assert_eq!(
+        body.local(destination.expect_local()).kind,
+        LocalKind::Binding
+    );
+    assert_eq!(body.local(borrowed.expect_local()).kind, LocalKind::Temp);
     assert_eq!(borrowed.projections(), [Projection::Deref]);
 }
 
@@ -125,7 +128,10 @@ fn a_borrowed_argument_is_passed_through_a_temporary() {
     let body = function(&fixture, &hir, &mir, "main");
     let block = body.block(body.entry);
     let (temp, borrow) = assignment(&block.statements[1]);
-    assert_eq!(body.local(temp.local).kind, crate::body::LocalKind::Temp);
+    assert_eq!(
+        body.local(temp.expect_local()).kind,
+        crate::body::LocalKind::Temp
+    );
     assert!(matches!(borrow, Rvalue::Ref { .. }));
 
     let (_, call) = assignment(&block.statements[2]);

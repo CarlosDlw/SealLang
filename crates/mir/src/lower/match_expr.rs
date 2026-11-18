@@ -694,7 +694,7 @@ impl BodyLowering<'_> {
                 },
                 parts.span,
             );
-            let element_place = slice.clone().index(index.local, None);
+            let element_place = slice.clone().index(index.expect_local(), None);
             self.lower_flat_pattern(child, element_place, element, fail, bindings);
         }
     }
@@ -724,7 +724,7 @@ impl BodyLowering<'_> {
             })),
             span,
         );
-        let element_place = place.index(index_place.local, Some(index));
+        let element_place = place.index(index_place.expect_local(), Some(index));
         self.lower_flat_pattern(child, element_place, element, fail, bindings);
     }
 

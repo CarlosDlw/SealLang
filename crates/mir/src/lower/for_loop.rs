@@ -318,7 +318,7 @@ impl BodyLowering<'_> {
         );
 
         self.current = Some(bind);
-        let index_local = index.local;
+        let index_local = index.expect_local();
         let element_place = source.base.clone().index(index_local, None);
         let subject = match source.reference {
             Some(kind) => {

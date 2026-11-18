@@ -17,14 +17,23 @@ use seal_typeck::{
     ResolvedMethod, ResolvedPlace, TypeckResults,
 };
 
-use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
+use crate::body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
-use crate::place::{Place, Projection};
+use crate::place::{Place, PlaceRoot, Projection};
 use crate::rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
 use crate::statement::Statement;
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
+
+/// Converts a HIR body kind into its MIR form.
+fn body_kind(kind: seal_hir::BodyKind) -> BodyKind {
+    match kind {
+        seal_hir::BodyKind::Function => BodyKind::Function,
+        seal_hir::BodyKind::Const => BodyKind::Const,
+        seal_hir::BodyKind::Static { mutable } => BodyKind::Static { mutable },
+    }
+}
 
 /// Lowers every body in `hir` to MIR.
 ///
@@ -73,6 +82,7 @@ struct BodyLowering<'a> {
     hir: &'a Hir,
     typeck: &'a TypeckResults,
     owner: DefId,
+    kind: BodyKind,
     locals: IndexVec<LocalId, LocalDecl>,
     local_of: FxHashMap<DefId, LocalId>,
     blocks: IndexVec<BasicBlockId, BlockBuilder>,
@@ -98,6 +108,7 @@ impl<'a> BodyLowering<'a> {
             hir,
             typeck,
             owner: body.owner,
+            kind: body_kind(body.kind),
             locals: IndexVec::new(),
             local_of: FxHashMap::default(),
             blocks: IndexVec::new(),
@@ -154,6 +165,7 @@ impl<'a> BodyLowering<'a> {
     fn finish(self) -> Body {
         let Self {
             owner,
+            kind,
             arg_count,
             locals,
             blocks,
@@ -171,6 +183,7 @@ impl<'a> BodyLowering<'a> {
             .collect();
         Body {
             owner,
+            kind,
             arg_count,
             locals,
             blocks,
@@ -477,13 +490,26 @@ impl<'a> BodyLowering<'a> {
                 }
             }
             ExprKind::Path {
-                res: Res::Const(_) | Res::Static(_),
+                res: Res::Const(def),
                 ..
             } => {
-                // Constant evaluation gives value items their operands; MIR only
-                // keeps the destination defined here.
                 if let Some(dest) = dest {
-                    self.assign_constant(dest, Constant::Unit, span);
+                    self.assign_operand(dest, Operand::Const(def), span);
+                }
+            }
+            ExprKind::Path {
+                res: Res::Static(def),
+                ..
+            } => {
+                if let Some(dest) = dest {
+                    let place = Place::static_root(def);
+                    let ty = self.expr_ty(expr);
+                    let operand = if self.hir.ty_ctxt().is_copy_with(ty, &self.param_env) {
+                        Operand::Copy(place)
+                    } else {
+                        Operand::Move(place)
+                    };
+                    self.assign_operand(dest, operand, span);
                 }
             }
             ExprKind::Path {
@@ -1580,17 +1606,31 @@ impl<'a> BodyLowering<'a> {
     /// becomes an explicit two-block graph, so code generation never has to
     /// invent control flow while computing an address.
     fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
-        let mut local = self.place_of_local(place.root_def()).local;
+        let root = match place.root {
+            seal_typeck::PlaceRoot::Local(def) => {
+                PlaceRoot::Local(self.place_of_local(def).expect_local())
+            }
+            seal_typeck::PlaceRoot::Static(def) => PlaceRoot::Static(def),
+            seal_typeck::PlaceRoot::Const(def) => {
+                // A constant has no storage, so a projected or borrowed const
+                // path starts from a temporary that holds its value.
+                let span = self.hir.definitions().get(def).span;
+                let temp = self.new_temp(place.root_ty, span);
+                self.assign_operand(temp.clone(), Operand::Const(def), span);
+                temp.root
+            }
+        };
+        let mut root = root;
         let mut projections = Vec::with_capacity(place.projections.len());
         let mut ty = place.root_ty;
         let mut slice_reference: Option<Place> = None;
         for projection in &place.projections {
             match projection {
                 PlaceProjection::CustomIndex { expr, .. } => {
-                    let base = Place::with_projections(local, projections.clone());
+                    let base = Place::with_root(root, projections.clone());
                     let span = self.hir.expr(*expr).span;
                     let (custom, element_ty) = self.lower_custom_index(*expr, base, ty, span);
-                    local = custom.local;
+                    root = custom.root;
                     projections = custom.projections;
                     ty = element_ty;
                     slice_reference = None;
@@ -1601,7 +1641,7 @@ impl<'a> BodyLowering<'a> {
                         _ => ty,
                     };
                     if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. }) {
-                        slice_reference = Some(Place::with_projections(local, projections.clone()));
+                        slice_reference = Some(Place::with_root(root, projections.clone()));
                     } else {
                         slice_reference = None;
                     }
@@ -1666,7 +1706,7 @@ impl<'a> BodyLowering<'a> {
                             format!("index out of bounds: the length is {length}")
                         };
                         self.emit_bounds_check_operand(
-                            Operand::Copy(Place::local(temp.local)),
+                            Operand::Copy(temp.clone()),
                             length_operand,
                             span,
                             &message,
@@ -1678,13 +1718,13 @@ impl<'a> BodyLowering<'a> {
                     };
                     slice_reference = None;
                     projections.push(Projection::Index {
-                        local: temp.local,
+                        local: temp.expect_local(),
                         constant: *constant,
                     });
                 }
             }
         }
-        Place::with_projections(local, projections)
+        Place::with_root(root, projections)
     }
 
     /// Lowers `&base[start..end]` into a fat-pointer construction.

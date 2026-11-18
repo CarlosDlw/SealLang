@@ -11,8 +11,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     /// Computes the address of `place`, projecting through fields and shared
     /// references.
     pub(crate) fn place_ptr(&self, place: &Place) -> Result<PointerValue<'ctx>, CodegenError> {
-        let mut pointer = self.alloca(place.local);
-        let mut ty = self.local_type(place.local);
+        let Some(local) = place.local_id() else {
+            return Err(CodegenError::internal(format!(
+                "place rooted at {:?} has no local allocation",
+                place.root
+            )));
+        };
+        let mut pointer = self.alloca(local);
+        let mut ty = self.local_type(local);
         for projection in &place.projections {
             match projection {
                 Projection::Deref => {
@@ -227,7 +233,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
 
     /// Returns the type of the value stored at `place`.
     pub(crate) fn place_type(&self, place: &Place) -> Result<TyId, CodegenError> {
-        let mut ty = self.local_type(place.local);
+        let mut ty = match place.root {
+            seal_mir::PlaceRoot::Local(local) => self.local_type(local),
+            seal_mir::PlaceRoot::Static(def) | seal_mir::PlaceRoot::Const(def) => self
+                .hir
+                .body_of(def)
+                .and_then(|body| body.ret)
+                .unwrap_or_else(|| self.tcx.error_ty()),
+        };
         for projection in &place.projections {
             match projection {
                 Projection::Deref => {

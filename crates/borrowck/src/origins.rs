@@ -150,8 +150,11 @@ impl OriginState {
     /// Paths overlap when one is a prefix of the other, matching the may-hold
     /// analysis: reading a whole aggregate includes references in its fields.
     pub(crate) fn at(&self, place: &Place) -> OriginSet {
+        let Some(local) = place.local_id() else {
+            return OriginSet::unknown();
+        };
         let mut set = OriginSet::default();
-        for (path, origins) in &self.locals[place.local.index() as usize].paths {
+        for (path, origins) in &self.locals[local.index() as usize].paths {
             if overlaps(path, &place.projections) {
                 set.extend(origins);
             }
@@ -163,7 +166,10 @@ impl OriginState {
         if place.is_deref() {
             return;
         }
-        let paths = &mut self.locals[place.local.index() as usize].paths;
+        let Some(local) = place.local_id() else {
+            return;
+        };
+        let paths = &mut self.locals[local.index() as usize].paths;
         paths.retain(|(path, _)| !path.starts_with(&place.projections));
         if !origins.is_empty() {
             paths.push((place.projections.clone(), origins));
@@ -174,7 +180,10 @@ impl OriginState {
         if place.is_deref() {
             return;
         }
-        self.locals[place.local.index() as usize]
+        let Some(local) = place.local_id() else {
+            return;
+        };
+        self.locals[local.index() as usize]
             .paths
             .retain(|(path, _)| !path.starts_with(&place.projections));
     }
@@ -272,7 +281,9 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
     if place.is_deref() {
         return;
     }
-    let destination_holds_references = hir.ty_ctxt().contains_reference(body.local(place.local).ty);
+    let destination_holds_references = place
+        .local_id()
+        .is_some_and(|local| hir.ty_ctxt().contains_reference(body.local(local).ty));
 
     match rvalue {
         Rvalue::Ref {
@@ -424,10 +435,16 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place) -> OriginSet {
         .iter()
         .position(|projection| *projection == Projection::Deref)
     else {
-        return OriginSet::frame(place.local, field_path(&place.projections));
+        return match place.local_id() {
+            Some(local) => OriginSet::frame(local, field_path(&place.projections)),
+            None => OriginSet::unknown(),
+        };
     };
 
-    let reference = Place::with_projections(place.local, place.projections[..index].to_vec());
+    let Some(base) = place.local_id() else {
+        return OriginSet::unknown();
+    };
+    let reference = Place::with_projections(base, place.projections[..index].to_vec());
     let rest = &place.projections[index + 1..];
     let origins = state.at(&reference);
     if origins.is_unknown() || origins.is_empty() {
@@ -476,7 +493,7 @@ pub(crate) fn first_deref_base(place: &Place) -> Option<Place> {
         .iter()
         .position(|projection| *projection == Projection::Deref)?;
     Some(Place::with_projections(
-        place.local,
+        place.local_id()?,
         place.projections[..index].to_vec(),
     ))
 }
@@ -543,7 +560,13 @@ fn field_path(projections: &[Projection]) -> Vec<StorageField> {
 
 /// Returns the type of `place`.
 pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
-    let mut ty = body.local(place.local).ty;
+    let mut ty = match place.root {
+        seal_mir::PlaceRoot::Local(local) => body.local(local).ty,
+        seal_mir::PlaceRoot::Static(def) | seal_mir::PlaceRoot::Const(def) => hir
+            .body_of(def)
+            .and_then(|body| body.ret)
+            .unwrap_or_else(|| hir.ty_ctxt().error_ty()),
+    };
     for projection in &place.projections {
         ty = match projection {
             Projection::Deref => match hir.ty_ctxt().kind(ty) {
