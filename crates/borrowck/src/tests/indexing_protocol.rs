@@ -55,6 +55,18 @@ fn an_exclusive_index_borrow_keeps_the_base_borrowed() {
 }
 
 #[test]
+fn a_simple_assignment_can_read_the_same_container() {
+    let source = format!(
+        "{GRID_MUT} func main() -> i32 {{ \
+             let mut grid = Grid {{ value: 1 }}; \
+             grid[0] = grid[0] + 1; \
+             grid[0] \
+         }}"
+    );
+    check_clean(&source);
+}
+
+#[test]
 fn indexing_after_the_base_borrow_ends_is_allowed() {
     let source = format!(
         "{GRID_MUT} func f() -> i32 {{ \

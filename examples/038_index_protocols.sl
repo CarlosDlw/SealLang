@@ -51,8 +51,11 @@ func main() -> i32 {
     right: Cell { value: 20 },
   };
 
+  // A simple assignment evaluates its value before the target place, so the
+  // right-hand read ends before the outer and inner IndexMut calls borrow row.
+  row[0][0] = row[0][0] + 5;
+
   // The outer write selects Row's IndexMut, then Cell's IndexMut.
-  row[0][0] += 5;
   row[1][0] += 7;
 
   // Reads at both levels select Index.

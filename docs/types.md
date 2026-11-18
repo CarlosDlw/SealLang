@@ -592,6 +592,11 @@ result is still a place and can be nested. A write without `IndexMut` is
 `E3054`. A type with neither built-in indexing nor a matching protocol is
 `E3021`, and indexing a value that is not a place is `E2013`.
 
+A simple assignment evaluates its value before the target place, so
+`grid[0] = grid[0] + 1` ends the shared read before `IndexMut` borrows the
+base. A compound assignment or update evaluates the target place once first,
+because it reads the old value through that place; the right-hand side follows.
+
 The size is `N × size(T)` and the alignment is `align(T)`. A zero-length array
 occupies no bytes but keeps the element alignment. Nested arrays multiply their
 sizes. A type whose size overflows or exceeds the target address space is

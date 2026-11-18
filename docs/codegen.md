@@ -163,8 +163,11 @@ The ABI is defined by the language, not by a C header:
   and a write or compound assignment reads and writes through
   `IndexMut::index_mut`; the returned reference is the place being accessed, so
   code generation emits the same call, load, and store shapes as any other
-  pointer-returning method. The compiler adds no bounds check for a custom
-  implementation; built-in arrays and slices keep the checked path above.
+  pointer-returning method. A simple assignment lowers its value before the
+  target place, so a read of the same container ends before the target acquires
+  its exclusive borrow; compound assignments lower the target place first. The
+  compiler adds no bounds check for a custom implementation; built-in arrays
+  and slices keep the checked path above.
 - A custom `for` loop is a small CFG. Lowering evaluates the source once, calls
   `IntoIterator::iter` when the source is not its own iterator, tests
   `Iterator::has_next`, runs the body with the item moved into the pattern, and

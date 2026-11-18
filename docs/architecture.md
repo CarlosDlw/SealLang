@@ -163,9 +163,13 @@ allowed to depend only on crates below it in the list.
     exactly one terminator, so there is no implicit fallthrough, and validation
     rejects a body whose place or edge names a missing local or block.
 33. **Evaluation order is preserved.** Operands are lowered left to right before
-    the operation that consumes them, statements keep source order, and a call
-    is a statement (`Rvalue::Call`) because Seal has no unwinding, so a call
-    has exactly one successor.
+    the operation that consumes them, and a simple assignment is the one
+    exception: its value is lowered before the target place, so
+    `grid[0] = grid[0] + 1` can read the container before the target borrows it.
+    Compound assignments lower the target place once before the value, because
+    they read the old value through that place. Statements keep source order,
+    and a call is a statement (`Rvalue::Call`) because Seal has no unwinding, so
+    a call has exactly one successor.
 34. **Short-circuiting is control flow.** `&&` and `||` lower to `SwitchInt`
     graphs whose short-circuit block stores the constant result, so the right
     operand is evaluated only on the path that needs it. MIR has no `BinOp` for

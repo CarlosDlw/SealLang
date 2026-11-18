@@ -797,15 +797,19 @@ impl<'a> BodyLowering<'a> {
         dest: Option<Place>,
         span: Span,
     ) {
-        let target_place = self.place_of_expr(target);
-        let target_ty = self.expr_ty(target);
-
         match op {
             AssignOp::Assign => {
+                // A simple assignment evaluates its value before the place.
+                // This lets the value read from the same container that the
+                // target place later borrows, matching the language's
+                // assignment evaluation order.
                 let value = self.lower_operand(value);
+                let target_place = self.place_of_expr(target);
                 self.assign_operand(target_place, value, span);
             }
             _ => {
+                let target_place = self.place_of_expr(target);
+                let target_ty = self.expr_ty(target);
                 let rhs = self.lower_operand(value);
                 let lhs = self.place_operand(target_place.clone(), target_ty);
                 self.assign_rvalue(

@@ -172,6 +172,28 @@ fn the_index_operand_runs_once_before_the_receiver_borrow() {
 }
 
 #[test]
+fn a_simple_assignment_evaluates_the_value_before_the_target_place() {
+    let source = format!(
+        "{GRID_MUT} func main() {{ let mut grid = Grid {{ value: 1 }}; grid[0] = grid[0] + 1; }}"
+    );
+    let (fixture, hir, mir) = lower_clean(&source);
+    let body = function(&fixture, &hir, &mir, "main");
+    let values = assignments(body);
+    let shared = values
+        .iter()
+        .position(|(_, rvalue)| is_call(&fixture, &hir, rvalue, "index"))
+        .expect("the value reads through Index");
+    let exclusive = values
+        .iter()
+        .position(|(_, rvalue)| is_call(&fixture, &hir, rvalue, "index_mut"))
+        .expect("the target writes through IndexMut");
+    assert!(
+        shared < exclusive,
+        "the value read must end before the target borrow, got {shared} and {exclusive}"
+    );
+}
+
+#[test]
 fn a_compound_assignment_uses_the_indexed_place_for_bothsides() {
     let source =
         format!("{GRID_MUT} func main() {{ let mut grid = Grid {{ value: 1 }}; grid[0] += 2; }}");
