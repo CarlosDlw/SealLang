@@ -185,12 +185,12 @@ impl Checker<'_> {
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)
             }
-            ExprKind::Cast { operand, .. } => {
-                // Numeric cast checking lands with the cast diagnostic phase;
-                // the operand is still inferred so its own errors surface.
-                let _ = self.infer_expr(operand, None, flow);
-                self.error_ty()
-            }
+            ExprKind::Cast {
+                operand,
+                ty,
+                as_span,
+                target_span,
+            } => self.check_cast(expr, operand, ty, as_span, target_span, flow),
             ExprKind::Assign { op, target, value } => {
                 self.check_assign(op, target, value, flow, span)
             }

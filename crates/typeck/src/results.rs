@@ -5,7 +5,7 @@ use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
-use seal_ty::{GenericParamDef, Instance, PathElem, RefKind, TraitRef, TyId};
+use seal_ty::{GenericParamDef, Instance, NumericCastKind, PathElem, RefKind, TraitRef, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -250,6 +250,7 @@ pub struct TypeckResults {
     methods: FxHashMap<HirExprId, ResolvedMethod>,
     instantiations: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
+    casts: FxHashMap<HirExprId, NumericCastKind>,
 }
 
 impl TypeckResults {
@@ -288,6 +289,11 @@ impl TypeckResults {
         self.coercions.get(&expr).copied()
     }
 
+    /// Returns the numeric conversion selected for a cast expression.
+    pub fn cast_kind(&self, expr: HirExprId) -> Option<NumericCastKind> {
+        self.casts.get(&expr).copied()
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -302,6 +308,7 @@ impl TypeckResults {
             methods: FxHashMap::default(),
             instantiations: FxHashMap::default(),
             coercions: FxHashMap::default(),
+            casts: FxHashMap::default(),
         }
     }
 
@@ -331,5 +338,9 @@ impl TypeckResults {
 
     pub(crate) fn record_coercion(&mut self, expr: HirExprId, coercion: Coercion) {
         self.coercions.insert(expr, coercion);
+    }
+
+    pub(crate) fn record_cast(&mut self, expr: HirExprId, kind: NumericCastKind) {
+        self.casts.insert(expr, kind);
     }
 }

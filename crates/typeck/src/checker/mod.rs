@@ -2,6 +2,7 @@
 
 mod borrow;
 mod call;
+mod cast;
 mod coerce;
 mod dynamic;
 mod exhaustive;

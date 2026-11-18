@@ -2004,6 +2004,36 @@ explicitly with `&*pointer` when a shared trait object is required. Trait-object
 upcasting from one trait to a supertrait is not a coercion in this language.",
 };
 
+/// An explicit cast is not a numeric conversion.
+pub const E3048: ErrorCode = ErrorCode {
+    code: "E3048",
+    title: "invalid cast",
+    explanation: "\
+The `as` operator converts between primitive numeric types only: any integer
+to any other integer, an integer to `f32` or `f64`, a floating-point value to
+an integer, and `f32` to `f64` or back. Every other pair is rejected, including
+`bool`, `char`, `str`, references, slices, arrays, tuples, structs, enums,
+trait objects, and the never type.\n\nNumeric casts may lose information. Integers narrow by truncating the high bits
+and widen by sign- or zero-extending; integer-to-float conversion rounds to
+nearest, ties to even; float-to-int conversion truncates toward zero, maps NaN
+to zero, and saturates at the destination bounds.\n\nUse the named conversions `bool.to_i32()` and `char.to_u32()` for those scalar
+types. Converting an enum to its discriminant, reinterpreting aggregates, and
+pointer casts are separate features, and fallible conversions belong in a
+checked API rather than in `as`.",
+};
+
+/// A cast involves a type parameter.
+pub const E3049: ErrorCode = ErrorCode {
+    code: "E3049",
+    title: "cast of a type parameter",
+    explanation: "\
+An explicit cast must select a concrete numeric conversion when it is checked.
+Seal has no numeric-bound trait, so the compiler cannot decide which integer or
+floating-point conversion a type parameter `T` performs, and monomorphization
+cannot postpone that choice: the cast kind is recorded before instantiation.\n\nMake the cast concrete, for example by casting a value whose type is known,
+or perform the conversion inside the impl that supplies the concrete type.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -2016,9 +2046,9 @@ pub static ALL: &[ErrorCode] = &[
     E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015,
     E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028,
     E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041,
-    E3042, E3043, E3044, E3045, E3046, E3047, E5001, E5002, E5003, E5004, E5005, E5006, E5007,
-    E5008, E5009, E5010, E6001, E6002, E6003, E7001, E7002, E7003, E7004, E7005, E7006, E9001,
-    E9002,
+    E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E5001, E5002, E5003, E5004, E5005,
+    E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E7001, E7002, E7003, E7004, E7005,
+    E7006, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2097,6 +2127,8 @@ mod tests {
             ("E2065", "needs a finite vtable"),
             ("E3046", "cannot choose between several"),
             ("E3047", "reference kind is preserved"),
+            ("E3048", "primitive numeric types only"),
+            ("E3049", "no numeric-bound trait"),
             ("E7005", "missing entry"),
             ("E7006", "vtable collection limit"),
         ] {
@@ -2172,7 +2204,7 @@ mod tests {
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
-                "E3046", "E3047",
+                "E3046", "E3047", "E3048", "E3049",
             ]
         );
     }

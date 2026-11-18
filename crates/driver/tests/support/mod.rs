@@ -40,7 +40,10 @@ impl Drop for SourceFile {
 }
 
 /// Runs `source` and requires a compilation error with `code` and `fragment`.
-pub(crate) fn reject(name: &str, source: &str, code: &str, fragment: &str) {
+///
+/// Returns the captured output so a caller can pin further details such as an
+/// exact source location.
+pub(crate) fn reject(name: &str, source: &str, code: &str, fragment: &str) -> Output {
     let file = SourceFile::new(name, source);
     let output = file.check();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -58,4 +61,5 @@ pub(crate) fn reject(name: &str, source: &str, code: &str, fragment: &str) {
         stderr.contains(fragment),
         "{name}: expected {fragment:?} in: {stderr}"
     );
+    output
 }

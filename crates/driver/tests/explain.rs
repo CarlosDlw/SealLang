@@ -18,6 +18,8 @@ fn monomorphization_codes_explain_the_action() {
         ("E3041", "A type parameter is opaque inside a generic body"),
         ("E3046", "needs exactly one"),
         ("E3047", "reference kind is preserved"),
+        ("E3048", "primitive numeric types only"),
+        ("E3049", "no numeric-bound trait"),
         ("E7001", "instance chain that reached it"),
         ("E7002", "selects the implementation"),
         ("E7003", "there is no caller to supply its type"),

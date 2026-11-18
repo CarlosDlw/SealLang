@@ -17,6 +17,7 @@
 #![warn(missing_docs)]
 
 mod adt;
+mod cast;
 mod ctxt;
 mod display;
 mod generics;
@@ -28,6 +29,7 @@ mod substs;
 mod template;
 
 pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
+pub use cast::NumericCastKind;
 pub use ctxt::{ImplHead, TyCtxt};
 pub use display::TyDisplay;
 pub use generics::{
