@@ -10,6 +10,7 @@ use seal_ty::{InitPaths, RefKind, TyKind};
 
 use crate::aliasing::{BodyFacts, CallSites};
 use crate::calls;
+use crate::effects::{self, Effects};
 use crate::holds::{self, HoldState, LoanSet};
 use crate::id::LoanId;
 use crate::init::{self, Init, InitInfo};
@@ -27,6 +28,7 @@ struct Context<'a> {
     holds: &'a holds::Holds,
     holds_at: &'a HoldState,
     origins: &'a OriginState,
+    effects: &'a Effects,
     const_locals: &'a origins::ConstLocals,
     /// The loan this statement creates, when it is a borrow.
     current_loan: Option<LoanId>,
@@ -45,6 +47,28 @@ impl Context<'_> {
     fn keys_of(&self, place: &Place) -> origins::OriginSet {
         origins::keys_of(self.origins, place, self.const_locals)
     }
+
+    /// Applies a callee's mutable-static effects at a call site.
+    fn apply_effects(
+        &self,
+        callee: seal_def::DefId,
+        summary: effects::GlobalEffects,
+        args: &[Operand],
+        span: seal_span::Span,
+    ) {
+        for conflict in effects::conflicts(
+            self.hir,
+            &summary,
+            args,
+            self.origins,
+            self.loans,
+            self.active,
+        ) {
+            let loan = self.loan(conflict.loan);
+            self.reporter
+                .call_global_conflict(callee, &conflict.path, conflict.write, span, loan);
+        }
+    }
 }
 
 /// Checks one body and records the alias facts its parameters depend on.
@@ -52,6 +76,7 @@ pub(crate) fn check_body(
     hir: &Hir,
     body: &Body,
     program: Option<&seal_const_eval::ConstProgram>,
+    effects: &Effects,
     dcx: &DiagCtxt,
     interner: &Interner,
     calls: &mut CallSites,
@@ -81,6 +106,7 @@ pub(crate) fn check_body(
                 holds: &holds,
                 holds_at: &holds.before[index][position],
                 origins: &origins.before[index][position],
+                effects,
                 const_locals: &const_locals,
                 current_loan: loan_at[index][position],
                 hir,
@@ -99,6 +125,7 @@ pub(crate) fn check_body(
             holds: &holds,
             holds_at: &holds.exit[index],
             origins: &origins.exit[index],
+            effects,
             const_locals: &const_locals,
             current_loan: None,
             hir,
@@ -178,6 +205,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             );
         }
         Rvalue::DynamicCall {
+            method,
             receiver,
             args,
             arg_spans,
@@ -205,6 +233,8 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 reporter: context.reporter,
             });
             unknown |= outcome.unknown;
+            let summary = context.effects.dynamic(*method);
+            context.apply_effects(*method, summary, &all_args, statement.span);
         }
         Rvalue::Discriminant(place) => {
             unknown |= context.keys_of(place).is_unknown();
@@ -307,6 +337,8 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 reporter: context.reporter,
             });
             unknown |= outcome.unknown;
+            let summary = context.effects.call(*target);
+            context.apply_effects(target.instance().def, summary, args, statement.span);
             // A symbolic trait call has no concrete callee whose `noalias`
             // contract could be proven here; monomorphization checks each
             // selected implementation at its own call sites.

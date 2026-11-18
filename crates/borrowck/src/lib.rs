@@ -72,6 +72,7 @@ mod access;
 mod aliasing;
 mod calls;
 mod check;
+mod effects;
 mod holds;
 mod id;
 mod init;
@@ -112,10 +113,11 @@ pub fn check(
     dcx: &DiagCtxt,
     interner: &Interner,
 ) -> AliasingFacts {
+    let effects = effects::analyze(hir, mir);
     let mut calls = aliasing::CallSites::default();
     let mut bodies = FxHashMap::default();
     for body in mir.bodies().iter() {
-        let facts = check::check_body(hir, body, program, dcx, interner, &mut calls);
+        let facts = check::check_body(hir, body, program, &effects, dcx, interner, &mut calls);
         bodies.insert(body.owner, facts);
     }
     aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls)
@@ -129,5 +131,6 @@ pub fn check(
 /// for the whole program and are therefore returned by [`check`] alone.
 pub fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Interner) {
     let mut calls = aliasing::CallSites::default();
-    check::check_body(hir, body, None, dcx, interner, &mut calls);
+    let effects = effects::Effects::default();
+    check::check_body(hir, body, None, &effects, dcx, interner, &mut calls);
 }

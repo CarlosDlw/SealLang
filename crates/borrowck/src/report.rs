@@ -9,6 +9,7 @@ use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::RefKind;
 
+use crate::effects::{GlobalPath, GlobalStep};
 use crate::loan::Loan;
 
 /// Emits `E5xxx` diagnostics for one body.
@@ -225,6 +226,63 @@ impl<'a> Reporter<'a> {
             .secondary(loan.span, "borrow created here")
             .help("return a reference to a parameter, or to data the caller owns")
             .emit();
+    }
+
+    /// A call may read or write a mutable static the caller borrowed.
+    pub(crate) fn call_global_conflict(
+        &self,
+        callee: seal_def::DefId,
+        path: &GlobalPath,
+        write: bool,
+        span: Span,
+        loan: &Loan,
+    ) {
+        let callee = self.interner.resolve(self.hir.definitions().name(callee));
+        let path = self.global_path_text(path);
+        let (code, message) = if write {
+            (
+                codes::E5013,
+                format!(
+                    "call to `{callee}` may write the mutable static `{path}` while it is borrowed"
+                ),
+            )
+        } else {
+            (
+                codes::E5011,
+                format!(
+                    "call to `{callee}` may read the mutable static `{path}` while it is exclusively borrowed"
+                ),
+            )
+        };
+        let builder = self
+            .dcx
+            .error(message)
+            .code(code.diag_code())
+            .primary(span, "this call")
+            .secondary(loan.span, "borrow occurs here")
+            .note("the callee accesses the static directly or through another call");
+        add_last_use(builder, loan, span).emit();
+    }
+
+    fn global_path_text(&self, path: &GlobalPath) -> String {
+        let mut text = self
+            .interner
+            .resolve(self.hir.definitions().name(path.def))
+            .to_owned();
+        for step in &path.steps {
+            match step {
+                GlobalStep::Field(field) => {
+                    text.push('.');
+                    text.push_str(
+                        self.interner
+                            .resolve(self.hir.definitions().get(*field).name),
+                    );
+                }
+                GlobalStep::TupleField(index) => text.push_str(&format!(".{index}")),
+                GlobalStep::Index(index) => text.push_str(&format!("[{index}]")),
+            }
+        }
+        text
     }
 
     /// A reference into a mutable static escapes its function.

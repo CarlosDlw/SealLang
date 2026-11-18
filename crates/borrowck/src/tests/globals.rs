@@ -3,6 +3,161 @@
 use super::support::{check_clean, check_errors};
 
 #[test]
+fn a_call_that_writes_a_borrowed_static_is_rejected() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         func reset() {\n  unsafe { COUNTER = 0; }\n}\n\
+         func broken() -> i32 {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    reset();\n    *value\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
+fn a_call_that_reads_an_exclusively_borrowed_static_is_rejected() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         func peek() -> i32 {\n  unsafe { COUNTER }\n}\n\
+         func broken() -> i32 {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    let observed = peek();\n    *value + observed\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5011", "may read the mutable static `COUNTER`");
+}
+
+#[test]
+fn effects_are_transitive_through_calls() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         func inner() {\n  unsafe { COUNTER = 1; }\n}\n\
+         func outer() {\n  inner();\n}\n\
+         func broken() {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    outer();\n    *value = 2;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
+fn recursive_effects_reach_a_fixed_point() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         func countdown(value: i32) {\n  \
+           unsafe {\n    if value > 0 {\n      COUNTER = value;\n      countdown(value - 1);\n    }\n  }\n\
+         }\n\
+         func broken() {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    countdown(2);\n    *value = 0;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
+fn a_reference_argument_does_not_duplicate_its_own_effect() {
+    check_clean(
+        "static mut COUNTER: i32 = 0;\n\
+         func read(value: *mut i32) -> i32 {\n  \
+           unsafe { *value + COUNTER }\n\
+         }\n\
+         func use_counter() -> i32 {\n  \
+           unsafe { read(&mut COUNTER) }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn passing_an_exclusive_static_reference_affects_callers() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         func touch(value: *mut i32) {\n  unsafe { *value = 1; }\n}\n\
+         func use_counter() {\n  unsafe { touch(&mut COUNTER); }\n}\n\
+         func broken() {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    use_counter();\n    *value = 2;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
+fn disjoint_static_fields_do_not_conflict_across_calls() {
+    check_clean(
+        "struct Pair { left: i32, right: i32 }\n\
+         static mut PAIR: Pair = Pair { left: 0, right: 0 };\n\
+         func write_left() {\n  unsafe { PAIR.left = 1; }\n}\n\
+         func use_right() {\n  \
+           unsafe {\n    let right = &mut PAIR.right;\n    write_left();\n    *right = 2;\n  }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn a_field_argument_does_not_hide_a_whole_static_write() {
+    let fixture = check_errors(
+        "struct Pair { left: i32, right: i32 }\n\
+         static mut PAIR: Pair = Pair { left: 0, right: 0 };\n\
+         func write_whole() {\n  unsafe { PAIR = Pair { left: 1, right: 2 }; }\n}\n\
+         func broken() {\n  \
+           unsafe {\n    let right = &mut PAIR.right;\n    write_whole();\n    *right = 3;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `PAIR`");
+}
+
+#[test]
+fn a_runtime_index_covers_the_whole_array() {
+    let fixture = check_errors(
+        "static mut TABLE: [i32; 2] = [0, 0];\n\
+         func write(index: usize) {\n  unsafe { TABLE[index] = 1; }\n}\n\
+         func broken() {\n  \
+           unsafe {\n    let element = &mut TABLE[1];\n    write(0);\n    *element = 2;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `TABLE`");
+}
+
+#[test]
+fn constant_indices_stay_disjoint_across_calls() {
+    check_clean(
+        "static mut TABLE: [i32; 2] = [0, 0];\n\
+         func write_first() {\n  unsafe { TABLE[0] = 1; }\n}\n\
+         func use_second() {\n  \
+           unsafe {\n    let second = &mut TABLE[1];\n    write_first();\n    *second = 2;\n  }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn trait_bound_calls_union_every_implementation() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         struct Item {}\n\
+         trait Touch { func touch(self: *Self); }\n\
+         impl Touch for Item {\n  func touch(self: *Item) { unsafe { COUNTER = 1; } }\n}\n\
+         func run<T: Touch>(value: *T) { value.touch(); }\n\
+         func broken() {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    let item = Item {};\n    run(&item);\n    *value = 2;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
+fn dynamic_calls_union_every_implementation() {
+    let fixture = check_errors(
+        "static mut COUNTER: i32 = 0;\n\
+         struct Item {}\n\
+         trait Touch { func touch(self: *mut Self); }\n\
+         impl Touch for Item {\n  func touch(self: *mut Item) { unsafe { COUNTER = 1; } }\n}\n\
+         func run(value: *mut dyn Touch) { value.touch(); }\n\
+         func broken(item: *mut Item) {\n  \
+           unsafe {\n    let value = &mut COUNTER;\n    let object: *mut dyn Touch = item;\n    run(object);\n    *value = 2;\n  }\n\
+         }\n",
+    );
+    fixture.expect("E5013", "may write the mutable static `COUNTER`");
+}
+
+#[test]
 fn borrowing_a_mutable_static_inside_unsafe_is_allowed() {
     check_clean(
         "static mut COUNTER: i32 = 0;\n\

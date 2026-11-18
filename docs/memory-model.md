@@ -432,6 +432,34 @@ later callees cannot see that global loan in their effect summaries, returning
 it is rejected (`E5012`). Passing it to an ordinary function is allowed for the
 duration of the call.
 
+### D19 — Mutable globals are ordered by effect summaries
+
+Borrow checking is intraprocedural, so a call is the one place where another
+body can reach the same `static mut`. Before checking bodies, the compiler
+computes for every body the statics it may read or write, keyed by static and by
+the statically known field, tuple, and constant-index path below it. A runtime
+index covers the whole array path. Direct accesses, borrows, and intrinsic
+receivers contribute direct effects; every call unions its callees' summaries.
+
+A trait-bound call unions every implementation that could satisfy the bound plus
+a default body, and a dynamic call unions every implementation in the principal
+trait and its supertraits. This is deliberately type-independent so the analysis
+runs before monomorphization. Recursion is a monotone fixed point: summaries
+start empty and grow until no set changes, making the result independent of
+traversal order. A call to a bodyless function is treated as touching every
+static; safe Seal has no such function, so this is a defensive rule.
+
+At each call site every summarized read must not overlap a live exclusive loan
+(`E5011`), and every summarized write must not overlap any live loan (`E5013`).
+A static path already granted to the call as a reference argument is checked by
+the ordinary argument rules and is not applied twice. Paths use prefix overlap:
+a write to a field conflicts with a loan of the whole static and vice versa.
+
+The guarantee is single-threaded. Seal has no threads: when they arrive, safe
+`static mut` access must move behind atomics or locks, or gain a `Sync`-style
+contract. The unsafe gate keeps that future change localized to the access rule
+and this summary.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -581,7 +609,11 @@ duration of the call.
 25. A reference into a static or const may be returned without being treated as
     a dangling local. A reference into a `static mut` may not escape the
     function that created it (`E5012`).
-26. Constant evaluation is deterministic: allocation order, dependency order,
+26. Every call site applies the callee's transitive mutable-static effects: a
+    read conflicts with a live exclusive loan (`E5011`) and a write conflicts
+    with any live loan (`E5013`). An effect already covered by a reference
+    argument is checked only by the ordinary argument rules.
+27. Constant evaluation is deterministic: allocation order, dependency order,
     step counting, and diagnostics do not depend on hash iteration. A value
     dependency cycle is reported (`E4007`), while an address-only cycle is
     accepted because every static allocation exists before evaluation.
