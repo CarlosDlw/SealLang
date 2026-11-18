@@ -69,6 +69,116 @@ fn unary_negation_requires_a_signed_or_float_type() {
 }
 
 #[test]
+fn equality_accepts_aggregates_and_reference_contents() {
+    check_clean(
+        "struct Point { x: i32, y: i32 } \
+         enum Shape { Dot, Line(i32) } \
+         func main() -> bool { \
+           let a: Point = Point { x: 1, y: 2 }; \
+           let b: Point = Point { x: 1, y: 2 }; \
+           let text: *str = \"seal\"; \
+           let values: [i32; 2] = [1, 2]; \
+           let slice: *[i32] = &values[..]; \
+           let pair: (i32, bool) = (1, true); \
+           let dot: Shape = Shape::Dot; \
+           let line: Shape = Shape::Line(1); \
+           a == b \
+             && text == text \
+             && slice == slice \
+             && values == values \
+             && pair == pair \
+             && dot != line \
+             && () == () \
+             && 'a' == 'a' \
+             && 1.5 != 2.5 \
+         }",
+    );
+}
+
+#[test]
+fn equality_reads_pointees_and_statics() {
+    check_clean(
+        "struct Point { x: i32, y: i32 } \
+         static ORIGIN: Point = Point { x: 0, y: 0 }; \
+         func main() -> bool { \
+           let a: Point = Point { x: 1, y: 2 }; \
+           let b: Point = Point { x: 1, y: 2 }; \
+           let left: *Point = &a; \
+           let right: *Point = &b; \
+           (*left == *right) && (a == ORIGIN) && (ORIGIN == b) \
+         }",
+    );
+}
+
+#[test]
+fn equality_rejects_thin_references() {
+    let (fixture, _, _) = check_errors(
+        "func main() -> bool { \
+           let a: i32 = 1; \
+           let b: i32 = 2; \
+           let left: *i32 = &a; \
+           let right: *i32 = &b; \
+           left == right \
+         }",
+    );
+    fixture.expect("E3002", "operator `==` cannot be applied to type `*i32`");
+}
+
+#[test]
+fn equality_rejects_a_field_without_equality() {
+    let (fixture, _, _) = check_errors(
+        "struct Point { x: i32 } \
+         struct Holder { point: *Point } \
+         func main() -> bool { \
+           let a: Point = Point { x: 1 }; \
+           let p: *Point = &a; \
+           let h: Holder = Holder { point: p }; \
+           h == h \
+         }",
+    );
+    fixture.expect("E3002", "operator `==` cannot be applied to type `Holder`");
+
+    let (fixture, _, _) = check_errors(
+        "struct Holder { values: [*mut i32; 2] } \
+         func main() -> bool { \
+           let h: Holder = Holder { values: [] }; \
+           h != h \
+         }",
+    );
+    fixture.expect("E3002", "operator `!=` cannot be applied to type `Holder`");
+}
+
+#[test]
+fn equality_rejects_trait_objects() {
+    let (fixture, _, _) = check_errors(
+        "trait Area { func area(self: *Self) -> i32; } \
+         struct Square { side: i32 } \
+         impl Area for Square { func area(self: *Square) -> i32 { (*self).side } } \
+         func main() -> bool { \
+           let a: Square = Square { side: 2 }; \
+           let left: *dyn Area = &a; \
+           left == left \
+         }",
+    );
+    fixture.expect(
+        "E3002",
+        "operator `==` cannot be applied to type `*dyn Area`",
+    );
+}
+
+#[test]
+fn equality_rejects_type_parameters() {
+    let (fixture, _, _) = check_errors("func same<T>(a: T, b: T) -> bool { a == b }");
+    fixture.expect("E3041", "operator `==` is not available");
+
+    let (fixture, _, _) = check_errors(
+        "struct Pair<T> { left: T, right: T } \
+         func same<T>(a: Pair<T>, b: Pair<T>) -> bool { a == b }",
+    );
+    fixture.expect("E3002", "operator `==` cannot be applied to type `Pair<T>`");
+}
+
+#[test]
 fn logical_not_and_bitwise_not_have_their_own_families() {
     let (fixture, hir, results) = check_clean("func main() -> bool { !false }");
     let (_, body) = function(&fixture, &hir, "main");

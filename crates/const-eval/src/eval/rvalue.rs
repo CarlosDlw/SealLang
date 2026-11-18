@@ -361,7 +361,17 @@ impl<'a> Interpreter<'a> {
                 };
                 Ok(ConstValue::Bool(result))
             }
-            _ => self.internal("binary operands have mismatched scalar kinds", span),
+            _ => {
+                if !matches!(op, seal_mir::BinOp::Eq | seal_mir::BinOp::Ne) {
+                    return self.internal("binary operands have mismatched scalar kinds", span);
+                }
+                let equal = self.values_equal(lhs, rhs, span)?;
+                Ok(ConstValue::Bool(if matches!(op, seal_mir::BinOp::Ne) {
+                    !equal
+                } else {
+                    equal
+                }))
+            }
         }
     }
 

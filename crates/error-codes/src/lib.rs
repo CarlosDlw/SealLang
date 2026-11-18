@@ -1222,8 +1222,12 @@ pub const E3002: ErrorCode = ErrorCode {
     explanation: "\
 Each operator accepts a fixed family of types. Arithmetic operators accept
 integers and floats of one type; `&`, `|`, `^`, `~`, `<<`, and `>>` accept
-integers; `&&`, `||`, and `!` accept `bool`; comparisons accept two equal
-numeric or `char` values, and equality also accepts other values.
+integers; `&&`, `||`, and `!` accept `bool`; ordering comparisons accept two
+equal numeric or `char` values. `==` and `!=` also accept `bool`, `()`, arrays,
+tuples, structs, and enums whose fields are themselves comparable, plus `*str`
+and `*[T]`, which compare contents. Thin references and trait objects have no
+equality: a reference would compare addresses, and a trait object erases its
+concrete type.
 
 Operands are never converted, so mixed-width arithmetic such as `1i32 + 1i64` is
 an error even though both sides are integers. Make both operands the same type.

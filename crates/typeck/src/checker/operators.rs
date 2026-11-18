@@ -6,6 +6,7 @@ use seal_span::Span;
 use seal_ty::TyId;
 
 use super::Checker;
+use super::PlaceMode;
 use super::flow::Flow;
 
 impl Checker<'_> {
@@ -94,11 +95,18 @@ impl Checker<'_> {
                 lhs_ty
             }
             BinaryOp::Eq | BinaryOp::Ne => {
-                let lhs_ty = self.infer_expr(lhs, None, flow);
+                // Equality reads both operands; it never moves them out of the
+                // place they came from. The read mode lets a non-`Copy` operand
+                // be a pointee or a static without reporting a move that the
+                // comparison does not perform.
+                let lhs_ty = self.infer_expr_mode(lhs, None, flow, PlaceMode::Borrow);
+                let lhs_span = self.hir.expr(lhs).span;
                 if let seal_ty::TyKind::Param(param) = self.hir.ty_ctxt().kind(lhs_ty) {
-                    self.report_parameter_operation(op.as_str(), param, self.hir.expr(lhs).span);
+                    self.report_parameter_operation(op.as_str(), param, lhs_span);
+                } else if !self.is_error(lhs_ty) {
+                    self.check_comparable(op.as_str(), lhs_ty, lhs_span);
                 }
-                self.check_expr(rhs, lhs_ty, flow);
+                self.check_expr_read(rhs, lhs_ty, flow);
                 self.bool_ty()
             }
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {

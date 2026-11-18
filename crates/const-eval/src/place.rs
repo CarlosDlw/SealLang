@@ -114,6 +114,22 @@ pub(crate) fn locate(
     if offset == 0 {
         return Some(Vec::new());
     }
+    locate_member(tcx, layout, root, ty, offset)
+}
+
+/// Returns the path of the member of `root` that starts at byte `offset`.
+///
+/// Unlike [`locate`], offset zero addresses the first member of the container
+/// rather than the container itself. A view that starts at the beginning of an
+/// aggregate needs the member: the first byte of an array holds its first
+/// element, not the array.
+pub(crate) fn locate_member(
+    tcx: &TyCtxt,
+    layout: &LayoutCtxt<'_>,
+    root: &ConstValue,
+    ty: TyId,
+    offset: u64,
+) -> Option<Vec<PathStep>> {
     match (tcx.kind(ty), root) {
         (TyKind::Adt { adt, args }, ConstValue::Struct { fields, .. }) => {
             let layouts = layout.field_layouts_with(adt, args).ok()?;

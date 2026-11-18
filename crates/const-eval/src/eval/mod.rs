@@ -31,6 +31,7 @@ use crate::value::{
 };
 
 mod call;
+mod equality;
 mod execution;
 mod intrinsic;
 mod memory;

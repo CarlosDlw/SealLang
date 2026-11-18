@@ -57,6 +57,7 @@ mod const_value;
 mod constant;
 mod debug;
 mod entry;
+mod equality;
 mod error;
 mod function;
 mod global;

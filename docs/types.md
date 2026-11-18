@@ -1292,6 +1292,43 @@ kinds and never unify. The compiler answers three structural queries:
 copy hook. A future opt-in `Copy` for structs derives the property from the
 fields without changing the move path.
 
+## Equality
+
+`==` and `!=` compare values, never addresses, and they read both operands
+without moving them: `a == b` leaves `a` and `b` usable even when the type is
+not `Copy`.
+
+| Type | Comparison rule |
+|------|-----------------|
+| integers, `char`, `bool` | Bit equality of the same value, so `==` agrees with the ordering operators |
+| `f32`, `f64` | IEEE 754: `-0.0 == 0.0` is true and `NaN == NaN` is false |
+| `()` | Always equal |
+| arrays, tuples | Element by element, in order |
+| structs | Field by field, in declaration order |
+| enums | Equal when both hold the same variant and that variant's fields are equal |
+| `*str` | Length, then bytes |
+| `*[T]` and `*mut [T]` | Length, then elements; `T` must itself be comparable |
+| `*T`, `*mut T` | Rejected: only the address could differ, which is not value equality |
+| `*dyn Trait` | Rejected: the concrete type is erased, so there is no structural comparison |
+
+A struct, tuple, or array is comparable only when every field or element is. A
+nested aggregate recurses with the same rules, so a struct holding a `*[i32]`
+compares the slice contents while a struct holding a `*Point` has no equality.
+Type parameters have none either: comparing an operand of type `T` reports
+`E3041`, and comparing an aggregate that contains a `T` reports `E3002`. There
+is no operator overloading — a type either follows the rules above or cannot be
+compared.
+
+Reading rather than moving is what makes the operand forms useful: `*left ==
+*right` compares the pointees of two thin references, and `value == ORIGIN`
+compares against a non-`Copy` static. Neither is a move, so neither reports
+`E3018` or `E3058`. The same dereference or static read anywhere else is still a
+move and is still rejected.
+
+Constant evaluation implements exactly these rules, so an equality used in a
+`const` or `static` initializer and the same comparison at runtime agree, NaN
+and `-0.0` included.
+
 ## Layout
 
 Layout is deterministic and defined by the language, not by the host C ABI:

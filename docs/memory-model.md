@@ -204,7 +204,8 @@ itself by value is `E3016`.
 Equality compares values, not addresses. Padding bytes are not observable. There
 is no guarantee that a local is zero-initialized. Two equal values are
 interchangeable in safe code, which is what allows moves and copies to be
-reordered.
+reordered. `==` and `!=` read their operands without moving them, and a thin
+reference has no equality at all, because only its address could differ.
 
 ### D12 — No implicit numeric conversions
 

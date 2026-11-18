@@ -12,6 +12,13 @@ fn int(fixture: &Fixture, name: &str) -> u128 {
     }
 }
 
+fn flag(fixture: &Fixture, name: &str) -> bool {
+    match fixture.value(name) {
+        ConstValue::Bool(value) => *value,
+        other => panic!("`{name}` is not a bool: {other:?}"),
+    }
+}
+
 #[test]
 fn scalars_keep_their_types_and_bits() {
     let fixture = clean(
@@ -136,6 +143,67 @@ fn aggregates_are_built_in_declaration_order() {
         ConstValue::Variant { fields, .. } if fields.len() == 1
     ));
     assert!(matches!(fixture.value("STRING"), ConstValue::Str { .. }));
+}
+
+#[test]
+fn equality_compares_aggregates_and_contents() {
+    let fixture = clean(
+        "struct Point { x: i32, y: i32 } \
+         enum Shape { Dot, Line(i32, i32) } \
+         const A: *str = \"hello\"; \
+         const B: *str = \"hello\"; \
+         const C: *str = \"hellp\"; \
+         const SHORTER: *str = \"hell\"; \
+         const STR_SAME: bool = A == B; \
+         const STR_DIFF: bool = A == C; \
+         const STR_LENGTH: bool = A == SHORTER; \
+         const VALUES: [i32; 3] = [1, 2, 3]; \
+         const ARRAY_SAME: bool = VALUES == [1, 2, 3]; \
+         const ARRAY_DIFF: bool = VALUES == [1, 2, 4]; \
+         const FIRST: *[i32] = &VALUES[0..2]; \
+         const SLICE_SAME: bool = FIRST == &VALUES[0..2]; \
+         const SLICE_SHIFTED: bool = FIRST == &VALUES[1..3]; \
+         const SLICE_SHORTER: bool = FIRST == &VALUES[0..1]; \
+         const P: Point = Point { x: 1, y: 2 }; \
+         const Q: Point = Point { x: 1, y: 2 }; \
+         const R: Point = Point { x: 1, y: 3 }; \
+         const STRUCT_SAME: bool = P == Q; \
+         const STRUCT_DIFF: bool = P == R; \
+         const DOT: Shape = Shape::Dot; \
+         const DOT_SAME: Shape = Shape::Dot; \
+         const LINE: Shape = Shape::Line(1, 2); \
+         const LINE_SAME: Shape = Shape::Line(1, 2); \
+         const LINE_DIFF: Shape = Shape::Line(1, 3); \
+         const ENUM_SAME: bool = DOT == DOT_SAME; \
+         const ENUM_VARIANT: bool = DOT == LINE; \
+         const ENUM_FIELDS: bool = LINE == LINE_SAME; \
+         const ENUM_DIFF: bool = LINE == LINE_DIFF; \
+         const TUPLE_SAME: bool = (1, true) == (1, true); \
+         const TUPLE_DIFF: bool = (1, true) == (1, false); \
+         const NAN: f64 = 0.0 / 0.0; \
+         const NAN_SAME: bool = NAN == NAN; \
+         const ZERO_SAME: bool = 0.0 == -0.0; \
+         const UNIT_SAME: bool = () == ();",
+    );
+    assert!(flag(&fixture, "STR_SAME"));
+    assert!(!flag(&fixture, "STR_DIFF"));
+    assert!(!flag(&fixture, "STR_LENGTH"));
+    assert!(flag(&fixture, "ARRAY_SAME"));
+    assert!(!flag(&fixture, "ARRAY_DIFF"));
+    assert!(flag(&fixture, "SLICE_SAME"));
+    assert!(!flag(&fixture, "SLICE_SHIFTED"));
+    assert!(!flag(&fixture, "SLICE_SHORTER"));
+    assert!(flag(&fixture, "STRUCT_SAME"));
+    assert!(!flag(&fixture, "STRUCT_DIFF"));
+    assert!(flag(&fixture, "ENUM_SAME"));
+    assert!(!flag(&fixture, "ENUM_VARIANT"));
+    assert!(flag(&fixture, "ENUM_FIELDS"));
+    assert!(!flag(&fixture, "ENUM_DIFF"));
+    assert!(flag(&fixture, "TUPLE_SAME"));
+    assert!(!flag(&fixture, "TUPLE_DIFF"));
+    assert!(!flag(&fixture, "NAN_SAME"));
+    assert!(flag(&fixture, "ZERO_SAME"));
+    assert!(flag(&fixture, "UNIT_SAME"));
 }
 
 #[test]

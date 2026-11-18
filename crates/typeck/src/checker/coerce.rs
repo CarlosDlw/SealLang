@@ -14,6 +14,7 @@ use seal_hir::HirExprId;
 use seal_ty::{TraitRef, TyKind};
 
 use super::Checker;
+use super::PlaceMode;
 use super::flow::Flow;
 use super::trait_solver::Proof;
 use crate::results::Coercion;
@@ -30,8 +31,32 @@ impl Checker<'_> {
         expected: seal_ty::TyId,
         flow: &mut Flow,
     ) -> seal_ty::TyId {
+        self.check_expr_in_mode(expr, expected, flow, PlaceMode::Read)
+    }
+
+    /// Checks `expr` against `expected` as a value that is read, not moved.
+    ///
+    /// An equality operand may be a non-`Copy` value reached through a
+    /// reference or stored in a static; the comparison only reads it, so owning
+    /// that storage is not required.
+    pub(super) fn check_expr_read(
+        &mut self,
+        expr: HirExprId,
+        expected: seal_ty::TyId,
+        flow: &mut Flow,
+    ) -> seal_ty::TyId {
+        self.check_expr_in_mode(expr, expected, flow, PlaceMode::Borrow)
+    }
+
+    fn check_expr_in_mode(
+        &mut self,
+        expr: HirExprId,
+        expected: seal_ty::TyId,
+        flow: &mut Flow,
+        mode: PlaceMode,
+    ) -> seal_ty::TyId {
         let expected = self.resolve_deep(expected);
-        let found = self.infer_expr(expr, Some(expected), flow);
+        let found = self.infer_expr_mode(expr, Some(expected), flow, mode);
         if self.is_compatible(expected, found) {
             return found;
         }

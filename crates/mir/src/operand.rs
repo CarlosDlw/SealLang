@@ -41,7 +41,11 @@ pub enum Constant {
 /// A value read by an operation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
-    /// Reads a place without taking ownership; valid because the type is `Copy`.
+    /// Reads a place without taking ownership.
+    ///
+    /// The type is usually `Copy`. The one operation that reads a non-`Copy`
+    /// place this way is equality, which compares the value without consuming
+    /// it, so the owner stays responsible for dropping it exactly once.
     Copy(Place),
     /// Reads a place and moves ownership out of it.
     Move(Place),

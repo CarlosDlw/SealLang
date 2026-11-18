@@ -51,3 +51,20 @@ two different things in two programs.
 - Only `static mut` is writable. Reading, writing, borrowing, or projecting it
   requires an `unsafe { ... }` block, and a reference to it may not escape the
   function that created it.
+
+### Structural equality
+
+`==` and `!=` now compare the values they are given instead of failing in code
+generation:
+
+- Structs compare field by field, enums compare the tag and the active variant's
+  fields, and arrays and tuples compare their elements.
+- `*str` compares length and bytes; `*[T]` compares length and elements.
+- Both operands are read, never moved, so `a == b` leaves a non-`Copy` value
+  usable.
+- Thin references and trait objects are rejected with `E3002` instead of
+  reaching the backend: a reference only has an address, and a trait object
+  erases the type that could be compared.
+
+Constant evaluation follows the same rules, so a comparison in a `const` or
+`static` initializer produces the value the same comparison produces at runtime.

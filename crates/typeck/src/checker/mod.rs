@@ -6,6 +6,7 @@ mod cast;
 mod coerce;
 mod const_context;
 mod dynamic;
+mod equality;
 mod exhaustive;
 mod expr;
 mod flow;

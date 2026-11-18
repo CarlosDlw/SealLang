@@ -418,7 +418,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         )
     }
 
-    fn binary(
+    pub(crate) fn binary(
         &self,
         op: BinOp,
         lhs: BasicValueEnum<'ctx>,
@@ -438,9 +438,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             (BasicValueEnum::FloatValue(lhs), BasicValueEnum::FloatValue(rhs)) => {
                 self.float_binary(op, lhs, rhs)
             }
-            _ => Err(CodegenError::internal(
-                "binary operands do not have the same scalar kind",
-            )),
+            _ => match op {
+                BinOp::Eq | BinOp::Ne => self.equality(ty, lhs, rhs, matches!(op, BinOp::Ne), span),
+                _ => Err(CodegenError::internal(
+                    "binary operands do not have the same scalar kind",
+                )),
+            },
         }
     }
 

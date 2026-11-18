@@ -673,8 +673,14 @@ impl<'a> BodyLowering<'a> {
                 self.lower_logical(op, lhs, rhs, dest, span)
             }
             ExprKind::Binary { op, lhs, rhs } => {
-                let lhs = self.lower_operand(lhs);
-                let rhs = self.lower_operand(rhs);
+                // Equality only reads its operands, so it never takes ownership
+                // of them: after `a == b` both values are still usable. Lowering
+                // the operands as `Copy` expresses that read even for an
+                // aggregate that is not `Copy`; code generation loads the value
+                // and the owner keeps dropping it exactly once.
+                let reads = matches!(op, BinaryOp::Eq | BinaryOp::Ne);
+                let lhs = self.lower_operand_for(lhs, reads);
+                let rhs = self.lower_operand_for(rhs, reads);
                 if let Some(dest) = dest {
                     self.assign_rvalue(
                         dest,
@@ -1495,6 +1501,19 @@ impl<'a> BodyLowering<'a> {
                 );
                 Operand::Copy(shared)
             }
+        }
+    }
+
+    /// Lowers an operand, reading it without moving when `read` is set.
+    ///
+    /// A move transfers ownership, which equality must not do. Converting the
+    /// move into a `Copy` of the same place keeps the operand's owner
+    /// responsible for its drop while still yielding the value.
+    fn lower_operand_for(&mut self, expr: HirExprId, read: bool) -> Operand {
+        let operand = self.lower_operand(expr);
+        match operand {
+            Operand::Move(place) if read => Operand::Copy(place),
+            operand => operand,
         }
     }
 

@@ -375,6 +375,33 @@ A cast emits no runtime call, allocation, temporary owner, or metadata. It reads
 its operand once and stores one destination value, and debug locations still
 describe the surrounding statement.
 
+### Equality
+
+`==` and `!=` on values that are not scalars lower to a structural comparison:
+
+- Both operands are stored in stack slots and the comparison walks the language
+  layout by byte offset. Only field and element bytes are read; padding between
+  fields is never loaded, so an uninitialized padding byte cannot be observed.
+  A scalar field is loaded at its own type and compared with the same predicate
+  as a top-level scalar.
+- An array compares its elements with a loop over a constant count. A struct and
+  a tuple compare every field in declaration order, and a nested aggregate
+  recurses.
+- An enum first compares the tags, then switches on the tag and compares the
+  fields of that one variant. Payload bytes belonging to any other variant are
+  uninitialized, so they are never read.
+- `*str` compares the lengths, then the bytes; `*[T]` compares the lengths, then
+  the elements. The element loop runs over the shorter length, so a differing
+  length never reads past either value, and a zero-length view compares equal to
+  another zero-length view.
+- Float fields and elements use ordered comparison, so `NaN` never equals itself
+  inside an aggregate either.
+
+The operands are read, not moved: MIR lowers them as `Operand::Copy` even for a
+non-`Copy` aggregate, and code generation loads the value without taking
+ownership. The value's owner still drops it exactly once, and `a == b` leaves
+both operands usable.
+
 ## Native runtime
 
 `build.rs` compiles `runtime/seal_rt.c` with the `cc` crate and embeds the
