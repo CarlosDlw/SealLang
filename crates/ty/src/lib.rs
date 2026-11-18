@@ -20,6 +20,7 @@ mod adt;
 mod cast;
 mod ctxt;
 mod display;
+mod drop;
 mod generics;
 mod id;
 mod infer;

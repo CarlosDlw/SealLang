@@ -268,7 +268,9 @@ fn parameter_queries_are_conservative_without_bounds() {
 
     assert!(!ctxt.is_copy(param_ty));
     assert!(ctxt.is_sized(param_ty));
-    assert!(!ctxt.needs_drop(param_ty));
+    // A parameter may be instantiated with a type that has a destructor, so the
+    // query is conservative; monomorphization answers for the concrete type.
+    assert!(ctxt.needs_drop(param_ty));
     assert!(ctxt.contains_reference(param_ty));
     assert!(ctxt.contains_exclusive_reference(param_ty));
 

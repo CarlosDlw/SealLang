@@ -8,6 +8,7 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
+use crate::drop::DropImpls;
 use crate::generics::{
     GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
 };
@@ -109,6 +110,12 @@ pub struct TyCtxt {
     trait_impls: RefCell<Vec<TraitImplDef>>,
     trait_impl_index: RefCell<FxHashMap<(DefId, ImplHead), Vec<usize>>>,
     blanket_trait_impls: RefCell<Vec<usize>>,
+    /// The `impl Drop` destructor of every aggregate that declares one.
+    ///
+    /// Lowering fills this after validating the implementation; see
+    /// [`crate::drop`]. A query on a type never observes a half-filled registry,
+    /// because lowering finishes before type checking starts.
+    drop_impls: RefCell<DropImpls>,
 }
 
 impl TyCtxt {
@@ -845,25 +852,58 @@ impl TyCtxt {
         }
     }
 
+    /// Records the destructor the aggregate `adt` declares.
+    ///
+    /// Lowering calls this once per validated `impl Drop for T`, after checking
+    /// that the implementation covers the whole declaration. The returned method
+    /// is the destructor previously recorded for the same aggregate, which lets
+    /// the caller reject a duplicate instead of replacing one silently.
+    #[must_use]
+    pub fn set_drop_method(&self, adt: AdtId, method: DefId) -> Option<DefId> {
+        self.drop_impls.borrow_mut().insert(adt, method)
+    }
+
+    /// Returns the destructor `adt` declares, if any.
+    ///
+    /// The method is the body of the aggregate's `impl Drop`; its instantiation
+    /// for one type argument list is what the drop glue calls.
+    pub fn drop_method(&self, adt: AdtId) -> Option<DefId> {
+        self.drop_impls.borrow().get(adt)
+    }
+
     /// Returns `true` if dropping a value of `ty` runs a destructor.
     ///
-    /// No current type has one: scalars, references, `str`, `()`, and `!` are
-    /// trivially disposable. An aggregate computes this from every field of
-    /// every variant and, later, from its own destructor. An unresolved
-    /// variable reports `false`; the caller must resolve it first, as with
-    /// [`TyCtxt::is_copy`].
+    /// A declared destructor makes an aggregate answer `true` on its own; a
+    /// reference to any such aggregate does not, because dropping a reference
+    /// never drops the pointee. Scalars, `bool`, `char`, `str`, `()`, `!`,
+    /// references, and slices are trivially disposable. Arrays and tuples
+    /// propagate from their elements, and an aggregate without a destructor
+    /// spreads the question over every field of every variant.
+    ///
+    /// A type parameter reports `true`, conservatively: monomorphization
+    /// replaces it with a concrete type, whose drop glue is empty when that type
+    /// has no destructor. Reporting `false` would skip the destructor of every
+    /// type argument that has one. A trait object reports `false` because it
+    /// never exists by value. An unresolved variable reports `false`; the caller
+    /// must resolve it first, as with [`TyCtxt::is_copy`].
     pub fn needs_drop(&self, ty: TyId) -> bool {
         self.needs_drop_inner(ty, &mut FxHashSet::default())
     }
 
     fn needs_drop_inner(&self, ty: TyId, visiting: &mut FxHashSet<(AdtId, SubstsId)>) -> bool {
         match self.kind(ty) {
+            TyKind::Param(_) => true,
             TyKind::Array { element, .. } => self.needs_drop_inner(element, visiting),
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
                 .iter()
                 .any(|element| self.needs_drop_inner(*element, visiting)),
             TyKind::Adt { adt, args } => {
+                // A declared destructor answers before the fields: its glue runs
+                // the destructor and then drops the fields itself.
+                if self.drop_method(adt).is_some() {
+                    return true;
+                }
                 let key = (adt, args);
                 if !visiting.insert(key) {
                     return false;
@@ -1152,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn no_current_type_needs_drop() {
+    fn trivial_types_never_need_drop() {
         let ctxt = TyCtxt::new();
         let int = ctxt.int_ty(IntTy::I32);
         for ty in [
