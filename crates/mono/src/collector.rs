@@ -1,6 +1,6 @@
 //! Reachable-instance collection.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use seal_diagnostics::DiagCtxt;
 use seal_error_codes as codes;
@@ -13,8 +13,9 @@ use seal_symbol::Interner;
 use seal_ty::Instance;
 
 use crate::error::MonoError;
-use crate::id::InstanceId;
-use crate::substitute;
+use crate::id::{InstanceId, VtableId};
+use crate::substitute::{self, BodyEvent};
+use crate::vtable::{self, MonoVTable, VtableKey};
 use crate::{MonoMir, MonoProgram};
 
 /// Maximum call-chain depth while discovering instances.
@@ -22,6 +23,9 @@ pub const MAX_DEPTH: usize = 64;
 
 /// Maximum number of distinct instances one program may collect.
 pub const MAX_INSTANCES: usize = 4096;
+
+/// Maximum number of distinct vtables one program may collect.
+pub const MAX_VTABLES: usize = 4096;
 
 /// Expansion limits.
 ///
@@ -32,12 +36,14 @@ pub const MAX_INSTANCES: usize = 4096;
 pub(crate) struct Limits {
     pub(crate) depth: usize,
     pub(crate) instances: usize,
+    pub(crate) vtables: usize,
 }
 
 impl Limits {
     pub(crate) const DEFAULT: Self = Self {
         depth: MAX_DEPTH,
         instances: MAX_INSTANCES,
+        vtables: MAX_VTABLES,
     };
 }
 
@@ -84,6 +90,9 @@ pub(crate) fn collect_with(
         queue: VecDeque::new(),
         bodies: Vec::new(),
         items: Vec::new(),
+        vtables: IndexVec::new(),
+        vtable_ids: FxHashMap::default(),
+        rejected_vtables: HashSet::new(),
     };
     collector.seed_roots();
     while let Some(pending) = collector.queue.pop_front() {
@@ -102,6 +111,10 @@ struct Collector<'a> {
     queue: VecDeque<Pending>,
     bodies: Vec<Option<MonoMir>>,
     items: Vec<MonoItem>,
+    vtables: IndexVec<VtableId, MonoVTable>,
+    vtable_ids: FxHashMap<VtableKey, VtableId>,
+    /// Keys already reported, so one broken coercion is not reported again.
+    rejected_vtables: HashSet<VtableKey>,
 }
 
 impl Collector<'_> {
@@ -197,28 +210,94 @@ impl Collector<'_> {
             return;
         };
         let specialized = substitute::instantiate_body(self.hir, body, pending.instance);
-        let (body, children) =
-            substitute::resolve_calls(self.hir, self.dcx, self.interner, specialized);
+        let (body, events) =
+            substitute::resolve_body(self.hir, self.dcx, self.interner, specialized);
         self.bodies[pending.id.index() as usize] = Some(MonoMir {
             instance: pending.instance,
             body,
         });
-        for child in children {
-            let mut chain = pending.chain.clone();
-            chain.push((child.instance, child.span));
-            self.enqueue(child.instance, pending.depth + 1, chain, child.span);
+        for event in events {
+            match event {
+                BodyEvent::Call(child) => {
+                    let mut chain = pending.chain.clone();
+                    chain.push((child.instance, child.span));
+                    self.enqueue(child.instance, pending.depth + 1, chain, child.span);
+                }
+                BodyEvent::Vtable { key, span } => {
+                    self.collect_vtable(key, span, pending.depth + 1, &pending.chain)
+                }
+            }
+        }
+    }
+
+    /// Builds one vtable and schedules its method instances.
+    ///
+    /// The key is inserted before the methods are enqueued so a method body
+    /// that coerces to the same vtable cannot request it recursively. Failures
+    /// mark the key rejected, so repeated coercions do not repeat diagnostics.
+    fn collect_vtable(
+        &mut self,
+        key: VtableKey,
+        span: Span,
+        depth: usize,
+        chain: &[(Instance, Span)],
+    ) {
+        if self.vtable_ids.contains_key(&key) || self.rejected_vtables.contains(&key) {
+            return;
+        }
+        if self.vtables.len() >= self.limits.vtables {
+            self.dcx
+                .error(
+                    MonoError::VtableLimit {
+                        limit: self.limits.vtables,
+                    }
+                    .to_string(),
+                )
+                .code(codes::E7006.diag_code())
+                .primary(span, "the vtable limit was reached here")
+                .emit();
+            self.rejected_vtables.insert(key);
+            return;
+        }
+        let table = match vtable::build_vtable(self.hir, self.interner, key) {
+            Ok(table) => table,
+            Err(error) => {
+                vtable::report(self.dcx, span, &error);
+                self.rejected_vtables.insert(key);
+                return;
+            }
+        };
+        let entries = table.entries.clone();
+        let id = VtableId::from_usize(self.vtables.len());
+        self.vtables.push(table);
+        self.vtable_ids.insert(key, id);
+        for entry in entries {
+            let mut chain = chain.to_vec();
+            chain.push((entry, span));
+            self.enqueue(entry, depth, chain, span);
         }
     }
 
     fn finish(self) -> MonoProgram {
         let Self {
-            ids, bodies, items, ..
+            ids,
+            bodies,
+            items,
+            vtables,
+            vtable_ids,
+            ..
         } = self;
         let instances: Vec<MonoMir> = bodies
             .into_iter()
             .map(|body| body.expect("every discovered instance has a body"))
             .collect();
-        MonoProgram::new(IndexVec::from_raw(instances), ids, items)
+        MonoProgram::new(
+            IndexVec::from_raw(instances),
+            ids,
+            items,
+            vtables,
+            vtable_ids,
+        )
     }
 
     /// Reports a limit diagnostic with one label per path step.

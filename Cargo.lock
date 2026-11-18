@@ -428,6 +428,7 @@ dependencies = [
  "seal-hash",
  "seal-hir",
  "seal-index",
+ "seal-layout",
  "seal-lexer",
  "seal-mir",
  "seal-parser",

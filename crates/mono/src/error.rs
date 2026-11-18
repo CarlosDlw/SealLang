@@ -68,6 +68,16 @@ pub enum MonoError {
         /// The configured limit.
         limit: usize,
     },
+    /// The total vtable limit was reached.
+    VtableLimit {
+        /// The configured limit.
+        limit: usize,
+    },
+    /// A vtable layout or method entry could not be built.
+    VtableLayout {
+        /// The layout failure, with the offending trait or method when known.
+        detail: String,
+    },
 }
 
 impl fmt::Display for MonoError {
@@ -120,6 +130,12 @@ impl fmt::Display for MonoError {
             ),
             Self::InstanceLimit { limit } => {
                 write!(f, "monomorphization reached its instance limit of {limit}")
+            }
+            Self::VtableLimit { limit } => {
+                write!(f, "monomorphization reached its vtable limit of {limit}")
+            }
+            Self::VtableLayout { detail } => {
+                write!(f, "a trait-object vtable could not be built: {detail}")
             }
         }
     }

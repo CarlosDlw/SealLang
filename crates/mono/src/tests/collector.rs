@@ -400,6 +400,7 @@ fn the_instance_limit_is_enforced_before_allocation() {
     let (hir, _mir, program) = fixture.lower_with(Limits {
         depth: 64,
         instances: 2,
+        vtables: 4096,
     });
     fixture.expect("E7004", "instance limit");
     assert_eq!(program.instances().len(), 2);

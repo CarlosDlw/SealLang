@@ -12,6 +12,7 @@ use seal_symbol::Interner;
 use seal_ty::{Bound, Instance, SubstsId, TemplateUnifier, TraitImplDef, TyCtxt, TyId};
 
 use crate::error::MonoError;
+use crate::vtable::{self, VtableKey};
 
 /// One call discovered in a specialized body.
 pub(crate) struct ChildCall {
@@ -19,6 +20,19 @@ pub(crate) struct ChildCall {
     pub(crate) instance: Instance,
     /// The call's source span, for limits and missing-impl diagnostics.
     pub(crate) span: Span,
+}
+
+/// One discovery event in a specialized body, in statement order.
+pub(crate) enum BodyEvent {
+    /// A call whose callee must be collected.
+    Call(ChildCall),
+    /// A trait-object coercion that needs a vtable.
+    Vtable {
+        /// The concrete type and principal trait.
+        key: VtableKey,
+        /// The coercion's source span.
+        span: Span,
+    },
 }
 
 /// Returns `body` with every type replaced by the instance's arguments.
@@ -41,49 +55,69 @@ pub(crate) fn instantiate_body(hir: &Hir, body: &Body, instance: Instance) -> Bo
     specialized
 }
 
-/// Replaces symbolic calls in `body`, returning every callee in statement order.
+/// Resolves symbolic calls and records vtable requests in statement order.
 ///
 /// A symbolic call whose implementation cannot be selected is reported and left
 /// symbolic; the caller stops the pipeline, and validation would reject it if it
-/// reached a later phase.
-pub(crate) fn resolve_calls(
+/// reached a later phase. A malformed trait-object coercion is reported here too,
+/// so a later phase never has to guess why a vtable is missing.
+pub(crate) fn resolve_body(
     hir: &Hir,
     dcx: &DiagCtxt,
     interner: &Interner,
     mut body: Body,
-) -> (Body, Vec<ChildCall>) {
-    let mut children = Vec::new();
+) -> (Body, Vec<BodyEvent>) {
+    let tcx = hir.ty_ctxt();
+    let mut events = Vec::new();
     for block in &mut body.blocks {
         for statement in &mut block.statements {
             let span = statement.span;
             let StatementKind::Assign { rvalue, .. } = &mut statement.kind;
-            let Rvalue::Call { target, .. } = rvalue else {
-                continue;
-            };
-            match *target {
-                CallTarget::Direct { instance, .. } => {
-                    children.push(ChildCall { instance, span });
-                }
-                CallTarget::TraitMethod {
-                    instance,
-                    parameters,
-                } => match resolve_trait_instance(hir, interner, instance) {
-                    Ok(concrete) => {
-                        *target = CallTarget::Direct {
-                            instance: concrete,
-                            parameters,
-                        };
-                        children.push(ChildCall {
-                            instance: concrete,
-                            span,
-                        });
+            match rvalue {
+                Rvalue::Call { target, .. } => match *target {
+                    CallTarget::Direct { instance, .. } => {
+                        events.push(BodyEvent::Call(ChildCall { instance, span }));
                     }
-                    Err(error) => report(dcx, span, &error),
+                    CallTarget::TraitMethod {
+                        instance,
+                        parameters,
+                    } => match resolve_trait_instance(hir, interner, instance) {
+                        Ok(concrete) => {
+                            *target = CallTarget::Direct {
+                                instance: concrete,
+                                parameters,
+                            };
+                            events.push(BodyEvent::Call(ChildCall {
+                                instance: concrete,
+                                span,
+                            }));
+                        }
+                        Err(error) => report(dcx, span, &error),
+                    },
                 },
+                Rvalue::MakeTraitObject {
+                    source_ty,
+                    target_ty,
+                    ..
+                } => match vtable::key_of(tcx, *source_ty, *target_ty) {
+                    Some(key) => events.push(BodyEvent::Vtable { key, span }),
+                    None => vtable::report(
+                        dcx,
+                        span,
+                        &MonoError::VtableLayout {
+                            detail: format!(
+                                "the coercion from `{}` to `{}` has no concrete trait-object key",
+                                display_type(tcx, interner, *source_ty),
+                                display_type(tcx, interner, *target_ty)
+                            ),
+                        },
+                    ),
+                },
+                _ => {}
             }
         }
     }
-    (body, children)
+    (body, events)
 }
 
 /// Selects the impl method instance for one symbolic trait call.

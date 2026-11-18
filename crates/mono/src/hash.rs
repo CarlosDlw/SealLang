@@ -9,6 +9,8 @@ use seal_hir::Hir;
 use seal_symbol::Interner;
 use seal_ty::{Instance, TyCtxt, TyId, TyKind};
 
+use crate::vtable::VtableKey;
+
 /// Returns the stable fingerprint of `instance`.
 pub fn instance_hash(hir: &Hir, instance: Instance) -> Fingerprint {
     let tcx = hir.ty_ctxt();
@@ -34,6 +36,44 @@ pub fn instance_name(hir: &Hir, interner: &Interner, instance: Instance) -> Stri
         .map(|argument| hir.ty_ctxt().display_with(*argument, interner).to_string())
         .collect();
     format!("{base}<{}>", rendered.join(", "))
+}
+
+/// Returns the stable fingerprint of a vtable key.
+///
+/// The fingerprint covers the concrete pointee, the principal trait, and its
+/// instantiated arguments. It excludes pointer sharedness, so shared and
+/// exclusive coercions of the same implementor share one fingerprint.
+pub fn vtable_hash(hir: &Hir, key: &VtableKey) -> Fingerprint {
+    let tcx = hir.ty_ctxt();
+    let mut hasher = StableHasher::new();
+    hasher.write_usize(key.trait_ref.trait_def.index() as usize);
+    hash_type(tcx, key.concrete, &mut hasher);
+    let arguments = tcx.substs_args(key.trait_ref.args);
+    hasher.write_length(arguments.len());
+    for argument in arguments {
+        hash_type(tcx, argument, &mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Returns a readable, non-user-visible name for a vtable key.
+pub fn vtable_name(hir: &Hir, interner: &Interner, key: &VtableKey) -> String {
+    let tcx = hir.ty_ctxt();
+    let trait_name = interner.resolve(hir.definitions().name(key.trait_ref.trait_def));
+    let arguments: Vec<String> = tcx
+        .substs_args(key.trait_ref.args)
+        .iter()
+        .map(|argument| tcx.display_with(*argument, interner).to_string())
+        .collect();
+    let suffix = if arguments.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", arguments.join(", "))
+    };
+    format!(
+        "{} as {trait_name}{suffix}",
+        tcx.display_with(key.concrete, interner)
+    )
 }
 
 fn hash_type(tcx: &TyCtxt, ty: TyId, hasher: &mut StableHasher) {

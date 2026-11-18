@@ -101,6 +101,10 @@ impl Fixture {
         &self.interner
     }
 
+    pub(crate) fn dcx(&self) -> &DiagCtxt {
+        &self.dcx
+    }
+
     pub(crate) fn symbol(&self, symbol: Symbol) -> String {
         self.interner.resolve(symbol).to_owned()
     }

@@ -10,3 +10,11 @@ newtype_index! {
     /// the same ID to the same instance.
     pub struct InstanceId;
 }
+
+newtype_index! {
+    /// Position of a [`MonoVTable`](crate::MonoVTable) in a
+    /// [`MonoProgram`](crate::MonoProgram).
+    ///
+    /// IDs follow first-coercion order and are independent from instance IDs.
+    pub struct VtableId;
+}
