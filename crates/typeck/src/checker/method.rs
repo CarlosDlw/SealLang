@@ -450,30 +450,15 @@ impl Checker<'_> {
         let Some(definition) = self.hir.trait_definition(trait_ref.trait_def) else {
             return;
         };
-        let mut arguments = Vec::with_capacity(definition.generics.params.len());
-        arguments.push(trait_ref.self_ty);
-        arguments.extend(self.hir.ty_ctxt().substs_args(trait_ref.args));
-        if arguments.len() != definition.generics.params.len() {
-            return;
-        }
-        let substs = self.hir.ty_ctxt().substs(&arguments);
         for supertrait in &definition.supertraits {
-            let self_ty = self.hir.ty_ctxt().substitute(supertrait.self_ty, substs);
-            let args: Vec<TyId> = self
+            let Some(instantiated) = self
                 .hir
                 .ty_ctxt()
-                .substs_args(supertrait.args)
-                .into_iter()
-                .map(|argument| self.hir.ty_ctxt().substitute(argument, substs))
-                .collect();
-            self.collect_visible_traits(
-                seal_ty::TraitRef::new(
-                    supertrait.trait_def,
-                    self_ty,
-                    self.hir.ty_ctxt().substs(&args),
-                ),
-                traits,
-            );
+                .instantiate_supertrait(*supertrait, trait_ref)
+            else {
+                continue;
+            };
+            self.collect_visible_traits(instantiated, traits);
         }
     }
 

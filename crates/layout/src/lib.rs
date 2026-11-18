@@ -14,6 +14,9 @@
 //! - scalar alignment equals size, references use the target pointer width,
 //!   `char` is 4 bytes, `bool` is 1, and `()`/`!` are zero-sized.
 //!
+//! Trait-object vtables use a separate deterministic slot layout: a three-entry
+//! header followed by the principal and supertrait methods. See [`VtableLayout`].
+//!
 //! Type checking rejects unsized and recursive-by-value aggregates before
 //! codegen, so errors here are internal invariants rather than user
 //! diagnostics.
@@ -21,7 +24,11 @@
 #![warn(missing_docs)]
 
 mod layout;
+mod vtable;
 
 pub use layout::{
     EnumLayout, FieldLayout, Layout, LayoutCtxt, LayoutError, VariantLayout, tag_layout,
+};
+pub use vtable::{
+    VTABLE_HEADER_SLOTS, VtableEntry, VtableEntryKind, VtableLayout, VtableLayoutError, VtableSlot,
 };
