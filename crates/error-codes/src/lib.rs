@@ -390,6 +390,46 @@ that Seal does not define. An enum variant must always be written with its enum
 name, as in `Mode::On`; a bare variant name is a binding.\n\nFix the pattern syntax, or use `_` when the arm ignores the value.",
 };
 
+/// A `const` or `static` declaration is incomplete.
+pub const E1012: ErrorCode = ErrorCode {
+    code: "E1012",
+    title: "incomplete const or static declaration",
+    explanation: "\
+A `const` or `static` declaration always states its type and its initializer: the
+type is the contract every use relies on, and the initializer is the value the
+compiler evaluates. There is no inference from a later assignment, and the value
+is never left uninitialized.
+
+Write both, as in `const LIMIT: usize = 1024;` or `static FLAG: bool = false;`.",
+};
+
+/// A mutable static is written in an invalid form.
+pub const E1013: ErrorCode = ErrorCode {
+    code: "E1013",
+    title: "invalid mutable static form",
+    explanation: "\
+`mut` is a modifier of `static`, not a separate item keyword. Seal has no
+`const mut`, no `mut static`, and no second `mut`; only `static mut NAME: T =
+value;` declares mutable global storage.
+
+Write `static mut` for mutable storage and plain `static` for read-only storage.
+A block-scope declaration follows the same spelling.",
+};
+
+/// A const or static declaration appears in an unsupported position.
+pub const E1014: ErrorCode = ErrorCode {
+    code: "E1014",
+    title: "declaration is not allowed here",
+    explanation: "\
+A `const` or `static` item appears at file scope, and may also be a declaration
+statement inside a block. `const func` is a file-scope item only, and no
+const/static declaration may appear inside an expression, a parameter list, or
+a trait implementation body.
+
+Move the declaration to file scope, or use a block-scope `const`/`static`
+statement where a local value is intended.",
+};
+
 /// A definition is declared twice in the same scope.
 pub const E2001: ErrorCode = ErrorCode {
     code: "E2001",
@@ -1142,6 +1182,20 @@ depend on an implementation that the compiler deliberately ignores.\n\nWrap the 
 wrapper. The built-in behavior remains available through the wrapped value.",
 };
 
+/// A value name is declared twice in the same scope.
+pub const E2068: ErrorCode = ErrorCode {
+    code: "E2068",
+    title: "duplicate value name",
+    explanation: "\
+Functions, `const` names, `static` names, parameters, and bindings share one
+value namespace. Declaring two of them with the same name in one scope makes
+every use ambiguous, so the compiler reports the second declaration instead of
+letting declaration order decide.
+
+A block-scope declaration may shadow a name from an outer scope; only a
+duplicate inside the same scope is rejected. Rename one of the two definitions.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -1721,6 +1775,46 @@ may still name the same place. Pass references to distinct places, or use a
 shared reference when the callee does not write.",
 };
 
+/// A call may read an exclusively borrowed static.
+pub const E5011: ErrorCode = ErrorCode {
+    code: "E5011",
+    title: "call may read an exclusively borrowed static",
+    explanation: "\
+An exclusive loan of a mutable static promises that no other access can reach
+its storage while the loan is live. The called function may read that static,
+directly or through another function, because Seal cannot see across the call.
+
+End the exclusive borrow before the call, or pass the value the function needs
+instead of letting it reach the global.",
+};
+
+/// A reference to a mutable static escapes its function.
+pub const E5012: ErrorCode = ErrorCode {
+    code: "E5012",
+    title: "mutable static reference escapes",
+    explanation: "\
+A reference to a `static mut` is only valid while the function that created it
+can reason about the borrow. Returning it, storing it in a longer-lived place, or
+passing it to code that keeps it would let another function use the global after
+the borrow checker stopped tracking it.
+
+Use the reference only inside the function, and reborrow the static where it is
+needed.",
+};
+
+/// A call may write a borrowed static.
+pub const E5013: ErrorCode = ErrorCode {
+    code: "E5013",
+    title: "call may write a borrowed static",
+    explanation: "\
+The called function may write a mutable static, directly or transitively. A live
+loan of that static in the caller would then observe storage changing through a
+path the loan did not expect.
+
+End the loan before the call, or restructure the code so the caller does not hold
+a reference to the global across it.",
+};
+
 /// The program has no usable entry point.
 pub const E6001: ErrorCode = ErrorCode {
     code: "E6001",
@@ -1762,6 +1856,20 @@ built for the target, or `sealc build --emit=obj` to link the object separately.
 Check that the output directory exists and is writable, that a C toolchain is
 installed, and that the target's linker and sysroot are available. Nothing is
 left behind: artifacts are written through a temporary file.",
+};
+
+/// A reachable static or constant cannot be emitted.
+pub const E6004: ErrorCode = ErrorCode {
+    code: "E6004",
+    title: "cannot emit a global value",
+    explanation: "\
+Code generation emits every reachable static and constant allocation as an LLVM
+global. A value whose layout is malformed, whose relocation targets a missing
+symbol, or whose trait object has no vtable cannot be represented in the object
+file.
+
+The message names the item and the offending type. This is usually an internal
+compiler error, unless the program uses a construct the target cannot represent.",
 };
 
 /// Monomorphization exceeded its recursion depth.
@@ -1849,6 +1957,19 @@ vtable collection limit before code generation starts.\n\nReduce the number of c
 grouping implementations behind fewer traits, or split the program so each part
 uses fewer trait objects. The limit exists so such a program reports an error
 instead of consuming unbounded memory.",
+};
+
+/// A constant trait object has no collected vtable.
+pub const E7007: ErrorCode = ErrorCode {
+    code: "E7007",
+    title: "constant trait object has no vtable",
+    explanation: "\
+A constant that holds a trait object names a concrete implementation and a
+trait. Monomorphization collects one vtable for every reachable pair, and code
+generation needs that table to initialize the constant.
+
+Implement the trait for the concrete type, or remove the constant that needs the
+missing table. The compiler reports this rather than emitting a null vtable.",
 };
 
 /// The internal compiler error code.
@@ -2141,21 +2262,466 @@ choose a concrete implementation or generate a well-typed call.\n\nAnnotate the 
 or pass a concrete type where the protocol is used.",
 };
 
+/// A static's type is not `Sized`.
+pub const E3056: ErrorCode = ErrorCode {
+    code: "E3056",
+    title: "static type is not sized",
+    explanation: "\
+Every static owns one allocation whose size must be known when the program is
+built. `str`, `[T]`, and bare trait objects are unsized, so they cannot be the
+type of a static.
+
+Store the value behind a reference (`*str`, `*[T]`, `*dyn Trait`) or use a sized
+aggregate that contains the data.",
+};
+
+/// A const's type is not `Sized`.
+pub const E3057: ErrorCode = ErrorCode {
+    code: "E3057",
+    title: "const type is not sized",
+    explanation: "\
+A `const` is inlined wherever it is used, so its type must have a fixed size.
+Unsized types have no value to copy: `str`, `[T]`, and bare trait objects exist
+only behind a reference.
+
+Use a sized type, or declare the value as a reference such as `*str`.",
+};
+
+/// A non-`Copy` value would be moved out of a static.
+pub const E3058: ErrorCode = ErrorCode {
+    code: "E3058",
+    title: "cannot move out of a static",
+    explanation: "\
+A static is one allocation shared by the whole program, so reading a non-`Copy`
+value out of it would move storage that other code can still reach. The compiler
+rejects the move instead of duplicating or invalidating the global.
+
+Read a `Copy` field, borrow the static (`*T` or `*mut T`), or copy the value
+into a local before using it.",
+};
+
+/// An immutable static is assigned.
+pub const E3059: ErrorCode = ErrorCode {
+    code: "E3059",
+    title: "cannot assign to an immutable static",
+    explanation: "\
+Only `static mut` is writable. A plain `static` is initialized before the
+program starts and never changes afterwards, so an assignment, a compound
+assignment, or an exclusive borrow of it is rejected.
+
+Declare the storage with `static mut` and perform the access inside `unsafe`, or
+keep the value immutable and compute a new local value instead.",
+};
+
+/// A const or static mentions a generic parameter.
+pub const E3060: ErrorCode = ErrorCode {
+    code: "E3060",
+    title: "const or static item mentions a generic parameter",
+    explanation: "\
+A `const` or `static` has exactly one value for the whole program, so its type
+and initializer cannot depend on a type parameter that varies per call or per
+instantiation. A declaration inside a generic function has the same rule: the
+storage is shared by every instantiation.
+
+Use a concrete type, move the value into a local, or compute it through a
+generic `const func` whose result is materialized per call.",
+};
+
+/// A const function mentions a mutable raw pointer.
+pub const E3062: ErrorCode = ErrorCode {
+    code: "E3062",
+    title: "const function mentions a mutable raw pointer",
+    explanation: "\
+Compile-time evaluation has no mutable memory to hand out, so a `const func`
+cannot declare, accept, return, or construct a `*mut T` value, directly or
+through an aggregate it names.
+
+Use a shared reference (`*T`) for data the function only reads, or move the
+pointer manipulation into an ordinary function that runs only at runtime.",
+};
+
+/// A mutable static place is accessed outside `unsafe`.
+pub const E3063: ErrorCode = ErrorCode {
+    code: "E3063",
+    title: "mutable static access requires unsafe",
+    explanation: "\
+Reading, writing, borrowing, or projecting a `static mut` place is only allowed
+inside an `unsafe { ... }` block. Mutable global storage can be reached from
+anywhere, so the marker records that the programmer, not the compiler, is
+responsible for the parts of aliasing that a single function cannot see.
+
+Wrap the access in `unsafe { ... }`, or use an immutable `static` when the value
+does not need to change.",
+};
+
+/// Constant evaluation failed.
+pub const E4001: ErrorCode = ErrorCode {
+    code: "E4001",
+    title: "constant evaluation failed",
+    explanation: "\
+The compiler evaluates every `const` and `static` initializer before the program
+runs. Evaluation can fail for a specific rule, reported by a more precise code;
+this code is the fallback that names the item when no specific reason applies.
+
+The diagnostic includes the item and the operation that failed. Fix the
+initializer so it can be computed from the values available at compile time.",
+};
+
+/// A constant expression divides by zero.
+pub const E4002: ErrorCode = ErrorCode {
+    code: "E4002",
+    title: "division by zero in a constant",
+    explanation: "\
+Constant evaluation performs integer arithmetic exactly, so dividing by zero has
+no value to produce and cannot be deferred to runtime: the initializer would
+never have a well-defined result.
+
+Guard the divisor, or compute the value in ordinary code where the division runs
+at runtime.",
+};
+
+/// A constant expression takes a remainder by zero.
+pub const E4003: ErrorCode = ErrorCode {
+    code: "E4003",
+    title: "remainder by zero in a constant",
+    explanation: "\
+The remainder operation is undefined when the divisor is zero, exactly like
+division. A constant must have one well-defined value, so the evaluator reports
+the operation instead of producing a result that depends on the target.
+
+Guard the divisor, or perform the remainder at runtime.",
+};
+
+/// A constant expression overflows signed division.
+pub const E4004: ErrorCode = ErrorCode {
+    code: "E4004",
+    title: "signed division overflow in a constant",
+    explanation: "\
+Signed division overflow is the one integer operation with no representable
+result: the minimum value divided by `-1` exceeds the maximum. Runtime code
+would trap, and constant evaluation reports it while the item is checked.
+
+Use a wider type, avoid the negative divisor, or handle the boundary case
+explicitly.",
+};
+
+/// A constant expression indexes outside an array or slice.
+pub const E4005: ErrorCode = ErrorCode {
+    code: "E4005",
+    title: "index out of bounds in a constant",
+    explanation: "\
+Constant evaluation checks every array, slice, and tuple index against the
+actual length, exactly like runtime indexing. An index outside that range has no
+element, and the constant cannot be built.
+
+Use an index inside the range, or change the array length or slice extent.",
+};
+
+/// A constant expression creates an invalid slice range.
+pub const E4006: ErrorCode = ErrorCode {
+    code: "E4006",
+    title: "invalid slice range in a constant",
+    explanation: "\
+A slice range must start and end inside the source and must not be reversed.
+Constant evaluation checks both bounds before creating the slice, so an empty or
+malformed extent is reported instead of producing a reference outside the
+allocation.
+
+Adjust the bounds so `start <= end` and both lie within the slice.",
+};
+
+/// Constants depend on each other in a cycle.
+pub const E4007: ErrorCode = ErrorCode {
+    code: "E4007",
+    title: "constant evaluation cycle",
+    explanation: "\
+Constants may refer to other constants, statics, and const functions. Each value
+must be computable from values that do not depend on it, so a dependency cycle
+has no starting point. The diagnostic lists the edges of the cycle rather than
+only the repeated name.
+
+Break the cycle by making one value independent, or compute it at runtime.",
+};
+
+/// Constant evaluation exceeded its step limit.
+pub const E4008: ErrorCode = ErrorCode {
+    code: "E4008",
+    title: "constant evaluation step limit reached",
+    explanation: "\
+Constant evaluation is bounded so a hostile or accidental initializer cannot
+keep the compiler running forever. The step budget counts interpreted
+operations, including calls made from a `const func`.
+
+Simplify the computation, move the work to runtime, or split the value into
+smaller constants. The limit exists to fail deterministically rather than hang.",
+};
+
+/// Constant evaluation exceeded its call-depth limit.
+pub const E4009: ErrorCode = ErrorCode {
+    code: "E4009",
+    title: "constant evaluation call depth reached",
+    explanation: "\
+A `const func` may call other `const func`s, including itself. Recursion is
+allowed only while the interpreter's call-depth budget lasts; exceeding it means
+the evaluation would not terminate within the guaranteed resources.
+
+Reduce the recursion depth, or perform the computation at runtime.",
+};
+
+/// Constant evaluation exceeded its allocation or value-size limit.
+pub const E4010: ErrorCode = ErrorCode {
+    code: "E4010",
+    title: "constant evaluation allocation limit reached",
+    explanation: "\
+Constant evaluation allocates values from a bounded budget. An initializer that
+builds a very large array or string, or that creates many intermediate values,
+can exhaust it before the item is complete.
+
+Reduce the size of the constant, split it into several items, or build the value
+at runtime.",
+};
+
+/// A constant context calls a non-const function.
+pub const E4011: ErrorCode = ErrorCode {
+    code: "E4011",
+    title: "constant context calls a non-const function",
+    explanation: "\
+A `const` or `static` initializer runs at compile time, so every function it
+calls must be marked `const func` and must itself be evaluable. An ordinary
+function needs runtime state that does not exist during compilation.
+
+Mark the callee `const func` and remove operations that only work at runtime, or
+move the call into ordinary code that runs when the program executes.",
+};
+
+/// A constant value contains a mutable reference.
+pub const E4012: ErrorCode = ErrorCode {
+    code: "E4012",
+    title: "constant value contains a mutable reference",
+    explanation: "\
+A `*mut T` grants exclusive access to storage. Constant values are shared,
+immutable, and may be merged with identical values, so they cannot carry a
+mutable reference: two uses could otherwise write to the same constant data.
+
+Use a shared reference (`*T`) in the constant, or keep the mutable access in
+runtime code.",
+};
+
+/// A reference produced by evaluation escapes its temporary storage.
+pub const E4013: ErrorCode = ErrorCode {
+    code: "E4013",
+    title: "constant reference escapes evaluation",
+    explanation: "\
+A reference produced while evaluating a `const` or `static` may point at
+temporary storage created by the interpreter. Once evaluation ends, that storage
+no longer exists, so the reference would dangle.
+
+Store the referent in a `static`, which has program lifetime, or return a value
+instead of a reference.",
+};
+
+/// A constant context reads a mutable static.
+pub const E4014: ErrorCode = ErrorCode {
+    code: "E4014",
+    title: "constant context reads a mutable static",
+    explanation: "\
+Reading a `static mut` is an unsafe operation whose value can change between
+compilation and execution. A constant must have one value fixed at compile time,
+so its initializer cannot observe mutable global storage.
+
+Use an immutable `static`, pass the value as a parameter, or read the mutable
+static at runtime inside `unsafe`.",
+};
+
+/// A constant context writes to a static.
+pub const E4015: ErrorCode = ErrorCode {
+    code: "E4015",
+    title: "constant context writes to a static",
+    explanation: "\
+A constant initializer cannot change global state: the write would happen during
+compilation, not when the program runs, and the result would depend on
+evaluation order.
+
+Move the write to runtime code, and use `static mut` with an `unsafe` block if
+mutable global storage is really intended.",
+};
+
+/// A constant context uses dynamic dispatch.
+pub const E4016: ErrorCode = ErrorCode {
+    code: "E4016",
+    title: "constant context uses dynamic dispatch",
+    explanation: "\
+A constant must be built from a call target known at compile time. Dynamic
+dispatch reads a function pointer from a vtable that only exists at runtime, so
+the evaluator cannot follow it.
+
+Call a concrete function, or use a const function whose calls resolve
+statically.",
+};
+
+/// A constant context uses a custom iteration or indexing protocol.
+pub const E4017: ErrorCode = ErrorCode {
+    code: "E4017",
+    title: "constant context uses a custom protocol",
+    explanation: "\
+`for` loops and `[]` may resolve through user-defined `IntoIterator`, `Iterator`,
+`Index`, or `IndexMut` protocols whose bodies are ordinary functions. Constant
+evaluation cannot run those bodies at compile time unless they are const, and
+the protocol contract does not require it.
+
+Use a built-in array or slice in the constant, or compute the value in a
+`const func` without custom protocols.",
+};
+
+/// A `const func` calls a non-const function.
+pub const E4018: ErrorCode = ErrorCode {
+    code: "E4018",
+    title: "const function calls a non-const function",
+    explanation: "\
+A `const func` may run at compile time and at runtime. To keep that promise,
+every function it calls must also be `const func`; otherwise a call during
+constant evaluation would need runtime state.
+
+Mark the callee `const func`, or move the non-const call out of the `const
+func` and into an ordinary function.",
+};
+
+/// A `const func` uses a mutable raw pointer.
+pub const E4019: ErrorCode = ErrorCode {
+    code: "E4019",
+    title: "const function uses a mutable raw pointer",
+    explanation: "\
+Compile-time evaluation has no mutable memory for a `*mut T` to point at. A
+`const func` that mentions one could not be interpreted, so the restriction is
+checked in the signature and the body before any call is evaluated.
+
+Use a shared reference, or move the pointer work into a non-const function.",
+};
+
+/// A `const func` accesses a mutable static.
+pub const E4020: ErrorCode = ErrorCode {
+    code: "E4020",
+    title: "const function accesses a mutable static",
+    explanation: "\
+A `const func` may execute during compilation, when mutable global storage has
+no defined state and cannot be written. Allowing the access would make the
+constant depend on when it was evaluated.
+
+Read only immutable statics from a `const func`, and perform mutable-global
+access in runtime functions inside `unsafe`.",
+};
+
+/// A `const func` uses dynamic dispatch or a trait-bound call.
+pub const E4021: ErrorCode = ErrorCode {
+    code: "E4021",
+    title: "const function uses dynamic dispatch",
+    explanation: "\
+Calls inside a `const func` must be resolvable before the program runs. Dynamic
+dispatch needs a vtable built at runtime, and trait-bound calls need a concrete
+implementation that the evaluator cannot select.
+
+Call a concrete function, or make the type argument concrete so a static call is
+possible.",
+};
+
+/// A constant context uses an intrinsic outside the whitelist.
+pub const E4022: ErrorCode = ErrorCode {
+    code: "E4022",
+    title: "intrinsic is not available in a constant",
+    explanation: "\
+Seal's intrinsic methods have a fixed list of operations that constant
+evaluation implements. An intrinsic outside that list would need runtime
+behavior, allocation, or an environment that the evaluator does not provide.
+
+Use an operation from the constant whitelist, or compute the value at runtime.",
+};
+
+/// A constant reference is out of bounds or invalid.
+pub const E4023: ErrorCode = ErrorCode {
+    code: "E4023",
+    title: "invalid reference in a constant",
+    explanation: "\
+A reference inside a constant must name an allocation that exists in the
+evaluated program: a static, a promoted value, or a string. A reference produced
+by arithmetic or by an index outside every allocation has no valid target.
+
+Build the reference from an existing allocation, or use an index inside its
+bounds.",
+};
+
+/// A trait-object constant cannot build its vtable.
+pub const E4024: ErrorCode = ErrorCode {
+    code: "E4024",
+    title: "trait-object constant has no vtable",
+    explanation: "\
+A `*dyn Trait` constant needs a vtable describing the concrete implementation.
+The evaluator records the concrete type and trait, and monomorphization must
+collect the matching table; a missing or malformed implementation leaves the
+constant without dispatch data.
+
+Make sure the concrete type implements the trait, and that the implementation is
+reachable from the constant.",
+};
+
+/// A constant value is too large.
+pub const E4025: ErrorCode = ErrorCode {
+    code: "E4025",
+    title: "constant value is too large",
+    explanation: "\
+Every constant has a maximum representable size so a program cannot exhaust
+memory at compile time or produce an object the target cannot address. The limit
+counts the whole value, including nested aggregates and referenced allocations.
+
+Reduce the constant's size, split it into several items, or construct it at
+runtime.",
+};
+
+/// A const or static initializer reads a mutable static.
+pub const E4026: ErrorCode = ErrorCode {
+    code: "E4026",
+    title: "initializer reads a mutable static",
+    explanation: "\
+A `const` or `static` initializer is computed once, before the program runs.
+Reading a `static mut` there would capture a value that does not yet have a
+defined state and can change later.
+
+Use an immutable static in the initializer, or read the mutable static at
+runtime.",
+};
+
+/// A compile-time call panicked or had non-concrete type arguments.
+pub const E4027: ErrorCode = ErrorCode {
+    code: "E4027",
+    title: "constant evaluation could not complete the call",
+    explanation: "\
+Constant evaluation reports this code when a `const func` call cannot be
+completed: either the interpreted body reached a panic path, or a compile-time
+call supplied type arguments that are still generic. Both cases mean the value
+cannot be produced from the information available while compiling.
+
+Make the type arguments concrete, or avoid the failing operation in the
+compile-time path. The message states which of the two cases applied.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
-    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010, E1011, E2001, E2002,
-    E2003, E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012, E2013, E2014, E2015,
-    E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025, E2026, E2027, E2028,
-    E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038, E2039, E2040, E2041,
-    E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051, E2052, E2053, E2054,
-    E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064, E2065, E2066, E2067,
-    E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013,
-    E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026,
-    E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039,
-    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052,
-    E3053, E3054, E3055, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E6001, E6002, E6003, E7001, E7002, E7003, E7004, E7005, E7006, E9001, E9002,
+    E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010, E1011, E1012, E1013,
+    E1014, E2001, E2002, E2003, E2004, E2005, E2006, E2007, E2008, E2009, E2010, E2011, E2012,
+    E2013, E2014, E2015, E2016, E2017, E2018, E2019, E2020, E2021, E2022, E2023, E2024, E2025,
+    E2026, E2027, E2028, E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038,
+    E2039, E2040, E2041, E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051,
+    E2052, E2053, E2054, E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064,
+    E2065, E2066, E2067, E2068, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009,
+    E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022,
+    E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035,
+    E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
+    E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
+    E3063, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012,
+    E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025,
+    E4026, E4027, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
+    E5012, E5013, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007,
+    E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2268,6 +2834,69 @@ mod tests {
     }
 
     #[test]
+    fn global_data_codes_have_explanations() {
+        for (code, fragment) in [
+            ("E1012", "always states its type"),
+            ("E1013", "modifier of `static`"),
+            (
+                "E1014",
+                "may also be a declaration statement inside a block",
+            ),
+            ("E2068", "bindings share one value namespace"),
+            ("E3056", "one allocation whose size"),
+            ("E3057", "inlined wherever it is used"),
+            ("E3058", "move storage that other code"),
+            ("E3059", "Only `static mut` is writable"),
+            ("E3060", "exactly one value for the whole program"),
+            ("E3062", "no mutable memory to hand out"),
+            ("E3063", "inside an `unsafe { ... }` block"),
+            ("E4001", "fallback that names the item"),
+            ("E4002", "dividing by zero"),
+            ("E4003", "remainder operation is undefined"),
+            ("E4004", "no representable result"),
+            ("E4005", "outside that range has no element"),
+            ("E4006", "must not be reversed"),
+            ("E4007", "edges of the cycle"),
+            ("E4008", "step budget"),
+            ("E4009", "call-depth budget"),
+            ("E4010", "bounded budget"),
+            ("E4011", "must be marked `const func`"),
+            ("E4012", "may be merged with identical values"),
+            ("E4013", "that storage no longer exists"),
+            ("E4014", "cannot observe mutable global storage"),
+            ("E4015", "depend on evaluation order"),
+            ("E4016", "vtable that only exists at runtime"),
+            ("E4017", "protocol contract does not require it"),
+            ("E4018", "every function it calls must also be `const func`"),
+            ("E4019", "no mutable memory for a `*mut T`"),
+            ("E4020", "when mutable global storage has no defined state"),
+            ("E4021", "vtable built at runtime"),
+            ("E4022", "fixed list of operations"),
+            ("E4023", "must name an allocation that exists"),
+            ("E4024", "monomorphization must collect"),
+            ("E4025", "maximum representable size"),
+            ("E4026", "does not yet have a defined state"),
+            ("E4027", "which of the two cases"),
+            ("E5011", "cannot see across the call"),
+            ("E5012", "reborrow the static where it is needed"),
+            ("E5013", "directly or transitively"),
+            ("E6004", "as an LLVM global"),
+            ("E7007", "rather than emitting a null vtable"),
+        ] {
+            let entry = lookup(code).expect("global-data code is registered");
+            let explanation = entry
+                .explanation()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                explanation.contains(fragment),
+                "{code} explanation is missing {fragment:?}"
+            );
+        }
+    }
+
+    #[test]
     fn codes_are_grouped_by_phase() {
         for code in [E0001, E0002, E0003, E0012] {
             assert_eq!(code.code()[1..2].parse::<u8>().expect("digit"), 0);
@@ -2287,7 +2916,7 @@ mod tests {
             codes,
             [
                 "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007", "E1008", "E1009",
-                "E1010", "E1011",
+                "E1010", "E1011", "E1012", "E1013", "E1014",
             ]
         );
         assert_eq!(E1001.code()[1..2].parse::<u8>().expect("digit"), 1);
@@ -2311,7 +2940,7 @@ mod tests {
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
                 "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
                 "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
-                "E2064", "E2065", "E2066", "E2067",
+                "E2064", "E2065", "E2066", "E2067", "E2068",
             ]
         );
     }
@@ -2332,9 +2961,11 @@ mod tests {
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
-                "E3055",
+                "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063",
             ]
         );
+        // `E3061` stays unallocated: codes are never reused, so a gap is
+        // cheaper than giving an unrelated diagnostic a number out of order.
     }
 
     #[test]
@@ -2348,7 +2979,7 @@ mod tests {
             codes,
             [
                 "E5001", "E5002", "E5003", "E5004", "E5005", "E5006", "E5007", "E5008", "E5009",
-                "E5010"
+                "E5010", "E5011", "E5012", "E5013"
             ]
         );
     }
@@ -2360,7 +2991,7 @@ mod tests {
             .map(|entry| entry.code())
             .filter(|code| code.starts_with("E60"))
             .collect();
-        assert_eq!(codes, ["E6001", "E6002", "E6003"]);
+        assert_eq!(codes, ["E6001", "E6002", "E6003", "E6004"]);
     }
 
     #[test]
@@ -2372,7 +3003,9 @@ mod tests {
             .collect();
         assert_eq!(
             codes,
-            ["E7001", "E7002", "E7003", "E7004", "E7005", "E7006"]
+            [
+                "E7001", "E7002", "E7003", "E7004", "E7005", "E7006", "E7007"
+            ]
         );
     }
 

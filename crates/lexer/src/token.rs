@@ -204,6 +204,12 @@ pub enum TokenKind {
     Where,
     /// `as`
     As,
+    /// `const`
+    Const,
+    /// `static`
+    Static,
+    /// `unsafe`
+    Unsafe,
 
     /// `(`
     LParen,

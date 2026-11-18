@@ -45,6 +45,43 @@ allowed to depend only on crates below it in the list.
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
 | `seal-driver` | The `sealc` binary: clap-based subcommands and argument groups, exit codes, panic policy, and phase wiring. |
 
+## Compilation pipeline
+
+The driver runs the phases in this order for every input. A phase runs only when
+its predecessors reported no errors, so each phase may rely on the invariants
+they establish.
+
+```text
+source
+  -> lex          tokens
+  -> parse        AST
+  -> lower        resolved HIR
+  -> typeck       checked HIR and TypeckResults
+  -> lower        MIR bodies
+  -> const-eval   ConstProgram: values, allocations, relocations
+  -> borrowck     loans, origins, and global effects
+  -> mono         MonoProgram
+  -> codegen      LLVM IR, object, or executable
+```
+
+| Phase | Crate | Consumes | Produces | Diagnostics |
+|-------|-------|----------|----------|-------------|
+| Lex | `seal-lexer` | source text | tokens and trivia | `E0xxx` |
+| Parse | `seal-parser` | tokens | `seal_ast::Ast` | `E1xxx` |
+| Lower | `seal-hir` | AST | resolved HIR and bodies | `E2xxx` |
+| Type check | `seal-typeck` | HIR | types, coercions, checked places | `E3xxx` |
+| Lower MIR | `seal-mir` | checked HIR | control-flow bodies | internal validation |
+| Const evaluation | `seal-const-eval` | MIR | `ConstProgram` | `E4xxx` |
+| Borrow check | `seal-borrowck` | MIR and `ConstProgram` | loans, origins, effects | `E5xxx` |
+| Monomorphize | `seal-mono` | MIR, `ConstProgram` | `MonoProgram` | `E7xxx` |
+| Code generation | `seal-codegen` | `MonoProgram`, `ConstProgram` | IR and artifacts | `E6xxx` |
+
+`seal-const-eval` is introduced together with the global-data feature and sits
+between MIR lowering and borrow checking, so later phases consume evaluated
+values instead of re-evaluating source. Its modules are `value`, `allocation`,
+`program`, `interpreter`, `place`, `rvalue`, `operators`, `intrinsic`,
+`dependency`, `limits`, and `error`, each with tests beside it.
+
 ## Invariants
 
 1. **No global mutable state.** Two sessions in one process are independent.
@@ -491,6 +528,66 @@ allowed to depend only on crates below it in the list.
     the ordinary call-return loan rules, including the conflict checks for a
     live base borrow. Built-in arrays, slices, and ranges keep their dedicated
     bounds-checked paths and never require a protocol implementation.
+
+71. **Global data is constant-initialized.** Every `static` and every `const`
+    initializer is evaluated before the program starts; there are no global
+    constructors, no initialization order, and no runtime initialization code.
+    A `static` has exactly one allocation for the whole program, and a `const`
+    has no storage of its own: each use is replaced by its value.
+72. **Constant evaluation is deterministic and bounded.** The evaluator reads
+    only source, evaluated values, and the target data model; it never reads the
+    clock, environment, filesystem, or hash iteration order. Steps, call depth,
+    allocations, and value size are limited, and every limit is a typed
+    diagnostic rather than a hang or a panic.
+73. **Constant evaluation runs before borrow checking.** `ConstProgram` is
+    produced from checked MIR and records values, allocations, relocations, and
+    dependency edges. Borrow checking, monomorphization, and code generation
+    consume those recorded facts and never re-evaluate a constant.
+74. **Mutable globals are explicit and unsafe-gated.** Only `static mut` names
+    writable global storage, every access to it requires an enclosing
+    `unsafe { ... }` block, and a reference to it may not escape its function.
+    The block gates nothing else and has no runtime representation.
+75. **Global accesses are checked around calls.** A whole-program fixed-point
+    analysis records which statics a function may read or write, unions the
+    effects of its callees, and treats trait-bound and dynamic calls
+    conservatively; the borrow checker applies those summaries at call sites.
+76. **Global emission is ordered.** Reachable statics, const allocations, and
+    vtables are collected deterministically before code generation; the backend
+    declares every global before initializing it, so relocations always name a
+    declared symbol.
+
+## Global data and constant evaluation
+
+Global data spans four storage classes with different contracts:
+
+| Form | Storage | Address | Initialization | Write |
+|------|---------|---------|----------------|-------|
+| `const` | none; inlined per use | not guaranteed, materialized by `&` | compile time | never |
+| `static` | one allocation | stable for the program | compile time | never |
+| `static mut` | one allocation | stable for the program | compile time | inside `unsafe` only |
+| promoted temporary | one allocation per promotion | stable | compile time | never |
+
+A `const` may be declared at file scope or in a block; a `static` follows the
+same scoping, and a block-scope static is one allocation shared by every call
+and every instantiation of its enclosing function. Const and static items are
+order-independent and may refer to each other, subject to the dependency cycle
+check in the evaluator.
+
+The evaluator interprets checked MIR with an explicit value model: scalars,
+arrays, tuples, structs, enums, strings, slices, references, and trait objects.
+Mutable references are rejected in constant values, and a reference to
+interpreter-only storage may not escape evaluation. Trait objects record the
+concrete type and trait so monomorphization can collect the vtable that
+code generation initializes.
+
+Mutable static storage is checked twice. The `unsafe` block gates the syntactic
+access and records programmer responsibility. Borrow checking then tracks loans
+rooted in a static and rejects a reference to a `static mut` that escapes its
+function (`E5012`). Around calls, the global effect summary rejects a call that
+may read an exclusively borrowed static (`E5011`) or write a borrowed static
+(`E5013`). The analysis unions effects through direct, symbolic, recursive,
+trait-object, and trait-bound calls; disjoint field paths stay separate, while
+runtime indices make the whole static affected.
 
 ## Extension points
 

@@ -299,6 +299,90 @@ needs no such proof because the type system already forbids writes through them.
 A trait-object pointer carries the same loan as its concrete source, so passing
 one is an access through every reference argument like any other.
 
+## Constants, statics, and global data
+
+A `const` is a compile-time value with no storage of its own: each use is
+replaced by the value. A `static` is one allocation with program lifetime,
+created before the program starts and addressable through a reference. Both must
+have an explicit type and an initializer, and both are evaluated at compile time.
+
+```seal
+const LIMIT: usize = 1 << 20;
+
+static GREETING: *str = "hello";
+static TABLE: [i32; 4] = [1, 2, 3, 4];
+static mut COUNTER: i32 = 0;
+
+const func twice(value: i32) -> i32 {
+    value * 2
+}
+```
+
+The type of a `const` or `static` must be `Sized` (`E3056`, `E3057`); `str`,
+`[T]`, and bare trait objects are only usable behind a reference. Neither item
+may declare generic parameters or mention one from the enclosing scope
+(`E3060`): there is exactly one value per declaration.
+
+`const` and `static` live in the value namespace together with functions,
+parameters, and bindings. A const/static name may collide with a type name but
+not with another value name (`E2068`). Items are order-independent: a `const`
+may refer to a `static` declared later, subject to cycle detection.
+
+Reading a `static` by value copies it, so the type must be `Copy`; a non-`Copy`
+static can be borrowed or read field by field but not moved (`E3058`). Every
+reference to the same static denotes the same allocation, and a static is never
+dropped. Immutable statics are read-only after initialization (`E3059`); mutable
+storage is written `static mut` and is only accessible inside an `unsafe { ... }`
+block (`E3063`).
+
+```seal
+func increment() {
+    unsafe {
+        COUNTER = COUNTER + 1;
+    }
+}
+```
+
+`unsafe { ... }` is an expression whose value is the block's value. In this
+feature it unlocks `static mut` places only; it does not relax type checking,
+borrow checking, initialization checking, or the global effect analysis, and it
+has no runtime representation.
+
+A block-scope declaration is a statement and follows lexical scope:
+
+```seal
+func example() -> i32 {
+    const SCALE: i32 = 3;
+    static CALLS: i32 = 0;
+
+    SCALE * 2 + CALLS
+}
+```
+
+A block-scope `const` is visible from its declaration to the end of the block and
+is not visible in its own initializer. A block-scope `static` has a single
+allocation shared by every call and every instantiation of the enclosing
+function, so its type and initializer cannot mention the function's type
+parameters or `Self`. A local `const func` does not exist.
+
+`const func` declares a function that may run at compile time and at runtime. It
+may declare type parameters, but a compile-time call must supply concrete type
+arguments; its signature and body cannot mention `*mut` (`E3062`), call a
+non-`const` function (`E4018`), use dynamic dispatch or a trait-bound call
+(`E4021`), or access a mutable static (`E4020`). Ordinary functions can call a
+`const func` like any other function.
+
+Constant evaluation is bounded and deterministic. It reports a typed diagnostic
+for division or remainder by zero (`E4002`, `E4003`), signed division overflow
+(`E4004`), out-of-bounds indexing and slicing (`E4005`, `E4006`), dependency
+cycles (`E4007`), step, depth, allocation, and size limits (`E4008`–`E4010`,
+`E4025`), and forbidden operations in a constant context (`E4011`–`E4027`).
+
+Array lengths remain integer literals. `const N: usize = 4; [i32; N]` is not part
+of this feature; const generics and type-level constants are a separate gap.
+Associated constants (`Type::VALUE`) and `extern` statics are also outside this
+feature.
+
 ## Structs
 
 ```seal
