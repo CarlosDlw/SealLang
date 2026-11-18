@@ -243,13 +243,7 @@ impl Checker<'_> {
             0 => UserLookup::NotAStruct,
             1 => {
                 let candidate = candidates.into_iter().next().unwrap();
-                UserLookup::Method(UserMethod::Concrete {
-                    function: candidate.function,
-                    receiver: candidate.receiver,
-                    source: MethodSource::Trait(candidate.trait_def),
-                    self_ty: candidate.self_ty,
-                    seed: candidate.seed,
-                })
+                UserLookup::Method(candidate.into_user_method())
             }
             _ => {
                 let traits: Vec<DefId> = candidates
@@ -286,12 +280,6 @@ impl Checker<'_> {
         }
         let mut candidates = Vec::new();
         for implementation in implementations {
-            let Some(function) = implementation.method(name) else {
-                continue;
-            };
-            let Some(receiver) = self.hir.receiver(function) else {
-                continue;
-            };
             let pattern = implementation.trait_ref.self_ty;
             let mut seed = FxHashMap::default();
             let self_ty = if match_type(self.hir, pattern, receiver_ty, &mut seed) {
@@ -307,15 +295,70 @@ impl Checker<'_> {
             } else {
                 continue;
             };
+
+            let kind = if let Some(function) = implementation.method(name) {
+                let Some(receiver) = self.hir.receiver(function) else {
+                    continue;
+                };
+                TraitCandidateKind::Provided { function, receiver }
+            } else {
+                let default = self
+                    .hir
+                    .trait_definition(implementation.trait_ref.trait_def)
+                    .and_then(|definition| definition.method(name).cloned())
+                    .filter(|method| self.hir.body_of(method.def).is_some());
+                let Some(method) = default else {
+                    continue;
+                };
+                if method.receiver.is_none() {
+                    continue;
+                }
+                TraitCandidateKind::Default {
+                    trait_ref: self.instantiate_trait_ref(&implementation, self_ty, &seed),
+                    method,
+                }
+            };
             candidates.push(TraitCandidate {
                 trait_def: implementation.trait_ref.trait_def,
-                function,
-                receiver,
+                kind,
                 seed,
                 self_ty,
             });
         }
         candidates
+    }
+
+    /// Builds the concrete trait reference for an impl selected by its self
+    /// type. A default method has no impl function, so its `[Self, args]`
+    /// substitution must come from the matched impl header itself.
+    fn instantiate_trait_ref(
+        &self,
+        implementation: &seal_ty::TraitImplDef,
+        self_ty: TyId,
+        seed: &FxHashMap<seal_ty::ParamTyId, TyId>,
+    ) -> seal_ty::TraitRef {
+        let tcx = self.hir.ty_ctxt();
+        let impl_arguments: Vec<TyId> = implementation
+            .generics
+            .params
+            .iter()
+            .map(|parameter| {
+                seed.get(&parameter.param)
+                    .copied()
+                    .unwrap_or_else(|| tcx.param_ty(parameter.param))
+            })
+            .collect();
+        let substs = tcx.substs(&impl_arguments);
+        let trait_arguments: Vec<TyId> = tcx
+            .substs_args(implementation.trait_ref.args)
+            .iter()
+            .map(|argument| tcx.substitute(*argument, substs))
+            .collect();
+        seal_ty::TraitRef::new(
+            implementation.trait_ref.trait_def,
+            self_ty,
+            tcx.substs(&trait_arguments),
+        )
     }
 
     fn adimpl_method_target(
@@ -377,13 +420,7 @@ impl Checker<'_> {
             }
             1 => {
                 let candidate = candidates.into_iter().next().unwrap();
-                UserLookup::Method(UserMethod::Concrete {
-                    function: candidate.function,
-                    receiver: candidate.receiver,
-                    source: MethodSource::Trait(candidate.trait_def),
-                    self_ty: candidate.self_ty,
-                    seed: candidate.seed,
-                })
+                UserLookup::Method(candidate.into_user_method())
             }
             _ => {
                 let traits: Vec<DefId> = candidates
@@ -1076,11 +1113,44 @@ impl Checker<'_> {
 /// One trait impl that could provide the called method.
 struct TraitCandidate {
     trait_def: DefId,
-    function: DefId,
-    receiver: ReceiverKind,
+    kind: TraitCandidateKind,
     seed: FxHashMap<seal_ty::ParamTyId, TyId>,
     /// The self type matched against the receiver, used for receiver checks.
     self_ty: TyId,
+}
+
+impl TraitCandidate {
+    /// Turns the selected candidate into the concrete or symbolic call shape.
+    fn into_user_method(self) -> UserMethod {
+        match self.kind {
+            TraitCandidateKind::Provided { function, receiver } => UserMethod::Concrete {
+                function,
+                receiver,
+                source: MethodSource::Trait(self.trait_def),
+                self_ty: self.self_ty,
+                seed: self.seed,
+            },
+            TraitCandidateKind::Default { trait_ref, method } => UserMethod::Bound {
+                trait_ref,
+                method,
+                self_ty: self.self_ty,
+            },
+        }
+    }
+}
+
+/// How one matching trait impl provides the called method.
+enum TraitCandidateKind {
+    /// The impl declares a concrete function.
+    Provided {
+        function: DefId,
+        receiver: ReceiverKind,
+    },
+    /// The impl omits the method and the trait supplies a default body.
+    Default {
+        trait_ref: seal_ty::TraitRef,
+        method: seal_ty::TraitMethodDef,
+    },
 }
 
 /// The user-defined resolution chosen for a method call.

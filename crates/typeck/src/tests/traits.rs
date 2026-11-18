@@ -1,5 +1,6 @@
 //! Trait method dispatch, ambiguity, and shared reborrow.
 
+use seal_def::{DefId, DefKind};
 use seal_hir::ExprKind;
 
 use crate::{MethodKind, ReceiverAdjust};
@@ -530,4 +531,276 @@ impl Bump for Token { func bump(self: *mut Token) { (*self).value += 1; } } \
 func first(tokens: *[Token]) { tokens[0].bump() }";
     let (fixture, _, _) = check_errors(source);
     fixture.expect("E3029", "needs to modify");
+}
+
+#[test]
+fn a_default_body_calls_its_own_trait_method_symbolically() {
+    let source = "\
+        trait Shape { \
+            func area(self: *Self) -> i32; \
+            func twice(self: *Self) -> i32 { self.area() } \
+        } \
+        struct Square { side: i32 } \
+        impl Shape for Square { \
+            func area(self: *Square) -> i32 { (*self).side * (*self).side } \
+        } \
+        func main() -> i32 { \
+            let square = Square { side: 3 }; \
+            square.twice() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let twice = trait_method_named(&fixture, &hir, "twice");
+    let area = trait_method_named(&fixture, &hir, "area");
+    let body = hir.body_of(twice).expect("twice has a default body");
+    let resolved = results
+        .method(tail(&hir, body))
+        .expect("the inner area call is resolved");
+    assert!(matches!(
+        resolved.kind,
+        MethodKind::TraitBound { method, .. } if method == area
+    ));
+
+    let (_, main) = function(&fixture, &hir, "main");
+    let outer = results
+        .method(tail(&hir, main))
+        .expect("twice is resolved on Square");
+    assert!(matches!(
+        outer.kind,
+        MethodKind::TraitBound { method, .. } if method == twice
+    ));
+}
+
+#[test]
+fn a_concrete_call_uses_an_omitted_default_method() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { func area(self: *Self) -> i32 { 7 } } \
+        impl Shape for Circle {} \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let area = trait_method_named(&fixture, &hir, "area");
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let resolved = results.method(call).expect("area is resolved");
+    assert!(matches!(
+        resolved.kind,
+        MethodKind::TraitBound { method, .. } if method == area
+    ));
+    assert_eq!(
+        super::support::ty_text_with(&fixture, &hir, super::support::expr_ty(&results, call)),
+        "i32"
+    );
+    let instance = results.instantiation(call).expect("instance is recorded");
+    assert_eq!(instance.def, area);
+    assert_eq!(hir.ty_ctxt().substs_args(instance.args).len(), 1);
+}
+
+#[test]
+fn an_empty_impl_reaches_every_default_method() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { \
+            func area(self: *Self) -> i32 { 7 } \
+            func perimeter(self: *Self) -> i32 { 8 } \
+        } \
+        impl Shape for Circle {} \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() + circle.perimeter() \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn an_override_of_a_default_method_stays_concrete() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { func area(self: *Self) -> i32 { 7 } } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { 8 } } \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let resolved = results.method(tail(&hir, body)).expect("area is resolved");
+    assert!(matches!(resolved.kind, MethodKind::Trait { .. }));
+}
+
+#[test]
+fn an_inherent_method_shadows_a_default_method() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { func area(self: *Self) -> i32 { 7 } } \
+        impl Circle { func area(self: *Circle) -> i32 { 9 } } \
+        impl Shape for Circle {} \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let resolved = results.method(tail(&hir, body)).expect("area is resolved");
+    assert!(matches!(resolved.kind, MethodKind::User { .. }));
+}
+
+#[test]
+fn two_default_methods_with_the_same_name_are_ambiguous() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Left { func area(self: *Self) -> i32 { 1 } } \
+        trait Right { func area(self: *Self) -> i32 { 2 } } \
+        impl Left for Circle {} \
+        impl Right for Circle {} \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() \
+        }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E2028", "declared by more than one trait");
+}
+
+#[test]
+fn a_default_method_from_a_supertrait_is_visible() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Base { func area(self: *Self) -> i32 { 3 } } \
+        trait Shape: Base {} \
+        impl Base for Circle {} \
+        impl Shape for Circle {} \
+        func main() -> i32 { \
+            let circle = Circle { radius: 1 }; \
+            circle.area() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let resolved = results.method(tail(&hir, body)).expect("area is resolved");
+    assert!(matches!(resolved.kind, MethodKind::TraitBound { .. }));
+}
+
+#[test]
+fn a_generic_default_method_substitutes_the_trait_arguments() {
+    let source = "\
+        struct Wrapper<T> { value: T } \
+        trait Convert<T> { \
+            func value(self: *Self) -> T; \
+            func twice(self: *Self) -> T { self.value() } \
+        } \
+        impl<T: Copy> Convert<T> for Wrapper<T> { \
+            func value(self: *Wrapper<T>) -> T { (*self).value } \
+        } \
+        func main() -> i32 { \
+            let wrapper = Wrapper { value: 7 }; \
+            wrapper.twice() \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let resolved = results.method(call).expect("twice is resolved");
+    assert!(matches!(resolved.kind, MethodKind::TraitBound { .. }));
+    let instance = results.instantiation(call).expect("instance is recorded");
+    assert_eq!(instance.def, trait_method_named(&fixture, &hir, "twice"));
+    assert_eq!(hir.ty_ctxt().substs_args(instance.args).len(), 2);
+}
+
+#[test]
+fn a_default_body_handles_exclusive_and_value_receivers() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Counter { \
+            func read(self: *Self) -> i32; \
+            func bump(self: *mut Self) -> i32 { self.read() } \
+        } \
+        impl Counter for Item { \
+            func read(self: *Item) -> i32 { (*self).value } \
+        } \
+        trait Consume { \
+            func value(self: Self) -> i32; \
+            func twice(self: Self) -> i32 { self.value() } \
+        } \
+        impl Consume for Item { \
+            func value(self: Item) -> i32 { self.value } \
+        } \
+        func main() -> i32 { \
+            let mut item = Item { value: 4 }; \
+            let first = item.bump(); \
+            let second = item.twice(); \
+            first + second \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_default_method_can_return_self() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Duplicate { \
+            func copy(self: *Self) -> Self; \
+            func duplicate(self: *Self) -> Self { self.copy() } \
+        } \
+        impl Duplicate for Item { \
+            func copy(self: *Item) -> Item { Item { value: (*self).value } } \
+        } \
+        func main() -> i32 { \
+            let item = Item { value: 5 }; \
+            let duplicate = item.duplicate(); \
+            duplicate.value \
+        }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let tail = tail(&hir, body);
+    let call = match &hir.expr(tail).kind {
+        ExprKind::Field { base, .. } => *base,
+        other => panic!("expected a field access, got {other:?}"),
+    };
+    assert_eq!(
+        super::support::ty_text_with(&fixture, &hir, super::support::expr_ty(&results, call)),
+        "Item"
+    );
+}
+
+#[test]
+fn a_default_method_from_a_supertrait_is_visible_through_a_bound() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Base { func area(self: *Self) -> i32 { 3 } } \
+        trait Shape: Base {} \
+        impl Base for Circle {} \
+        impl Shape for Circle {} \
+        func measure<T: Shape>(value: *T) -> i32 { value.area() }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "measure");
+    let resolved = results
+        .method(tail(&hir, body))
+        .expect("area is resolved through the bound");
+    assert!(matches!(resolved.kind, MethodKind::TraitBound { .. }));
+}
+
+#[test]
+fn a_default_body_reports_a_return_type_mismatch() {
+    let fixture =
+        super::support::Fixture::new("trait Shape { func area(self: *Self) -> i32 { true } }");
+    let _ = fixture.check(64);
+    fixture.expect("E3001", "mismatched types");
+}
+
+#[test]
+fn a_default_body_reports_an_unknown_method() {
+    let fixture = super::support::Fixture::new(
+        "trait Shape { func area(self: *Self) -> i32 { self.missing() } }",
+    );
+    let _ = fixture.check(64);
+    fixture.expect("E3027", "no method named `missing`");
+}
+
+fn trait_method_named(fixture: &super::support::Fixture, hir: &seal_hir::Hir, name: &str) -> DefId {
+    let symbol = fixture.interner().intern(name);
+    hir.definitions()
+        .iter_enumerated()
+        .find(|(_, data)| data.kind == DefKind::TraitMethod && data.name == symbol)
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no trait method named `{name}`"))
 }

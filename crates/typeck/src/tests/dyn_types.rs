@@ -583,6 +583,24 @@ fn method_slot_matches_vtable_layout() {
 }
 
 #[test]
+fn a_default_method_stays_dispatchable_through_a_trait_object() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { \
+            func area(self: *Self) -> i32; \
+            func twice(self: *Self) -> i32 { self.area() * 2 } \
+        } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+        func twice(object: *dyn Shape) -> i32 { object.twice() }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "twice");
+    let resolved = results
+        .method(tail(&hir, body))
+        .expect("the default method dispatches dynamically");
+    assert!(matches!(resolved.kind, MethodKind::Dynamic { .. }));
+}
+
+#[test]
 fn dynamic_call_records_no_concrete_instance() {
     let source = format!("{SHAPE} func area(object: *dyn Shape) -> i32 {{ object.area() }}");
     let (fixture, hir, results) = check_clean(&source);
