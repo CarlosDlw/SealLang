@@ -78,6 +78,11 @@ pub enum MonoError {
         /// The layout failure, with the offending trait or method when known.
         detail: String,
     },
+    /// A constant trait object could not get a complete vtable.
+    ConstantVtable {
+        /// The layout or selection failure.
+        detail: String,
+    },
 }
 
 impl fmt::Display for MonoError {
@@ -136,6 +141,12 @@ impl fmt::Display for MonoError {
             }
             Self::VtableLayout { detail } => {
                 write!(f, "a trait-object vtable could not be built: {detail}")
+            }
+            Self::ConstantVtable { detail } => {
+                write!(
+                    f,
+                    "a constant trait object has no complete vtable: {detail}"
+                )
             }
         }
     }

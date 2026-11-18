@@ -291,7 +291,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     // Collection runs even for `check`: it resolves symbolic trait calls and
     // proves the program has a finite, fully concrete instance set.
     let mono = session.profiler().time("mono", || {
-        seal_mono::collect(&hir, &mir, session.diag(), session.interner())
+        seal_mono::collect(&hir, &mir, &program, session.diag(), session.interner())
     });
     if session.diag().error_count() != errors {
         return;
@@ -299,6 +299,11 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     if let Err(error) = mono.validate(&hir) {
         session.diag().bug(format!(
             "monomorphization produced an invalid instance: {error}"
+        ));
+    }
+    if let Err(error) = mono.validate_globals(&program) {
+        session.diag().bug(format!(
+            "monomorphization produced an invalid global item: {error}"
         ));
     }
 

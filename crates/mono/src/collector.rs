@@ -2,12 +2,16 @@
 
 use std::collections::{HashSet, VecDeque};
 
+use seal_const_eval::{AllocId, AllocSource, ConstProgram, ConstValue};
 use seal_diagnostics::DiagCtxt;
 use seal_error_codes as codes;
-use seal_hash::FxHashMap;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_index::{Idx, IndexVec};
-use seal_mir::Mir;
+use seal_mir::{
+    Body, BodyKind, IntrinsicReceiver, Mir, Operand, Place, PlaceRoot, Rvalue, StatementKind,
+    TerminatorKind,
+};
 use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::Instance;
@@ -48,14 +52,14 @@ impl Limits {
 }
 
 /// One collected item.
-///
-/// Functions are the only items with an instance today; the enum keeps the door
-/// open for global constants and statics without changing the collector's
-/// output type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MonoItem {
     /// One concrete function body.
     Function(Instance),
+    /// One reachable static, collected once per declaration.
+    Static(seal_def::DefId),
+    /// One reachable non-static allocation, addressed by a const or promotion.
+    ConstAlloc(AllocId),
 }
 
 /// One discovered instance waiting for its body.
@@ -68,14 +72,21 @@ struct Pending {
 }
 
 /// Collects every instance reachable from the non-generic roots.
-pub fn collect(hir: &Hir, mir: &Mir, dcx: &DiagCtxt, interner: &Interner) -> MonoProgram {
-    collect_with(hir, mir, dcx, interner, Limits::DEFAULT)
+pub fn collect(
+    hir: &Hir,
+    mir: &Mir,
+    constants: &ConstProgram,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+) -> MonoProgram {
+    collect_with(hir, mir, constants, dcx, interner, Limits::DEFAULT)
 }
 
 /// Collects with explicit limits, for tests.
 pub(crate) fn collect_with(
     hir: &Hir,
     mir: &Mir,
+    constants: &ConstProgram,
     dcx: &DiagCtxt,
     interner: &Interner,
     limits: Limits,
@@ -83,6 +94,7 @@ pub(crate) fn collect_with(
     let mut collector = Collector {
         hir,
         mir,
+        constants,
         dcx,
         interner,
         limits,
@@ -90,6 +102,11 @@ pub(crate) fn collect_with(
         queue: VecDeque::new(),
         bodies: Vec::new(),
         items: Vec::new(),
+        statics: Vec::new(),
+        static_ids: FxHashSet::default(),
+        const_allocations: Vec::new(),
+        alloc_ids: FxHashSet::default(),
+        scanned_allocs: FxHashSet::default(),
         vtables: IndexVec::new(),
         vtable_ids: FxHashMap::default(),
         rejected_vtables: HashSet::new(),
@@ -104,6 +121,7 @@ pub(crate) fn collect_with(
 struct Collector<'a> {
     hir: &'a Hir,
     mir: &'a Mir,
+    constants: &'a ConstProgram,
     dcx: &'a DiagCtxt,
     interner: &'a Interner,
     limits: Limits,
@@ -111,6 +129,11 @@ struct Collector<'a> {
     queue: VecDeque<Pending>,
     bodies: Vec<Option<MonoMir>>,
     items: Vec<MonoItem>,
+    statics: Vec<seal_def::DefId>,
+    static_ids: FxHashSet<seal_def::DefId>,
+    const_allocations: Vec<AllocId>,
+    alloc_ids: FxHashSet<AllocId>,
+    scanned_allocs: FxHashSet<AllocId>,
     vtables: IndexVec<VtableId, MonoVTable>,
     vtable_ids: FxHashMap<VtableKey, VtableId>,
     /// Keys already reported, so one broken coercion is not reported again.
@@ -121,6 +144,11 @@ impl Collector<'_> {
     /// Enqueues every non-generic function body, rejecting a generic `main`.
     fn seed_roots(&mut self) {
         for body in self.mir.bodies().iter() {
+            // Const and static initializers are data, not roots: they become
+            // items only when reachable from a function or another global.
+            if body.kind != BodyKind::Function {
+                continue;
+            }
             let owner = body.owner;
             let name = self.interner.resolve(self.hir.definitions().name(owner));
             let parameters = self.hir.flattened_generics(owner).len();
@@ -153,7 +181,7 @@ impl Collector<'_> {
         if self.ids.contains_key(&instance) {
             return;
         }
-        if self.items.len() >= self.limits.instances {
+        if self.ids.len() >= self.limits.instances {
             self.report_limit(
                 codes::E7004,
                 span,
@@ -192,7 +220,7 @@ impl Collector<'_> {
                 .emit();
             return;
         }
-        let id = InstanceId::from_usize(self.items.len());
+        let id = InstanceId::from_usize(self.ids.len());
         self.ids.insert(instance, id);
         self.items.push(MonoItem::Function(instance));
         self.bodies.push(None);
@@ -212,6 +240,7 @@ impl Collector<'_> {
         let specialized = substitute::instantiate_body(self.hir, body, pending.instance);
         let (body, events) =
             substitute::resolve_body(self.hir, self.dcx, self.interner, specialized);
+        self.scan_body(&body);
         self.bodies[pending.id.index() as usize] = Some(MonoMir {
             instance: pending.instance,
             body,
@@ -224,7 +253,7 @@ impl Collector<'_> {
                     self.enqueue(child.instance, pending.depth + 1, chain, child.span);
                 }
                 BodyEvent::Vtable { key, span } => {
-                    self.collect_vtable(key, span, pending.depth + 1, &pending.chain)
+                    self.collect_vtable(key, span, pending.depth + 1, &pending.chain, false)
                 }
             }
         }
@@ -241,6 +270,7 @@ impl Collector<'_> {
         span: Span,
         depth: usize,
         chain: &[(Instance, Span)],
+        from_const: bool,
     ) {
         if self.vtable_ids.contains_key(&key) || self.rejected_vtables.contains(&key) {
             return;
@@ -262,7 +292,20 @@ impl Collector<'_> {
         let table = match vtable::build_vtable(self.hir, self.interner, key) {
             Ok(table) => table,
             Err(error) => {
-                vtable::report(self.dcx, span, &error);
+                if from_const {
+                    self.dcx
+                        .error(
+                            MonoError::ConstantVtable {
+                                detail: error.to_string(),
+                            }
+                            .to_string(),
+                        )
+                        .code(codes::E7007.diag_code())
+                        .primary(span, "this constant trait object needs a complete vtable")
+                        .emit();
+                } else {
+                    vtable::report(self.dcx, span, &error);
+                }
                 self.rejected_vtables.insert(key);
                 return;
             }
@@ -278,11 +321,204 @@ impl Collector<'_> {
         }
     }
 
+    /// Records every static, const allocation, and vtable a body references.
+    fn scan_body(&mut self, body: &Body) {
+        for block in body.blocks.iter() {
+            for statement in &block.statements {
+                let span = statement.span;
+                let StatementKind::Assign { place, rvalue } = &statement.kind;
+                self.scan_place(place, span);
+                self.scan_rvalue(rvalue, span);
+            }
+            if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
+                self.scan_operand(discriminant, block.terminator.span);
+            }
+        }
+    }
+
+    fn scan_rvalue(&mut self, rvalue: &Rvalue, span: Span) {
+        match rvalue {
+            Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => self.scan_operand(operand, span),
+            Rvalue::MakeTraitObject { source, .. } => self.scan_operand(source, span),
+            Rvalue::TraitObjectReborrow { source, place, .. } => {
+                self.scan_operand(source, span);
+                self.scan_place(place, span);
+            }
+            Rvalue::Ref { place, .. } => self.scan_place(place, span),
+            Rvalue::SliceRef {
+                base, start, end, ..
+            } => {
+                self.scan_place(base, span);
+                for operand in start.iter().chain(end.iter()) {
+                    self.scan_operand(operand, span);
+                }
+            }
+            Rvalue::Discriminant(place) => self.scan_place(place, span),
+            Rvalue::Len { slice } => self.scan_operand(slice, span),
+            Rvalue::Binary { lhs, rhs, .. } => {
+                self.scan_operand(lhs, span);
+                self.scan_operand(rhs, span);
+            }
+            Rvalue::Unary { operand, .. } => self.scan_operand(operand, span),
+            Rvalue::Intrinsic { receiver, args, .. } => {
+                match receiver {
+                    IntrinsicReceiver::Place(place) => self.scan_place(place, span),
+                    IntrinsicReceiver::Value(operand) => self.scan_operand(operand, span),
+                }
+                for arg in args {
+                    self.scan_operand(arg, span);
+                }
+            }
+            Rvalue::DynamicCall { receiver, args, .. } => {
+                self.scan_operand(receiver, span);
+                for arg in args {
+                    self.scan_operand(arg, span);
+                }
+            }
+            Rvalue::Call { args, .. } => {
+                for arg in args {
+                    self.scan_operand(arg, span);
+                }
+            }
+            Rvalue::Aggregate { fields, .. } => {
+                for (_, operand) in fields {
+                    self.scan_operand(operand, span);
+                }
+            }
+            Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
+                for operand in elements {
+                    self.scan_operand(operand, span);
+                }
+            }
+            Rvalue::Repeat { value, .. } => self.scan_operand(value, span),
+        }
+    }
+
+    fn scan_operand(&mut self, operand: &Operand, span: Span) {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => self.scan_place(place, span),
+            Operand::Const(def) => {
+                if let Some(value) = self.constants.value(*def).cloned() {
+                    self.scan_value(&value, span);
+                }
+            }
+            Operand::Constant(_) => {}
+        }
+    }
+
+    fn scan_place(&mut self, place: &Place, span: Span) {
+        match place.root {
+            PlaceRoot::Local(_) => {}
+            PlaceRoot::Static(def) => self.add_static(def),
+            PlaceRoot::Const(def) => {
+                if let Some(alloc) = self.constants.const_allocation(def) {
+                    self.scan_allocation(alloc);
+                } else if let Some(value) = self.constants.value(def).cloned() {
+                    self.scan_value(&value, span);
+                }
+            }
+        }
+    }
+
+    /// Adds a static item and scans its allocation once.
+    fn add_static(&mut self, def: seal_def::DefId) {
+        if !self.static_ids.insert(def) {
+            return;
+        }
+        let Some(data) = self.constants.static_data(def).copied() else {
+            self.dcx
+                .bug("MIR references a static that constant evaluation did not produce");
+        };
+        self.statics.push(def);
+        self.items.push(MonoItem::Static(def));
+        self.scan_allocation(data.alloc);
+    }
+
+    /// Adds a non-static allocation item; the caller scans its value.
+    fn add_const_allocation(&mut self, id: AllocId) {
+        if self.alloc_ids.insert(id) {
+            self.const_allocations.push(id);
+            self.items.push(MonoItem::ConstAlloc(id));
+        }
+    }
+
+    /// Resolves one allocation, recording the owning static or a const item.
+    fn scan_allocation(&mut self, id: AllocId) {
+        if !self.scanned_allocs.insert(id) {
+            return;
+        }
+        let allocation = self.constants.allocation(id);
+        let source = allocation.source;
+        let value = allocation.value.clone();
+        let span = self.source_span(source);
+        match source {
+            AllocSource::Static(def) => self.add_static(def),
+            AllocSource::Const(_)
+            | AllocSource::Promoted { .. }
+            | AllocSource::ConstFnLocal { .. } => self.add_const_allocation(id),
+        }
+        self.scan_value(&value, span);
+    }
+
+    /// Scans a constant value for allocation references and trait objects.
+    fn scan_value(&mut self, value: &ConstValue, span: Span) {
+        match value {
+            ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
+                self.scan_allocation(*target);
+            }
+            ConstValue::Dyn {
+                data,
+                concrete,
+                trait_ref,
+                ..
+            } => {
+                self.scan_allocation(*data);
+                self.collect_vtable(
+                    VtableKey {
+                        concrete: *concrete,
+                        trait_ref: *trait_ref,
+                    },
+                    span,
+                    0,
+                    &[],
+                    true,
+                );
+            }
+            ConstValue::Tuple(elements) | ConstValue::Array(elements) => {
+                for element in elements {
+                    self.scan_value(element, span);
+                }
+            }
+            ConstValue::Struct { fields, .. } | ConstValue::Variant { fields, .. } => {
+                for (_, field) in fields {
+                    self.scan_value(field, span);
+                }
+            }
+            ConstValue::Int { .. }
+            | ConstValue::Float { .. }
+            | ConstValue::Bool(_)
+            | ConstValue::Char(_)
+            | ConstValue::Unit
+            | ConstValue::Str { .. } => {}
+        }
+    }
+
+    fn source_span(&self, source: AllocSource) -> Span {
+        let def = match source {
+            AllocSource::Static(def) | AllocSource::Const(def) => def,
+            AllocSource::Promoted { owner, .. } => owner,
+            AllocSource::ConstFnLocal { instance, .. } => instance.def,
+        };
+        self.hir.definitions().get(def).span
+    }
+
     fn finish(self) -> MonoProgram {
         let Self {
             ids,
             bodies,
             items,
+            statics,
+            const_allocations,
             vtables,
             vtable_ids,
             ..
@@ -295,6 +531,8 @@ impl Collector<'_> {
             IndexVec::from_raw(instances),
             ids,
             items,
+            statics,
+            const_allocations,
             vtables,
             vtable_ids,
         )

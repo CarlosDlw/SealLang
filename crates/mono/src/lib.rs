@@ -38,6 +38,8 @@ mod tests;
 mod validate;
 mod vtable;
 
+use seal_const_eval::{AllocId, ConstProgram};
+use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_index::{Idx, IndexVec};
 use seal_mir::Body;
@@ -70,6 +72,8 @@ pub struct MonoProgram {
     instances: IndexVec<InstanceId, MonoMir>,
     ids: FxHashMap<Instance, InstanceId>,
     items: Vec<MonoItem>,
+    statics: Vec<DefId>,
+    const_allocations: Vec<AllocId>,
     vtables: IndexVec<VtableId, MonoVTable>,
     vtable_ids: FxHashMap<VtableKey, VtableId>,
 }
@@ -79,6 +83,8 @@ impl MonoProgram {
         instances: IndexVec<InstanceId, MonoMir>,
         ids: FxHashMap<Instance, InstanceId>,
         items: Vec<MonoItem>,
+        statics: Vec<DefId>,
+        const_allocations: Vec<AllocId>,
         vtables: IndexVec<VtableId, MonoVTable>,
         vtable_ids: FxHashMap<VtableKey, VtableId>,
     ) -> Self {
@@ -86,6 +92,8 @@ impl MonoProgram {
             instances,
             ids,
             items,
+            statics,
+            const_allocations,
             vtables,
             vtable_ids,
         }
@@ -107,10 +115,22 @@ impl MonoProgram {
         &self.instances[id]
     }
 
-    /// Returns every collected item, in the same order as the instances.
+    /// Returns every collected item in deterministic discovery order.
     #[inline]
     pub fn items(&self) -> &[MonoItem] {
         &self.items
+    }
+
+    /// Returns every reachable static, in discovery order.
+    #[inline]
+    pub fn statics(&self) -> &[DefId] {
+        &self.statics
+    }
+
+    /// Returns every reachable non-static const allocation, in discovery order.
+    #[inline]
+    pub fn const_allocations(&self) -> &[AllocId] {
+        &self.const_allocations
     }
 
     /// Returns the dense ID assigned to `instance`, if it was collected.
@@ -157,5 +177,10 @@ impl MonoProgram {
             validate::validate_vtable(hir, self, id, table)?;
         }
         Ok(())
+    }
+
+    /// Validates the collected global items against the evaluated constants.
+    pub fn validate_globals(&self, constants: &ConstProgram) -> Result<(), MonoValidationError> {
+        validate::validate_globals(self, constants)
     }
 }

@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use seal_const_eval::{AllocId, AllocSource, ConstProgram, ConstValue};
+use seal_def::DefId;
 use seal_hir::Hir;
 use seal_layout::VtableLayout;
 use seal_mir::{
@@ -11,7 +13,7 @@ use seal_mir::{
 use seal_span::Span;
 use seal_ty::{Instance, TyCtxt, TyId, TyKind};
 
-use crate::vtable::key_of;
+use crate::vtable::{VtableKey, key_of};
 use crate::{MonoProgram, MonoVTable, VtableId};
 
 /// A broken only-monomorphic invariant.
@@ -89,6 +91,23 @@ pub enum MonoValidationError {
         /// The collected entry count.
         found: usize,
     },
+    /// A collected static has no evaluated data.
+    MissingStatic {
+        /// The static definition.
+        def: DefId,
+    },
+    /// A collected const allocation does not exist in the evaluated program.
+    MissingConstAllocation {
+        /// The missing allocation.
+        alloc: AllocId,
+    },
+    /// A constant trait object names a pair without a collected vtable.
+    MissingConstVtable {
+        /// The concrete type the trait object erases.
+        concrete: seal_ty::TyId,
+        /// The principal trait reference.
+        trait_ref: seal_ty::TraitRef,
+    },
 }
 
 impl fmt::Display for MonoValidationError {
@@ -141,6 +160,22 @@ impl fmt::Display for MonoValidationError {
             } => write!(
                 f,
                 "vtable {vtable:?} has {found} entries, but its layout needs {expected}"
+            ),
+            Self::MissingStatic { def } => {
+                write!(f, "static {def:?} was collected without evaluated data")
+            }
+            Self::MissingConstAllocation { alloc } => {
+                write!(
+                    f,
+                    "const allocation {alloc:?} was not produced by evaluation"
+                )
+            }
+            Self::MissingConstVtable {
+                concrete,
+                trait_ref,
+            } => write!(
+                f,
+                "constant trait object {concrete:?} / {trait_ref:?} has no collected vtable"
             ),
         }
     }
@@ -384,6 +419,244 @@ fn check_vtable_type(tcx: &TyCtxt, vtable: VtableId, ty: TyId) -> Result<(), Mon
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+/// Checks that global items match the evaluated constants.
+pub(crate) fn validate_globals(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+) -> Result<(), MonoValidationError> {
+    for def in program.statics() {
+        let data = constants
+            .static_data(*def)
+            .ok_or(MonoValidationError::MissingStatic { def: *def })?;
+        check_allocation_reference(program, constants, data.alloc)?;
+        let allocation = &constants.allocations()[data.alloc];
+        check_const_value(program, constants, &allocation.value)?;
+    }
+    for id in program.const_allocations() {
+        if !allocation_exists(constants, *id) {
+            return Err(MonoValidationError::MissingConstAllocation { alloc: *id });
+        }
+        let allocation = &constants.allocations()[*id];
+        check_const_value(program, constants, &allocation.value)?;
+    }
+    for instance in program.instances() {
+        check_body_globals(program, constants, &instance.body)?;
+    }
+    Ok(())
+}
+
+fn check_body_globals(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    body: &seal_mir::Body,
+) -> Result<(), MonoValidationError> {
+    for block in body.blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign { place, rvalue } = &statement.kind;
+            check_place_global(program, constants, place)?;
+            check_rvalue_globals(program, constants, rvalue)?;
+        }
+        if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
+            check_operand_global(program, constants, discriminant)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_rvalue_globals(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    rvalue: &Rvalue,
+) -> Result<(), MonoValidationError> {
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
+            check_operand_global(program, constants, operand)
+        }
+        Rvalue::MakeTraitObject { source, .. } => check_operand_global(program, constants, source),
+        Rvalue::TraitObjectReborrow { source, place, .. } => {
+            check_operand_global(program, constants, source)?;
+            check_place_global(program, constants, place)
+        }
+        Rvalue::Ref { place, .. } => check_place_global(program, constants, place),
+        Rvalue::SliceRef {
+            base, start, end, ..
+        } => {
+            check_place_global(program, constants, base)?;
+            for operand in start.iter().chain(end.iter()) {
+                check_operand_global(program, constants, operand)?;
+            }
+            Ok(())
+        }
+        Rvalue::Discriminant(place) => check_place_global(program, constants, place),
+        Rvalue::Len { slice } => check_operand_global(program, constants, slice),
+        Rvalue::Binary { lhs, rhs, .. } => {
+            check_operand_global(program, constants, lhs)?;
+            check_operand_global(program, constants, rhs)
+        }
+        Rvalue::Unary { operand, .. } => check_operand_global(program, constants, operand),
+        Rvalue::Intrinsic { receiver, args, .. } => {
+            match receiver {
+                IntrinsicReceiver::Place(place) => {
+                    check_place_global(program, constants, place)?;
+                }
+                IntrinsicReceiver::Value(operand) => {
+                    check_operand_global(program, constants, operand)?;
+                }
+            }
+            for arg in args {
+                check_operand_global(program, constants, arg)?;
+            }
+            Ok(())
+        }
+        Rvalue::DynamicCall { receiver, args, .. } => {
+            check_operand_global(program, constants, receiver)?;
+            for arg in args {
+                check_operand_global(program, constants, arg)?;
+            }
+            Ok(())
+        }
+        Rvalue::Call { args, .. } => {
+            for arg in args {
+                check_operand_global(program, constants, arg)?;
+            }
+            Ok(())
+        }
+        Rvalue::Aggregate { fields, .. } => {
+            for (_, operand) in fields {
+                check_operand_global(program, constants, operand)?;
+            }
+            Ok(())
+        }
+        Rvalue::Tuple { elements, .. } | Rvalue::Array { elements, .. } => {
+            for operand in elements {
+                check_operand_global(program, constants, operand)?;
+            }
+            Ok(())
+        }
+        Rvalue::Repeat { value, .. } => check_operand_global(program, constants, value),
+    }
+}
+
+fn check_operand_global(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    operand: &Operand,
+) -> Result<(), MonoValidationError> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => {
+            check_place_global(program, constants, place)
+        }
+        Operand::Const(def) => match constants.value(*def) {
+            Some(value) => check_const_value(program, constants, value),
+            None => Ok(()),
+        },
+        Operand::Constant(_) => Ok(()),
+    }
+}
+
+fn check_place_global(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    place: &seal_mir::Place,
+) -> Result<(), MonoValidationError> {
+    match place.root {
+        seal_mir::PlaceRoot::Local(_) => Ok(()),
+        seal_mir::PlaceRoot::Static(def) => {
+            if program.statics().contains(&def) {
+                Ok(())
+            } else {
+                Err(MonoValidationError::MissingStatic { def })
+            }
+        }
+        seal_mir::PlaceRoot::Const(def) => {
+            if let Some(id) = constants.const_allocation(def) {
+                check_allocation_reference(program, constants, id)
+            } else if let Some(value) = constants.value(def) {
+                check_const_value(program, constants, value)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn allocation_exists(constants: &ConstProgram, id: AllocId) -> bool {
+    (id.index() as usize) < constants.allocations().len()
+}
+
+fn check_allocation_reference(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    id: AllocId,
+) -> Result<(), MonoValidationError> {
+    if !allocation_exists(constants, id) {
+        return Err(MonoValidationError::MissingConstAllocation { alloc: id });
+    }
+    match constants.allocations()[id].source {
+        AllocSource::Static(def) if !program.statics().contains(&def) => {
+            Err(MonoValidationError::MissingStatic { def })
+        }
+        AllocSource::Static(_) => Ok(()),
+        AllocSource::Const(_) | AllocSource::Promoted { .. } | AllocSource::ConstFnLocal { .. } => {
+            if program.const_allocations().contains(&id) {
+                Ok(())
+            } else {
+                Err(MonoValidationError::MissingConstAllocation { alloc: id })
+            }
+        }
+    }
+}
+
+fn check_const_value(
+    program: &MonoProgram,
+    constants: &ConstProgram,
+    value: &ConstValue,
+) -> Result<(), MonoValidationError> {
+    match value {
+        ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
+            check_allocation_reference(program, constants, *target)
+        }
+        ConstValue::Dyn {
+            data,
+            concrete,
+            trait_ref,
+            ..
+        } => {
+            check_allocation_reference(program, constants, *data)?;
+            let key = VtableKey {
+                concrete: *concrete,
+                trait_ref: *trait_ref,
+            };
+            if program.vtable_id(key).is_some() {
+                Ok(())
+            } else {
+                Err(MonoValidationError::MissingConstVtable {
+                    concrete: *concrete,
+                    trait_ref: *trait_ref,
+                })
+            }
+        }
+        ConstValue::Tuple(elements) | ConstValue::Array(elements) => {
+            for element in elements {
+                check_const_value(program, constants, element)?;
+            }
+            Ok(())
+        }
+        ConstValue::Struct { fields, .. } | ConstValue::Variant { fields, .. } => {
+            for (_, field) in fields {
+                check_const_value(program, constants, field)?;
+            }
+            Ok(())
+        }
+        ConstValue::Int { .. }
+        | ConstValue::Float { .. }
+        | ConstValue::Bool(_)
+        | ConstValue::Char(_)
+        | ConstValue::Unit
+        | ConstValue::Str { .. } => Ok(()),
     }
 }
 

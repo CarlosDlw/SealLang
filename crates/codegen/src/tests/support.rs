@@ -53,14 +53,29 @@ pub(crate) fn front_end(source: &str) -> Compiled {
         session.target().pointer_width(),
     );
     let mir = seal_mir::lower(&hir, &typeck);
-    let facts = seal_borrowck::check(&hir, &mir, None, session.diag(), session.interner());
-    let mono = seal_mono::collect(&hir, &mir, session.diag(), session.interner());
+    let constants = seal_const_eval::evaluate(
+        &hir,
+        &mir,
+        session.diag(),
+        session.interner(),
+        session.target().pointer_width(),
+    );
+    let facts = seal_borrowck::check(
+        &hir,
+        &mir,
+        Some(&constants),
+        session.diag(),
+        session.interner(),
+    );
+    let mono = seal_mono::collect(&hir, &mir, &constants, session.diag(), session.interner());
     assert!(
         !session.diag().has_errors(),
         "the fixture must check and monomorphize"
     );
     mono.validate(&hir)
         .expect("monomorphization preserves its invariants");
+    mono.validate_globals(&constants)
+        .expect("monomorphization preserves its global invariants");
     Compiled {
         session,
         hir,

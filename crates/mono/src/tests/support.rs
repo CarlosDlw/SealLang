@@ -92,6 +92,15 @@ impl Fixture {
 
     /// Runs the front end and collection with explicit limits.
     pub(crate) fn lower_with(&self, limits: Limits) -> (Hir, Mir, MonoProgram) {
+        let (hir, mir, _constants, program) = self.lower_constants_with(limits);
+        (hir, mir, program)
+    }
+
+    /// Runs the front end and collection, returning the evaluated constants.
+    pub(crate) fn lower_constants_with(
+        &self,
+        limits: Limits,
+    ) -> (Hir, Mir, seal_const_eval::ConstProgram, MonoProgram) {
         let ast = self.parse();
         let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
         let typeck = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
@@ -99,8 +108,9 @@ impl Fixture {
         let mir = seal_mir::lower(&hir, &typeck);
         mir.validate_with(&hir)
             .expect("MIR lowering maintains its invariants");
-        let program = collect_with(&hir, &mir, &self.dcx, &self.interner, limits);
-        (hir, mir, program)
+        let constants = seal_const_eval::evaluate(&hir, &mir, &self.dcx, &self.interner, 64);
+        let program = collect_with(&hir, &mir, &constants, &self.dcx, &self.interner, limits);
+        (hir, mir, constants, program)
     }
 
     pub(crate) fn interner(&self) -> &Interner {
@@ -158,6 +168,22 @@ pub(crate) fn collect_clean(source: &str) -> (Fixture, Hir, Mir, MonoProgram) {
     let (hir, mir, program) = fixture.lower();
     fixture.assert_clean();
     (fixture, hir, mir, program)
+}
+
+/// Collects `source` and returns the evaluated constants too.
+pub(crate) fn collect_clean_constants(
+    source: &str,
+) -> (
+    Fixture,
+    Hir,
+    Mir,
+    seal_const_eval::ConstProgram,
+    MonoProgram,
+) {
+    let fixture = Fixture::new(source);
+    let (hir, mir, constants, program) = fixture.lower_constants_with(Limits::DEFAULT);
+    fixture.assert_clean();
+    (fixture, hir, mir, constants, program)
 }
 
 /// Collects `source` and returns the fixture for diagnostics.

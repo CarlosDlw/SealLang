@@ -31,6 +31,7 @@ seal-ty.workspace = true
 [dev-dependencies]
 seal-ast.workspace = true
 seal-borrowck.workspace = true
+seal-const-eval.workspace = true
 seal-lexer.workspace = true
 seal-mono.workspace = true
 seal-parser.workspace = true

@@ -17,6 +17,8 @@ fn program_with(mono: MonoMir) -> MonoProgram {
         IndexVec::from_raw(vec![mono]),
         ids,
         vec![MonoItem::Function(instance)],
+        Vec::new(),
+        Vec::new(),
         IndexVec::new(),
         FxHashMap::default(),
     )

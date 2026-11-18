@@ -116,17 +116,32 @@ pub(crate) fn compile_for_target_with_runtime(
     let mir = seal_mir::lower(&hir, &typeck);
     mir.validate()
         .expect("MIR lowering preserves its invariants");
-    let aliasing = seal_borrowck::check(&hir, &mir, None, session.diag(), session.interner());
+    let constants = seal_const_eval::evaluate(
+        &hir,
+        &mir,
+        session.diag(),
+        session.interner(),
+        session.target().pointer_width(),
+    );
+    let aliasing = seal_borrowck::check(
+        &hir,
+        &mir,
+        Some(&constants),
+        session.diag(),
+        session.interner(),
+    );
     assert!(!session.diag().has_errors(), "borrow checking failed");
 
     // Monomorphization diagnostics are not asserted here: a generic `main` is
     // reported by collection and then surfaces through entry-point validation,
     // which is exactly what the entry-point test exercises. Every successful
     // test still asserts the code generation result below.
-    let mono = seal_mono::collect(&hir, &mir, session.diag(), session.interner());
+    let mono = seal_mono::collect(&hir, &mir, &constants, session.diag(), session.interner());
     if !session.diag().has_errors() {
         mono.validate(&hir)
             .expect("monomorphization preserves its invariants");
+        mono.validate_globals(&constants)
+            .expect("monomorphization preserves its global invariants");
     }
 
     seal_codegen::emit(
