@@ -79,8 +79,46 @@ fn a_cast_on_the_left_is_grouped_before_multiplication() {
 #[test]
 fn a_missing_cast_target_recovers_at_the_next_statement() {
     let fixture = crate::tests::support::Fixture::new("func main(value: i32) { value as; 0 }");
-    let _ = fixture.parse();
+    let ast = fixture.parse();
     fixture.expect("E1004", "expected a type, found `;`");
+    let function = sole_function(&ast);
+    let block = ast.block(function.body);
+    assert_eq!(
+        block.statements.len(),
+        1,
+        "the failed cast stays one statement"
+    );
+    assert!(block.tail.is_some(), "the next expression survives");
+}
+
+#[test]
+fn the_cast_spans_cover_the_operand_as_and_target() {
+    let (fixture, ast) = parse_clean("func main(value: i32) { value as i32 }");
+    let declaration = sole_function(&ast);
+    let id = ast.block(declaration.body).tail.expect("tail exists");
+    let ExprKind::Cast {
+        operand,
+        ty,
+        as_span,
+    } = ast.expr(id).kind
+    else {
+        panic!("expected a cast, got {:?}", ast.expr(id).kind);
+    };
+    assert_eq!(fixture.text(as_span), "as");
+    assert_eq!(fixture.text(ast.ty(ty).span), "i32");
+    assert_eq!(fixture.text(ast.expr(id).span), "value as i32");
+    assert_eq!(fixture.text(ast.expr(operand).span), "value");
+    assert_invariants(&fixture, &ast);
+}
+
+#[test]
+fn as_is_not_a_function_name() {
+    let fixture = crate::tests::support::Fixture::new("func as() { }");
+    let _ = fixture.parse();
+    assert!(
+        !fixture.diagnostics().is_empty(),
+        "`as` must not parse as a function name"
+    );
 }
 
 #[test]

@@ -42,6 +42,7 @@ const NUMERIC_CASTS: &str = include_str!("../../../examples/035_numeric_casts.sl
 /// A program that returns zero only when every cast family produces its
 /// documented value, including saturation and NaN handling.
 const CAST_MATRIX: &str = "\
+func take(value: u8) -> u8 { value }\n\
 func main() -> i32 {
   if 300 as u8 != 44u8 { return 1; }
   if 255 as i8 != -1i8 { return 2; }
@@ -67,6 +68,21 @@ func main() -> i32 {
   if -1 as i64 as u128 != 340282366920938463463374607431768211455u128 { return 22; }
   if 1.0e300 as u128 != 340282366920938463463374607431768211455u128 { return 23; }
   if -1.0e300 as i128 != -170141183460469231731687303715884105728i128 { return 24; }
+  if 0 as u8 != 0u8 { return 25; }
+  if -1 as u8 != 255u8 { return 26; }
+  if (-2147483648) as u32 != 2147483648u32 { return 27; }
+  if (-0.0) as i32 != 0 { return 28; }
+  if (9223372036854775807i64 as f64) != 9223372036854775808.0 { return 29; }
+  if (18446744073709551615u64 as f64) != 18446744073709551616.0 { return 30; }
+  if 1 as i32 != 1 { return 31; }
+  let matched = match 300 as u8 { 44 => 1, _ => 0 };
+  if matched != 1 { return 32; }
+  let mut total = 0;
+  for index in 0..3 { total += index as i32; }
+  if total != 3 { return 33; }
+  if take(300 as u8) != 44u8 { return 34; }
+  if (200 as i8) as i64 != -56i64 { return 35; }
+  1 as u8;
   0
 }
 ";
