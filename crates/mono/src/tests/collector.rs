@@ -1,8 +1,8 @@
 //! Collection order, specialization, and limits.
 
-use seal_def::DefKind;
+use seal_def::{DefId, DefKind};
 use seal_mir::{CallTarget, Rvalue, StatementKind};
-use seal_ty::Instance;
+use seal_ty::{Instance, IntTy};
 
 use crate::collector::Limits;
 use crate::tests::support::{Fixture, collect_clean, collect_errors, names};
@@ -24,6 +24,14 @@ fn instance_named<'a>(
         "no instance named `{name}`, have {:?}",
         names(fixture, hir, program)
     )
+}
+
+fn def_named(fixture: &Fixture, hir: &seal_hir::Hir, kind: DefKind, name: &str) -> DefId {
+    hir.definitions()
+        .iter_enumerated()
+        .find(|(_, data)| data.kind == kind && fixture.symbol(data.name) == name)
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no {kind:?} named `{name}`"))
 }
 
 /// Returns every direct call target in `body`, in statement order.
@@ -496,6 +504,197 @@ fn the_stable_hash_is_equal_across_fresh_collections() {
         }
     }
     let _ = (&first_fixture, &second_fixture);
+}
+
+#[test]
+fn a_bound_call_uses_the_default_when_the_impl_omits_the_method() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "trait Show { func show(self: *Self) -> i32 { 7 } }\
+         impl Show for i32 {}\
+         func apply<T: Show>(value: *T) -> i32 { value.show() }\
+         func main() -> i32 { let value = 1; apply(&value) }",
+    );
+    let apply = instance_named(&fixture, &hir, &program, "apply<i32>");
+    let target = call_targets(&apply.body)
+        .into_iter()
+        .next()
+        .expect("apply calls the bound method");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the default call was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+    assert!(program.id_of(instance).is_some());
+    program
+        .validate(&hir)
+        .expect("the default instance is valid");
+}
+
+#[test]
+fn a_concrete_omitted_method_uses_the_default() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "struct Circle { radius: i32 }\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\
+         impl Shape for Circle {}\
+         func main() -> i32 {\
+             let circle = Circle { radius: 1 };\
+             circle.area()\
+         }",
+    );
+    let main = instance_named(&fixture, &hir, &program, "main");
+    let target = call_targets(&main.body)
+        .into_iter()
+        .next()
+        .expect("main calls area");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the default call was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+    assert!(program.id_of(instance).is_some());
+    program
+        .validate(&hir)
+        .expect("the default instance is valid");
+}
+
+#[test]
+fn an_override_still_wins_over_a_default() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "struct Circle { radius: i32 }\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\
+         impl Shape for Circle { func area(self: *Circle) -> i32 { 8 } }\
+         func main() -> i32 {\
+             let circle = Circle { radius: 1 };\
+             circle.area()\
+         }",
+    );
+    let main = instance_named(&fixture, &hir, &program, "main");
+    let target = call_targets(&main.body)
+        .into_iter()
+        .next()
+        .expect("main calls area");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the override call was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::Function);
+}
+
+#[test]
+fn a_supertrait_default_resolves_from_the_declaring_trait() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "trait Root { func root(self: *Self) -> i32 { 5 } }\
+         trait Leaf: Root {}\
+         impl Root for i32 {}\
+         impl Leaf for i32 {}\
+         func read<T: Leaf>(value: *T) -> i32 { value.root() }\
+         func main() -> i32 { let value = 1; read(&value) }",
+    );
+    let read = instance_named(&fixture, &hir, &program, "read<i32>");
+    let target = call_targets(&read.body)
+        .into_iter()
+        .next()
+        .expect("read calls root");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the supertrait default was not resolved");
+    };
+    let root = def_named(&fixture, &hir, DefKind::Trait, "Root");
+    assert_eq!(hir.definitions().get(instance.def).parent, Some(root));
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+}
+
+#[test]
+fn a_generic_default_keeps_self_and_trait_arguments() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "struct Wrapper<T> { value: T }\
+         trait Convert<T> {\
+             func value(self: *Self) -> T;\
+             func twice(self: *Self) -> T { self.value() }\
+         }\
+         impl Convert<i32> for Wrapper<i32> {\
+             func value(self: *Wrapper<i32>) -> i32 { (*self).value }\
+         }\
+         func main() -> i32 {\
+             let wrapper = Wrapper { value: 4 };\
+             wrapper.twice()\
+         }",
+    );
+    let main = instance_named(&fixture, &hir, &program, "main");
+    let target = call_targets(&main.body)
+        .into_iter()
+        .next()
+        .expect("main calls twice");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the generic default was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+    let arguments: Vec<String> = hir
+        .ty_ctxt()
+        .substs_args(instance.args)
+        .iter()
+        .map(|argument| {
+            hir.ty_ctxt()
+                .display_with(*argument, fixture.interner())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(arguments, ["Wrapper<i32>", "i32"]);
+    program
+        .validate(&hir)
+        .expect("the generic default is valid");
+}
+
+#[test]
+fn a_default_methods_own_bounds_are_validated() {
+    let fixture = Fixture::new(
+        "struct Token { value: i32 }\
+         trait Show { func show<U: Copy>(self: *Self) -> i32 { 7 } }\
+         impl Show for i32 {}",
+    );
+    let (hir, _mir) = fixture.frontend();
+    let show = def_named(&fixture, &hir, DefKind::TraitMethod, "show");
+    let token = def_named(&fixture, &hir, DefKind::Struct, "Token");
+    let token = hir.adt(token).expect("Token is an ADT");
+    let arguments = [
+        hir.ty_ctxt().int_ty(IntTy::I32),
+        hir.ty_ctxt().adt_ty(token),
+    ];
+    let instance = Instance::new(show, hir.ty_ctxt().substs(&arguments));
+    let error = crate::substitute::resolve_trait_instance(&hir, fixture.interner(), instance)
+        .expect_err("Token is not Copy");
+    assert!(matches!(error, crate::MonoError::MissingBound { .. }));
+}
+
+#[test]
+fn a_recursive_default_collects_one_instance() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "trait Loop { func f(self: *Self) -> i32 { self.f() } }\
+         impl Loop for i32 {}\
+         func main() -> i32 { let value = 1; value.f() }",
+    );
+    assert_eq!(
+        names(&fixture, &hir, &program)
+            .iter()
+            .filter(|name| name.starts_with("f<"))
+            .count(),
+        1
+    );
+    program.validate(&hir).expect("recursive default is valid");
+}
+
+#[test]
+fn a_growing_recursive_default_hits_the_existing_limit() {
+    let fixture = Fixture::new(
+        "trait Grow {\
+             func grow<T>(self: *Self, value: T) -> i32 { self.grow([value]) }\
+         }\
+         impl Grow for i32 {}\
+         func main() -> i32 { let value = 1; value.grow(0) }",
+    );
+    let (_hir, _mir, program) = fixture.lower_with(Limits {
+        depth: 4,
+        instances: 4096,
+        vtables: 4096,
+    });
+    fixture.expect("E7001", "recursion limit");
+    assert!(!program.instances().is_empty());
 }
 
 #[test]

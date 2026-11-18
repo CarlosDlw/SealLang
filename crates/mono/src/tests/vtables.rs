@@ -398,6 +398,116 @@ fn vtable_fingerprints_are_stable_across_collections() {
 }
 
 #[test]
+fn a_vtable_entry_uses_the_default_when_the_impl_omits_the_method() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { func area(self: *Self) -> i32 { 7 } } \
+        impl Shape for Circle {} \
+        func upcast(circle: *Circle) -> *dyn Shape { circle }";
+    let (fixture, hir, _mir, program) = collect_clean(source);
+    assert_eq!(program.vtables().len(), 1);
+    let table = program.vtable(VtableId::from_usize(0));
+    assert_eq!(
+        entry_names(&fixture, &hir, &program),
+        [vec!["area<Circle>".to_owned()]]
+    );
+    assert_eq!(table.entries[0].def, {
+        hir.definitions()
+            .iter_enumerated()
+            .find(|(_, data)| fixture.symbol(data.name) == "area")
+            .map(|(id, _)| id)
+            .expect("area exists")
+    });
+    assert!(table.drop.is_none());
+    program.validate(&hir).expect("the default vtable is valid");
+}
+
+#[test]
+fn a_vtable_mixes_overrides_and_defaults_in_layout_order() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { \
+            func area(self: *Self) -> i32; \
+            func name(self: *Self) -> i32 { 9 } \
+        } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+        func upcast(circle: *Circle) -> *dyn Shape { circle }";
+    let (fixture, hir, _mir, program) = collect_clean(source);
+    assert_eq!(
+        entry_names(&fixture, &hir, &program),
+        [vec!["area".to_owned(), "name<Circle>".to_owned()]]
+    );
+    let table = program.vtable(VtableId::from_usize(0));
+    assert_eq!(
+        hir.definitions().kind(table.entries[0].def),
+        seal_def::DefKind::Function
+    );
+    assert_eq!(
+        hir.definitions().kind(table.entries[1].def),
+        seal_def::DefKind::TraitMethod
+    );
+    program.validate(&hir).expect("the mixed vtable is valid");
+}
+
+#[test]
+fn a_supertrait_default_fills_its_vtable_slot() {
+    let source = "\
+        struct Point { x: i32 } \
+        trait Root { func root(self: *Self) -> i32 { 5 } } \
+        trait Leaf: Root { func leaf(self: *Self) -> i32; } \
+        impl Root for Point {} \
+        impl Leaf for Point { func leaf(self: *Point) -> i32 { (*self).x } } \
+        func upcast(point: *Point) -> *dyn Leaf { point }";
+    let (fixture, hir, _mir, program) = collect_clean(source);
+    assert_eq!(
+        entry_names(&fixture, &hir, &program),
+        [vec!["leaf".to_owned(), "root<Point>".to_owned()]]
+    );
+    let table = program.vtable(VtableId::from_usize(0));
+    assert_eq!(
+        hir.definitions().kind(table.entries[1].def),
+        seal_def::DefKind::TraitMethod
+    );
+    program
+        .validate(&hir)
+        .expect("the supertrait default is valid");
+}
+
+#[test]
+fn a_generic_default_vtable_entry_carries_the_trait_arguments() {
+    let source = "\
+        struct Meter { value: i32 } \
+        trait Convert<T> { \
+            func make(self: *Self) -> T; \
+            func twice(self: *Self) -> T { self.make() } \
+        } \
+        impl Convert<i32> for Meter {\
+            func make(self: *Meter) -> i32 { (*self).value }\
+        } \
+        func upcast(meter: *Meter) -> *dyn Convert<i32> { meter }";
+    let (fixture, hir, _mir, program) = collect_clean(source);
+    assert_eq!(
+        entry_names(&fixture, &hir, &program),
+        [vec!["make".to_owned(), "twice<Meter, i32>".to_owned()]]
+    );
+    let table = program.vtable(VtableId::from_usize(0));
+    let arguments: Vec<String> = hir
+        .ty_ctxt()
+        .substs_args(table.entries[1].args)
+        .iter()
+        .map(|argument| {
+            hir.ty_ctxt()
+                .display_with(*argument, fixture.interner())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(arguments, ["Meter", "i32"]);
+    program
+        .validate(&hir)
+        .expect("the generic default is valid");
+}
+
+#[test]
 fn missing_impl_reports_e7005_without_an_ice() {
     let fixture = Fixture::new(
         "trait Show { func show(self: *Self) -> i32; } \

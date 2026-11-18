@@ -230,10 +230,15 @@ pub(crate) fn resolve_trait_instance(
     }
     let (implementation, impl_arguments) = matches.pop().expect("one match remains");
     let Some(function) = implementation.method(method_name) else {
-        return Err(MonoError::MissingMethod {
-            trait_name,
-            method: interner.resolve(method_name).to_owned(),
-        });
+        return resolve_default_method(
+            hir,
+            interner,
+            instance,
+            &implementation,
+            method_arguments,
+            &trait_name,
+            method_name,
+        );
     };
     let function_own = hir
         .generics(function)
@@ -248,8 +253,55 @@ pub(crate) fn resolve_trait_instance(
     let mut all_arguments = impl_arguments.clone();
     all_arguments.extend_from_slice(method_arguments);
     let substs = tcx.substs(&all_arguments);
-    check_bounds(hir, interner, &implementation, substs, &impl_arguments)?;
+    check_impl_bounds(hir, interner, &implementation, substs, &impl_arguments)?;
     Ok(Instance::new(function, substs))
+}
+
+/// Selects the trait's default body when the matching impl omits the method.
+///
+/// The trait method's flattened arguments are already `[Self, trait args...,
+/// method args...]`, exactly the order its own body expects. The method's
+/// bounds are checked here because no impl function exists to carry them.
+fn resolve_default_method(
+    hir: &Hir,
+    interner: &Interner,
+    instance: Instance,
+    implementation: &TraitImplDef,
+    method_arguments: &[TyId],
+    trait_name: &str,
+    method_name: seal_symbol::Symbol,
+) -> Result<Instance, MonoError> {
+    let missing = || MonoError::MissingMethod {
+        trait_name: trait_name.to_owned(),
+        method: interner.resolve(method_name).to_owned(),
+    };
+    let Some(definition) = hir.trait_definition(implementation.trait_ref.trait_def) else {
+        return Err(missing());
+    };
+    let Some(declaration) = definition.method(method_name) else {
+        return Err(missing());
+    };
+    if hir.body_of(declaration.def).is_none() {
+        return Err(missing());
+    }
+    let expected = hir.flattened_generics(declaration.def).len();
+    let arguments = hir.ty_ctxt().substs_args(instance.args);
+    if arguments.len() != expected {
+        return Err(missing());
+    }
+    let method_generics = hir.generics(declaration.def).ok_or_else(missing)?;
+    if method_generics.params.len() != method_arguments.len() {
+        return Err(missing());
+    }
+    check_method_bounds(
+        hir,
+        interner,
+        declaration.def,
+        &method_generics,
+        instance.args,
+        method_arguments,
+    )?;
+    Ok(Instance::new(declaration.def, instance.args))
 }
 
 /// Verifies the selected impl's bounds for the concrete arguments.
@@ -257,21 +309,52 @@ pub(crate) fn resolve_trait_instance(
 /// Type checking already proves these at every call site; this pass refuses to
 /// continue with an instance whose contract is not met instead of generating
 /// code that assumes it.
-fn check_bounds(
+fn check_impl_bounds(
     hir: &Hir,
     interner: &Interner,
     implementation: &TraitImplDef,
     substs: SubstsId,
     arguments: &[TyId],
 ) -> Result<(), MonoError> {
+    check_param_bounds(
+        hir,
+        interner,
+        implementation.def,
+        &implementation.generics.params,
+        substs,
+        arguments,
+    )
+}
+
+/// Verifies the bounds declared by the trait method itself.
+fn check_method_bounds(
+    hir: &Hir,
+    interner: &Interner,
+    owner: seal_def::DefId,
+    generics: &seal_ty::Generics,
+    substs: SubstsId,
+    arguments: &[TyId],
+) -> Result<(), MonoError> {
+    check_param_bounds(hir, interner, owner, &generics.params, substs, arguments)
+}
+
+/// Verifies every bound attached to the given parameters.
+fn check_param_bounds(
+    hir: &Hir,
+    interner: &Interner,
+    owner: seal_def::DefId,
+    parameters: &[seal_ty::GenericParamDef],
+    substs: SubstsId,
+    arguments: &[TyId],
+) -> Result<(), MonoError> {
     let tcx = hir.ty_ctxt();
-    for (parameter, argument) in implementation.generics.params.iter().zip(arguments) {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
         for bound in &parameter.bounds {
             match bound {
                 Bound::Copy => {
                     if !tcx.is_copy(*argument) {
                         return Err(MonoError::MissingBound {
-                            implementation: display_def(hir, interner, implementation.def),
+                            implementation: display_def(hir, interner, owner),
                             argument: display_type(tcx, interner, *argument),
                         });
                     }
@@ -285,7 +368,7 @@ fn check_bounds(
                         .collect();
                     if !has_impl(hir, trait_ref.trait_def, goal_self, &goal_arguments) {
                         return Err(MonoError::MissingBound {
-                            implementation: display_def(hir, interner, implementation.def),
+                            implementation: display_def(hir, interner, owner),
                             argument: display_type(tcx, interner, goal_self),
                         });
                     }
