@@ -398,6 +398,21 @@ for division or remainder by zero (`E4002`, `E4003`), signed division overflow
 cycles (`E4007`), step, depth, allocation, and size limits (`E4008`–`E4010`,
 `E4025`), and forbidden operations in a constant context (`E4011`–`E4027`).
 
+Three boundaries keep this section from growing into a type-system feature of
+its own. There are no associated constants: `Type::VALUE` still resolves only
+an enum variant or an associated function, so a constant never participates in
+method resolution or in a trait implementation. Array lengths stay integer
+literals, so a constant is never read during parsing or layout. And a `const`
+item is not a type-level constant: `const N: usize = 4` cannot appear where a
+type argument is expected. Const generics, associated constants, and
+value-level array lengths are separate features with their own design.
+
+A `const` or `static` may name a trait object, a slice, or a string through a
+reference, because those pointees are `Sized` behind the pointer. A trait-object
+static records the concrete type and principal trait reference, which is what
+lets monomorphization collect the vtable its initializer points at; a static
+never needs a runtime type search.
+
 #### Compile-time calls
 
 A call from a constant context to a `const func` is interpreted directly from

@@ -27,6 +27,12 @@ const DEFAULT_METHOD_EXAMPLES: [&str; 1] = ["036_default_methods.sl"];
 
 const PROTOCOL_EXAMPLES: [&str; 2] = ["037_iteration_protocols.sl", "038_index_protocols.sl"];
 
+const GLOBAL_EXAMPLES: [&str; 3] = [
+    "039_const_static.sl",
+    "040_global_data.sl",
+    "041_global_mutation.sl",
+];
+
 fn check_examples(names: &[&str]) {
     for name in names {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -73,4 +79,9 @@ fn default_method_examples_check_cleanly() {
 #[test]
 fn protocol_examples_check_cleanly() {
     check_examples(&PROTOCOL_EXAMPLES);
+}
+
+#[test]
+fn global_examples_check_cleanly() {
+    check_examples(&GLOBAL_EXAMPLES);
 }

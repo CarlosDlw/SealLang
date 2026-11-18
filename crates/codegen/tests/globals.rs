@@ -13,7 +13,10 @@ use seal_session::OptLevel;
 
 mod support;
 
-use support::{TempOutput, compile, contains, run};
+use support::{
+    TempOutput, assert_no_thread_locals_or_constructors, compile, contains, is_read_only, run,
+    section_of,
+};
 
 /// Every global-data form in one program.
 ///
@@ -127,31 +130,6 @@ fn statics_and_constants_produce_their_documented_values() {
     }
 }
 
-/// Returns the section directive in effect at `symbol`'s label.
-fn section_of(assembly: &str, symbol: &str) -> Option<String> {
-    let mut section: Option<String> = None;
-    for line in assembly.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix(".section") {
-            let name = rest.split(',').next().unwrap_or_default().trim();
-            section = Some(name.to_owned());
-        } else if matches!(line, ".data" | ".text" | ".bss") {
-            section = Some(line.to_owned());
-        } else if line.trim_end_matches(':') == symbol {
-            return section;
-        }
-    }
-    None
-}
-
-/// Returns `true` for a section that is never written after loading.
-fn is_read_only(section: &str) -> bool {
-    section.contains("rodata")
-        || section.contains("data.rel.ro")
-        || section.contains("__const")
-        || section.contains("__DATA_CONST")
-}
-
 #[test]
 fn immutable_statics_are_read_only_and_mutable_ones_are_writable() {
     // Placement is asserted at `-O0`, where every reachable global is emitted
@@ -196,14 +174,7 @@ fn immutable_statics_are_read_only_and_mutable_ones_are_writable() {
         );
     }
 
-    assert!(
-        !assembly.contains(".tdata") && !assembly.contains(".tbss"),
-        "a static must not become thread-local:\n{assembly}"
-    );
-    assert!(
-        !assembly.contains("llvm.global_ctors"),
-        "statics must be initialized without a constructor:\n{assembly}"
-    );
+    assert_no_thread_locals_or_constructors(&assembly);
 }
 
 #[test]

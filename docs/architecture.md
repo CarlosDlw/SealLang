@@ -569,6 +569,16 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     local value, generic parameter, or `Self` from the enclosing function is
     `E3060`, because the item is evaluated outside the call frame. The check
     runs during resolution, so a captured name never becomes a `Res`.
+80. **Globals are emitted as exact memory images.** A `static` and an addressed
+    `const` are encoded from their evaluated value into a byte buffer with one
+    symbolic pointer slot per address, and the global's LLVM type is a packed
+    struct of byte runs and pointer fields carrying the language alignment.
+    Every slot is resolved after all globals are declared, so a static may
+    refer to a later static or to itself, and an immutable static that holds a
+    pointer lands in read-only-after-relocation data. A static is never
+    `unnamed_addr`, a zero-sized allocation keeps one byte so its address stays
+    unique, and no constructor or thread-local storage is emitted for any
+    global.
 
 ## Global data and constant evaluation
 

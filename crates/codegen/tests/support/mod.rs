@@ -183,3 +183,40 @@ pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         .windows(needle.len())
         .any(|window| window == needle)
 }
+
+/// Returns the section directive in effect at `symbol`'s label.
+pub(crate) fn section_of(assembly: &str, symbol: &str) -> Option<String> {
+    let mut section: Option<String> = None;
+    for line in assembly.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(".section") {
+            let name = rest.split(',').next().unwrap_or_default().trim();
+            section = Some(name.to_owned());
+        } else if matches!(line, ".data" | ".text" | ".bss") {
+            section = Some(line.to_owned());
+        } else if line.trim_end_matches(':') == symbol {
+            return section;
+        }
+    }
+    None
+}
+
+/// Returns `true` for a section that is never written after loading.
+pub(crate) fn is_read_only(section: &str) -> bool {
+    section.contains("rodata")
+        || section.contains("data.rel.ro")
+        || section.contains("__const")
+        || section.contains("__DATA_CONST")
+}
+
+/// Asserts that `assembly` has no thread-local storage and no constructors.
+pub(crate) fn assert_no_thread_locals_or_constructors(assembly: &str) {
+    assert!(
+        !assembly.contains(".tdata") && !assembly.contains(".tbss"),
+        "a global must not become thread-local:\n{assembly}"
+    );
+    assert!(
+        !assembly.contains("llvm.global_ctors"),
+        "globals must be initialized without a constructor:\n{assembly}"
+    );
+}

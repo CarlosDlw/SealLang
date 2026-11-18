@@ -47,6 +47,9 @@ fn all_examples_lex_cleanly() {
         "031_generic_recursion.sl",
         "035_numeric_casts.sl",
         "036_default_methods.sl",
+        "039_const_static.sl",
+        "040_global_data.sl",
+        "041_global_mutation.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);
@@ -55,7 +58,14 @@ fn all_examples_lex_cleanly() {
         assert!(
             matches!(
                 lexed.tokens.first().map(|token| token.kind),
-                Some(TokenKind::Func | TokenKind::Struct | TokenKind::Enum | TokenKind::Trait)
+                Some(
+                    TokenKind::Func
+                        | TokenKind::Struct
+                        | TokenKind::Enum
+                        | TokenKind::Trait
+                        | TokenKind::Const
+                        | TokenKind::Static
+                )
             ),
             "first token of {name}"
         );

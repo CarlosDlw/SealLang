@@ -416,6 +416,15 @@ value for the rest of the program. Static roots are always initialized and are
 never dropped. A block-scope static is one allocation per declaration, shared by
 every call and every monomorphization of the enclosing function.
 
+The storage model is completed at emission. A `const` or `static` value is
+materialized as its exact memory image with one relocation per address it holds,
+so the object file already contains the finished graph and nothing runs at load
+time. An immutable static, including one that holds a pointer, is read-only
+after relocation; a zero-initialized `static mut` becomes a local common symbol
+in BSS; and a zero-sized static still reserves one byte, so two unrelated
+zero-sized statics never share an address. A static is not `unnamed_addr`, which
+is what makes its address identity observable to the program.
+
 Borrow checking keys global storage by definition, not by the place syntax that
 reaches it. A loan rooted at a static or at an addressed const is an ordinary
 loan whose storage is that allocation, so two loans of disjoint fields do not

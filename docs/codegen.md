@@ -287,6 +287,12 @@ initializer, and the fourth resolves the pointers inside it.
   emitted, and no static becomes `thread_local`; a program can therefore start
   without a constructor and keeps the single-threaded global contract.
 
+`examples/039_const_static.sl`, `examples/040_global_data.sl`, and
+`examples/041_global_mutation.sl` are the acceptance surface of this section,
+and `crates/codegen/tests/global_examples.rs` compiles them at `-O0` and `-O2`,
+runs the executable, and inspects the assembly and the object for the expected
+sections and for the absence of constructors and thread-local storage.
+
 ## Debug information
 
 `-g` requests `DWARFEmissionKind::Full` with `DWARFSourceLanguage::Rust`:

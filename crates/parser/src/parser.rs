@@ -939,12 +939,18 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let found = self.describe(token.kind);
+                let help = match token_name(token.kind) {
+                    Some(keyword) => {
+                        format!("`{keyword}` is a reserved keyword; rename the identifier")
+                    }
+                    None => "identifiers start with a letter or `_`".to_owned(),
+                };
                 self.error(
                     codes::E1005,
                     token.span,
                     format!("expected {context}, found {found}"),
                 )
-                .help("identifiers start with a letter or `_`")
+                .help(help)
                 .emit();
                 (Symbol::EMPTY, token.span)
             }

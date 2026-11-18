@@ -112,6 +112,22 @@ pattern before every iteration. A successful match binds its names only in the
 loop body; a failed match exits the loop. `break` and `continue` act on the
 innermost loop, and `continue` reevaluates the scrutinee.
 
+`const` declares a compile-time value with no storage of its own, and `static`
+declares one allocation for the whole program. Both are initialized before the
+program starts, and `const func` may run at compile time or at runtime. Only
+`static mut` is writable, and every access to it needs an `unsafe { ... }`
+block:
+
+```seal
+const LIMIT: i32 = 6;
+static STEP: i32 = 7;
+static mut CALLS: i32 = 0;
+
+const func scaled(value: i32) -> i32 {
+  value * LIMIT
+}
+```
+
 ## Command line
 
 ```text
@@ -206,6 +222,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
+| [`RELEASES.md`](RELEASES.md) | Release notes and source migration for language changes |
 
 ## Status
 
@@ -246,3 +263,16 @@ overrides, symbolic dispatch, supertraits, generic defaults, dynamic dispatch,
 and associated default functions. `examples/037_iteration_protocols.sl` shows a
 custom `IntoIterator` cursor and the direct `Iterator` fallback, and
 `examples/038_index_protocols.sl` shows nested reads plus mutable indexing.
+
+Global data is part of the surface: `const` and `static` items may appear at
+file scope or in a block, `const func` may be called from a constant initializer,
+and a static may hold aggregates, references, slices, strings, and trait
+objects. Every initializer is evaluated at compile time, so a program has no
+global constructors and no initialization order; a `static` is one allocation
+with the layout and alignment of its type, and a `const` is substituted at every
+use unless its address is taken. Only `static mut` is writable, and all of its
+accesses are gated by `unsafe`, with a whole-program effect analysis keeping
+calls honest. `examples/039_const_static.sl` shows constant values and constant
+functions, `examples/040_global_data.sl` shows relocated aggregates, slices,
+strings, and trait objects, and `examples/041_global_mutation.sl` shows
+unsafe-gated mutable globals and block-scope statics.

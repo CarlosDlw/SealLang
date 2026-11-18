@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 32] = [
+const EXAMPLES: [&str; 35] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -40,6 +40,9 @@ const EXAMPLES: [&str; 32] = [
     "031_generic_recursion.sl",
     "035_numeric_casts.sl",
     "036_default_methods.sl",
+    "039_const_static.sl",
+    "040_global_data.sl",
+    "041_global_mutation.sl",
 ];
 
 fn source(name: &str) -> String {

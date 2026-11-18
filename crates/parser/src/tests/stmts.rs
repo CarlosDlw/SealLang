@@ -74,6 +74,21 @@ fn mut_is_a_keyword_not_a_binding_name() {
 }
 
 #[test]
+fn a_reserved_keyword_cannot_be_a_binding_name() {
+    let fixture = Fixture::new("func main() { let static = 1; }");
+    let _ = fixture.parse();
+    fixture.expect("E1005", "a binding name");
+    assert!(
+        fixture.diagnostics().iter().any(|diagnostic| diagnostic
+            .helps()
+            .iter()
+            .any(|help| help.contains("`static` is a reserved keyword"))),
+        "the diagnostic names the reserved keyword: {:?}",
+        fixture.diagnostics()
+    );
+}
+
+#[test]
 fn name_spans_point_at_the_names() {
     let (fixture, ast) = parse_clean("func main(param: i32) { let local = 1; }");
     let declaration = sole_function(&ast);

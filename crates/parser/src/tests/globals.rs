@@ -275,6 +275,26 @@ fn a_missing_name_is_reported_and_the_declaration_survives() {
 }
 
 #[test]
+fn a_reserved_keyword_cannot_name_a_value_declaration() {
+    for (source, keyword) in [
+        ("const unsafe: i32 = 1;", "unsafe"),
+        ("static const: i32 = 1;", "const"),
+    ] {
+        let fixture = Fixture::new(source);
+        let _ = fixture.parse();
+        fixture.expect("E1005", "a declaration name");
+        assert!(
+            fixture.diagnostics().iter().any(|diagnostic| diagnostic
+                .helps()
+                .iter()
+                .any(|help| help.contains(&format!("`{keyword}` is a reserved keyword")))),
+            "the diagnostic explains that `{keyword}` is reserved: {:?}",
+            fixture.diagnostics()
+        );
+    }
+}
+
+#[test]
 fn unsafe_without_a_block_is_reported() {
     let fixture = Fixture::new("func main() { unsafe 1 }");
     let ast = fixture.parse();

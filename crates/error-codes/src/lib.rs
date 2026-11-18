@@ -306,8 +306,10 @@ pub const E1005: ErrorCode = ErrorCode {
 This position needs a name: a function name, a parameter name, or a binding name.
 The parser found a keyword, a literal, or punctuation instead.
 
-Identifiers start with a letter or `_` and continue with letters, digits, and
-underscores; Unicode identifiers are accepted.",
+A keyword is reserved by the language and cannot name anything, so a program
+that used one as an identifier must rename it. Identifiers start with a letter
+or `_` and continue with letters, digits, and underscores; Unicode identifiers
+are accepted.",
 };
 
 /// An assignment or update has a target that cannot be assigned.
