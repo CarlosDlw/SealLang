@@ -16,7 +16,7 @@ use seal_ty::{AdtKind, GenericSignature, RefKind, TraitRef, TyCtxt, TyId, TyKind
 use crate::body::{Body, ParamData};
 use crate::generics::{GenericScopes, InherentImpl};
 use crate::res::Res;
-use crate::{Block, Hir, HirBlockId, ReceiverKind};
+use crate::{Block, Hir, HirBlockId, Protocol, ReceiverKind};
 
 mod aggregates;
 mod coherence;
@@ -112,13 +112,36 @@ struct PendingTraitImpl {
     functions: Vec<(DefId, Symbol)>,
 }
 
+/// One implementation function's signature after `Self` substitution.
+struct ImplSignature {
+    name: Symbol,
+    name_span: Span,
+    params: Vec<TyId>,
+    ret: TyId,
+}
+
+/// Maps a semantic trait-method receiver to the HIR receiver form.
+fn protocol_receiver(method: &seal_ty::TraitMethodDef) -> Option<ReceiverKind> {
+    method.receiver.map(|receiver| match receiver.reference {
+        None => ReceiverKind::Value,
+        Some(RefKind::Shared) => ReceiverKind::Shared,
+        Some(RefKind::Exclusive) => ReceiverKind::Exclusive,
+    })
+}
+
 impl<'a> Lowering<'a> {
     fn new(ast: &'a Ast, dcx: &'a DiagCtxt, interner: &'a Interner) -> Self {
+        let hir = Hir::empty(TyCtxt::new(), interner);
+        let mut traits = FxHashMap::default();
+        for protocol in Protocol::ALL {
+            let definition = hir.protocol_trait(protocol);
+            traits.insert(hir.definitions().name(definition), definition);
+        }
         Self {
             ast,
             dcx,
             interner,
-            hir: Hir::empty(TyCtxt::new()),
+            hir,
             scopes: scope::Scopes::default(),
             globals: FxHashMap::default(),
             types: FxHashMap::default(),
@@ -127,7 +150,7 @@ impl<'a> Lowering<'a> {
             function_items: Vec::new(),
             struct_items: Vec::new(),
             enum_items: Vec::new(),
-            traits: FxHashMap::default(),
+            traits,
             trait_methods: FxHashMap::default(),
             trait_method_order: FxHashMap::default(),
             trait_items: Vec::new(),
@@ -221,6 +244,23 @@ impl<'a> Lowering<'a> {
 
     /// Registers a trait and its method signatures.
     fn collect_trait(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        if let Some(protocol) = Protocol::from_name(self.interner.resolve(name)) {
+            self.error(
+                codes::E2066,
+                name_span,
+                format!(
+                    "the trait name `{}` is reserved for a compiler-provided protocol",
+                    protocol.name()
+                ),
+            )
+            .help(format!(
+                "`{}` is provided by the compiler; implement it instead of declaring it",
+                protocol.name()
+            ))
+            .emit();
+            return;
+        }
+
         let definition = self.define(DefData {
             kind: DefKind::Trait,
             name,
@@ -543,6 +583,34 @@ impl<'a> Lowering<'a> {
         );
         self.impl_self_tys.insert(impl_def, self_ty);
 
+        let levels = self.push_generic_scope(impl_def);
+        let saved = self.self_ty.replace(self_ty);
+        let trait_ref = declaration
+            .trait_ref
+            .as_ref()
+            .and_then(|path| self.lower_impl_trait_ref(path, self_ty));
+        self.self_ty = saved;
+        self.pop_generic_scope(levels);
+
+        if let Some(trait_ref) = trait_ref
+            && let Some(protocol) = self.hir.protocol_of_trait(trait_ref.trait_def)
+            && crate::protocols::is_builtin_sequence(self.hir.ty_ctxt(), self_ty)
+        {
+            let display = self.display_ty(self_ty);
+            let ty_span = self.ast.ty(declaration.self_ty).span;
+            self.error(
+                codes::E2067,
+                ty_span,
+                format!(
+                    "the protocol `{}` cannot be implemented for the compiler-owned type `{display}`",
+                    protocol.name()
+                ),
+            )
+            .help("wrap the array or slice in a struct and implement the protocol for the wrapper")
+            .emit();
+            return;
+        }
+
         if !self.hir.ty_ctxt().is_sized(self_ty)
             && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error)
         {
@@ -557,14 +625,6 @@ impl<'a> Lowering<'a> {
             .emit();
         }
 
-        let levels = self.push_generic_scope(impl_def);
-        let saved = self.self_ty.replace(self_ty);
-        let trait_ref = declaration
-            .trait_ref
-            .as_ref()
-            .and_then(|path| self.lower_impl_trait_ref(path, self_ty));
-        self.self_ty = saved;
-        self.pop_generic_scope(levels);
         let nominal = self.nominal_impl_target(self_ty);
 
         if let Some(trait_ref) = trait_ref {
@@ -774,11 +834,21 @@ impl<'a> Lowering<'a> {
         let pending = std::mem::take(&mut self.pending_trait_impls);
         for implementation in pending {
             let trait_def = implementation.trait_ref.trait_def;
-            let Some(order) = self.trait_method_order.get(&trait_def).cloned() else {
-                continue;
-            };
             let Some(declaration) = self.hir.trait_definition(trait_def) else {
                 continue;
+            };
+            let protocol = self.hir.protocol_of_trait(trait_def);
+            let order = if protocol.is_some() {
+                declaration
+                    .methods
+                    .iter()
+                    .map(|method| method.name)
+                    .collect()
+            } else {
+                let Some(order) = self.trait_method_order.get(&trait_def).cloned() else {
+                    continue;
+                };
+                order
             };
             let type_name = self.display_ty(implementation.self_ty);
             let trait_name = self
@@ -792,15 +862,30 @@ impl<'a> Lowering<'a> {
             }
 
             for name in &order {
-                let Some(raw) = self.trait_methods.get(&(trait_def, *name)).cloned() else {
-                    continue;
-                };
                 let Some(method) = declaration.method(*name) else {
                     continue;
                 };
+                let has_default = if protocol.is_some() {
+                    false
+                } else {
+                    self.trait_methods
+                        .get(&(trait_def, *name))
+                        .is_some_and(|raw| raw.body.is_some())
+                };
                 match implemented.get(name) {
-                    None if raw.body.is_some() => {}
+                    None if has_default => {}
                     None => {
+                        let help = if protocol.is_some() {
+                            format!(
+                                "add `func {}(...)` to this impl block; compiler-provided protocols have no default body",
+                                self.interner.resolve(*name)
+                            )
+                        } else {
+                            format!(
+                                "add `func {}(...)` to this impl block, or give the trait method a default body",
+                                self.interner.resolve(*name)
+                            )
+                        };
                         self.error(
                             codes::E2022,
                             implementation.span,
@@ -809,20 +894,30 @@ impl<'a> Lowering<'a> {
                                 self.interner.resolve(*name)
                             ),
                         )
-                        .help(format!(
-                            "add `func {}(...)` to this impl block, or give the trait method a default body",
-                            self.interner.resolve(*name)
-                        ))
+                        .help(help)
                         .emit();
                     }
                     Some(&function) => {
-                        self.check_trait_method(
-                            &raw,
-                            method,
-                            function,
-                            implementation.trait_ref,
-                            (&trait_name, &type_name),
-                        );
+                        if protocol.is_some() {
+                            self.check_protocol_method(
+                                method,
+                                function,
+                                implementation.trait_ref,
+                                (&trait_name, &type_name),
+                            );
+                        } else {
+                            let Some(raw) = self.trait_methods.get(&(trait_def, *name)).cloned()
+                            else {
+                                continue;
+                            };
+                            self.check_trait_method(
+                                &raw,
+                                method,
+                                function,
+                                implementation.trait_ref,
+                                (&trait_name, &type_name),
+                            );
+                        }
                     }
                 }
             }
@@ -846,25 +941,16 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Compares one implementation function with its trait method.
-    fn check_trait_method(
-        &mut self,
-        raw: &TraitMethodSig,
-        declared: &seal_ty::TraitMethodDef,
-        function: DefId,
-        trait_ref: TraitRef,
-        names: (&str, &str),
-    ) {
-        let (trait_name, type_name) = names;
-        let self_ty = trait_ref.self_ty;
-        let Some(&item_id) = self.function_item_of.get(&function) else {
-            return;
-        };
-        let (params, ret, name_span) = {
+    /// Lowers an implementation function's parameters and return type with the
+    /// impl's `Self` substituted.
+    fn lowered_impl_signature(&mut self, function: DefId, self_ty: TyId) -> Option<ImplSignature> {
+        let item_id = *self.function_item_of.get(&function)?;
+        let (name, params, ret, name_span) = {
             let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
-                return;
+                return None;
             };
             (
+                declaration.name,
                 declaration.params.clone(),
                 declaration.ret,
                 declaration.name_span,
@@ -888,24 +974,46 @@ impl<'a> Lowering<'a> {
         self.self_ty = saved;
         self.pop_generic_scope(levels);
 
+        Some(ImplSignature {
+            name,
+            name_span,
+            params: implemented,
+            ret: found_ret,
+        })
+    }
+
+    /// Compares one implementation function with its source trait method.
+    fn check_trait_method(
+        &mut self,
+        raw: &TraitMethodSig,
+        declared: &seal_ty::TraitMethodDef,
+        function: DefId,
+        trait_ref: TraitRef,
+        names: (&str, &str),
+    ) {
+        let (trait_name, type_name) = names;
+        let Some(implemented) = self.lowered_impl_signature(function, trait_ref.self_ty) else {
+            return;
+        };
+
         let receiver = self.hir.receiver(function);
         let mut difference = if raw.receiver != receiver {
             Some("the receiver does not match the trait declaration".to_owned())
-        } else if declared.signature.params.len() != implemented.len() {
+        } else if declared.signature.params.len() != implemented.params.len() {
             Some(format!(
                 "the trait declares {} parameter(s), but this function has {}",
                 declared.signature.params.len(),
-                implemented.len()
+                implemented.params.len()
             ))
         } else {
             match self.instantiate_trait_signature(declared, trait_ref, function) {
                 Err(difference) => Some(difference),
-                Ok(expected) => self.compare_parameter_types(&expected.params, &implemented),
+                Ok(expected) => self.compare_parameter_types(&expected.params, &implemented.params),
             }
         };
         if difference.is_none() {
             if let Ok(expected) = self.instantiate_trait_signature(declared, trait_ref, function) {
-                difference = self.compare_return_type(expected.ret, found_ret);
+                difference = self.compare_return_type(expected.ret, implemented.ret);
             }
         }
 
@@ -914,13 +1022,66 @@ impl<'a> Lowering<'a> {
         };
         self.error(
             codes::E2024,
-            name_span,
+            implemented.name_span,
             format!(
                 "`{}` does not match its declaration in the trait `{trait_name}`: {difference}",
-                self.interner.resolve(raw.name)
+                self.interner.resolve(implemented.name)
             ),
         )
         .secondary(raw.name_span, "declared here")
+        .help(format!(
+            "align the receiver, parameters, and return type; `{type_name}` plays the role of `Self`"
+        ))
+        .emit();
+    }
+
+    /// Compares one implementation function with a compiler-provided protocol
+    /// method. Built-in declarations have no source span, so the primary
+    /// diagnostic points at the implementation and never at a synthetic span.
+    fn check_protocol_method(
+        &mut self,
+        method: &seal_ty::TraitMethodDef,
+        function: DefId,
+        trait_ref: TraitRef,
+        names: (&str, &str),
+    ) {
+        let (trait_name, type_name) = names;
+        let Some(implemented) = self.lowered_impl_signature(function, trait_ref.self_ty) else {
+            return;
+        };
+        let receiver = self.hir.receiver(function);
+        let expected_receiver = protocol_receiver(method);
+        let mut difference = if expected_receiver != receiver {
+            Some("the receiver does not match the compiler-provided declaration".to_owned())
+        } else if method.signature.params.len() != implemented.params.len() {
+            Some(format!(
+                "the compiler provides {} parameter(s), but this function has {}",
+                method.signature.params.len(),
+                implemented.params.len()
+            ))
+        } else {
+            match self.instantiate_trait_signature(method, trait_ref, function) {
+                Err(difference) => Some(difference),
+                Ok(expected) => self.compare_parameter_types(&expected.params, &implemented.params),
+            }
+        };
+        if difference.is_none() {
+            if let Ok(expected) = self.instantiate_trait_signature(method, trait_ref, function) {
+                difference = self.compare_return_type(expected.ret, implemented.ret);
+            }
+        }
+
+        let Some(difference) = difference else {
+            return;
+        };
+        self.error(
+            codes::E2024,
+            implemented.name_span,
+            format!(
+                "`{}` does not match its compiler-provided declaration in the trait `{trait_name}`: {difference}",
+                self.interner.resolve(implemented.name)
+            ),
+        )
         .help(format!(
             "align the receiver, parameters, and return type; `{type_name}` plays the role of `Self`"
         ))

@@ -33,6 +33,7 @@ mod id;
 mod lower;
 mod pattern;
 mod primitives;
+mod protocols;
 mod res;
 mod traits;
 
@@ -45,6 +46,7 @@ pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
+pub use protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use res::Res;
 pub use traits::TraitMethodLookup;
 
@@ -97,6 +99,7 @@ pub struct Hir {
     adts: FxHashMap<DefId, AdtId>,
     variants: FxHashMap<(DefId, Symbol), VariantIdx>,
     traits: FxHashMap<Symbol, DefId>,
+    protocols: Option<ProtocolDefs>,
     trait_impls: traits::TraitImpls,
     /// Inherent associated functions, in declaration order per type and name.
     ///
@@ -267,6 +270,44 @@ impl Hir {
         self.ty_ctxt.trait_def(def)
     }
 
+    /// Returns the definition IDs of the compiler-provided protocols.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the HIR was constructed without installing its built-in
+    /// protocols, which is an internal invariant violation.
+    pub fn protocol_defs(&self) -> ProtocolDefs {
+        self.protocols
+            .expect("every HIR installs the built-in protocols")
+    }
+
+    /// Returns the trait definition for `protocol`.
+    pub fn protocol_trait(&self, protocol: Protocol) -> DefId {
+        self.protocol_defs().trait_def(protocol)
+    }
+
+    /// Returns the protocol owned by the trait definition `def`.
+    pub fn protocol_of_trait(&self, def: DefId) -> Option<Protocol> {
+        self.protocols?.protocol_of_trait(def)
+    }
+
+    /// Returns the protocol and method named by a method definition.
+    pub fn protocol_method_of(&self, def: DefId) -> Option<(Protocol, ProtocolMethod)> {
+        self.protocols?.protocol_method_of(def)
+    }
+
+    /// Returns `true` when `def` is a compiler-provided protocol definition or
+    /// one of its generic parameters.
+    pub fn is_builtin_def(&self, def: DefId) -> bool {
+        if self.protocol_of_trait(def).is_some() {
+            return true;
+        }
+        self.definitions
+            .get(def)
+            .parent
+            .is_some_and(|parent| self.is_builtin_def(parent))
+    }
+
     /// Returns the generic parameters declared by `owner`.
     ///
     /// An impl method reports the impl as its parent; use
@@ -406,9 +447,9 @@ impl Hir {
         &self.exprs
     }
 
-    pub(crate) fn empty(mut ty_ctxt: TyCtxt) -> Self {
+    pub(crate) fn empty(mut ty_ctxt: TyCtxt, interner: &Interner) -> Self {
         lower::intern_primitives(&mut ty_ctxt);
-        Self {
+        let mut hir = Self {
             definitions: Definitions::new(),
             bodies: IndexVec::new(),
             blocks: IndexVec::new(),
@@ -420,12 +461,15 @@ impl Hir {
             adts: FxHashMap::default(),
             variants: FxHashMap::default(),
             traits: FxHashMap::default(),
+            protocols: None,
             trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
             dyn_types: Vec::new(),
-        }
+        };
+        hir.protocols = Some(protocols::install(&mut hir, interner));
+        hir
     }
 
     pub(crate) fn define(&mut self, data: DefData) -> DefId {

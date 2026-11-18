@@ -13,6 +13,7 @@ mod if_let;
 mod match_advanced;
 mod match_expr;
 mod methods;
+mod protocols;
 mod resolve;
 mod slices;
 mod structs;
