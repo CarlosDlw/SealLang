@@ -33,6 +33,9 @@ impl Lowering<'_> {
                 self.scopes.insert(binding.name, local);
                 StmtKind::Let { local, ty, init }
             }
+            // Block-scope declarations introduce definitions, so they are
+            // lowered by the value-item pass together with file-scope items.
+            AstStmtKind::Const(_) | AstStmtKind::Static(_) => StmtKind::Error,
             AstStmtKind::Return(value) => {
                 StmtKind::Return(value.map(|value| self.lower_expr(value)))
             }

@@ -1,6 +1,6 @@
 //! Blocks and statements.
 
-use seal_ast::{BlockId, ExprKind, ForSource, StmtId};
+use seal_ast::{BlockId, ConstDecl, ExprKind, ForSource, StaticDecl, StmtId};
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
 use seal_span::Span;
@@ -30,6 +30,12 @@ impl Parser<'_> {
             if self.at(TokenKind::Let) {
                 let statement = self.parse_let();
                 statements.push(statement);
+            } else if self.at(TokenKind::Const) {
+                let statement = self.parse_const_stmt();
+                statements.push(statement);
+            } else if self.at(TokenKind::Static) {
+                let statement = self.parse_static_stmt();
+                statements.push(statement);
             } else if self.at(TokenKind::Return) {
                 let statement = self.parse_return();
                 statements.push(statement);
@@ -49,7 +55,10 @@ impl Parser<'_> {
                 // A block-like expression in statement position stands alone: a
                 // token on the next line starts a new statement, so `if c { }`
                 // followed by `*r` is not a multiplication.
-                let expr = if self.at(TokenKind::If) || self.at(TokenKind::Match) {
+                let expr = if self.at(TokenKind::If)
+                    || self.at(TokenKind::Match)
+                    || self.at(TokenKind::Unsafe)
+                {
                     self.parse_prefix()
                 } else {
                     self.parse_expr(0)
@@ -63,7 +72,10 @@ impl Parser<'_> {
                     break;
                 } else if matches!(
                     self.builder.ast().expr(expr).kind,
-                    ExprKind::If { .. } | ExprKind::IfLet { .. } | ExprKind::Match { .. }
+                    ExprKind::If { .. }
+                        | ExprKind::IfLet { .. }
+                        | ExprKind::Match { .. }
+                        | ExprKind::Unsafe(_)
                 ) {
                     // Block-like expressions are statements without a `;`.
                     statements.push(self.builder.push_expr_stmt(expr_span, expr));
@@ -143,6 +155,53 @@ impl Parser<'_> {
         let span = keyword.span.cover(self.previous_span());
         self.builder
             .push_let(span, name, name_span, mutable, ty, init)
+    }
+
+    /// Parses a block-scope `const` declaration.
+    ///
+    /// A `const func` is a file-scope item, so it is reported as `E1014` and
+    /// skipped instead of being attached to the block.
+    fn parse_const_stmt(&mut self) -> StmtId {
+        let keyword = self.bump();
+        if self.at(TokenKind::Func) {
+            let span = self.recover_local_item(keyword.span, "const func");
+            return self.builder.push_error_stmt(span);
+        }
+        self.reject_const_mut();
+        let declaration = self.parse_value_decl("const");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_const_stmt(
+            span,
+            ConstDecl {
+                name: declaration.name,
+                name_span: declaration.name_span,
+                ty: declaration.ty,
+                init: declaration.init,
+            },
+        )
+    }
+
+    /// Parses a block-scope `static` declaration.
+    fn parse_static_stmt(&mut self) -> StmtId {
+        let keyword = self.bump();
+        if self.at(TokenKind::Func) {
+            let span = self.recover_local_item(keyword.span, "static func");
+            return self.builder.push_error_stmt(span);
+        }
+        let mutable = self.eat(TokenKind::Mut);
+        self.reject_extra_mut();
+        let declaration = self.parse_value_decl("static");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_static_stmt(
+            span,
+            StaticDecl {
+                name: declaration.name,
+                name_span: declaration.name_span,
+                mutable,
+                ty: declaration.ty,
+                init: declaration.init,
+            },
+        )
     }
 
     fn parse_while(&mut self) -> StmtId {

@@ -4,7 +4,9 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::generics::{GenericParams, TraitPath, WhereClause};
-use crate::id::{BlockId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId};
+use crate::id::{
+    BlockId, ExprId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId,
+};
 
 /// A top-level item.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +22,10 @@ pub struct Item {
 pub enum ItemKind {
     /// A function declaration.
     Func(FnDecl),
+    /// A constant declaration.
+    Const(ConstDecl),
+    /// A static declaration, immutable or mutable.
+    Static(StaticDecl),
     /// A struct declaration.
     Struct(StructDecl),
     /// An enum declaration.
@@ -196,6 +202,8 @@ pub struct FnDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Whether the declaration is a `const func`.
+    pub is_const: bool,
     /// Declared function type parameters.
     pub generics: GenericParams,
     /// Parameters in source order.
@@ -206,6 +214,42 @@ pub struct FnDecl {
     pub where_clause: WhereClause,
     /// The function body.
     pub body: BlockId,
+}
+
+/// A constant declaration.
+///
+/// A constant has no storage of its own: its value is evaluated at compile time
+/// and every use is replaced by that value. Both the type and the initializer
+/// are required.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstDecl {
+    /// The constant name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// The declared type.
+    pub ty: TypeId,
+    /// The constant expression.
+    pub init: ExprId,
+}
+
+/// A static declaration.
+///
+/// A static owns one allocation with program lifetime, initialized at compile
+/// time. Only `static mut` is writable, and every access to it requires an
+/// enclosing `unsafe` block.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StaticDecl {
+    /// The static name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// Whether the declaration is `static mut`.
+    pub mutable: bool,
+    /// The declared type.
+    pub ty: TypeId,
+    /// The initializer.
+    pub init: ExprId,
 }
 
 /// A function parameter.

@@ -421,6 +421,13 @@ pub enum ExprKind {
     /// The value of the block is its tail expression, or `()` when the block
     /// has statements but no tail. The block owns its own scope.
     Block(BlockId),
+    /// An unsafe block, written `unsafe { statements; tail }`.
+    ///
+    /// The expression has the value of its block. In this feature the marker
+    /// only unlocks places rooted in a `static mut`; it does not relax type
+    /// checking, borrow checking, or initialization checking, and it has no
+    /// runtime representation.
+    Unsafe(BlockId),
     /// A conditional expression.
     ///
     /// The value of the expression is the value of the branch that runs. An

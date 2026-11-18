@@ -316,6 +316,16 @@ impl Reachability<'_> {
                     self.check_block(body);
                 }
             }
+            ItemKind::Const(declaration) => {
+                self.assert_span(declaration.name_span);
+                self.check_type(declaration.ty);
+                self.check_expr(declaration.init);
+            }
+            ItemKind::Static(declaration) => {
+                self.assert_span(declaration.name_span);
+                self.check_type(declaration.ty);
+                self.check_expr(declaration.init);
+            }
             ItemKind::Error => {}
         }
     }
@@ -484,6 +494,16 @@ impl Reachability<'_> {
                 if let Some(init) = binding.init {
                     self.check_expr(init);
                 }
+            }
+            StmtKind::Const(declaration) => {
+                self.assert_span(declaration.name_span);
+                self.check_type(declaration.ty);
+                self.check_expr(declaration.init);
+            }
+            StmtKind::Static(declaration) => {
+                self.assert_span(declaration.name_span);
+                self.check_type(declaration.ty);
+                self.check_expr(declaration.init);
             }
             StmtKind::Return(value) => {
                 if let Some(value) = value {
@@ -663,7 +683,7 @@ impl Reachability<'_> {
                     self.check_expr(arm.body);
                 }
             }
-            ExprKind::Block(block) => self.check_block(block),
+            ExprKind::Block(block) | ExprKind::Unsafe(block) => self.check_block(block),
             ExprKind::If {
                 condition,
                 then_branch,

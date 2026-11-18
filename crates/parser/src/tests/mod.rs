@@ -9,6 +9,7 @@ mod examples;
 mod exprs;
 mod for_loop;
 mod generics;
+mod globals;
 mod if_let;
 mod impls;
 mod items;

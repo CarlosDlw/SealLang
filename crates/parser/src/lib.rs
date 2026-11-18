@@ -10,24 +10,39 @@
 //! ```text
 //! program    = item*
 //! item       = "func" IDENT "(" params? ")" ("->" type)? block
+//!            | "const" "func" IDENT "(" params? ")" ("->" type)? block
+//!            | "const" IDENT ":" type "=" expr ";"
+//!            | "static" "mut"? IDENT ":" type "=" expr ";"
+//!            | "struct" IDENT generics? "{" fields "}"
+//!            | "enum" IDENT generics? "{" variants "}"
+//!            | "impl" generics? type ("for" type)? "{" item* "}"
+//!            | "trait" IDENT generics? (":" bound ("," bound)*)? "{" item* "}"
 //! params     = param ("," param)* ","?
 //! param      = IDENT ":" type
 //! type       = "*" type | PRIMITIVE
 //! block      = "{" statement* expr? "}"
 //! statement  = "let" "mut"? IDENT (":" type)? ("=" expr)? ";"
+//!            | "const" IDENT ":" type "=" expr ";"
+//!            | "static" "mut"? IDENT ":" type "=" expr ";"
 //!            | "return" expr? ";"
 //!            | "while" expr block
 //!            | "break" ";"
 //!            | "continue" ";"
 //!            | expr ";"?
 //! expr       = assignment and binary expressions over literals, names,
-//!              calls, `if`, and parenthesized expressions
+//!              calls, `if`, `unsafe` blocks, and parenthesized expressions
 //! if_expr    = "if" expr block ("else" (block | if_expr))?
 //! ```
 //!
 //! `if` is an expression whose value is the block that runs; without `else` its
-//! type is unit. A block-like expression used as a statement needs no semicolon.
-//! `break` and `continue` act on the innermost enclosing loop.
+//! type is unit. `unsafe { ... }` is a prefix expression whose value is the
+//! block's value; it needs no semicolon in statement position. A block-like
+//! expression used as a statement needs no semicolon. `break` and `continue` act
+//! on the innermost enclosing loop.
+//!
+//! `const` and `static` may be declared at file scope or as a declaration
+//! statement in a block. The token after `const` selects the form: `func` starts
+//! a constant function, and anything else starts a constant declaration.
 //!
 //! Bindings are immutable unless `mut` is written; the AST records the flag, so
 //! the checker never has to infer mutability from how a name is used.
@@ -36,7 +51,7 @@
 //!
 //! Parsing never stops at the first error. A malformed item, statement, or
 //! expression becomes an `Error` node, and the parser synchronizes at `;`, `}`,
-//! `func`, and end of file. Diagnostics are emitted through [`DiagCtxt`] with
+//! `func`, `const`, `static`, and end of file. Diagnostics are emitted through [`DiagCtxt`] with
 //! codes in the `E1xxx` range. Every loop asserts progress, so hostile input
 //! cannot hang the compiler, and recursion is bounded by a nesting limit.
 //!

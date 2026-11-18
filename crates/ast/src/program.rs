@@ -12,7 +12,8 @@ use crate::id::{
     TupleFieldDeclId, TypeId, VariantDeclId,
 };
 use crate::item::{
-    FieldDecl, Item, ItemKind, Param, TupleFieldDecl, VariantDecl, VariantFieldList,
+    ConstDecl, FieldDecl, Item, ItemKind, Param, StaticDecl, TupleFieldDecl, VariantDecl,
+    VariantFieldList,
 };
 use crate::pattern::Pattern;
 use crate::ty::{Type, TypeKind};
@@ -240,6 +241,22 @@ impl AstBuilder {
         self.ast.items.push(Item { kind, span })
     }
 
+    /// Adds a constant declaration item and returns its ID.
+    pub fn push_const_item(&mut self, span: Span, declaration: ConstDecl) -> ItemId {
+        self.ast.items.push(Item {
+            kind: ItemKind::Const(declaration),
+            span,
+        })
+    }
+
+    /// Adds a static declaration item and returns its ID.
+    pub fn push_static_item(&mut self, span: Span, declaration: StaticDecl) -> ItemId {
+        self.ast.items.push(Item {
+            kind: ItemKind::Static(declaration),
+            span,
+        })
+    }
+
     /// Adds a generic parameter declaration and returns its ID.
     pub fn push_generic_param(
         &mut self,
@@ -340,6 +357,22 @@ impl AstBuilder {
                 ty,
                 init,
             }),
+            span,
+        })
+    }
+
+    /// Adds a block-scope constant declaration and returns its ID.
+    pub fn push_const_stmt(&mut self, span: Span, declaration: ConstDecl) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::Const(declaration),
+            span,
+        })
+    }
+
+    /// Adds a block-scope static declaration and returns its ID.
+    pub fn push_static_stmt(&mut self, span: Span, declaration: StaticDecl) -> StmtId {
+        self.ast.stmts.push(Stmt {
+            kind: StmtKind::Static(declaration),
             span,
         })
     }
@@ -462,6 +495,14 @@ impl AstBuilder {
                 then_branch,
                 else_branch,
             },
+            span,
+        })
+    }
+
+    /// Adds an `unsafe` block expression and returns its ID.
+    pub fn push_unsafe(&mut self, span: Span, block: BlockId) -> ExprId {
+        self.ast.exprs.push(Expr {
+            kind: ExprKind::Unsafe(block),
             span,
         })
     }

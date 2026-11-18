@@ -4,6 +4,7 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::id::{BlockId, ExprId, PatternId, StmtId, TypeId};
+use crate::item::{ConstDecl, StaticDecl};
 
 /// A braced block.
 ///
@@ -33,6 +34,10 @@ pub struct Stmt {
 pub enum StmtKind {
     /// A `let` binding.
     Let(LetStmt),
+    /// A block-scope constant declaration.
+    Const(ConstDecl),
+    /// A block-scope static declaration.
+    Static(StaticDecl),
     /// A `return`, with an optional value.
     Return(Option<ExprId>),
     /// A `while` loop.

@@ -1,9 +1,9 @@
 //! Parser state, token access, diagnostics, and top-level items.
 
 use seal_ast::{
-    Ast, AstBuilder, EnumDecl, ExprId, FieldDeclId, FnDecl, GenericParams, ImplDecl, ItemId,
-    ItemKind, ParamId, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId, TypeId,
-    VariantDeclId, VariantFieldList,
+    Ast, AstBuilder, ConstDecl, EnumDecl, ExprId, ExprKind, FieldDeclId, FnDecl, GenericParams,
+    ImplDecl, ItemId, ItemKind, ParamId, StaticDecl, StructDecl, TraitDecl, TraitMethodDecl,
+    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -11,6 +11,14 @@ use seal_error_codes::ErrorCode;
 use seal_lexer::{Lexed, Token, TokenKind};
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
+
+/// The name, type, and initializer of one `const` or `static` declaration.
+pub(crate) struct ValueDecl {
+    pub(crate) name: Symbol,
+    pub(crate) name_span: Span,
+    pub(crate) ty: TypeId,
+    pub(crate) init: ExprId,
+}
 
 /// Maximum nesting depth for expressions and types.
 ///
@@ -64,7 +72,14 @@ impl<'a> Parser<'a> {
         while !self.is_eof() {
             let before = self.index;
             if self.at(TokenKind::Func) {
-                let item = self.parse_function();
+                let start = self.current_span();
+                let item = self.parse_function(false, start);
+                self.items.push(item);
+            } else if self.at(TokenKind::Const) {
+                let item = self.parse_const_item();
+                self.items.push(item);
+            } else if self.at(TokenKind::Static) {
+                let item = self.parse_static_item();
                 self.items.push(item);
             } else if self.at(TokenKind::Struct) {
                 let item = self.parse_struct();
@@ -86,10 +101,15 @@ impl<'a> Parser<'a> {
                     start,
                     format!("expected an item, found {found}"),
                 )
-                .help("top-level items start with `func`, `struct`, `enum`, `impl`, or `trait`")
+                .help(
+                    "top-level items start with `func`, `const`, `static`, `struct`, `enum`, \
+                     `impl`, or `trait`",
+                )
                 .emit();
                 while !self.is_eof()
                     && !self.at(TokenKind::Func)
+                    && !self.at(TokenKind::Const)
+                    && !self.at(TokenKind::Static)
                     && !self.at(TokenKind::Struct)
                     && !self.at(TokenKind::Enum)
                     && !self.at(TokenKind::Impl)
@@ -108,8 +128,197 @@ impl<'a> Parser<'a> {
         self.builder.finish(items)
     }
 
-    fn parse_function(&mut self) -> ItemId {
+    /// Parses a `const` item, including `const func`.
+    ///
+    /// The token after `const` decides the form: `func` starts a constant
+    /// function, and anything else starts a constant declaration.
+    fn parse_const_item(&mut self) -> ItemId {
         let keyword = self.bump();
+        if self.at(TokenKind::Func) {
+            return self.parse_function(true, keyword.span);
+        }
+        self.reject_const_mut();
+        let declaration = self.parse_value_decl("const");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_const_item(
+            span,
+            ConstDecl {
+                name: declaration.name,
+                name_span: declaration.name_span,
+                ty: declaration.ty,
+                init: declaration.init,
+            },
+        )
+    }
+
+    /// Parses a `static` item, with an optional `mut`.
+    fn parse_static_item(&mut self) -> ItemId {
+        let keyword = self.bump();
+        if self.at(TokenKind::Func) {
+            self.error(
+                codes::E1013,
+                keyword.span.cover(self.current_span()),
+                "`static` cannot declare a function",
+            )
+            .help("write `const func` for a function that may run at compile time")
+            .emit();
+            return self.parse_function(false, keyword.span);
+        }
+        let mutable = self.eat(TokenKind::Mut);
+        self.reject_extra_mut();
+        let declaration = self.parse_value_decl("static");
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_static_item(
+            span,
+            StaticDecl {
+                name: declaration.name,
+                name_span: declaration.name_span,
+                mutable,
+                ty: declaration.ty,
+                init: declaration.init,
+            },
+        )
+    }
+
+    /// Parses the name, type, and initializer shared by `const` and `static`
+    /// declarations, at file scope and in a block.
+    ///
+    /// The current token is the name. A missing type or initializer is reported
+    /// once as `E1012`, and the declaration still gets a total node with an
+    /// error type or expression so later phases see the written shape.
+    pub(crate) fn parse_value_decl(&mut self, keyword: &str) -> ValueDecl {
+        let (name, name_span) = self.expect_ident("a declaration name");
+        let ty = if self.eat(TokenKind::Colon) {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        let init = if self.eat(TokenKind::Eq) {
+            Some(self.parse_expr(0))
+        } else {
+            None
+        };
+
+        if ty.is_none() || init.is_none() {
+            let message = match (ty.is_none(), init.is_none()) {
+                (true, true) => {
+                    format!("`{keyword}` declaration needs an explicit type and an initializer")
+                }
+                (true, false) => format!("`{keyword}` declaration needs an explicit type"),
+                (false, true) => format!("`{keyword}` declaration needs an initializer"),
+                (false, false) => unreachable!("a missing piece was just detected"),
+            };
+            self.error(codes::E1012, name_span, message)
+                .help(format!("write `{keyword} NAME: Type = value;`"))
+                .emit();
+        }
+
+        let ty = ty.unwrap_or_else(|| self.builder.push_type(TypeKind::Error, name_span));
+        let init = init.unwrap_or_else(|| {
+            let span = self.current_span();
+            self.builder.push_expr(ExprKind::Error, span)
+        });
+
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `;` after the `{keyword}` declaration, found {found}"),
+            )
+            .help("end the declaration with `;`")
+            .emit();
+        }
+
+        ValueDecl {
+            name,
+            name_span,
+            ty,
+            init,
+        }
+    }
+
+    /// Rejects `const mut`, which is not a declaration form.
+    pub(crate) fn reject_const_mut(&mut self) {
+        if !self.at(TokenKind::Mut) {
+            return;
+        }
+        let token = self.bump();
+        self.error(
+            codes::E1013,
+            token.span,
+            "`const` cannot be declared mutable",
+        )
+        .help("only `static mut` declares writable global storage")
+        .emit();
+        while self.at(TokenKind::Mut) {
+            self.bump();
+        }
+    }
+
+    /// Rejects a second `mut` on a static declaration.
+    pub(crate) fn reject_extra_mut(&mut self) {
+        if !self.at(TokenKind::Mut) {
+            return;
+        }
+        let token = self.bump();
+        self.error(codes::E1013, token.span, "`static` takes at most one `mut`")
+            .help("write `static mut NAME: Type = value;`")
+            .emit();
+        while self.at(TokenKind::Mut) {
+            self.bump();
+        }
+    }
+
+    /// Reports a block-scope declaration that cannot exist there and skips its
+    /// tokens, keeping the enclosing block's closing brace for the block.
+    pub(crate) fn recover_local_item(&mut self, start: Span, construct: &str) -> Span {
+        self.error(
+            codes::E1014,
+            start,
+            format!("`{construct}` cannot be declared inside a block"),
+        )
+        .help("move the declaration to file scope")
+        .emit();
+        self.skip_declaration();
+        start.cover(self.previous_span())
+    }
+
+    /// Skips a declaration after a diagnostic, including any balanced body.
+    fn skip_declaration(&mut self) {
+        let mut depth = 0usize;
+        while !self.is_eof() {
+            match self.current_kind() {
+                TokenKind::LBrace => {
+                    depth += 1;
+                    self.bump();
+                }
+                TokenKind::RBrace if depth == 0 => break,
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    self.bump();
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Semicolon if depth == 0 => {
+                    self.bump();
+                    break;
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// Parses a function declaration.
+    ///
+    /// `start` is the first token of the declaration, which is `const` for a
+    /// `const func`; the item span covers it so the whole declaration has one
+    /// exact source range.
+    fn parse_function(&mut self, is_const: bool, start: Span) -> ItemId {
+        let _keyword = self.bump();
         let (name, name_span, generics, params, ret) = self.parse_signature();
         let where_clause = self.parse_where_clause();
         let body = if self.at(TokenKind::LBrace) {
@@ -127,11 +336,12 @@ impl<'a> Parser<'a> {
             self.builder.push_block(span, Vec::new(), None)
         };
 
-        let span = keyword.span.cover(self.previous_span());
+        let span = start.cover(self.previous_span());
         self.builder.push_item(
             ItemKind::Func(FnDecl {
                 name,
                 name_span,
+                is_const,
                 generics,
                 params,
                 ret,
@@ -231,7 +441,8 @@ impl<'a> Parser<'a> {
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
             if self.at(TokenKind::Func) {
-                functions.push(self.parse_function());
+                let start = self.current_span();
+                functions.push(self.parse_function(false, start));
             } else {
                 let found = self.describe(self.current_kind());
                 self.error(
@@ -874,6 +1085,9 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::True => "true",
         TokenKind::False => "false",
         TokenKind::Where => "where",
+        TokenKind::Const => "const",
+        TokenKind::Static => "static",
+        TokenKind::Unsafe => "unsafe",
         TokenKind::LParen => "(",
         TokenKind::RParen => ")",
         TokenKind::LBrace => "{",
@@ -972,6 +1186,7 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::LBracket
             | TokenKind::If
             | TokenKind::Match
+            | TokenKind::Unsafe
             | TokenKind::Error
     )
 }

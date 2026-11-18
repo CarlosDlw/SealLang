@@ -310,6 +310,9 @@ impl Lowering<'_> {
                 }
             }
             AstExprKind::Block(block) => ExprKind::Block(self.lower_block(block)),
+            // An unsafe block has no runtime representation: its value is the
+            // value of its block.
+            AstExprKind::Unsafe(block) => ExprKind::Block(self.lower_block(block)),
             AstExprKind::Paren(inner) => return self.lower_expr(inner),
             AstExprKind::Error => ExprKind::Error,
         };
