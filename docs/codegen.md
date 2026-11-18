@@ -20,7 +20,9 @@ assembly output do not require an entry point; executables do.
    fingerprint of its definition and full type arguments
    (`seal.identity.<hash>`), so two instantiations cannot collide and repeated
    builds produce the same symbol. Declaring first lets a body call a function
-   declared later; calls resolve by `Instance`, never by name.
+   declared later; calls resolve by `Instance`, never by name. Every collected
+   vtable becomes one private unnamed constant global before any body is
+   lowered.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
    block, and explicit loads/stores for places. Struct field and tuple element
    projections use struct GEPs; array indices use a byte offset after the MIR
@@ -163,9 +165,21 @@ The ABI is defined by the language, not by a C header:
   An automatic shared or exclusive receiver borrow is an explicit
   `Rvalue::Ref` in MIR, so code generation emits the ordinary address and load
   for the call. Associated functions are ordinary calls reached through a
-  resolved function path. Trait methods take the same path because dispatch is
-  static, and a `*mut T` receiver passed to a shared method becomes a shared
-  `Rvalue::Ref` of the pointee.
+  resolved function path. A static trait method takes the same path, and a
+  `*mut T` receiver passed to a shared method becomes a shared `Rvalue::Ref` of
+  the pointee.
+- A trait-object pointer is the fat pointer `{ data, vtable }`. `MakeTraitObject`
+  stores the concrete data address and the address of that pair's vtable
+  constant; `TraitObjectReborrow` copies the two words and records the new loan
+  without changing either. The vtable starts with a no-op drop function, size,
+  and alignment, followed by method pointers in the shared `seal-layout` order:
+  principal-trait methods in declaration order, then supertraits depth-first,
+  deduplicated by method identity. `DynamicCall` loads the recorded slot from
+  the receiver's own vtable, extracts the data word, and emits an indirect call
+  whose first argument is that data pointer. It never inspects the concrete type
+  or searches for a vtable at run time. Construction and dispatch allocate nothing and copy no concrete
+  value. The vtable layout is compiler-private; Seal does not promise a stable
+  external ABI for it.
 - Intrinsic methods lower from `Rvalue::Intrinsic`. Scalar methods use LLVM
   instructions and target intrinsics: `llvm.abs`, `llvm.ctpop`, `llvm.ctlz`,
   `llvm.cttz`, `llvm.fshl`/`llvm.fshr`, `llvm.bswap`, `llvm.fabs`,
@@ -194,18 +208,20 @@ The ABI is defined by the language, not by a C header:
 - `*str` is the fat pointer `{ data, length }`. A literal becomes a private,
   unnamed constant array plus its byte length; no run-time terminator scan is
   needed.
-- A reference is one pointer-sized word in both kinds: `*T` and `*mut T` share a
+- A `*T` or `*mut T` is one pointer-sized word: both kinds share a
   representation and differ only in the checks they enable, so the kind costs
   nothing at run time. The backend marks an exclusive-reference parameter
   `noalias` only when borrow checking proved the whole program upholds its
   exclusive grant: the function body never reaches storage through a reference
-  of unknown target, and every call site proves its reference arguments name
-  disjoint storage. The proof covers every call site in the compiled program;
-  calling an exported function from foreign code with aliasing pointers is
-  outside it.  A shared `*T` parameter is `readonly`: the type system forbids
-  writing through it, so that promise needs no whole-program proof. A `*str`,
-  `*[T]`, or `*mut [T]` parameter is a fat pointer, which LLVM cannot annotate,
-  so it keeps the ordinary ABI.
+  of unknown target or a dynamic call, and every call site proves its reference
+  arguments name disjoint storage. The proof covers every call site in the
+  compiled program; calling an exported function from foreign code with aliasing
+  pointers is outside it. A shared `*T` parameter is `readonly`: the type system
+  forbids writing through it, so that promise needs no whole-program proof. A
+  function reachable through a vtable is always excluded from `noalias`, because
+  its indirect call sites never passed the static proof. A `*str`, `*[T]`,
+  `*mut [T]`, `*dyn Trait`, or `*mut dyn Trait` parameter is a fat pointer,
+  which LLVM cannot annotate, so it keeps the ordinary ABI.
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 
@@ -226,8 +242,8 @@ The ABI is defined by the language, not by a C header:
   member and a payload byte-array member at the layout offset. Variant parts are not emitted
   yet, so a debugger shows the tag and raw payload rather than the active
   variant's fields; the layout is still exact;
-- pointer and fat-pointer types, including `&str` and `&[T]` as two-member
-  structs;
+- pointer and fat-pointer types, including `*str`, `*[T]`, and `*dyn Trait` as
+  two-member structs with data and length or vtable metadata;
 - array types with their element type, length, size, and alignment;
 - a line-table entry for every statement and terminator, so debuggers stop on
   source lines rather than function boundaries.
@@ -341,8 +357,10 @@ cargo build --workspace
 The end-to-end tests compile and run `examples/006_structs.sl`,
 `examples/009_arrays.sl`, `examples/010_slices.sl`,
 `examples/011_methods.sl`, `examples/012_user_methods.sl`,
-`examples/013_method_borrows.sl`, `examples/014_method_namespaces.sl`, and
-`examples/026_tuples.sl` in debug and release, check DWARF sections and names, exercise object and assembly
+`examples/013_method_borrows.sl`, `examples/014_method_namespaces.sl`,
+`examples/026_tuples.sl`, and `examples/032_trait_objects.sl` through
+`examples/034_trait_objects_generic.sl` in debug and release, check DWARF
+sections and names, exercise object and assembly
 output without `main`, verify entry-point diagnostics, confirm panic messages
 and status 101 for zero divisors, signed overflow in both `/` and `%`, and
 out-of-range array indices, and reject executable linking when the embedded
@@ -369,6 +387,11 @@ shared reborrow from a mutable receiver, and the rule that no method named
 `main` becomes the entry point. Enum tests cover unit and payload variants,
 construction into struct fields, moves through calls, associated constructors,
 variant and field diagnostics, recursive and unsized variant fields, and the
-generated tag/payload layout in debug and release. The driver tests export the
+generated tag/payload layout in debug and release. Trait-object tests cover
+non-object-safe detection, missing and wrong-kind coercions, bare `dyn` by
+value, shared-to-exclusive rejection, ambiguous supertrait methods, two concrete
+implementations behind one pointer, supertrait dispatch, generic coercion, the
+`{ data, vtable }` representation, vtable slot order, indirect-call lowering,
+`noalias` exclusion, and the no-allocation/no-copy construction rule. The driver tests export the
 embedded archive with
 `sealc emit-runtime` and reuse it with `--runtime-archive` to link that example.

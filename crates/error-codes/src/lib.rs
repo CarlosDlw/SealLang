@@ -1252,14 +1252,16 @@ pub const E3010: ErrorCode = ErrorCode {
     title: "value has an unsized type",
     explanation: "\
 Locals, parameters, and return values are stored directly, so their type must
-have a size known at compile time (decision D10 of the memory model). `str` and
-slices are unsized: they carry a runtime length, so they can only appear behind
+have a size known at compile time (decision D10 of the memory model). `str`,
+slices, and `dyn Trait` are unsized: a string or slice carries a runtime length,
+and a trait object has no known concrete layout, so each can only appear behind
 a reference.
 
-Use `*str` for string data and `*[T]`/`*mut [T]` for a borrowed sequence.
-String literals already have type `*str`, and a range such as `&values[..]`
-produces a slice reference, so both can be stored in a binding without an
-annotation.",
+Use `*str` for string data, `*[T]`/`*mut [T]` for a borrowed sequence, and
+`*dyn Trait`/`*mut dyn Trait` for dynamic dispatch. String literals already have
+type `*str`, and a range such as `&values[..]` produces a slice reference, so
+both can be stored in a binding without an annotation. A trait-object pointer is
+created by coercing a pointer to a concrete implementation.",
 };
 
 /// A local is read before it is definitely initialized.
@@ -1480,7 +1482,7 @@ pub const E3027: ErrorCode = ErrorCode {
     code: "E3027",
     title: "no such method",
     explanation: "\
-A struct method comes from an `impl` block for that struct; an intrinsic method\ncomes from the compiler-owned scalar, array, or slice catalog. A name that\nneither source defines for the receiver's type cannot be called.\n\nCheck the spelling and the impl block, or dereference the receiver until it\nreaches the type that defines the method. The intrinsic catalog documents every\ncompiler-owned name.",
+A struct method comes from an `impl` block for that struct, a trait method from\nan implemented trait, and an intrinsic method from the compiler-owned scalar,\narray, or slice catalog. On a trait object, lookup covers the principal trait\nand every supertrait; a name none of them declares cannot be called.\n\nCheck the spelling, the impl block, and the traits in scope, or dereference the\nreceiver until it reaches the type that defines the method. The intrinsic\ncatalog documents every compiler-owned name. If a supertrait declares the name\nbut the principal trait does not, call it through a `*dyn` pointer whose\nprincipal trait is that supertrait.",
 };
 
 /// A method call supplies the wrong number of arguments.
@@ -1496,7 +1498,7 @@ pub const E3029: ErrorCode = ErrorCode {
     code: "E3029",
     title: "method receiver is not writable",
     explanation: "\
-A method with an exclusive receiver, and an intrinsic such as `reverse`, `fill`,\nor `toggle`, modifies its receiver. It requires a mutable binding, or a place\nreached through a `*mut T` reference. A shared reference and an immutable\nbinding do not permit the write.\n\nDeclare the binding with `let mut`, or call the method through a mutable\nreference.",
+A method with an exclusive receiver, and an intrinsic such as `reverse`, `fill`,\nor `toggle`, modifies its receiver. It requires a mutable binding, or a place\nreached through a `*mut T` reference. A shared reference, an immutable binding,\nand a shared trait object (`*dyn Trait`) do not permit the write.\n\nDeclare the binding with `let mut`, call the method through a mutable reference,\nor use a `*mut dyn Trait` receiver when dispatching dynamically.",
 };
 
 /// `fill` is called on a sequence whose element type is not `Copy`.

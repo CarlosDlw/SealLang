@@ -205,7 +205,9 @@ impl<'a> Checker<'a> {
             span,
             format!("{what} cannot have the unsized type `{}`", self.ty_text(ty)),
         )
-        .help("use a reference, such as `*str`, to store the value indirectly")
+        .help(
+            "use a reference, such as `*str`, `*[T]`, or `*dyn Trait`, to store the value indirectly",
+        )
         .emit();
     }
 

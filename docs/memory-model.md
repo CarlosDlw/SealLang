@@ -44,9 +44,10 @@ abstraction), copy-on-write (unpredictable aliasing and allocation).
 ### D2 — `Copy` is a property of the type
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
-`*T`/`*mut T`, an array whose element type is `Copy`, and a tuple whose elements
-are all `Copy`. Not copied: `str` and slices (unsized) and every struct or enum
-value, even one whose fields are all `Copy`. Arrays and tuples gain nothing from
+`*T`/`*mut T`, `*dyn Trait`/`*mut dyn Trait`, an array whose element type is
+`Copy`, and a tuple whose elements are all `Copy`. Not copied: `str`, slices,
+and `dyn Trait` (unsized) and every struct or enum value, even one whose fields
+are all `Copy`. Arrays and tuples gain nothing from
 an explicit opt-in because their elements already decide whether a bitwise copy
 is safe. Keeping structs non-`Copy` means ownership is
 explicit at every aggregate boundary; field reads still copy `Copy` fields
@@ -126,8 +127,10 @@ same storage when one of them is exclusive (`E5010`). Argument storage is
 compared with the may-name analysis, so copies and reborrows are ordered. This
 is also what lets the backend treat an exclusive parameter as `noalias`: the
 attribute is emitted only when the body never reaches storage through an unknown
-pointer and every call site proves the contract, so the optimization can never
-turn safe code into undefined behavior.
+pointer or a dynamic call and every call site proves the contract, so the
+optimization can never turn safe code into undefined behavior. A method
+reachable through a vtable has call sites the static proof never sees, so it is
+excluded from `noalias` until a future proof covers indirect calls.
 
 For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
 with pointer provenance (RFC 3559): every pointer carries the allocation and the
@@ -142,7 +145,9 @@ length) into static read-only memory, so `str` is an **unsized pointee** and is
 only usable behind a reference. Owned heap data arrives with the allocator API
 as a distinct owning type that implements `Drop`; allocation failure is returned
 as a value, not hidden behind an abort. Reallocation and growth are explicit
-operations of that type, never implicit on assignment.
+operations of that type, never implicit on assignment. A trait object also does
+not allocate: its vtable is a constant built at compile time per concrete type
+and trait reference, and coercing to it copies only the data and vtable words.
 
 ### D8 — Bindings are immutable by default
 
@@ -187,8 +192,9 @@ field or element out marks that path moved and leaves its siblings usable.
 
 Locals, parameters, return values, by-value operands, struct fields, enum
 variant fields, tuple elements, and array elements must have a size known at
-compile time. `str` and slices are unsized and can only appear behind a
-reference. A tuple is sized when every element is, an array when its element is,
+compile time. `str`, slices, and `dyn Trait` are unsized and can only appear
+behind a reference. A tuple is sized when every element is, an array when its
+element is,
 and its size must fit the target address space (`E3023`). Recursive types are only possible through a
 reference, which indirection makes finite; a struct or enum that contains
 itself by value is `E3016`.
@@ -266,27 +272,26 @@ conversion, not a copy: it keeps the same data address, derives the length from
 the array type, and records the same loan. A slice is neither `Copy`, `Sized`,
 nor owning; its reference is `Copy` and carries the loan.
 
-### D15 — Methods are static and borrow through their receiver
+### D15 — Method dispatch borrows through the receiver
 
 Method lookup has two sources. An inherent method declared in an `impl` block
 is found on the receiver's nominal struct; intrinsic methods are a closed
 compiler catalog over integers, floats, `bool`, `char`, arrays, and slices. In
 both cases the owner is the receiver's type after every reference layer is
-followed. There is no vtable, dynamic dispatch, or method value: a user method
-lowers to a direct `Rvalue::Call` with the receiver as its first argument, and
-an intrinsic lowers to a semantic `Rvalue::Intrinsic` whose operation the
-backend chooses. This keeps the memory model independent of implementation
-details.
+followed. There is no method value: a static user method lowers to a direct
+`Rvalue::Call` with the receiver as its first argument, an intrinsic lowers to a
+semantic `Rvalue::Intrinsic` whose operation the backend chooses, and a call
+through a trait object lowers to `Rvalue::DynamicCall`, which loads a vtable slot
+(D16). The receiver borrow is visible to the same checker in every form.
 
 Traits use the same path. A trait declaration contributes signatures written
 against `Self`, and `impl Trait for Type` binds each one to a concrete function.
 Type checking tries the inherent registry first and then the trait
 implementations of the receiver's type, recording the call as a direct
 `Rvalue::Call` to that function. Two implemented traits declaring one method
-name make the call ambiguous (`E2028`), while an inherent method always wins.
-There is still no vtable, trait object, or dynamic dispatch, so the ownership
-model is unchanged: a trait call owns and borrows exactly what the concrete
-function declares.
+name make the call ambiguous (`E2028`), while an inherent method always wins. A
+static trait call therefore owns and borrows exactly what the concrete function
+declares. The dynamic case, where the receiver's pointee is `dyn Trait`, is D16.
 
 With generics, the receiver may be a declared type parameter. The generic body
 cannot select an implementation, so the call stays symbolic until
@@ -326,16 +331,52 @@ by the front end. Sequence methods check every runtime index against the length
 before access, and no method allocates or changes a loan's lifetime beyond the
 call.
 
+### D16 — Trait objects borrow through a fat pointer
+
+`dyn Trait` is unsized: every value has an unknown concrete layout, so it is
+never stored, moved, or returned by value (D10). `*dyn Trait` and
+`*mut dyn Trait` are `Copy` references of two words, `{ data, vtable }`. The
+reference is a borrowed view exactly like any other: coercing `*S` records the
+same loan as the source, and copying or reborrowing the fat pointer extends that
+loan without touching the value. Coercion preserves the reference kind, so
+`*mut S` becomes only `*mut dyn Trait`; sharing it requires the explicit
+`&*pointer` reborrow.
+
+The vtable is a constant emitted once per `(concrete type, trait reference)`
+pair. Its first three slots are a no-op drop function, size, and alignment,
+followed by method pointers in the principal trait's declaration order and then
+supertraits depth-first, deduplicated by method identity. The drop slot is a
+compiler-generated no-op because no current type has a destructor; reserving it
+keeps the layout stable when `Drop` lands. Size and alignment are not read by a
+current operation. The layout is compiler-private and is not a stable external
+ABI.
+
+A dynamic call does not discover the concrete type at runtime. Type checking
+selects the vtable slot, monomorphization collects the concrete method instance,
+and the backend loads the pointer from the vtable second word and calls it
+indirectly. The extracted data pointer is passed according to the selected
+method's receiver form: `self: *Self` receives `*T`, while `self: *mut Self`
+receives `*mut T`; a shared receiver reached through an exclusive object is
+reborrowed as shared, so the callee cannot write while that loan is live.
+Calling an exclusive method through `*dyn Trait` is `E3029`.
+
+The coercion neither allocates nor copies the concrete value, and the vtable is
+not copied into the value or the stack. A function reachable through a vtable is
+excluded from `noalias`: its indirect call sites never passed through the static
+whole-program proof, so the attribute would make the contract unverifiable.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
   `Float`, `Ref { kind: RefKind, pointee }`, `Array { element, length }`,
-  `Adt { adt, args }`, `Tuple(TupleId)`, `Param(ParamTyId)`, `Unit`, `Never`,
-  `Error`, and `Infer`.
+  `Adt { adt, args }`, `Dyn { trait_def, args }`, `Tuple(TupleId)`,
+  `Param(ParamTyId)`, `Unit`, `Never`, `Error`, and `Infer`.
   `AdtId` always names the declaration and `args` is the interned, structural
   list of type arguments; `Param` is a rigid parameter of one generic body.
+  `Dyn` names one trait declaration plus its fully substituted arguments and is
+  always the pointee of a reference.
   Tuple IDs come from a structural interner, so equal element lists share one
   `TupleId`. `RefKind` is `Shared`
   (`*T`) or `Exclusive` (`*mut T`); the kind is part of the type, so the two
@@ -347,8 +388,9 @@ call.
   structural arena keyed by their ordered `TyId`s, with no names or `DefId`s.
 - `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
   aggregate fields, tuple elements, and array elements with a cycle guard; no
-  query can loop on a malformed declaration. On a declared parameter the
-  structural queries are conservative: `is_copy` is false without a `Copy`
+  query can loop on a malformed declaration. `Str`, `Slice`, and `Dyn` are never
+  `Copy` or `Sized`; a reference to any of them is both. On a declared parameter
+  the structural queries are conservative: `is_copy` is false without a `Copy`
   bound, `is_sized` is true, `needs_drop` is false, and both reference
   predicates are true. The environment-aware `is_copy_in` answers from the
   body's bounds instead.
@@ -383,21 +425,29 @@ call.
 - **Name resolution** gives every place a `DefId`; the borrow checker never
   resolves syntax.
 - **Type checking** decides the type of every expression and place, resolves
-  every field projection, runs definite-initialization analysis over move paths,
-  and inserts drop obligations.
+  every field projection, checks object safety when a `dyn Trait` is formed,
+  records each implicit trait-object coercion with its source and target types,
+  runs definite-initialization analysis over move paths, and inserts drop
+  obligations.
 - **Borrow checking** runs on MIR, where every move, borrow, and drop is an
   explicit statement in a control-flow graph; regions are inferred from the
   liveness of those statements, and place conflicts compare path prefixes so
   field borrows are as precise as the moves they guard.
 - **Monomorphization** collects every reachable `(definition, arguments)` pair,
   substitutes the body, resolves a trait-bound call to the unique impl method,
-  and validates that no parameter or inference variable survives. It is the
-  only phase that turns a generic body into concrete code.
+  and validates that no parameter or inference variable survives. It also
+  collects one vtable per reachable `(concrete type, trait reference)` pair and
+  every method instance in its slots. It is the only phase that turns a generic
+  body into concrete code.
 - **Codegen** may assume that no safe reference is null or dangling and that a
-  `Copy` value has no destructor. It marks an exclusive-reference parameter
-  `noalias` only for a function whose body never reaches storage through an
-  unknown pointer and whose every call site proves its reference arguments are
-  disjoint when one is exclusive; otherwise two `*mut T` parameters may alias.
+  `Copy` value has no destructor. It emits each collected vtable as a constant
+  with the fixed header and method slots, constructs trait-object pointers by
+  copying the data address and the table address, and lowers a dynamic call as
+  an indirect call through the loaded slot. It marks an exclusive-reference
+  parameter `noalias` only for a function whose body never reaches storage
+  through an unknown pointer or a dynamic call and whose every call site proves
+  its reference arguments are disjoint when one is exclusive; otherwise two
+  `*mut T` parameters may alias, and a vtable-reachable method stays unmarked.
 
 ## Invariants
 
@@ -427,6 +477,16 @@ call.
     guarded arm never contributes coverage, every match is exhaustive
     (`E3032`), and no arm is unreachable (`E3033`). Matching moves the
     scrutinee; a non-`Copy` field binding moves that field out of the value.
+13. `dyn Trait` is unsized and never a value. `*dyn Trait` and `*mut dyn Trait`
+    are exactly two pointer-sized words, data first and vtable second, and the
+    reference kind is preserved by every coercion and reborrow.
+14. A dynamic call's recorded principal trait reference matches the receiver's
+    pointee, and its slot is the same index everywhere in the compiler.
+15. Every vtable method slot has one collected concrete instance and no null
+    entry. Constructing or copying a trait-object pointer allocates nothing and
+    copies no concrete value.
+16. A function reachable through a vtable is excluded from `noalias` unless a
+    future whole-program proof covers indirect calls.
 
 ## Reserved syntax
 
@@ -439,8 +499,8 @@ above and only waits for the surrounding features.
   a bare struct — extend the same pattern tree and the same usefulness check;
   the tag and payload layout above does not change.
 - User-defined implementations, trait implementations, and intrinsic methods
-  already share the static lookup and receiver-borrow model that generics
-  parameterize.
+  share the static lookup and receiver-borrow model that generics parameterize;
+  trait objects add the dynamic path in D16 without changing that model.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.

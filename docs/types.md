@@ -9,8 +9,8 @@ decided in [`memory-model.md`](memory-model.md).
 ## Type list
 
 Sizes and alignments are for a 64-bit target. `isize`, `usize`, and every
-reference follow the target pointer width — 4 bytes on a 32-bit target — and
-`*str` is always two words.
+reference follow the target pointer width — 4 bytes on a 32-bit target — while
+`*str` and a trait-object pointer are always two words.
 
 | Type | Spelling | Size (bytes) | Align | `Copy` | `Sized` | Destructor |
 |------|----------|-------------:|------:|:------:|:-------:|:----------:|
@@ -36,6 +36,8 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — and
 | String pointee | `str` | unsized | unsized | no | no | no |
 | Slice reference | `*[T]`, `*mut [T]` | 2 × pointer | pointer | yes | yes | no |
 | Slice pointee | `[T]` | unsized | unsized | no | no | no |
+| Trait-object reference | `*dyn Trait`, `*mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
+| Trait-object pointee | `dyn Trait` | unsized | unsized | no | no | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | Enum | `E` | computed | computed | no | yes, if every variant field is | no |
 | Tuple | `(T, U)`, `(T,)` | computed | computed | yes, if every element is | yes, if every element is | no |
@@ -116,9 +118,11 @@ finite. Type arguments have no runtime representation: they cost nothing at run
 time and are not stored in the value.
 
 The costs are compile time and binary size. Every reachable instance is emitted
-once, calls are direct, and no allocation, boxing, dictionary, or vtable is
-introduced. Monomorphization is bounded: a recursive instantiation chain deeper
-than 64 (`E7001`) or more than 4096 distinct instances (`E7004`) is rejected
+once, a generic call resolves to a direct call, and no allocation, boxing, or
+dictionary is introduced. A trait object is the separate opt-in dynamic path:
+its vtable is built at compile time for the concrete instance and adds no
+runtime allocation. Monomorphization is bounded: a recursive instantiation chain
+deeper than 64 (`E7001`) or more than 4096 distinct instances (`E7004`) is rejected
 with the instance chain. As a reference measurement, the five generic examples
 link to about 16 KiB each at `-O2` on 64-bit Linux, and a stress program with
 100 distinct instances stays under 1 MiB; the test suite enforces that bound.
@@ -222,14 +226,15 @@ A raw line break is not allowed inside a string literal; it must be escaped.
 
 | Kind | Spelling | Read | Write | Overlap rule | Codegen attribute |
 |------|----------|:----:|:-----:|--------------|-------------------|
-| Shared | `*T` | yes | no | Any number of shared loans may overlap | `readonly` on pointer parameters (not `*str`) |
+| Shared | `*T` | yes | no | Any number of shared loans may overlap | `readonly` on pointer parameters (not `*str` or `*dyn Trait`) |
 | Exclusive | `*mut T` | yes | yes | No other loan may overlap while live | `noalias` when the whole-program proof holds |
 
 Both kinds are non-null, non-owning, and `Copy`; copying the pointer copies the
 loan, so the pointee stays borrowed until the last use of every copy. Neither
 kind supports arithmetic, casts, or null values. A reference is a machine
 pointer, except `*str`, `*[T]`, and `*mut [T]`, which are two-word fat pointers
-holding a data address and a length.
+holding a data address and a length, and `*dyn Trait`/`*mut dyn Trait`, whose
+second word addresses the vtable.
 
 Borrowing writes the place, not the type: `&place` creates `*T` and
 `&mut place` creates `*mut T`. `&mut place` requires a writable place — a `mut`
@@ -249,9 +254,11 @@ A call is an access through every reference argument. Passing an exclusive
 argument that overlaps a live loan is `E5009`, and a call whose reference
 arguments may name the same storage when one is exclusive is `E5010`. The
 `noalias` attribute is emitted only when the function body never reaches storage
-through an unknown pointer and every call site proves the contract; `readonly`
-on pointer parameters other than `*str` needs no such proof because the type
-system already forbids writes through them.
+through an unknown pointer or a dynamic call and every call site proves the
+contract; `readonly` on pointer parameters other than `*str` or `*dyn Trait`
+needs no such proof because the type system already forbids writes through them.
+A trait-object pointer carries the same loan as its concrete source, so passing
+one is an access through every reference argument like any other.
 
 ## Structs
 
@@ -613,12 +620,15 @@ tried first; on scalars, sequences, and references to them, lookup uses the
 closed compiler-owned intrinsic catalog. Every reference layer is followed
 before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
 scalar method, and a `*Point` can call a `Point` method written for `*Point`.
-There is no vtable, dynamic dispatch, or method value; a trait method resolved
-on a nominal type is a static call to the implementing function, and a method
-declared by a trait bound records the trait method until monomorphization selects
-the implementation. Methods and impls may declare type parameters in both cases.
-An unknown name is `E3027`, an associated function written as a method is
-`E2019`, and a method written as `Type::name` is `E2019` as well.
+There is no method value. A call on a nominal type, a type parameter, or an
+intrinsic receiver is static: a trait method on a concrete type is a direct call
+to the implementing function, and a method declared by a trait bound records the
+trait method until monomorphization selects the implementation. A call through
+`*dyn Trait` or `*mut dyn Trait` is dynamic and loads the function from the
+receiver's vtable, as described under trait objects below. Methods and impls may
+declare type parameters in both cases. An unknown name is `E3027`, an associated
+function written as a method is `E2019`, and a method written as `Type::name` is
+`E2019` as well.
 
 ```seal
 func main() -> i32 {
@@ -735,13 +745,13 @@ requirement is kept once.
 Lookup is ordered: an inherent method on the struct wins, then the bounds
 visible on a type parameter, then the trait methods implemented for a concrete
 type, and finally the intrinsic catalog for receivers with no user method. Every
-concrete candidate is the function of one impl, so a trait call is a direct call
-with no vtable, trait object, or dynamic dispatch. A call through a type
-parameter has no known impl yet; it records the trait method and its arguments
-for monomorphization instead. When two implemented traits declare the same
-method name and nothing earlier resolves it, the call is ambiguous (`E2028`).
-Seal has no syntax for naming the trait at a call, so the fix is to rename one
-of the methods; an inherent method with the name resolves the call instead.
+concrete candidate is the function of one impl, so a static trait call is a
+direct call with no vtable involved. A call through a type parameter has no
+known impl yet; it records the trait method and its arguments for
+monomorphization instead. When two implemented traits declare the same method
+name and nothing earlier resolves it, the call is ambiguous (`E2028`). Seal has
+no syntax for naming the trait at a call, so the fix is to rename one of the
+methods; an inherent method with the name resolves the call instead.
 
 Implementing a trait is checked as a complete contract. Every declared method
 must be present (`E2022`), nothing else may appear in the block (`E2023`), and
@@ -761,6 +771,89 @@ the pointee, so the borrow checker sees the same access a written `&*reference`
 would create. The conversion is one-way; a `*Struct` never reaches an exclusive
 receiver (`E3031`). A trait may declare an associated function with no receiver,
 which is called as `Struct::name()` like an inherent one.
+
+### Trait objects and dynamic dispatch
+
+`dyn Trait` is an unsized type denoting any value of a concrete type implementing
+`Trait`. It can only appear behind a reference: `*dyn Trait` gives shared access
+and `*mut dyn Trait` gives exclusive access. Both are `Copy` fat pointers of two
+words, `{ data, vtable }`, with the data address first and the vtable address
+second. The mutability is static in the reference kind; both forms share one
+representation.
+
+```seal
+trait Shape {
+  func area(self: *Self) -> i32;
+}
+
+struct Circle { radius: i32 }
+struct Square { side: i32 }
+
+impl Shape for Circle {
+  func area(self: *Circle) -> i32 { (*self).radius * (*self).radius }
+}
+
+impl Shape for Square {
+  func area(self: *Square) -> i32 { (*self).side * (*self).side }
+}
+
+func area(shape: *dyn Shape) -> i32 {
+  shape.area()
+}
+
+func main() -> i32 {
+  let circle = Circle { radius: 3 };
+  let square = Square { side: 4 };
+  area(&circle) + area(&square)
+}
+```
+
+A trait argument after `dyn` must be fully written, so a generic trait object
+spells its arguments (`dyn Convert<i32>`). Coercion happens at an expression
+with an expected trait-object type: `*S` becomes `*dyn Trait` and `*mut S`
+becomes `*mut dyn Trait` when `S` implements the trait. The reference kind is
+preserved, so a `*mut S` does not implicitly become `*dyn Trait` (`E3047`); write
+`&*pointer` to reborrow it as shared. A concrete type that does not implement
+the trait is `E3046`. Coercion keeps the data address and records the original
+loan, so it neither copies the value nor allocates.
+
+A trait is usable as a trait object only when every method is dispatchable: a
+receiver of `*Self` or `*mut Self`, no `Self` in any other parameter or return
+type, no generic method type parameters, and no associated function. Violations
+are `E2065` when the `dyn` type is formed, not when the trait is declared; the
+same trait remains usable for static dispatch. Supertraits must themselves be
+dispatchable, and their methods are part of the principal object's vtable.
+
+Lookup on a trait object starts with the principal trait, then its supertraits
+depth-first in declaration order, with duplicate methods kept once. A method
+only a supertrait declares is callable through `*dyn Sub` because `Sub: Super`
+proves it. Two traits that declare the same method and are not resolved earlier
+make the call ambiguous (`E2028`). A method taking `self: *mut Self` requires a
+`*mut dyn Trait` receiver; calling it through `*dyn Trait` is `E3029`. A shared
+receiver called through `*mut dyn Trait` is reborrowed as shared, so the callee
+cannot write while the shared loan is live.
+
+Each `(concrete type, fully substituted trait reference)` pair has one vtable,
+emitted as a constant in the program. Its layout is compiler-private, not a
+stable external ABI:
+
+```text
+slot 0: drop_in_place  fn(*mut u8)
+slot 1: size           usize
+slot 2: align          usize
+slot 3..: method pointers
+```
+
+Method slots follow the principal trait's methods in declaration order, then
+supertrait methods depth-first in declaration order, deduplicated by method
+identity on first occurrence. The slot is fixed at compile time and shared by
+type checking, MIR, monomorphization, and code generation. A dynamic call loads
+the slot from the vtable already embedded in the receiver; it never searches for
+the concrete type at runtime. The drop slot is a compiler-generated no-op
+because no current Seal type has a destructor, and the size and alignment slots
+reserve the stable header for a future `Drop` implementation. A reference to a
+trait object is still a borrowed view: converting to it, copying it, and
+reborrowing it copy only the two pointer words.
 
 ### Signed and unsigned integers
 
@@ -887,9 +980,9 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, and every struct or enum are not, even when all their fields are `Copy`. |
-| `Sized` | Every type has a compile-time size except `str`, slices, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
-| `needs_drop` | No current type runs a destructor. An array, tuple, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. |
+| `Copy` | Scalars, `()`, `!`, and every reference, including `*dyn Trait` and `*mut dyn Trait`, are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, `dyn Trait`, and every struct or enum are not, even when all their fields are `Copy`. |
+| `Sized` | Every type has a compile-time size except `str`, slices, `dyn Trait`, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
+| `needs_drop` | No current type runs a destructor. An array, tuple, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. A trait object's vtable reserves a drop slot, but the current slot is a no-op. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the
@@ -902,7 +995,8 @@ Layout is deterministic and defined by the language, not by the host C ABI:
 1. Scalars use natural alignment: alignment equals size. `bool` is 1 byte,
    `char` is 4 bytes, and every integer and float has its width.
 2. Every reference uses the target pointer width. `*str` is two words: data and
-   length, both pointer-sized.
+   length, both pointer-sized. `*dyn Trait` and `*mut dyn Trait` are two words:
+   data and vtable, both pointer-sized.
 3. Fields and tuple elements keep declaration order; there is no reordering,
    packing, or overlapping. Each field starts at the next multiple of its
    alignment.
@@ -917,8 +1011,8 @@ Layout is deterministic and defined by the language, not by the host C ABI:
    enum, which is what code generation and debug information use.
 6. A tuple is laid out exactly like a struct with positional fields: natural
 alignment, no reordering, and trailing padding rounded to its alignment.
-7. `()`, `!`, and `Error` are zero-sized with alignment 1. `str` has no layout of
-   its own.
+7. `()`, `!`, and `Error` are zero-sized with alignment 1. `str`, slices, and
+   `dyn Trait` have no layout of their own.
 8. An array has the element's alignment and `length × size(element)` bytes. It
    adds no padding between elements beyond the element's own size, which already
    includes its trailing padding.
@@ -935,11 +1029,13 @@ alignment, no reordering, and trailing padding rounded to its alignment.
 | `[u8; 0]` | 0 | 1 | none |
 | `*i32` on a 64-bit target | 8 | 8 | none |
 | `*str` on a 64-bit target | 16 | 8 | data at 0, length at 8 |
+| `*dyn Shape` on a 64-bit target | 16 | 8 | data at 0, vtable at 8 |
 
 Code generation materializes one stack slot per local, uses struct GEPs for
 struct fields and tuple elements, indexes arrays with a bounds-checked byte
 offset, and passes references as pointers — or as a `{ data, length }` pair for
-`*str`. `()` and `!` are zero-sized structs in the ABI.
+`*str` and a `{ data, vtable }` pair for `*dyn Trait`. `()` and `!` are
+zero-sized structs in the ABI.
 
 ## Loops
 
@@ -986,6 +1082,8 @@ Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
 and its interning key before it can appear in a signature. Slices reuse the
 element stride and add a runtime length; enum variants reuse the field, query,
 and layout rules per variant; generic instantiations apply the same rules per
-concrete argument; owning heap types will add field-derived destructors. None of these requires changing the identity, layout, or ownership
-model above: `TyId` equality, declaration-order layout, and the move/borrow
+concrete argument; trait objects reuse the reference layout and add a vtable
+address; owning heap types will add field-derived destructors. None of these
+requires changing the identity, layout, or ownership model above: `TyId`
+equality, declaration-order layout, and the move/borrow
 rules stay the same.

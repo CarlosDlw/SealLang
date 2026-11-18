@@ -169,10 +169,11 @@ isolation check on its own.
 | Tuples | `(T, U)`, `(T,)`, `()` | Structural product types; fields are `.0`, `.1`, …; `Copy` when every element is |
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
+| Trait objects | `dyn T`, `*dyn T`, `*mut dyn T` | Unsized pointee behind a two-word `{ data, vtable }` reference; dynamic dispatch through the vtable |
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
 | Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is not `Copy` |
-| Methods | `impl S { … }` | Inherent methods and associated functions; static calls, no vtable |
-| Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch: each call binds to the concrete implementation of the receiver's type |
+| Methods | `impl S { … }` | Inherent methods and associated functions; static calls on concrete types, dynamic calls through trait objects |
+| Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch on concrete types and bounds; object-safe traits also dispatch dynamically through `*dyn T` |
 | Generics | `func f<T>(…)`, `struct S<T>`, `enum E<T>`, `impl<T> S<T>` | Monomorphized: one concrete body and layout per type argument; bounds are static and closed-world |
 
 There are no implicit numeric conversions: every arithmetic and comparison
@@ -200,19 +201,24 @@ definite initialization, `if`, `if let`, `while`, `while let`, `for` over intege
 expressions with structural patterns, guards, and exhaustiveness checking, the
 usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
 methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`
-methods and associated functions on nominal types, and traits with static
-dispatch. Every call resolves statically: there is no vtable, dynamic dispatch,
-or hidden allocation, and modifying methods borrow the receiver exclusively.
-User methods declare their receiver explicitly as `self: S`, `self: *S`, or
+methods and associated functions on nominal types, traits with static
+dispatch, and trait objects with dynamic dispatch. A call on a concrete type or
+a type parameter resolves statically; a call through `*dyn Trait` or
+`*mut dyn Trait` loads a slot from the receiver's compiler-built vtable. Neither
+form allocates, and modifying methods borrow the receiver exclusively. User
+methods declare their receiver explicitly as `self: S`, `self: *S`, or
 `self: *mut S`; the compiler borrows a value receiver automatically when the
 method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
 read-only method. A trait writes `Self` for the implementing type and every
-`impl Trait for S` binds one concrete function per method, so a trait call is an
-ordinary direct call. Generic functions, structs, enums, inherent impls,
-associated functions, traits, trait methods, and trait impls accept type
-parameters with inline or `where` bounds; every reachable instance is
-monomorphized, so a generic call is still one direct call with no dictionary or
-runtime type metadata. Trait objects and an `unsafe` layer are not part of the
-surface yet; the memory model records how they fit without redesigning the type
-system. The generic examples in `examples/027_generic_functions.sl` through
-`examples/031_generic_recursion.sl` show the feature end to end.
+`impl Trait for S` binds one concrete function per method, so a static trait
+call is an ordinary direct call. Coercing `*S` or `*mut S` to a trait-object
+pointer preserves the reference kind and requires an implemented, object-safe
+trait. Generic functions, structs, enums, inherent impls, associated functions,
+traits, trait methods, and trait impls accept type parameters with inline or
+`where` bounds; every reachable instance is monomorphized, so a generic call is
+still one direct call with no dictionary or runtime type search. The type table
+and the trait-object section of `docs/types.md` define the surface; owning
+`Box<dyn Trait>`, upcasting between trait objects, and an `unsafe` layer are not
+part of it yet. The trait-object examples in
+`examples/032_trait_objects.sl` through
+`examples/034_trait_objects_generic.sl` show dispatch end to end.

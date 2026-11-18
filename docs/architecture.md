@@ -26,16 +26,16 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, and slices; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
-| `seal-layout` | Deterministic struct, enum, tuple, and array layout: field offsets, alignment, tag and payload layout, and size derived from `TyCtxt` types. |
+| `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, trait and impl coherence, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice coercion, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct and symbolic call targets, bounds checks, match dispatch, terminators, and structural plus type validation. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, escaping references, `E5xxx` diagnostics. |
-| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types and aggregate arguments, resolution of trait calls to impl methods, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
-| `seal-codegen` | LLVM lowering of checked MIR, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
+| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types and aggregate arguments, resolution of trait calls to impl methods, vtable collection, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
+| `seal-codegen` | LLVM lowering of checked MIR, vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
@@ -307,8 +307,9 @@ allowed to depend only on crates below it in the list.
     arguments)` pair. The C `main` wrapper is the only `main`, and only a
     non-generic free function can be the language entry point. A user `main`
     takes no parameters and returns `i32` or `()`. `*str`, `*[T]`, and
-    `*mut [T]` are `{ data, length }`; `()`/`!` are zero-sized structs; the
-    object is position independent.
+    `*mut [T]` are `{ data, length }`; `*dyn Trait` and `*mut dyn Trait` are
+    `{ data, vtable }`; `()`/`!` are zero-sized structs; the object is position
+    independent.
 55. **Debug information describes the generated IR.** `-g` emits a Rust compile
     unit, one subprogram and one aggregate type record per instance with
     readable type arguments, parameters, bindings, aggregate types with layout
@@ -364,27 +365,34 @@ allowed to depend only on crates below it in the list.
     known and disjoint. A function outside the set keeps the ordinary ABI and
     remains correct; the attribute never decides whether a program is accepted.
     A shared `*T` parameter is always `readonly`, because the type system
-    forbids writing through it.
-63. **Methods resolve statically through per-type and catalog lookup.** A method
-    call is a dedicated AST and HIR node, not a desugared field access. Type
-    checking first looks up `(struct, name)` in the inherent impl registry and
-    then, for non-struct receivers, the intrinsic catalog after following the
-    receiver's reference layers. It validates the signature and writability and
-    records whether the call is a user function or an intrinsic, the receiver
-    adjustment, dereference count, and result type. A user method lowers to a
-    direct `Rvalue::Call` whose first argument is the receiver, with an explicit
+    forbids writing through it. A function reachable through a vtable is always
+    outside the set, because indirect call sites never passed the whole-program
+    proof.
+63. **Method dispatch resolves through per-type, catalog, and object lookup.**
+    A method call is a dedicated AST and HIR node, not a desugared field access.
+    Type checking first looks up `(struct, name)` in the inherent impl registry
+    and then, for non-struct receivers, the intrinsic catalog after following
+    the receiver's reference layers. It validates the signature and writability
+    and records whether the call is a user function, a trait function, an
+    intrinsic, or a dynamic slot, the receiver adjustment, dereference count,
+    and result type. A static user or trait method lowers to a direct
+    `Rvalue::Call` whose first argument is the receiver, with an explicit
     `Rvalue::Ref` when the receiver is borrowed automatically; an intrinsic
-    lowers to `Rvalue::Intrinsic`. Code generation consumes the recorded form
-    and never re-infers ownership or the receiver shape. The two lookups are
-    ordered, so a struct method shadows an intrinsic with the same name. Trait
-    methods add one layer to the nominal lookup: the inherent registry wins,
-    then the functions bound by the type's `impl Trait` blocks, and a name two
-    implemented traits declare is ambiguous (`E2028`). Each implementation is
-    validated as a contract (`E2021`–`E2026`) with `Self` substituted by the
-    implementing type, and it lives beside the inherent registry rather than in
-    it, so an inherent method and a trait method may share a name. A `*mut T`
-    receiver passed to a shared method is reborrowed as `*T`, lowering to a
-    shared `Rvalue::Ref` of the pointee.
+    lowers to `Rvalue::Intrinsic`. A dynamic call lowers to
+    `Rvalue::DynamicCall`, which carries the principal trait reference, selected
+    slot, receiver value, and argument types; the receiver is reborrowed as the
+    method declares, and the borrow checker sees the same loan as a written
+    borrow. Code generation consumes the recorded form and never re-infers
+    ownership or the receiver shape. The lookups are ordered, so a struct method
+    shadows an intrinsic with the same name. Trait methods add one layer to the
+    nominal lookup: the inherent registry wins, then the functions bound by the
+    type's `impl Trait` blocks, and a name two implemented traits declare is
+    ambiguous (`E2028`). Each implementation is validated as a contract
+    (`E2021`–`E2026`) with `Self` substituted by the implementing type, and it
+    lives beside the inherent registry rather than in it, so an inherent method
+    and a trait method may share a name. A `*mut T` receiver passed to a shared
+    method is reborrowed as `*T`, lowering to a shared `Rvalue::Ref` of the
+    pointee.
 64. **`match` evaluates its scrutinee once and tests it structurally.** Lowering
     moves the scrutinee into a temporary, reads the tag with
     `Rvalue::Discriminant`, and dispatches with `SwitchInt`; a literal pattern
@@ -409,6 +417,32 @@ allowed to depend only on crates below it in the list.
     while success binds the pattern before lowering the then block. `while let`
     performs the same tests at the loop head, binds on success, and adds a
     backedge from the body to the head; failure exits the loop.
+65. **Trait objects are unsized and object safety is checked when they form.**
+    `dyn Trait` is a `TyKind` whose pointee has no layout; `*dyn Trait` and
+    `*mut dyn Trait` are two-word fat pointers. Forming the type runs object
+    safety over its principal trait and every supertrait: only `*Self`/`*mut
+    Self` receivers, no `Self` elsewhere in a signature, no generic methods, and
+    no associated functions (`E2065`). A trait remains usable statically.
+    Coercion is selected only at an expected-type boundary, preserves the
+    reference kind, requires an implemented trait (`E3046`), and is recorded on
+    the expression as `Coercion::TraitObject`. A coerced dyn pointer reborrows
+    as `Coercion::TraitObjectReborrow` with the same loan.
+66. **Vtables have one deterministic key and slot order.** Monomorphization
+    collects one vtable per reachable `(concrete type, fully substituted trait
+    reference)` pair and one concrete method instance per slot. The key contains
+    no `Param` or `Infer`. Slot order is the shared `seal-layout` order: drop,
+    size, align, then principal-trait methods in declaration order and
+    supertraits depth-first, deduplicated by method identity. Validation rejects
+    a null slot, a method from a different trait, and a call whose principal
+    reference differs from the receiver's pointee.
+67. **Vtable construction and dispatch are explicit in MIR and IR.**
+    `MakeTraitObject` copies the data address and the table address without
+    copying the value, and `TraitObjectReborrow` copies the pair without a new
+    loan. `DynamicCall` loads the recorded slot from the receiver's own vtable
+    and emits an indirect call; code generation never looks up a vtable from the
+    concrete type at runtime. The drop slot is a compiler-generated no-op while
+    no type has a destructor, and the header stays reserved for that future
+    implementation. Every vtable-reachable method is excluded from `noalias`.
 
 ## Extension points
 
@@ -460,12 +494,15 @@ allowed to depend only on crates below it in the list.
   per-type symbol name must stay unique. Add parser, HIR, typeck, MIR, borrowck,
   and end-to-end coverage.
 - **New trait or lookup rule.** Traits are declarations plus implementations,
-  not a new type kind. Parse the declaration in `seal-parser`, register the trait
-  and its `Self`-relative signatures in `seal-hir`, validate each impl as a
-  contract, and resolve calls through the same static lookup that serves
-  inherent methods. A trait call must stay a direct `Rvalue::Call`; a new rule
-  changes the registry order and its ambiguity check, never the MIR shape. Add
-  parser, HIR, typeck, MIR, borrowck, and end-to-end coverage.
+  with an object-safe subset usable behind `dyn`. Parse the declaration in
+  `seal-parser`, register the trait and its `Self`-relative signatures in
+  `seal-hir`, validate each impl as a contract, and resolve a static call
+  through the same lookup that serves inherent methods. A static trait call
+  stays a direct `Rvalue::Call`; a call on an object receiver becomes
+  `Rvalue::DynamicCall` with the slot chosen by the shared vtable order. A new
+  rule changes the registry order and its ambiguity check or the object-safety
+  check, never the direct-call shape. Add parser, HIR, typeck, MIR, borrowck,
+  codegen, and end-to-end coverage.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is

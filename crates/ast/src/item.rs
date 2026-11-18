@@ -143,9 +143,10 @@ pub struct ImplDecl {
 
 /// A trait declaration.
 ///
-/// A trait is a list of method signatures. Seal resolves every call statically:
-/// implementing the trait attaches one concrete function per signature, and
-/// there is no vtable or trait object. A signature writes `Self` wherever the
+/// A trait is a list of method signatures. Implementing the trait attaches one
+/// concrete function per signature, so a call on a concrete type or a type
+/// parameter is static; an object-safe trait can also be used behind `dyn`,
+/// where dispatch goes through a vtable. A signature writes `Self` wherever the
 /// implementing type appears, including in the receiver type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraitDecl {

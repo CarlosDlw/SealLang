@@ -893,12 +893,13 @@ impl<'a> BodyLowering<'a> {
             panic!("method call at {name_span:?} was not resolved; this is a compiler bug")
         });
 
-        // A user method and a trait method are ordinary functions whose first
-        // parameter is the receiver, so both lower to a call: traits use static
-        // dispatch and have no vtable. A bound method is symbolic until
-        // monomorphization selects the implementation. The receiver adjustment
-        // is explicit in the argument expression, and the borrow checker sees
-        // the same `Rvalue::Ref` it would see for a written borrow.
+        // A user method and a statically resolved trait method are ordinary
+        // functions whose first parameter is the receiver, so both lower to a
+        // direct call. A bound method is symbolic until monomorphization selects
+        // the implementation; a method on a trait object lowers to
+        // `Rvalue::DynamicCall` below. The receiver adjustment is explicit in
+        // the argument expression, and the borrow checker sees the same
+        // `Rvalue::Ref` it would see for a written borrow.
         let (function, symbolic) = match resolved.kind {
             MethodKind::Intrinsic(method) => {
                 return self.lower_intrinsic_call(IntrinsicCall {

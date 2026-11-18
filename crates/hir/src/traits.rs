@@ -1,9 +1,10 @@
-//! Trait implementations and static method lookup.
+//! Trait implementations and method lookup.
 //!
-//! Seal resolves trait calls statically: an `impl Trait for Type` block binds
-//! one concrete function per trait method, and a call through a value of that
-//! type lowers to a direct call. There is no vtable, and a type may implement
-//! several traits as long as no call becomes ambiguous.
+//! An `impl Trait for Type` block binds one concrete function per trait method,
+//! so a call through a value of that type lowers to a direct call. Object-safe
+//! traits can also be used behind `dyn`, where dispatch is dynamic. A type may
+//! implement several traits as long as no static call or trait-object method
+//! becomes ambiguous.
 
 use seal_def::DefId;
 use seal_hash::FxHashMap;

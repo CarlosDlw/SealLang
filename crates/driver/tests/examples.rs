@@ -15,9 +15,14 @@ const GENERIC_EXAMPLES: [&str; 5] = [
     "031_generic_recursion.sl",
 ];
 
-#[test]
-fn generic_examples_check_cleanly() {
-    for name in GENERIC_EXAMPLES {
+const TRAIT_OBJECT_EXAMPLES: [&str; 3] = [
+    "032_trait_objects.sl",
+    "033_trait_objects_supertraits.sl",
+    "034_trait_objects_generic.sl",
+];
+
+fn check_examples(names: &[&str]) {
+    for name in names {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples")
             .join(name);
@@ -37,4 +42,14 @@ fn generic_examples_check_cleanly() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn generic_examples_check_cleanly() {
+    check_examples(&GENERIC_EXAMPLES);
+}
+
+#[test]
+fn trait_object_examples_check_cleanly() {
+    check_examples(&TRAIT_OBJECT_EXAMPLES);
 }
