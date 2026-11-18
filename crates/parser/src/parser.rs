@@ -264,8 +264,9 @@ impl<'a> Parser<'a> {
 
     /// Parses `trait Name { func signature; ... }`.
     ///
-    /// A trait contains only signatures. They are stored as items so the arena
-    /// owns them and the reachability invariant covers the whole tree.
+    /// A trait contains method declarations, each a signature followed by
+    /// either `;` or a default body. They are stored as items so the arena owns
+    /// them and the reachability invariant covers the whole tree.
     fn parse_trait(&mut self) -> ItemId {
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("a trait name");
@@ -294,10 +295,17 @@ impl<'a> Parser<'a> {
                     self.current_span(),
                     format!("expected `func` in the trait, found {found}"),
                 )
-                .help("a trait only contains method signatures")
+                .help("a trait only contains method declarations")
                 .emit();
                 while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::RBrace) {
-                    self.bump();
+                    // A stray block owns its closing brace. Skipping it as a
+                    // unit keeps that brace from closing the trait early and
+                    // losing the next method.
+                    if self.at(TokenKind::LBrace) {
+                        let _ = self.parse_block();
+                    } else {
+                        self.bump();
+                    }
                 }
             }
             self.ensure_progress(before);
@@ -318,35 +326,33 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// Parses one `func name(...) -> Type;` trait method signature.
+    /// Parses one trait method declaration.
+    ///
+    /// The declaration is `func name(...) -> Type;` when each implementation
+    /// supplies the body, or the same signature followed by a block when the
+    /// trait provides a default.
     fn parse_trait_method(&mut self) -> ItemId {
         let keyword = self.bump();
         let (name, name_span, generics, params, ret) = self.parse_signature();
         let where_clause = self.parse_where_clause();
 
-        if !self.eat(TokenKind::Semicolon) {
+        let body = if self.eat(TokenKind::Semicolon) {
+            None
+        } else if self.at(TokenKind::LBrace) {
+            Some(self.parse_block())
+        } else {
             let found = self.describe(self.current_kind());
-            if self.at(TokenKind::LBrace) {
-                self.error(
-                    codes::E1002,
-                    self.current_span(),
-                    "a trait method declares only its signature, not a body",
-                )
-                .help("end the declaration with `;`; the implementation supplies the body")
-                .emit();
-                // Consume the body so its braces cannot open a second item and
-                // so recovery resumes after the method.
-                let _ = self.parse_block();
-            } else {
-                self.error(
-                    codes::E1002,
-                    self.current_span(),
-                    format!("expected `;` after the trait method signature, found {found}"),
-                )
-                .help("a trait method declaration ends with `;`")
-                .emit();
-            }
-        }
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!(
+                    "expected `;` or a default body after the trait method signature, found {found}"
+                ),
+            )
+            .help("end a signature-only declaration with `;`, or write the default body")
+            .emit();
+            None
+        };
 
         let span = keyword.span.cover(self.previous_span());
         self.builder.push_item(
@@ -357,6 +363,7 @@ impl<'a> Parser<'a> {
                 params,
                 ret,
                 where_clause,
+                body,
             }),
             span,
         )

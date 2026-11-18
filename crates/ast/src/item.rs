@@ -143,11 +143,12 @@ pub struct ImplDecl {
 
 /// A trait declaration.
 ///
-/// A trait is a list of method signatures. Implementing the trait attaches one
-/// concrete function per signature, so a call on a concrete type or a type
-/// parameter is static; an object-safe trait can also be used behind `dyn`,
-/// where dispatch goes through a vtable. A signature writes `Self` wherever the
-/// implementing type appears, including in the receiver type.
+/// A trait is a list of method signatures, some of which may carry a default
+/// body. Implementing the trait attaches one concrete function per signature,
+/// so a call on a concrete type or a type parameter is static; an object-safe
+/// trait can also be used behind `dyn`, where dispatch goes through a vtable. A
+/// signature writes `Self` wherever the implementing type appears, including in
+/// the receiver type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraitDecl {
     /// The trait name.
@@ -166,8 +167,10 @@ pub struct TraitDecl {
 
 /// One method signature inside a trait declaration.
 ///
-/// Trait methods declare no body: the implementation supplies it. The parser
-/// stores them as items so the arena and its reachability invariants cover them.
+/// A trait method either ends with `;`, leaving the body to each implementation,
+/// or carries a default body that implementations may use unchanged. The parser
+/// stores methods as items so the arena and its reachability invariants cover
+/// them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraitMethodDecl {
     /// The method name.
@@ -182,6 +185,8 @@ pub struct TraitMethodDecl {
     pub ret: Option<TypeId>,
     /// Bounds written after the return type.
     pub where_clause: WhereClause,
+    /// The default body, or `None` for a signature-only declaration.
+    pub body: Option<BlockId>,
 }
 
 /// A function declaration.

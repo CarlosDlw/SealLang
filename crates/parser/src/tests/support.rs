@@ -312,6 +312,9 @@ impl Reachability<'_> {
                 for param in &declaration.params {
                     self.check_param(*param);
                 }
+                if let Some(body) = declaration.body {
+                    self.check_block(body);
+                }
             }
             ItemKind::Error => {}
         }
