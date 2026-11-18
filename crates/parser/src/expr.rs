@@ -21,6 +21,8 @@ use crate::parser::{MAX_DEPTH, Parser, can_start_expr, is_expression_stop};
 const ASSIGN_BP: u8 = 1;
 /// Binding power of prefix operators; higher than every binary operator.
 const PREFIX_BP: u8 = 13;
+/// Binding power of `as`; below prefix operators and above multiplicative ones.
+const CAST_BP: u8 = 12;
 
 /// The condition of one `if` or `if let` expression.
 enum IfCondition {
@@ -185,6 +187,29 @@ impl Parser<'_> {
                         op,
                         operand: lhs,
                         postfix: true,
+                    },
+                    span,
+                );
+                continue;
+            }
+
+            if self.at(TokenKind::As) {
+                if min_bp > CAST_BP {
+                    break;
+                }
+                let token = self.bump();
+                let ty = self.parse_type();
+                let span = self
+                    .builder
+                    .ast()
+                    .expr(lhs)
+                    .span
+                    .cover(self.builder.ast().ty(ty).span);
+                lhs = self.builder.push_expr(
+                    ExprKind::Cast {
+                        operand: lhs,
+                        ty,
+                        as_span: token.span,
                     },
                     span,
                 );

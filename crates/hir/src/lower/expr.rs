@@ -182,6 +182,11 @@ impl Lowering<'_> {
                 lhs: self.lower_expr(lhs),
                 rhs: self.lower_expr(rhs),
             },
+            AstExprKind::Cast { operand, ty, .. } => {
+                let _ = self.lower_expr(operand);
+                let _ = self.lower_type(ty);
+                ExprKind::Error
+            }
             AstExprKind::Assign { op, target, value } => ExprKind::Assign {
                 op,
                 target: self.lower_expr(target),

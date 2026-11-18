@@ -30,6 +30,7 @@ pub(crate) fn lookup(text: &str) -> Option<TokenKind> {
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         "where" => TokenKind::Where,
+        "as" => TokenKind::As,
         _ => return None,
     })
 }

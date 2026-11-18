@@ -4,7 +4,7 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::generics::GenericArgs;
-use crate::id::{BlockId, ExprId, PatternId};
+use crate::id::{BlockId, ExprId, PatternId, TypeId};
 use crate::pattern::MatchArm;
 
 /// A binary operator.
@@ -359,6 +359,15 @@ pub enum ExprKind {
         lhs: ExprId,
         /// The right operand.
         rhs: ExprId,
+    },
+    /// An explicit cast, written `value as Type`.
+    Cast {
+        /// The value being converted.
+        operand: ExprId,
+        /// The target type.
+        ty: TypeId,
+        /// The span of the `as` token, for diagnostics.
+        as_span: Span,
     },
     /// An assignment, including compound assignment.
     Assign {

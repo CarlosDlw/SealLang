@@ -612,6 +612,16 @@ impl Reachability<'_> {
                 self.check_expr(lhs);
                 self.check_expr(rhs);
             }
+            ExprKind::Cast {
+                operand,
+                ty,
+                as_span,
+            } => {
+                self.assert_span(as_span);
+                self.check_expr(operand);
+                self.assert_span(self.ast.ty(ty).span);
+                self.check_type(ty);
+            }
             ExprKind::Assign { target, value, .. } => {
                 self.check_expr(target);
                 self.check_expr(value);

@@ -202,6 +202,8 @@ pub enum TokenKind {
     False,
     /// `where`
     Where,
+    /// `as`
+    As,
 
     /// `(`
     LParen,

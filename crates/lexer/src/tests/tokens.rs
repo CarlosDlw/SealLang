@@ -126,6 +126,21 @@ fn in_is_a_keyword_but_a_prefixed_name_is_not() {
 }
 
 #[test]
+fn as_is_a_keyword_but_a_prefixed_name_is_not() {
+    let fixture = Fixture::new("as asx");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    assert_eq!(
+        fixture.kinds(&lexed),
+        [
+            TokenKind::As,
+            TokenKind::Ident(fixture.interner.intern("asx")),
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
         "func funcx struct structx enum enumx impl implx trait traitx dyn dynx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false",
