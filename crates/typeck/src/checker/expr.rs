@@ -7,8 +7,19 @@ use seal_symbol::Symbol;
 use seal_ty::{TyId, TyKind};
 
 use super::flow::Flow;
+use super::protocol::IndexAccess;
 use super::{Checker, PlaceMode};
 use crate::results::{PlaceProjection, ResolvedPlace};
+
+/// The pieces of an index expression before its base type is known.
+struct IndexExpression {
+    expr: HirExprId,
+    base: HirExprId,
+    index: HirExprId,
+    span: Span,
+    mode: PlaceMode,
+    expected: Option<TyId>,
+}
 
 /// The pieces of a field access needed to resolve and type it.
 struct FieldAccess {
@@ -170,9 +181,17 @@ impl Checker<'_> {
             ExprKind::ArrayRepeat { value, length } => {
                 self.check_array_repeat(value, length, expected, flow, span)
             }
-            ExprKind::Index { base, index } => {
-                self.check_index(expr, base, index, span, flow, mode)
-            }
+            ExprKind::Index { base, index } => self.check_index(
+                IndexExpression {
+                    expr,
+                    base,
+                    index,
+                    span,
+                    mode,
+                    expected,
+                },
+                flow,
+            ),
             ExprKind::Slice { base, start, end } => self.check_slice(base, start, end, span, flow),
             ExprKind::SliceRef {
                 base,
@@ -596,15 +615,15 @@ impl Checker<'_> {
         actual
     }
 
-    fn check_index(
-        &mut self,
-        expr: HirExprId,
-        base: HirExprId,
-        index: HirExprId,
-        span: Span,
-        flow: &mut Flow,
-        mode: PlaceMode,
-    ) -> TyId {
+    fn check_index(&mut self, access: IndexExpression, flow: &mut Flow) -> TyId {
+        let IndexExpression {
+            expr,
+            base,
+            index,
+            span,
+            mode,
+            expected,
+        } = access;
         let mut base_ty = self.infer_expr_mode(base, None, flow, PlaceMode::Write);
         let mut auto_deref = None;
         if let TyKind::Ref { kind, pointee } = self.hir.ty_ctxt().kind(base_ty)
@@ -621,6 +640,22 @@ impl Checker<'_> {
             TyKind::Array { element, length } => (element, length, false),
             TyKind::Slice { element } => (element, 0, true),
             _ => {
+                if matches!(mode, PlaceMode::Read | PlaceMode::Borrow)
+                    && let Some(ty) = self.resolve_index(
+                        IndexAccess {
+                            expr,
+                            base,
+                            base_ty,
+                            index,
+                            mode,
+                            span,
+                            expected,
+                        },
+                        flow,
+                    )
+                {
+                    return ty;
+                }
                 self.check_expr(index, self.usize_ty(), flow);
                 if !self.is_error(base_ty) {
                     self.error(

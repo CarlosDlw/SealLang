@@ -15,6 +15,7 @@ mod method;
 mod operators;
 mod pattern;
 mod place;
+mod protocol;
 mod slice;
 mod slice_patterns;
 mod stmt;

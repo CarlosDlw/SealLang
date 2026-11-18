@@ -11,6 +11,7 @@ mod flow;
 mod for_loop;
 mod generics;
 mod if_let;
+mod indexing_protocol;
 mod init;
 mod literals;
 mod match_advanced;

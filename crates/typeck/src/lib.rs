@@ -45,8 +45,8 @@ mod results;
 mod tests;
 
 pub use results::{
-    Coercion, MethodKind, PlaceProjection, ReceiverAdjust, ReceiverForm, ResolvedMethod,
-    ResolvedPlace, Signature, TypeckResults,
+    Coercion, IndexProtocol, MethodKind, PlaceProjection, ProtocolCall, ReceiverAdjust,
+    ReceiverForm, ResolvedMethod, ResolvedPlace, Signature, TypeckResults,
 };
 
 use seal_diagnostics::DiagCtxt;

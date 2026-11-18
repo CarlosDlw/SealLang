@@ -220,6 +220,40 @@ pub struct ResolvedMethod {
     pub ret_ty: TyId,
 }
 
+/// One call to a compiler-provided protocol method.
+///
+/// Protocol calls use the same static or symbolic dispatch recorded for any
+/// other method call. Keeping the complete call here lets later phases lower
+/// the operator without repeating trait lookup or inference.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolCall {
+    /// The resolved method, including its dispatch kind and signature.
+    pub method: ResolvedMethod,
+    /// The concrete instantiation, or `None` for a symbolic bound or dynamic
+    /// dispatch.
+    pub instance: Option<Instance>,
+}
+
+/// The protocol selected for one index expression.
+///
+/// Built-in arrays and slices leave no entry in [`TypeckResults`]; their
+/// resolved place already describes the access. Only custom implementations
+/// are recorded, so their lower phases never repeat protocol lookup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexProtocol {
+    /// Compiler-owned array or slice indexing.
+    Builtin,
+    /// A user implementation of `Index` or `IndexMut`.
+    Custom {
+        /// Whether the selected protocol is `IndexMut` rather than `Index`.
+        mutable: bool,
+        /// The element type produced by the selected implementation.
+        element_ty: TyId,
+        /// The protocol method call.
+        call: ProtocolCall,
+    },
+}
+
 /// A function signature as seen by callers.
 ///
 /// Parameters whose declared type is unsized are normalized to the error type,
@@ -248,6 +282,7 @@ pub struct TypeckResults {
     signatures: FxHashMap<DefId, Signature>,
     places: FxHashMap<HirExprId, ResolvedPlace>,
     methods: FxHashMap<HirExprId, ResolvedMethod>,
+    index_protocols: FxHashMap<HirExprId, IndexProtocol>,
     instantiations: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
     casts: FxHashMap<HirExprId, NumericCastKind>,
@@ -279,6 +314,13 @@ impl TypeckResults {
         self.methods.get(&expr)
     }
 
+    /// Returns the protocol selected for an index expression.
+    ///
+    /// `None` means the expression uses built-in array or slice indexing.
+    pub fn index_protocol(&self, expr: HirExprId) -> Option<&IndexProtocol> {
+        self.index_protocols.get(&expr)
+    }
+
     /// Returns the complete instantiation of a call, literal, or method call.
     pub fn instantiation(&self, expr: HirExprId) -> Option<Instance> {
         self.instantiations.get(&expr).copied()
@@ -306,6 +348,7 @@ impl TypeckResults {
             signatures: FxHashMap::default(),
             places: FxHashMap::default(),
             methods: FxHashMap::default(),
+            index_protocols: FxHashMap::default(),
             instantiations: FxHashMap::default(),
             coercions: FxHashMap::default(),
             casts: FxHashMap::default(),
@@ -330,6 +373,10 @@ impl TypeckResults {
 
     pub(crate) fn record_method(&mut self, expr: HirExprId, method: ResolvedMethod) {
         self.methods.insert(expr, method);
+    }
+
+    pub(crate) fn record_index_protocol(&mut self, expr: HirExprId, protocol: IndexProtocol) {
+        self.index_protocols.insert(expr, protocol);
     }
 
     pub(crate) fn record_instantiation(&mut self, expr: HirExprId, instance: Instance) {

@@ -2058,6 +2058,33 @@ cannot postpone that choice: the cast kind is recorded before instantiation.\n\n
 or perform the conversion inside the impl that supplies the concrete type.",
 };
 
+/// An index expression matches more than one protocol implementation.
+pub const E3053: ErrorCode = ErrorCode {
+    code: "E3053",
+    title: "ambiguous indexing protocol",
+    explanation: "\
+Custom indexing resolves through the `Index` protocol for reads and `IndexMut`
+for writes. A type may implement a protocol for several index types, and the
+index expression chooses one by its own type. When the expression cannot choose
+exactly one implementation, the compiler does not guess: silently preferring the
+first candidate would make the program depend on declaration order.\n\nMake the index expression's type select one implementation, add a more specific
+implementation, or wrap the base type in a newtype with a single indexing
+behavior.",
+};
+
+/// A protocol type argument cannot be inferred.
+pub const E3055: ErrorCode = ErrorCode {
+    code: "E3055",
+    title: "cannot infer a protocol type argument",
+    explanation: "\
+An indexing or iteration protocol names type parameters that the surrounding
+expression must determine. The index expression supplies the protocol's index
+type, and the expected value type or the implementation supplies the element or
+item type. If one of those parameters remains unresolved, the compiler cannot
+choose a concrete implementation or generate a well-typed call.\n\nAnnotate the resulting value, use an implementation that fixes the parameter,
+or pass a concrete type where the protocol is used.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -2070,9 +2097,9 @@ pub static ALL: &[ErrorCode] = &[
     E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013,
     E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026,
     E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039,
-    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E5001, E5002, E5003,
-    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E7001, E7002, E7003,
-    E7004, E7005, E7006, E9001, E9002,
+    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3053, E3055, E5001,
+    E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003, E7001,
+    E7002, E7003, E7004, E7005, E7006, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2165,6 +2192,17 @@ mod tests {
     }
 
     #[test]
+    fn protocol_codes_have_explanations() {
+        for (code, fragment) in [("E3053", "does not guess"), ("E3055", "remains unresolved")] {
+            let entry = lookup(code).expect("protocol code is registered");
+            assert!(
+                entry.explanation().contains(fragment),
+                "{code} explanation is missing {fragment:?}"
+            );
+        }
+    }
+
+    #[test]
     fn codes_are_grouped_by_phase() {
         for code in [E0001, E0002, E0003, E0012] {
             assert_eq!(code.code()[1..2].parse::<u8>().expect("digit"), 0);
@@ -2228,7 +2266,7 @@ mod tests {
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
-                "E3046", "E3047", "E3048", "E3049",
+                "E3046", "E3047", "E3048", "E3049", "E3053", "E3055",
             ]
         );
     }
