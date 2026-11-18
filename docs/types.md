@@ -577,11 +577,20 @@ an expected array type (`E3019`). A literal whose element or length disagrees
 with its annotation is a normal type mismatch.
 
 Indexing is written `base[index]` and selects a place, so it can be read,
-assigned, borrowed, or projected further. The index type is exactly `usize`;
-an unsuffixed integer literal adopts `usize`. A constant out-of-range index is
-`E3022` at compile time. A runtime index is evaluated once and bounds-checked
-before the access; an out-of-range value panics with status 101. Indexing a
-non-array is `E3021`, and indexing a value that is not a place is `E2013`.
+assigned, borrowed, or projected further. Arrays and slices keep built-in
+indexing: the index type is exactly `usize`, an unsuffixed integer literal
+adopts `usize`, a constant out-of-range array index is `E3022` at compile time,
+and a runtime index is evaluated once and bounds-checked before the access. An
+out-of-range value panics with status 101.
+
+A custom base instead implements `Index<Key, Value>` for reads and
+`IndexMut<Key, Value>` for writes, compound assignments, and exclusive borrows.
+The index expression selects the `Key` type and must select exactly one
+implementation (`E3053`); `Value` comes from that implementation or from the
+expected type (`E3055`). Both methods return a reference into the base, so the
+result is still a place and can be nested. A write without `IndexMut` is
+`E3054`. A type with neither built-in indexing nor a matching protocol is
+`E3021`, and indexing a value that is not a place is `E2013`.
 
 The size is `N × size(T)` and the alignment is `align(T)`. A zero-length array
 occupies no bytes but keeps the element alignment. Nested arrays multiply their
@@ -650,6 +659,52 @@ is the method form and returns the same value from the fat pointer's length
 member. A slice is neither `Copy` nor `Sized` nor owning: the reference is
 `Copy`, and creating or copying it extends the loan of the underlying storage
 like any other reference.
+
+## Iteration and indexing protocols
+
+Seal installs four compiler-owned traits. They cannot be redeclared (`E2066`),
+and an implementation cannot target an array, slice, or reference to one
+(`E2067`): built-in sequences keep their bounds-checked behavior.
+
+```text
+IntoIterator<Iter, Item> { func iter(self: Self) -> Iter; }
+Iterator<Item> { func has_next(self: *Self) -> bool; func next(self: *mut Self) -> Item; }
+Index<Key, Value> { func index(self: *Self, key: Key) -> *Value; }
+IndexMut<Key, Value> { func index_mut(self: *mut Self, key: Key) -> *mut Value; }
+```
+
+A `for` loop tries the built-in ranges, arrays, and slices first. For another
+source `S`, it peels reference layers and looks for `S: IntoIterator<Iter,
+Item>`; if there is none, it accepts `S: Iterator<Item>` directly. When both are
+available, `IntoIterator` wins. The cursor returned by `iter` must implement
+`Iterator<Item>` with the same item type; otherwise the loop is `E3051`. More
+than one `IntoIterator` or `Iterator` implementation is ambiguous (`E3050`,
+`E3052`), and a type that leaves a protocol argument unresolved is `E3055`.
+
+The source is evaluated once. Its impl may take it by value, by shared
+reference, or by exclusive reference, so `for value in &collection` and
+`for value in &mut collection` are ordinary protocol selections. The cursor is
+stored for the loop's lifetime. `has_next` does not mutate it, `next` advances
+it, and the item is moved into the pattern. A non-`Copy` item therefore moves
+once per iteration, and a refutable pattern filters elements according to the
+normal `for` pattern rules. `break` leaves the loop, while `continue` returns to
+`has_next` without calling `next` twice.
+
+Custom indexing is selected by the shape of the place. Reads use `Index`;
+writes, compound assignments, increment/decrement, and exclusive borrows use
+`IndexMut`. The key expression is evaluated once and its type selects the
+implementation, while the expected value type or the implementation fixes
+`Value`. `Index` and `IndexMut` are independent: implementing one does not
+provide the other. Unlike built-in arrays and slices, the compiler does not add
+a bounds check to a custom implementation; the implementation owns the
+validity and lifetime of the reference it returns. A returned reference keeps
+the base loan alive through the ordinary call and borrow rules.
+
+Protocol methods are ordinary trait methods. Static calls are direct after
+monomorphization, and `*dyn Index<Key, Value>` or `*mut dyn IndexMut<Key,
+Value>` uses the existing vtable dispatch. `IntoIterator` is not dyn-compatible
+because `iter` takes `self` by value, so forming `dyn IntoIterator` is `E2065`
+before monomorphization.
 
 ## Methods
 
@@ -1142,6 +1197,8 @@ A `for` source is one of:
 | `[T; N]` | `T`; the array is moved unless it is `Copy` |
 | `&[T; N]`, `&mut [T; N]` | `*T`, `*mut T` |
 | `*[T]`, `*mut [T]` | `*T`, `*mut T` |
+| `S: IntoIterator<I, T>` | `T`, after `S::iter` returns `I: Iterator<T>` |
+| `S: Iterator<T>` | `T`, through the direct fallback |
 
 The two bounds of a range must have the same integer type; an unsuffixed integer
 literal on one side adopts the type of the other, so `0..len(values)` uses the
@@ -1150,12 +1207,18 @@ runs while `counter < end`, and the inclusive range while `counter <= end`;
 the inclusive form exits before incrementing when the counter equals `end`, so
 `0u8..=255u8` visits every value without overflowing.
 
-The pattern must be irrefutable, because a refutable one would silently skip
-elements (`E3034`). The iterable is copied or moved once before the loop; a
-borrowed array or slice is reborrowed element by element with the same shared or
-exclusive kind, so writing through `*mut T` elements is allowed while the source
-is exclusively borrowed. An unsupported source is `E3035`. A `continue` in the
-body goes to the increment step, never directly to the test, so it always makes
+For a built-in range or sequence the pattern must be irrefutable (`E3034`). A
+custom protocol loop accepts a refutable pattern: an item that does not match is
+skipped without binding, and the loop continues with the next `has_next` test.
+The iterable is copied or moved once before the loop; a borrowed array or slice
+is reborrowed element by element with the same shared or exclusive kind, so
+writing through `*mut T` elements is allowed while the source is exclusively
+borrowed. A custom source uses `IntoIterator` first and the direct `Iterator`
+fallback second; the cursor's `has_next` tests whether another item exists, and
+`next` moves it into the pattern. An unsupported source is `E3035`, ambiguous
+protocols are `E3050`/`E3052`, and a cursor without the matching `Iterator` is
+`E3051`. A `continue` in the body goes to the increment step or the next
+protocol test, never directly past a pending `next`, so it always makes
 progress.
 
 ## Growth

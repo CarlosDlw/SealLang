@@ -158,9 +158,20 @@ The ABI is defined by the language, not by a C header:
   from the source and stores `end - start` as the length. A full `[..]` range
   performs no check. Slicing a slice reloads its fat pointer and applies the
   same arithmetic, so reborrows do not allocate.
-- Slice indexing reloads the data member of the fat pointer and checks the
-  runtime index against the length member before the element offset. `len`
-  extracts the length member directly; both operations are O(1).
+- Custom indexing is an ordinary protocol call followed by a dereference.
+  `grid[key]` reads through `Index::index` (or a vtable slot on `*dyn Index`),
+  and a write or compound assignment reads and writes through
+  `IndexMut::index_mut`; the returned reference is the place being accessed, so
+  code generation emits the same call, load, and store shapes as any other
+  pointer-returning method. The compiler adds no bounds check for a custom
+  implementation; built-in arrays and slices keep the checked path above.
+- A custom `for` loop is a small CFG. Lowering evaluates the source once, calls
+  `IntoIterator::iter` when the source is not its own iterator, tests
+  `Iterator::has_next`, runs the body with the item moved into the pattern, and
+  calls `Iterator::next` on the backedge; `continue` goes to the condition and
+  `break` to the exit. A failed refutable pattern skips the body without
+  binding. The calls are direct, symbolic, or dynamic exactly like any other
+  method call, so the loop allocates nothing and adds no new MIR terminator.
 - User methods lower from `Rvalue::Call`; the receiver is the first argument.
   An automatic shared or exclusive receiver borrow is an explicit
   `Rvalue::Ref` in MIR, so code generation emits the ordinary address and load
@@ -414,6 +425,9 @@ non-object-safe detection, missing and wrong-kind coercions, bare `dyn` by
 value, shared-to-exclusive rejection, ambiguous supertrait methods, two concrete
 implementations behind one pointer, supertrait dispatch, generic coercion, the
 `{ data, vtable }` representation, vtable slot order, indirect-call lowering,
-`noalias` exclusion, and the no-allocation/no-copy construction rule. The driver tests export the
+`noalias` exclusion, and the no-allocation/no-copy construction rule. Protocol
+tests run `examples/037_iteration_protocols.sl` and
+`examples/038_index_protocols.sl` at `O0` and `O2`, plus dynamic indexing
+through `*dyn Index`. The driver tests export the
 embedded archive with
 `sealc emit-runtime` and reuse it with `--runtime-archive` to link that example.

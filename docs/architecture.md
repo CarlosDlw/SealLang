@@ -464,6 +464,29 @@ allowed to depend only on crates below it in the list.
     a receiver follow the same fallback, including `Self::name()` inside a
     default body. Vtable slots use the same resolver, so an omitted method points
     at the default instance; layout and MIR shapes do not change.
+70. **Operator protocols use ordinary calls, not new MIR forms.** HIR installs
+    `IntoIterator`, `Iterator`, `Index`, and `IndexMut` before user item
+    collection, reserves their names (`E2066`), and rejects impls for
+    compiler-owned sequences (`E2067`). Type checking records the selected
+    protocol call and the iterator cursor in `TypeckResults`; lowering emits the
+    existing `Rvalue::Call` or `Rvalue::DynamicCall`, a reference, and a deref,
+    so monomorphization, borrow checking, and code generation need no protocol
+    variant. A concrete call becomes `CallTarget::Direct`, a bound call remains
+    symbolic until its instance is substituted, and a `dyn Index`/`dyn IndexMut`
+    receiver uses the existing vtable slot. Monomorphization rejects any
+    surviving `Param` or `Infer` as an internal invariant failure; type checking
+    reports `E3055` first.
+    A custom `for` source resolves through a peeled reference layer: a unique
+    `IntoIterator` wins, and a unique direct `Iterator` is the fallback. Lowering
+    evaluates the source once, calls `iter` when present, and builds the CFG
+    condition -> pattern binding -> body -> `next` -> condition with `continue`
+    to the condition and `break` to the exit. The item local is moved into the
+    pattern; a failed refutable pattern skips the body. Custom indexing lowers
+    reads to `Index` plus a deref and writes, compound assignments, and exclusive
+    borrows to `IndexMut` plus a deref. The returned reference participates in
+    the ordinary call-return loan rules, including the conflict checks for a
+    live base borrow. Built-in arrays, slices, and ranges keep their dedicated
+    bounds-checked paths and never require a protocol implementation.
 
 ## Extension points
 
@@ -532,6 +555,12 @@ allowed to depend only on crates below it in the list.
   order and its ambiguity check or the object-safety check, never the direct-call
   shape. Add parser, HIR, typeck, MIR, borrowck,
   codegen, and end-to-end coverage.
+- **New operator protocol.** Add the compiler-owned trait and its methods in
+  `seal-hir::protocols`, record the selected call in `TypeckResults`, and lower
+  it through the existing call/reference/place machinery. Reserve the trait
+  name, reject implementations on compiler-owned types, and add static,
+  symbolic, dynamic, borrowck, and end-to-end coverage. Do not add a parallel
+  MIR call shape for operator sugar.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is

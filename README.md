@@ -87,10 +87,20 @@ integer and character ranges partition their domain so adjacent ranges can be
 exhaustive, slice patterns partition the runtime length domain the same way,
 floats need a catch-all, and an arm that no value can reach is `E3033`.
 
-`for` loops iterate an integer range (`0..n` or `0..=n`), an array by value, or
-a borrowed array or slice. The loop pattern must be irrefutable, and `continue`
-advances the range or index before the next test, so a skipped iteration still
-makes progress.
+`for` loops iterate an integer range (`0..n` or `0..=n`), an array by value, a
+borrowed array or slice, or a custom source. A custom source resolves through
+`IntoIterator<Iter, Item>` first, whose cursor must implement `Iterator<Item>`;
+a source that implements `Iterator<Item>` itself uses the direct fallback. The
+loop pattern must be irrefutable, and `continue` advances to the next element,
+so a skipped iteration still makes progress.
+
+Custom indexing implements `Index<Key, Value>` for reads and
+`IndexMut<Key, Value>` for writes, compound assignments, and exclusive borrows.
+Both protocols return references into the base, so indexing remains a place and
+nests without allocating. Built-in arrays and slices keep their precedence and
+bounds checks; a custom implementation receives the key type written by the
+expression and selects the value type from its implementation or the expected
+type.
 
 `if let pattern = value { ... } else { ... }` evaluates the value once and runs
 the body only when the pattern matches. Its pattern may be refutable, and the
@@ -233,4 +243,6 @@ part of it yet. The trait-object examples in
 `examples/035_numeric_casts.sl` shows every cast family and its boundary, and
 `examples/036_default_methods.sl` exercises required methods, defaults,
 overrides, symbolic dispatch, supertraits, generic defaults, dynamic dispatch,
-and associated default functions.
+and associated default functions. `examples/037_iteration_protocols.sl` shows a
+custom `IntoIterator` cursor and the direct `Iterator` fallback, and
+`examples/038_index_protocols.sl` shows nested reads plus mutable indexing.

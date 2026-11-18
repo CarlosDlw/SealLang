@@ -1431,12 +1431,14 @@ pub const E3021: ErrorCode = ErrorCode {
     code: "E3021",
     title: "cannot index this type",
     explanation: "\
-The `base[index]` syntax selects an element of a fixed-size array. Seal has no
-slices, strings are not indexable, and there is no overloading or automatic
-dereference, so the base must have an array type such as `[i32; 4]`.
+The `base[index]` syntax selects an element of a fixed-size array or a slice, or
+calls a custom `Index<Key, Value>`/`IndexMut<Key, Value>` implementation. A
+scalar, a struct without the protocol, and a string have no element to select.
 
-Dereference a reference first, as in `(*array)[index]`, and make sure the base
-is an array rather than a scalar or a struct.",
+Use an array, slice, or a type with a matching protocol implementation. Built-in
+arrays and slices use a `usize` index with a bounds check; a custom
+implementation chooses its key and value types. If the base is a reference,
+indexing follows it before selecting the built-in or protocol path.",
 };
 
 /// A constant array index is outside the array bounds.
@@ -1892,10 +1894,12 @@ pub const E3035: ErrorCode = ErrorCode {
     explanation: "\
 A for loop iterates an integer range, an array by value, or a reference to an
 array or slice. A custom source may instead implement `IntoIterator` with an
-`Iterator` for the resulting cursor, or implement `Iterator` directly. Other
-values have no elements to visit, so the loop cannot run.\n\nIterate an integer range such as `0..len(values)`, an array, `&array`, or a
-slice reference. For a custom type, implement `IntoIterator` and `Iterator`,
-or implement `Iterator` on the source itself.",
+`Iterator` for the resulting cursor; a source that implements `Iterator`
+directly uses the fallback. `IntoIterator` takes precedence when both are
+available. Other values have no elements to visit, so the loop cannot run.\n\nIterate an integer range such as `0..len(values)`, an array, `&array`, or a
+slice reference. For a custom type, implement `IntoIterator` and `Iterator`, or
+implement `Iterator` on the source itself. The cursor's item type must match the
+`IntoIterator` item, and ambiguous implementations are reported separately.",
 };
 
 /// A tuple element index is outside the tuple.
@@ -2246,6 +2250,8 @@ mod tests {
     #[test]
     fn protocol_codes_have_explanations() {
         for (code, fragment) in [
+            ("E3021", "custom `Index"),
+            ("E3035", "directly uses the fallback"),
             ("E3050", "does not guess"),
             ("E3051", "cannot call"),
             ("E3052", "does not choose one"),

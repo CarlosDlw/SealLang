@@ -369,6 +369,36 @@ not copied into the value or the stack. A function reachable through a vtable is
 excluded from `noalias`: its indirect call sites never passed through the static
 whole-program proof, so the attribute would make the contract unverifiable.
 
+### D17 — Protocol calls borrow storage and move values normally
+
+The iteration and indexing protocols add no storage of their own. A custom
+`Index::index` or `IndexMut::index_mut` returns a reference into the base, so
+the selected element is the existing storage reached through an ordinary
+reference; the call transfers the base loan exactly like any other
+pointer-returning method. Read indexing keeps a shared loan, while writes,
+compound assignments, and exclusive borrows take an exclusive loan through
+`IndexMut` and conflict with live aliases under the usual rules. The compiler
+adds no bounds check for a custom implementation, so the implementation must
+return a valid reference for every accepted key.
+
+A custom `for` loop evaluates the source once and stores it for the loop's
+lifetime. `IntoIterator::iter` may move the source or receive a shared or
+exclusive reference selected by its implementation; the returned cursor is a
+local with the same storage and drop rules as any other value. `has_next`
+borrows the cursor shared, `next` borrows it exclusively, and the returned item
+is moved into the loop binding. A non-`Copy` item is therefore consumed once,
+while the cursor and its source remain distinct values. Nothing is allocated by
+the protocol itself, and no hidden heap cursor exists.
+
+`Index` and `IndexMut` are object-safe because their methods use reference
+receivers and do not mention `Self` in the result; `*dyn Index` stores the
+ordinary `{ data, vtable }` pair and dispatches through the existing vtable
+slot. `IntoIterator::iter` takes `self` by value, so `dyn IntoIterator` is not
+dyn-compatible and is rejected at object-safety checking before any storage or
+vtable is created. Built-in arrays, slices, and ranges never use these
+protocols, which is why their bounds checks and representation remain
+unchanged.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:

@@ -30,41 +30,8 @@ fn assert_result(source: &str, expected: i32, stem: &str) {
     }
 }
 
-const ITERATION: &str = "\
-struct Source { value: i32 } \
-struct Cursor { value: i32 } \
-impl Iterator<i32> for Cursor { \
-    func has_next(self: *Cursor) -> bool { (*self).value < 43 } \
-    func next(self: *mut Cursor) -> i32 { \
-        let value = (*self).value; \
-        (*self).value += 1; \
-        value \
-    } \
-} \
-impl IntoIterator<Cursor, i32> for Source { \
-    func iter(self: Source) -> Cursor { Cursor { value: self.value } } \
-} \
-func main() -> i32 { \
-    let source = Source { value: 42 }; \
-    let mut result = 0; \
-    for value in source { result = value; } \
-    result \
-}";
-
-const INDEXING: &str = "\
-struct Grid { value: i32 } \
-impl Index<usize, i32> for Grid { \
-    func index(self: *Grid, index: usize) -> *i32 { &(*self).value } \
-} \
-impl IndexMut<usize, i32> for Grid { \
-    func index_mut(self: *mut Grid, index: usize) -> *mut i32 { &mut (*self).value } \
-} \
-func main() -> i32 { \
-    let mut grid = Grid { value: 40 }; \
-    grid[0] += 1; \
-    grid[0] = 42; \
-    grid[0] \
-}";
+const ITERATION: &str = include_str!("../../../examples/037_iteration_protocols.sl");
+const INDEXING: &str = include_str!("../../../examples/038_index_protocols.sl");
 
 const DYNAMIC_INDEXING: &str = "\
 struct Grid { value: i32 } \
