@@ -13,6 +13,7 @@ use super::flow::Flow;
 struct TraitFunctionCall<'a> {
     expr: HirExprId,
     function: DefId,
+    trait_ref: Option<TraitRef>,
     args: &'a [HirExprId],
     explicit: Option<&'a [TyId]>,
     expected: Option<TyId>,
@@ -29,11 +30,19 @@ impl Checker<'_> {
         flow: &mut Flow,
         span: Span,
     ) -> TyId {
-        let function = match self.hir.expr(callee).kind.clone() {
+        let (function, supplied_trait_ref) = match self.hir.expr(callee).kind.clone() {
             ExprKind::Path {
                 res: Res::Function(definition),
                 ..
-            } => Some(definition),
+            } => (Some(definition), None),
+            ExprKind::Path {
+                res:
+                    Res::TraitFunction {
+                        function,
+                        trait_ref,
+                    },
+                ..
+            } => (Some(function), Some(trait_ref)),
             _ => {
                 let ty = self.infer_expr(callee, None, flow);
                 if !self.is_error(ty) {
@@ -45,7 +54,7 @@ impl Checker<'_> {
                     .help("only function items can be called")
                     .emit();
                 }
-                None
+                (None, None)
             }
         };
 
@@ -65,6 +74,7 @@ impl Checker<'_> {
                 TraitFunctionCall {
                     expr,
                     function,
+                    trait_ref: supplied_trait_ref,
                     args,
                     explicit: explicit.as_deref(),
                     expected,
@@ -128,6 +138,7 @@ impl Checker<'_> {
         let TraitFunctionCall {
             expr,
             function,
+            trait_ref: supplied_trait_ref,
             args,
             explicit,
             expected,
@@ -153,7 +164,8 @@ impl Checker<'_> {
         else {
             return self.error_ty();
         };
-        let Some(trait_ref) = self.visible_trait_ref(trait_def) else {
+        let Some(trait_ref) = supplied_trait_ref.or_else(|| self.visible_trait_ref(trait_def))
+        else {
             for arg in args {
                 self.infer_expr(*arg, None, flow);
             }

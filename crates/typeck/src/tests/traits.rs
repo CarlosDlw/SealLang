@@ -258,6 +258,101 @@ fn a_trait_associated_function_has_a_signature() {
 }
 
 #[test]
+fn a_qualified_default_function_is_checked_and_recorded() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Factory { func make() -> i32 { 1 } } \
+        impl Factory for Circle { } \
+        func main() -> i32 { Circle::make() }";
+    let (fixture, hir, results) = check_clean(source);
+    let make = trait_method_named(&fixture, &hir, "make");
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let ExprKind::Call { callee, .. } = hir.expr(call).kind.clone() else {
+        panic!("expected a call");
+    };
+    assert!(matches!(
+        hir.expr(callee).kind,
+        ExprKind::Path {
+            res: seal_hir::Res::TraitFunction { .. },
+            ..
+        }
+    ));
+    let instance = results
+        .instantiation(call)
+        .expect("the default function is instantiated");
+    assert_eq!(instance.def, make);
+    assert_eq!(
+        super::support::ty_text_with(&fixture, &hir, super::support::expr_ty(&results, call)),
+        "i32"
+    );
+}
+
+#[test]
+fn a_generic_qualified_default_uses_the_written_type_arguments() {
+    let source = "\
+        struct Wrapper<T> { value: T } \
+        trait Factory<T> { func make(value: T) -> T { value } } \
+        impl<T> Factory<T> for Wrapper<T> { } \
+        func main() -> i32 { Wrapper::<i32>::make(7) }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let instance = results
+        .instantiation(call)
+        .expect("the generic default is instantiated");
+    let arguments = hir.ty_ctxt().substs_args(instance.args);
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(
+        super::support::ty_text_with(&fixture, &hir, arguments[0]),
+        "Wrapper<i32>"
+    );
+    assert_eq!(
+        super::support::ty_text_with(&fixture, &hir, arguments[1]),
+        "i32"
+    );
+}
+
+#[test]
+fn self_as_an_associated_function_is_symbolic_in_a_default_body() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Factory { \
+            func make() -> i32 { 1 } \
+            func twice() -> i32 { Self::make() } \
+        } \
+        impl Factory for Circle { } \
+        func main() -> i32 { Circle::twice() }";
+    let (fixture, hir, results) = check_clean(source);
+    let make = trait_method_named(&fixture, &hir, "make");
+    let twice = trait_method_named(&fixture, &hir, "twice");
+    let body = hir.body_of(twice).expect("twice has a default body");
+    let inner = results
+        .instantiation(tail(&hir, body))
+        .expect("Self::make is instantiated symbolically");
+    assert_eq!(inner.def, make);
+    let (_, main) = function(&fixture, &hir, "main");
+    let outer = results
+        .instantiation(tail(&hir, main))
+        .expect("twice is instantiated on Circle");
+    assert_eq!(outer.def, twice);
+}
+
+#[test]
+fn an_override_of_an_associated_default_is_used() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Factory { func make() -> i32 { 1 } } \
+        impl Factory for Circle { func make() -> i32 { 2 } } \
+        func main() -> i32 { Circle::make() }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let instance = results.instantiation(call).expect("make is instantiated");
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::Function);
+}
+
+#[test]
 fn an_inherent_method_shadows_a_trait_method() {
     let source = "\
 struct Circle { radius: i32 } \

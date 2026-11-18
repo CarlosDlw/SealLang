@@ -227,6 +227,8 @@ pub struct TraitMethodDef {
     pub generics: Generics,
     /// How the method takes its receiver, or `None` for an associated function.
     pub receiver: Option<TraitMethodReceiver>,
+    /// Whether the trait declaration supplies a default body.
+    pub has_body: bool,
 }
 
 /// The receiver declared by a trait method.
@@ -251,7 +253,14 @@ impl TraitMethodDef {
             signature,
             generics,
             receiver,
+            has_body: false,
         }
+    }
+
+    /// Records whether the declaration has a default body.
+    pub fn with_body(mut self, has_body: bool) -> Self {
+        self.has_body = has_body;
+        self
     }
 }
 

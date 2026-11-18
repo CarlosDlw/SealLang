@@ -1600,6 +1600,33 @@ fn default_receivers_run_at_both_levels() {
 }
 
 #[test]
+fn associated_default_function_returns_value() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Factory { func unit() -> i32 { 1 } }\n\
+         impl Factory for Circle { }\n\
+         func main() -> i32 { Circle::unit() }\n",
+        1,
+        "associated-default",
+    );
+}
+
+#[test]
+fn self_associated_default_dispatches_to_override() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Factory {\n\
+             func unit() -> i32 { 1 }\n\
+             func twice() -> i32 { Self::unit() * 2 }\n\
+         }\n\
+         impl Factory for Circle { func unit() -> i32 { 5 } }\n\
+         func main() -> i32 { Circle::twice() }\n",
+        10,
+        "associated-self-override",
+    );
+}
+
+#[test]
 fn arrays_pass_by_value_through_function_parameters() {
     let source = "func first(values: [i32; 3]) -> i32 { values[0] }\n\
                   func main() -> i32 { first([41, 1, 2]) + 1 }\n";

@@ -9,6 +9,7 @@
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_symbol::Symbol;
+use seal_ty::TraitRef;
 
 /// The outcome of looking up a trait method for one nominal type.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +20,16 @@ pub enum TraitMethodLookup {
     Found {
         /// The trait declaration that requires the method.
         trait_def: DefId,
+        /// The implemented trait reference, in template form.
+        trait_ref: TraitRef,
         /// The function that implements the method for the type.
+        function: DefId,
+    },
+    /// The implementation omits the name and the trait supplies a default body.
+    Default {
+        /// The implemented trait reference, in template form.
+        trait_ref: TraitRef,
+        /// The trait function declaration carrying the default body.
         function: DefId,
     },
     /// Several implemented traits declare the name, so the call is ambiguous.
@@ -38,7 +48,7 @@ pub(crate) struct TraitImpls {
 /// One `impl Trait for Type` block.
 #[derive(Debug)]
 struct TraitImpl {
-    trait_def: DefId,
+    trait_ref: TraitRef,
     type_def: DefId,
     functions: FxHashMap<Symbol, DefId>,
 }
@@ -51,40 +61,56 @@ impl TraitImpls {
     /// every one is consulted by [`TraitImpls::lookup`].
     pub(crate) fn insert(
         &mut self,
-        trait_def: DefId,
+        trait_ref: TraitRef,
         type_def: DefId,
         functions: FxHashMap<Symbol, DefId>,
     ) {
         self.entries.push(TraitImpl {
-            trait_def,
+            trait_ref,
             type_def,
             functions,
         });
     }
 
     /// Returns the function implementing `name` for `type_def`.
-    pub(crate) fn lookup(&self, type_def: DefId, name: Symbol) -> TraitMethodLookup {
+    ///
+    /// `default` receives an implemented trait reference and returns the trait
+    /// declaration carrying a default body for `name`, when one exists. The
+    /// callback keeps the registry independent from the trait definition table.
+    pub(crate) fn lookup(
+        &self,
+        type_def: DefId,
+        name: Symbol,
+        default: impl Fn(TraitRef, Symbol) -> Option<DefId>,
+    ) -> TraitMethodLookup {
         let mut matches = self.entries.iter().filter_map(|entry| {
             if entry.type_def != type_def {
                 return None;
             }
-            entry
-                .functions
-                .get(&name)
-                .map(|function| (entry.trait_def, *function))
+            if let Some(function) = entry.functions.get(&name).copied() {
+                return Some((entry.trait_ref, function, false));
+            }
+            default(entry.trait_ref, name).map(|function| (entry.trait_ref, function, true))
         });
-        let Some((trait_def, function)) = matches.next() else {
+        let Some((trait_ref, function, is_default)) = matches.next() else {
             return TraitMethodLookup::Missing;
         };
-        let mut traits = vec![trait_def];
-        traits.extend(matches.map(|(trait_def, _)| trait_def));
-        if traits.len() == 1 {
-            TraitMethodLookup::Found {
-                trait_def,
+        let mut traits = vec![trait_ref.trait_def];
+        traits.extend(matches.map(|(trait_ref, _, _)| trait_ref.trait_def));
+        if traits.len() != 1 {
+            return TraitMethodLookup::Ambiguous(traits);
+        }
+        if is_default {
+            TraitMethodLookup::Default {
+                trait_ref,
                 function,
             }
         } else {
-            TraitMethodLookup::Ambiguous(traits)
+            TraitMethodLookup::Found {
+                trait_def: trait_ref.trait_def,
+                trait_ref,
+                function,
+            }
         }
     }
 }

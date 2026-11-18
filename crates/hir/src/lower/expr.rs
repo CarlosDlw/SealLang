@@ -31,7 +31,10 @@ impl Lowering<'_> {
             } => match self.resolve(name, span) {
                 Some(res) => {
                     let expected = match res {
-                        crate::Res::Function(function) => self.own_generic_count(function),
+                        crate::Res::Function(function)
+                        | crate::Res::TraitFunction { function, .. } => {
+                            self.own_generic_count(function)
+                        }
                         crate::Res::Local(_) => 0,
                     };
                     let args = self.lower_expr_arguments(args.as_ref(), expected);
@@ -318,8 +321,9 @@ impl Lowering<'_> {
     ///
     /// Inherent functions are tried first, then the traits the type implements,
     /// which is what makes `Type::name()` work for an associated function a
-    /// trait declares. The resulting node is a normal function path, so calls,
-    /// arguments, and code generation need no additional case. Instance methods
+    /// trait declares. A concrete implementation becomes a normal function
+    /// path; an omitted default becomes [`crate::Res::TraitFunction`], so calls,
+    /// arguments, and code generation share one symbolic path. Instance methods
     /// are rejected in both lookups: they need a receiver and are only reachable
     /// through `.`.
     fn lower_qualified_path(
@@ -330,6 +334,19 @@ impl Lowering<'_> {
         name: Symbol,
         name_span: Span,
     ) -> ExprKind {
+        if type_name == self.self_symbol {
+            if let Some(resolved) = self.lower_trait_self_function(type_args, name, name_span) {
+                return resolved;
+            }
+            self.error(
+                codes::E2018,
+                type_span,
+                "`Self` names an associated function only inside a trait body",
+            )
+            .help("call the function through a concrete type instead")
+            .emit();
+            return ExprKind::Error;
+        }
         // A type parameter is not a type definition, but it can still name an
         // associated function through its bounds.
         if let Some(param) = self.generic_scope_param(type_name) {
@@ -413,6 +430,55 @@ impl Lowering<'_> {
             TraitMethodLookup::Found { function, .. } => {
                 self.qualified_function(function, name, name_span, type_args)
             }
+            TraitMethodLookup::Default {
+                trait_ref,
+                function,
+            } => {
+                let Some(trait_ref) =
+                    self.instantiate_impl_trait_ref(trait_ref, type_def, type_args)
+                else {
+                    let trait_name = self
+                        .interner
+                        .resolve(self.hir.definitions().name(trait_ref.trait_def));
+                    self.error(
+                        codes::E2018,
+                        name_span,
+                        format!(
+                            "no implementation of `{trait_name}` matches the supplied type arguments for `{}`",
+                            self.interner.resolve(name)
+                        ),
+                    )
+                    .help("use type arguments that match the impl self type")
+                    .emit();
+                    return ExprKind::Error;
+                };
+                let Some(definition) = self.hir.trait_definition(trait_ref.trait_def) else {
+                    return ExprKind::Error;
+                };
+                let Some(method) = definition.method(name) else {
+                    return ExprKind::Error;
+                };
+                if method.receiver.is_some() {
+                    self.error(
+                        codes::E2019,
+                        name_span,
+                        format!(
+                            "`{}` is a method, not an associated function",
+                            self.interner.resolve(name)
+                        ),
+                    )
+                    .help("call it on a value, as in `value.name()`")
+                    .emit();
+                    return ExprKind::Error;
+                }
+                ExprKind::Path {
+                    res: crate::Res::TraitFunction {
+                        function,
+                        trait_ref,
+                    },
+                    args: None,
+                }
+            }
             TraitMethodLookup::Ambiguous(traits) => {
                 let traits = traits
                     .iter()
@@ -457,6 +523,132 @@ impl Lowering<'_> {
                 ExprKind::Error
             }
         }
+    }
+
+    /// Lowers `Self::name(...)` inside a trait default body.
+    ///
+    /// The call stays symbolic: `Self` is the trait's implicit parameter, so
+    /// monomorphization selects an override or the default body itself.
+    fn lower_trait_self_function(
+        &mut self,
+        type_args: Option<&seal_ast::GenericArgs>,
+        name: Symbol,
+        name_span: Span,
+    ) -> Option<ExprKind> {
+        let function = self.function?;
+        let trait_def = self.hir.definitions().get(function).parent?;
+        if self.hir.definitions().kind(trait_def) != seal_def::DefKind::Trait
+            || self.self_ty.is_some()
+        {
+            return None;
+        }
+        let generics = self.hir.generics(trait_def)?;
+        let self_param = generics.params.iter().find(|parameter| parameter.is_self)?;
+        let tcx = self.hir.ty_ctxt();
+        let self_ty = tcx.param_ty(self_param.param);
+        let trait_arguments: Vec<seal_ty::TyId> = generics
+            .params
+            .iter()
+            .filter(|parameter| !parameter.is_self)
+            .map(|parameter| tcx.param_ty(parameter.param))
+            .collect();
+        let trait_ref = seal_ty::TraitRef::new(trait_def, self_ty, tcx.substs(&trait_arguments));
+        let Some(method) = self
+            .hir
+            .trait_definition(trait_def)
+            .and_then(|definition| definition.method(name).cloned())
+        else {
+            let trait_name = self
+                .interner
+                .resolve(self.hir.definitions().name(trait_def));
+            self.error(
+                codes::E2018,
+                name_span,
+                format!(
+                    "the trait `{trait_name}` has no associated function `{}`",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help("declare it in the trait, or check the spelling")
+            .emit();
+            return Some(ExprKind::Error);
+        };
+        if method.receiver.is_some() {
+            self.error(
+                codes::E2019,
+                name_span,
+                format!(
+                    "`{}` is a method, not an associated function",
+                    self.interner.resolve(name)
+                ),
+            )
+            .help(format!(
+                "call it on a value, as in `value.{}()`",
+                self.interner.resolve(name)
+            ))
+            .emit();
+            return Some(ExprKind::Error);
+        }
+        let expected = method.generics.params.len();
+        let args = self.lower_expr_arguments(type_args, expected);
+        Some(ExprKind::Path {
+            res: crate::Res::TraitFunction {
+                function: method.def,
+                trait_ref,
+            },
+            args,
+        })
+    }
+
+    /// Instantiates an impl's trait reference with the type arguments written
+    /// before an associated function.
+    fn instantiate_impl_trait_ref(
+        &self,
+        trait_ref: seal_ty::TraitRef,
+        type_def: DefId,
+        type_args: Option<seal_ty::SubstsId>,
+    ) -> Option<seal_ty::TraitRef> {
+        let Some(type_args) = type_args else {
+            return Some(trait_ref);
+        };
+        let tcx = self.hir.ty_ctxt();
+        let Some(adt) = self.hir.adt(type_def) else {
+            return Some(trait_ref);
+        };
+        let actual = tcx.adt_ty_with(adt, type_args);
+        let mut unifier = seal_ty::TemplateUnifier::new(tcx);
+        if !unifier.unify(trait_ref.self_ty, actual) {
+            return None;
+        }
+        let matched = unifier.into_match();
+        let implementation = self
+            .hir
+            .trait_impls()
+            .into_iter()
+            .find(|implementation| implementation.trait_ref == trait_ref)?;
+        let impl_arguments: Vec<seal_ty::TyId> = implementation
+            .generics
+            .params
+            .iter()
+            .map(|parameter| {
+                matched
+                    .left()
+                    .get(&parameter.param)
+                    .copied()
+                    .unwrap_or_else(|| tcx.param_ty(parameter.param))
+            })
+            .collect();
+        let substs = tcx.substs(&impl_arguments);
+        let trait_arguments: Vec<seal_ty::TyId> = tcx
+            .substs_args(trait_ref.args)
+            .iter()
+            .map(|argument| tcx.substitute(*argument, substs))
+            .collect();
+        Some(seal_ty::TraitRef::new(
+            trait_ref.trait_def,
+            tcx.substitute(trait_ref.self_ty, substs),
+            tcx.substs(&trait_arguments),
+        ))
     }
 
     /// Lowers `Enum::Variant(value, ...)` when the qualified name is a variant.

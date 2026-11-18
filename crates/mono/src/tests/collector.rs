@@ -556,6 +556,40 @@ fn a_concrete_omitted_method_uses_the_default() {
 }
 
 #[test]
+fn a_qualified_associated_default_is_monomorphized() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "struct Circle { radius: i32 }\
+         trait Factory { func make() -> i32 { 7 } }\
+         impl Factory for Circle {}\
+         func main() -> i32 { Circle::make() }",
+    );
+    let main = instance_named(&fixture, &hir, &program, "main");
+    let target = call_targets(&main.body)
+        .into_iter()
+        .next()
+        .expect("main calls make");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the associated default was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+    let arguments: Vec<String> = hir
+        .ty_ctxt()
+        .substs_args(instance.args)
+        .iter()
+        .map(|argument| {
+            hir.ty_ctxt()
+                .display_with(*argument, fixture.interner())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(arguments, ["Circle"]);
+    assert!(program.id_of(instance).is_some());
+    program
+        .validate(&hir)
+        .expect("the associated default instance is valid");
+}
+
+#[test]
 fn an_override_still_wins_over_a_default() {
     let (fixture, hir, _mir, program) = collect_clean(
         "struct Circle { radius: i32 }\

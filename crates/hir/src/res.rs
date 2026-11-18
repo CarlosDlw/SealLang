@@ -1,6 +1,7 @@
 //! The result of resolving a name.
 
 use seal_def::DefId;
+use seal_ty::TraitRef;
 
 /// What a name resolved to.
 ///
@@ -11,6 +12,17 @@ use seal_def::DefId;
 pub enum Res {
     /// A function item.
     Function(DefId),
+    /// An associated trait function whose implementation is selected later.
+    ///
+    /// A default associated function has no impl function of its own. The
+    /// stored trait reference gives type checking the concrete `Self` and trait
+    /// arguments needed to instantiate the declaration.
+    TraitFunction {
+        /// The trait function declaration.
+        function: DefId,
+        /// The trait reference it is called through.
+        trait_ref: TraitRef,
+    },
     /// A parameter or `let` binding.
     Local(DefId),
 }
@@ -21,6 +33,7 @@ impl Res {
     pub const fn def(self) -> DefId {
         match self {
             Self::Function(def) | Self::Local(def) => def,
+            Self::TraitFunction { function, .. } => function,
         }
     }
 }

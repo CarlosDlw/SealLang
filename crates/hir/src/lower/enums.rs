@@ -161,7 +161,8 @@ impl Lowering<'_> {
         let function = match self.hir.method(enum_def, name) {
             Some(function) => Some(function),
             None => match self.hir.trait_method(enum_def, name) {
-                TraitMethodLookup::Found { function, .. } => Some(function),
+                TraitMethodLookup::Found { function, .. }
+                | TraitMethodLookup::Default { function, .. } => Some(function),
                 TraitMethodLookup::Ambiguous(_) | TraitMethodLookup::Missing => None,
             },
         };

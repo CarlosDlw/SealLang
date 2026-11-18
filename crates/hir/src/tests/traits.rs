@@ -28,6 +28,7 @@ fn trait_impls_bind_each_method_to_a_concrete_function() {
     let TraitMethodLookup::Found {
         trait_def,
         function,
+        ..
     } = hir.trait_method(circle, area)
     else {
         panic!("area is implemented");
@@ -36,6 +37,127 @@ fn trait_impls_bind_each_method_to_a_concrete_function() {
     assert_eq!(hir.definitions().get(function).parent, Some(circle));
     assert_eq!(hir.receiver(function), Some(ReceiverKind::Shared));
     assert_eq!(hir.bodies().len(), 3);
+}
+
+#[test]
+fn an_impl_may_omit_an_associated_default_function() {
+    let (fixture, hir) = lower_clean(
+        "struct Circle { radius: i32 } \
+         trait Factory { func unit() -> i32 { 1 } } \
+         impl Factory for Circle { }",
+    );
+    let circle = type_named(&fixture, &hir, "Circle");
+    let TraitMethodLookup::Default {
+        trait_ref,
+        function,
+    } = hir.trait_method(circle, fixture.interner.intern("unit"))
+    else {
+        panic!("unit comes from the default body");
+    };
+    assert_eq!(hir.definitions().kind(trait_ref.trait_def), DefKind::Trait);
+    assert_eq!(
+        hir.definitions().get(function).parent,
+        Some(trait_ref.trait_def)
+    );
+    assert!(hir.body_of(function).is_some());
+}
+
+#[test]
+fn a_qualified_default_function_lowers_to_a_trait_function() {
+    let (fixture, hir) = lower_clean(
+        "struct Circle { radius: i32 } \
+         trait Factory { func unit() -> i32 { 1 } } \
+         impl Factory for Circle { } \
+         func main() -> i32 { Circle::unit() }",
+    );
+    let factory = trait_named(&fixture, &hir, "Factory");
+    let unit = trait_method_named(&fixture, &hir, factory, "unit");
+    let (_, body) = function(&fixture, &hir, "main");
+    let ExprKind::Call { callee, .. } = hir.expr(tail(&hir, body)).kind.clone() else {
+        panic!("expected a call");
+    };
+    let Res::TraitFunction {
+        function,
+        trait_ref,
+    } = path_res(&hir, callee)
+    else {
+        panic!("expected a symbolic trait function");
+    };
+    assert_eq!(function, unit);
+    assert_eq!(trait_ref.trait_def, factory);
+}
+
+#[test]
+fn self_inside_a_default_body_names_a_trait_function() {
+    let (fixture, hir) = lower_clean(
+        "trait Factory { \
+             func unit() -> i32 { 1 } \
+             func twice() -> i32 { Self::unit() } \
+         }",
+    );
+    let factory = trait_named(&fixture, &hir, "Factory");
+    let unit = trait_method_named(&fixture, &hir, factory, "unit");
+    let twice = trait_method_named(&fixture, &hir, factory, "twice");
+    let body = hir.body_of(twice).expect("twice has a default body");
+    let ExprKind::Call { callee, .. } = hir.expr(tail(&hir, body)).kind.clone() else {
+        panic!("expected a call");
+    };
+    let Res::TraitFunction {
+        function,
+        trait_ref,
+    } = path_res(&hir, callee)
+    else {
+        panic!("expected a symbolic trait function");
+    };
+    assert_eq!(function, unit);
+    assert_eq!(trait_ref.trait_def, factory);
+}
+
+#[test]
+fn default_type_arguments_must_match_the_impl_self_type() {
+    let fixture = Fixture::new(
+        "struct Wrapper<T> { value: T } \
+         trait Factory { func make() -> i32 { 1 } } \
+         impl Factory for Wrapper<i32> { } \
+         func main() -> i32 { Wrapper::<bool>::make() }",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2018", "supplied type arguments");
+}
+
+#[test]
+fn two_associated_defaults_with_the_same_name_are_ambiguous() {
+    let fixture = Fixture::new(
+        "struct Circle { radius: i32 } \
+         trait Left { func unit() -> i32 { 1 } } \
+         trait Right { func unit() -> i32 { 2 } } \
+         impl Left for Circle { } \
+         impl Right for Circle { } \
+         func main() -> i32 { Circle::unit() }",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2028", "more than one trait");
+}
+
+#[test]
+fn a_qualified_function_without_an_impl_or_default_is_missing() {
+    let fixture = Fixture::new(
+        "struct Circle { radius: i32 } \
+         trait Factory { func make() -> i32; } \
+         func main() -> i32 { Circle::make() }",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2018", "associated function `make`");
+}
+
+#[test]
+fn self_qualified_function_outside_a_trait_is_rejected() {
+    let fixture = Fixture::new("func main() -> i32 { Self::make() }");
+    let _ = fixture.lower();
+    fixture.expect(
+        "E2018",
+        "`Self` names an associated function only inside a trait body",
+    );
 }
 
 #[test]

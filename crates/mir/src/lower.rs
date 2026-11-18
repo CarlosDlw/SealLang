@@ -473,7 +473,7 @@ impl<'a> BodyLowering<'a> {
                 }
             }
             ExprKind::Path {
-                res: Res::Function(_),
+                res: Res::Function(_) | Res::TraitFunction { .. },
                 ..
             }
             | ExprKind::Error => {
@@ -856,6 +856,10 @@ impl<'a> BodyLowering<'a> {
                 res: Res::Function(definition),
                 ..
             } => Some(definition),
+            ExprKind::Path {
+                res: Res::TraitFunction { function, .. },
+                ..
+            } => Some(function),
             _ => None,
         };
         let arg_spans: Vec<Span> = args.iter().map(|arg| self.hir.expr(*arg).span).collect();
@@ -1266,7 +1270,7 @@ impl<'a> BodyLowering<'a> {
                 self.place_operand(place, ty)
             }
             ExprKind::Path {
-                res: Res::Function(_),
+                res: Res::Function(_) | Res::TraitFunction { .. },
                 ..
             }
             | ExprKind::Error => Operand::Constant(Constant::Unit),

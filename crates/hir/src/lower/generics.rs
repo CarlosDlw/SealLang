@@ -332,13 +332,16 @@ impl Lowering<'_> {
                         crate::ReceiverKind::Exclusive => Some(seal_ty::RefKind::Exclusive),
                     },
                 });
-                methods.push(seal_ty::TraitMethodDef::new(
-                    raw.def,
-                    raw.name,
-                    seal_ty::GenericSignature::new(params, ret),
-                    method_generics,
-                    receiver,
-                ));
+                methods.push(
+                    seal_ty::TraitMethodDef::new(
+                        raw.def,
+                        raw.name,
+                        seal_ty::GenericSignature::new(params, ret),
+                        method_generics,
+                        receiver,
+                    )
+                    .with_body(raw.body.is_some()),
+                );
             }
 
             let self_param = generics

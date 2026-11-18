@@ -227,7 +227,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, hir: &Hir, results: &TypeckRe
             && matches!(
                 &hir.expr(*callee).kind,
                 ExprKind::Path {
-                    res: Res::Function(_),
+                    res: Res::Function(_) | Res::TraitFunction { .. },
                     ..
                 }
             )

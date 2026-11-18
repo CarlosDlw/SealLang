@@ -298,7 +298,7 @@ impl Checker<'_> {
                 }
                 ty
             }
-            Res::Function(_) => {
+            Res::Function(_) | Res::TraitFunction { .. } => {
                 self.report_function_as_value(span);
                 self.error_ty()
             }

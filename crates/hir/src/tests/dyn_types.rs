@@ -276,6 +276,18 @@ fn generic_trait_with_concrete_arguments_is_object_safe() {
 }
 
 #[test]
+fn an_associated_default_function_is_not_object_safe() {
+    let fixture =
+        Fixture::new("trait Factory { func make() -> i32 { 1 } } func f(value: *dyn Factory) {}");
+    let _ = fixture.lower();
+    let notes = note_messages(&fixture, "E2065");
+    assert!(
+        notes.iter().any(|note| note.contains("make")),
+        "unexpected notes: {notes:?}"
+    );
+}
+
+#[test]
 fn dyn_of_an_unknown_trait_is_reported_once() {
     let fixture = Fixture::new("func f(value: *dyn Missing) {}");
     let _ = fixture.lower();

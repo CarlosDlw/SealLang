@@ -630,10 +630,9 @@ impl<'a> Lowering<'a> {
         let Some(trait_ref) = trait_ref else {
             return;
         };
-        let trait_def = trait_ref.trait_def;
         if let Some(type_def) = nominal {
             let map: FxHashMap<Symbol, DefId> = functions.iter().copied().collect();
-            self.hir.insert_trait_impl(trait_def, type_def, map);
+            self.hir.insert_trait_impl(trait_ref, type_def, map);
         }
         if let Some(generics) = self.hir.generics(impl_def) {
             self.hir

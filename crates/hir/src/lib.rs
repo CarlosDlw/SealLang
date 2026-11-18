@@ -347,7 +347,12 @@ impl Hir {
     /// Inherent functions are not considered here: callers try [`Hir::method`]
     /// first, so an inherent method shadows a trait method with the same name.
     pub fn trait_method(&self, type_def: DefId, name: Symbol) -> TraitMethodLookup {
-        self.trait_impls.lookup(type_def, name)
+        self.trait_impls.lookup(type_def, name, |trait_ref, name| {
+            self.trait_definition(trait_ref.trait_def)
+                .and_then(|definition| definition.method(name).cloned())
+                .filter(|method| method.has_body)
+                .map(|method| method.def)
+        })
     }
 
     pub(crate) fn insert_adt(&mut self, def: DefId, adt: AdtId) {
@@ -364,11 +369,11 @@ impl Hir {
 
     pub(crate) fn insert_trait_impl(
         &mut self,
-        trait_def: DefId,
+        trait_ref: seal_ty::TraitRef,
         type_def: DefId,
         functions: FxHashMap<Symbol, DefId>,
     ) {
-        self.trait_impls.insert(trait_def, type_def, functions);
+        self.trait_impls.insert(trait_ref, type_def, functions);
     }
 
     pub(crate) fn insert_method(&mut self, type_def: DefId, name: Symbol, function: DefId) {
