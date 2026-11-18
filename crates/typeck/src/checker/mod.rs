@@ -4,6 +4,7 @@ mod borrow;
 mod call;
 mod cast;
 mod coerce;
+mod const_context;
 mod dynamic;
 mod exhaustive;
 mod expr;
@@ -28,7 +29,7 @@ use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
 use seal_hash::{FxHashMap, FxHashSet};
-use seal_hir::{Body, Hir, HirBlockId};
+use seal_hir::{Body, BodyKind, Hir, HirBlockId};
 use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::{InferCtxt, ParamEnv, TraitRef, TyId, TyKind};
@@ -89,6 +90,14 @@ pub(crate) struct Checker<'a> {
     /// projection. The base is not required to be initialized as a whole:
     /// only the selected sub-place is read or written.
     pub(super) checking_place_base: bool,
+    /// Whether the body is a `const` or `static` initializer.
+    pub(super) const_initializer: bool,
+    /// Whether the body is a `const func`.
+    pub(super) const_fn: bool,
+    /// The number of enclosing `unsafe` blocks.
+    pub(super) unsafe_depth: usize,
+    /// Whether this body already reported a forbidden `*mut` type.
+    pub(super) mut_ref_reported: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -116,6 +125,10 @@ impl<'a> Checker<'a> {
             ret: unit,
             guard_moves: None,
             checking_place_base: false,
+            const_initializer: false,
+            const_fn: false,
+            unsafe_depth: 0,
+            mut_ref_reported: false,
         };
         checker.validate_bound_arguments();
         checker.build_signatures();
@@ -135,15 +148,31 @@ impl<'a> Checker<'a> {
     fn build_signatures(&mut self) {
         let bodies: Vec<Body> = self.hir.bodies().iter().cloned().collect();
         for body in bodies {
+            self.mut_ref_reported = false;
             let owner_span = self.hir.definitions().get(body.owner).span;
+            let is_value = !matches!(body.kind, BodyKind::Function);
             let ret = match body.ret {
-                Some(ty) => self.storage_ty(ty, owner_span, "return type"),
+                Some(ty) => {
+                    let ty = if is_value {
+                        self.value_decl_ty(ty, owner_span, body.kind)
+                    } else {
+                        self.storage_ty(ty, owner_span, "return type")
+                    };
+                    if body.is_const || is_value {
+                        self.note_declared_mut_ref(ty, owner_span, body.is_const);
+                    }
+                    ty
+                }
                 None => self.unit(),
             };
             let mut params = Vec::with_capacity(body.params.len());
             for param in &body.params {
                 let span = self.hir.definitions().get(param.def).span;
-                params.push(self.storage_ty(param.ty, span, "parameter"));
+                let ty = self.storage_ty(param.ty, span, "parameter");
+                if body.is_const {
+                    self.note_declared_mut_ref(ty, span, true);
+                }
+                params.push(ty);
             }
             self.results.insert_signature(
                 body.owner,
@@ -167,6 +196,15 @@ impl<'a> Checker<'a> {
         self.env = self.hir.param_env(body.owner);
         self.proof_cache.clear();
         self.owner = Some(body.owner);
+        self.const_fn = body.is_const;
+        self.const_initializer = !matches!(body.kind, BodyKind::Function);
+        self.unsafe_depth = 0;
+        self.mut_ref_reported = (self.const_fn || self.const_initializer)
+            && signature
+                .params
+                .iter()
+                .chain(std::iter::once(&signature.ret))
+                .any(|ty| self.contains_mut_ref(*ty));
 
         let mut flow = Flow::new();
         for (param, ty) in body.params.iter().zip(&signature.params) {

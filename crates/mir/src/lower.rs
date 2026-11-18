@@ -696,7 +696,7 @@ impl<'a> BodyLowering<'a> {
                 ..
             } => self.lower_method(expr, receiver, name_span, &args, dest, span),
             ExprKind::Match { scrutinee, arms } => self.lower_match(scrutinee, &arms, dest, span),
-            ExprKind::Block(block) => self.lower_block(block, dest),
+            ExprKind::Block(block) | ExprKind::Unsafe { block } => self.lower_block(block, dest),
             ExprKind::If {
                 condition,
                 then_branch,
@@ -1580,7 +1580,7 @@ impl<'a> BodyLowering<'a> {
     /// becomes an explicit two-block graph, so code generation never has to
     /// invent control flow while computing an address.
     fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
-        let mut local = self.place_of_local(place.local).local;
+        let mut local = self.place_of_local(place.root_def()).local;
         let mut projections = Vec::with_capacity(place.projections.len());
         let mut ty = place.root_ty;
         let mut slice_reference: Option<Place> = None;

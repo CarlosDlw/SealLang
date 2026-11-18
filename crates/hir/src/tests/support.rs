@@ -546,7 +546,7 @@ impl Reachability<'_> {
                     self.check_expr(arm.body);
                 }
             }
-            ExprKind::Block(block) => self.check_block(block),
+            ExprKind::Block(block) | ExprKind::Unsafe { block } => self.check_block(block),
             ExprKind::If {
                 condition,
                 then_branch,

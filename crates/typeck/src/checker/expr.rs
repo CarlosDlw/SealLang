@@ -9,7 +9,7 @@ use seal_ty::{TyId, TyKind};
 use super::flow::Flow;
 use super::protocol::IndexAccess;
 use super::{Checker, PlaceMode};
-use crate::results::{PlaceProjection, ResolvedPlace};
+use crate::results::{PlaceProjection, PlaceRoot, ResolvedPlace};
 
 /// The pieces of an index expression before its base type is known.
 struct IndexExpression {
@@ -103,6 +103,9 @@ impl Checker<'_> {
             let expr = self.hir.expr(expr);
             (expr.span, expr.kind.clone())
         };
+        // The match below consumes parts of `kind`; keep a copy for the
+        // constant-context checks that run after the expression is typed.
+        let dispatch_kind = kind.clone();
         // A parameter may already have been bound by an expected return type;
         // passing the resolved type lets literals adopt it instead of falling
         // back to their default and then failing unification.
@@ -252,6 +255,13 @@ impl Checker<'_> {
                 *flow = outcome.flow;
                 outcome.ty
             }
+            ExprKind::Unsafe { block } => {
+                self.unsafe_depth += 1;
+                let outcome = self.check_block(block, expected, flow.clone());
+                self.unsafe_depth -= 1;
+                *flow = outcome.flow;
+                outcome.ty
+            }
             ExprKind::If {
                 condition,
                 then_branch,
@@ -275,7 +285,59 @@ impl Checker<'_> {
 
         let ty = self.resolve_deep(ty);
         self.results.record_expr(expr, ty);
+        self.check_static_move(expr, ty, mode);
+        self.note_const_mut_ref(ty, span);
+        if !self.is_error(ty) {
+            match &dispatch_kind {
+                ExprKind::Call { callee, .. } => {
+                    if let ExprKind::Path { res, .. } = self.hir.expr(*callee).kind.clone() {
+                        match res {
+                            Res::Function(function) => self.check_const_call(function, span),
+                            Res::TraitFunction { .. } => self.report_const_dispatch(span),
+                            _ => {}
+                        }
+                    }
+                }
+                ExprKind::MethodCall { receiver, .. } => {
+                    self.check_const_method(expr, *receiver, span);
+                }
+                ExprKind::Index { .. } => self.check_const_index(expr, span),
+                _ => {}
+            }
+        }
         ty
+    }
+
+    /// Rejects reading a non-`Copy` static by value.
+    ///
+    /// A static is permanent storage, so a read that would move out of it is
+    /// invalid. A `Copy` field read is allowed, and borrowing never moves.
+    fn check_static_move(&mut self, expr: HirExprId, ty: TyId, mode: PlaceMode) {
+        if mode != PlaceMode::Read
+            || self.checking_place_base
+            || self.is_error(ty)
+            || self.is_copy(ty)
+        {
+            return;
+        }
+        let Some(place) = self.results.place(expr) else {
+            return;
+        };
+        if !matches!(place.root, PlaceRoot::Static(_)) || place.contains_deref() {
+            return;
+        }
+        let span = self.hir.expr(expr).span;
+        let name = self.def_name(place.root.def());
+        self.error(
+            seal_error_codes::E3058,
+            span,
+            format!(
+                "cannot move `{name}` out of a static, because `{}` is not `Copy`",
+                self.ty_text(ty)
+            ),
+        )
+        .help("borrow the static, or read one of its `Copy` fields")
+        .emit();
     }
 
     fn check_path(
@@ -309,7 +371,7 @@ impl Checker<'_> {
                 self.results.record_place(
                     expr,
                     ResolvedPlace {
-                        local,
+                        root: PlaceRoot::Local(local),
                         root_ty: ty,
                         projections: Vec::new(),
                         ty,
@@ -322,17 +384,67 @@ impl Checker<'_> {
                 ty
             }
             Res::Const(def) | Res::Static(def) => {
-                // The initializer body carries the declared type; the global-data
-                // phase adds storage classes, write rules, and unsafe gating.
                 let ty = self
                     .hir
                     .body_of(def)
                     .and_then(|body| body.ret)
                     .unwrap_or_else(|| self.error_ty());
+                let is_static = matches!(res, Res::Static(_));
+                let mutable = is_static && self.hir.definitions().is_mutable(def);
+                let assignment = mode == PlaceMode::Write;
+                let writes = assignment || mode == PlaceMode::BorrowExclusive;
+                if mutable {
+                    if self.in_const_context() {
+                        let access = if writes {
+                            super::const_context::StaticAccess::Write
+                        } else {
+                            super::const_context::StaticAccess::Read
+                        };
+                        self.report_const_static_access(access, span);
+                    } else if self.unsafe_depth == 0 {
+                        self.error(
+                            seal_error_codes::E3063,
+                            span,
+                            format!(
+                                "access to the mutable static `{}` requires an `unsafe` block",
+                                self.def_name(def)
+                            ),
+                        )
+                        .help("wrap the access in `unsafe { ... }`")
+                        .emit();
+                    }
+                } else if assignment {
+                    if is_static {
+                        self.error(
+                            seal_error_codes::E3059,
+                            span,
+                            format!(
+                                "cannot assign to the immutable static `{}`",
+                                self.def_name(def)
+                            ),
+                        )
+                        .help("declare it as `static mut` to allow writes")
+                        .emit();
+                    } else {
+                        self.error(
+                            seal_error_codes::E3005,
+                            span,
+                            format!("cannot assign to the constant `{}`", self.def_name(def)),
+                        )
+                        .help(
+                            "a constant is a value, not storage; assign to a `mut` binding instead",
+                        )
+                        .emit();
+                    }
+                }
+                let root = match res {
+                    Res::Const(_) => PlaceRoot::Const(def),
+                    _ => PlaceRoot::Static(def),
+                };
                 self.results.record_place(
                     expr,
                     ResolvedPlace {
-                        local: def,
+                        root,
                         root_ty: ty,
                         projections: Vec::new(),
                         ty,

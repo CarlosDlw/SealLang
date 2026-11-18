@@ -399,6 +399,23 @@ vtable is created. Built-in arrays, slices, and ranges never use these
 protocols, which is why their bounds checks and representation remain
 unchanged.
 
+### D18 — Global storage has two classes
+
+A `const` is a value with no storage. A place rooted at a const is a
+**value-backed place**: reading it produces the constant value afresh, projecting
+a field or element reads that part of the value, and `&CONST` materializes one
+compiler-owned allocation with program lifetime. A const root is never writable
+and is always initialized; assigning to it is rejected at type checking.
+
+A `static` is one allocation with program lifetime, real storage for the borrow
+checker and code generation. An immutable static is read-only after compile-time
+initialization; a `static mut` is writable only inside an `unsafe` block, and
+its reference may not escape the function that created it. Moving a non-`Copy`
+value out of any static is rejected, because the static would be left without a
+value for the rest of the program. Static roots are always initialized and are
+never dropped. A block-scope static is one allocation per declaration, shared by
+every call and every monomorphization of the enclosing function.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -523,8 +540,19 @@ unchanged.
 16. An explicit numeric cast reads its operand exactly once, creates no loan,
     and writes only its destination. Float-to-integer conversion is saturated
     and maps NaN to zero, so no source value can invoke undefined behavior.
-16. A function reachable through a vtable is excluded from `noalias` unless a
+17. A function reachable through a vtable is excluded from `noalias` unless a
     future whole-program proof covers indirect calls.
+18. A place root is a binding, a const, or a static. Only a binding root takes
+    part in definite initialization; const and static roots are always
+    initialized, and const roots are never writable.
+19. A `static mut` place is accessed only inside an `unsafe` block, and only in
+    ordinary run-time code; a constant context rejects every mutable-static
+    access. An immutable static is never written or borrowed exclusively.
+20. A non-`Copy` value is never moved out of a static. A const has no storage,
+    so reading it by value always produces a fresh value.
+21. A `const` or `static` initializer and a `const func` body run at compile
+    time: they cannot call non-`const` functions, use dynamic dispatch or custom
+    protocols, or carry `*mut T`.
 
 ## Reserved syntax
 

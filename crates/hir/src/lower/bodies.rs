@@ -15,7 +15,7 @@ impl Lowering<'_> {
             let Some(&function) = self.function_defs.get(&item_id) else {
                 continue;
             };
-            let (ret, params, body) = {
+            let (ret, params, body, is_const) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::Func(declaration) = &item.kind else {
                     continue;
@@ -24,11 +24,12 @@ impl Lowering<'_> {
                     declaration.ret,
                     declaration.params.clone(),
                     declaration.body,
+                    declaration.is_const,
                 )
             };
 
             let self_ty = self.impl_self_ty_of_function.get(&function).copied();
-            self.lower_body(function, ret, &params, body, self_ty);
+            self.lower_body(function, ret, &params, body, self_ty, is_const);
         }
         self.function = None;
     }
@@ -52,7 +53,7 @@ impl Lowering<'_> {
                 (declaration.ret, declaration.params.clone(), body)
             };
 
-            self.lower_body(method, ret, &params, body, None);
+            self.lower_body(method, ret, &params, body, None, false);
         }
         self.function = None;
     }
@@ -68,6 +69,7 @@ impl Lowering<'_> {
         params: &[ParamId],
         body: AstBlockId,
         self_ty: Option<TyId>,
+        is_const: bool,
     ) {
         self.function = Some(owner);
         self.loop_depth = 0;
@@ -89,6 +91,7 @@ impl Lowering<'_> {
             owner,
             kind: BodyKind::Function,
             ret,
+            is_const,
             params,
             root,
         });

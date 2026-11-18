@@ -144,9 +144,9 @@ impl Checker<'_> {
         match self.deref_kind(operand) {
             Some(kind) => kind.is_exclusive(),
             None => self
-                .hir
+                .results
                 .place(operand)
-                .is_some_and(|place| self.hir.definitions().is_mutable(place.local_def())),
+                .is_some_and(|place| self.root_is_writable(place.root)),
         }
     }
 
@@ -188,10 +188,20 @@ impl Checker<'_> {
             .emit();
             return;
         }
-        let text = self
-            .results
-            .place(operand)
-            .map_or_else(|| "this place".to_owned(), |place| self.place_text(place));
+        let place = self.results.place(operand);
+        let text = place.map_or_else(|| "this place".to_owned(), |place| self.place_text(place));
+        if let Some(place) = place
+            && !place.root.is_local()
+        {
+            self.error(
+                codes::E3017,
+                self.hir.expr(operand).span,
+                format!("cannot borrow the immutable item `{text}` as mutable"),
+            )
+            .help("an immutable `const` or `static` is read-only")
+            .emit();
+            return;
+        }
         self.error(
             codes::E3017,
             self.hir.expr(operand).span,

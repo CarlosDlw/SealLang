@@ -46,7 +46,7 @@ impl Lowering<'_> {
                     declaration.ty,
                     declaration.init,
                     BodyKind::Const,
-                    None,
+                    self.function,
                 );
                 self.declare_local_value(definition, declaration.name, declaration.name_span);
                 StmtKind::Const { def: definition }

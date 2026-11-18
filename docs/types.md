@@ -329,9 +329,14 @@ not with another value name (`E2068`). Items are order-independent: a `const`
 may refer to a `static` declared later, subject to cycle detection.
 
 Reading a `static` by value copies it, so the type must be `Copy`; a non-`Copy`
-static can be borrowed or read field by field but not moved (`E3058`). Every
-reference to the same static denotes the same allocation, and a static is never
-dropped. Immutable statics are read-only after initialization (`E3059`); mutable
+static can be borrowed or read field by field but not moved (`E3058`). A
+`const`, by contrast, produces a fresh value at every use, so reading a
+non-`Copy` const by value is allowed; `&CONST` borrows one compiler-owned
+constant allocation. The checker records each path as a place rooted at a
+binding, a const, or a static, and only a binding root participates in
+definite-initialization tracking: a const or static is always initialized.
+Every reference to the same static denotes the same allocation, and a static is
+never dropped. Immutable statics are read-only after initialization (`E3059`); mutable
 storage is written `static mut` and is only accessible inside an `unsafe { ... }`
 block (`E3063`).
 
@@ -346,7 +351,17 @@ func increment() {
 `unsafe { ... }` is an expression whose value is the block's value. In this
 feature it unlocks `static mut` places only; it does not relax type checking,
 borrow checking, initialization checking, or the global effect analysis, and it
-has no runtime representation.
+has no runtime representation. The checker tracks the number of enclosing
+`unsafe` blocks, so an access is gated by the innermost context rather than by
+whether an `unsafe` appears anywhere in the function.
+
+A `const` or `static` initializer and every `const func` body are constant
+contexts. Besides the `const func` restrictions below, such a context cannot
+call a non-`const` function (`E4011`), use dynamic dispatch (`E4016`) or a custom
+iteration/indexing protocol (`E4017`), use an intrinsic outside the const
+whitelist (`E4022`), write a static (`E4015`), or read a mutable static
+(`E4026`). A constant value cannot contain `*mut T` (`E4012`). The checks run at
+the use site during type checking, before constant evaluation.
 
 A block-scope declaration is a statement and follows lexical scope:
 
@@ -360,14 +375,19 @@ func example() -> i32 {
 ```
 
 A block-scope `const` is visible from its declaration to the end of the block and
-is not visible in its own initializer. A block-scope `static` has a single
-allocation shared by every call and every instantiation of the enclosing
-function, so its type and initializer cannot mention the function's type
-parameters or `Self`. A local `const func` does not exist.
+is not visible in its own initializer. Both local forms are evaluated
+compile-time values: their type and initializer cannot capture the enclosing
+function's parameters or bindings, and cannot mention its type parameters or
+`Self` (`E3060`). A block-scope `static` has a single allocation shared by every
+call and every instantiation of the enclosing function. A local `const func`
+does not exist.
 
 `const func` declares a function that may run at compile time and at runtime. It
 may declare type parameters, but a compile-time call must supply concrete type
-arguments; its signature and body cannot mention `*mut` (`E3062`), call a
+arguments. Like any function it has a signature; a `const` or `static` body
+also has one, with no parameters and the declared type as its return type, so
+consumers never read an initializer outside its body. A `const func` signature
+and body cannot mention `*mut` (`E3062`), call a
 non-`const` function (`E4018`), use dynamic dispatch or a trait-bound call
 (`E4021`), or access a mutable static (`E4020`). Ordinary functions can call a
 `const func` like any other function.

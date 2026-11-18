@@ -242,6 +242,34 @@ fn a_local_static_cannot_mention_self() {
 }
 
 #[test]
+fn a_const_function_body_records_its_flag() {
+    let (fixture, hir) = lower_clean("const func twice(value: i32) -> i32 { value + value }");
+    let (_, body) = function(&fixture, &hir, "twice");
+    assert!(body.is_const, "a `const func` body records the flag");
+
+    let (fixture, hir) = lower_clean("func plain(value: i32) -> i32 { value }");
+    let (_, body) = function(&fixture, &hir, "plain");
+    assert!(!body.is_const);
+}
+
+#[test]
+fn an_unsafe_expression_keeps_its_block() {
+    let (fixture, hir) = lower_clean("func main() -> i32 { unsafe { 1 } }");
+    let (_, body) = function(&fixture, &hir, "main");
+    let ExprKind::Unsafe { block } = hir.expr(tail(&hir, body)).kind else {
+        panic!("the unsafe expression keeps its own kind");
+    };
+    assert!(hir.block(block).tail.is_some(), "the block keeps its tail");
+}
+
+#[test]
+fn a_local_constant_cannot_capture_a_parameter() {
+    let fixture = Fixture::new("func f(x: i32) -> i32 { const X: i32 = x; X }");
+    fixture.lower();
+    fixture.expect("E3060", "cannot capture `x`");
+}
+
+#[test]
 fn value_bodies_keep_hir_invariants() {
     let sources = [
         "const A: i32 = 1;",

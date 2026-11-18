@@ -38,6 +38,31 @@ pub enum PlaceProjection {
     },
 }
 
+/// The storage a place starts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PlaceRoot {
+    /// A binding or parameter owned by the body being checked.
+    Local(DefId),
+    /// A constant item. It is a value, not storage: reads produce it afresh.
+    Const(DefId),
+    /// A static item, whose single allocation has program lifetime.
+    Static(DefId),
+}
+
+impl PlaceRoot {
+    /// Returns the definition that roots the place.
+    pub const fn def(self) -> DefId {
+        match self {
+            Self::Local(def) | Self::Const(def) | Self::Static(def) => def,
+        }
+    }
+
+    /// Returns `true` when the root is a binding or parameter.
+    pub const fn is_local(self) -> bool {
+        matches!(self, Self::Local(_))
+    }
+}
+
 /// A place resolved by type checking.
 ///
 /// HIR keeps field names symbolic because resolving them needs the base type.
@@ -45,8 +70,8 @@ pub enum PlaceProjection {
 /// move analysis) consume it instead of resolving again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedPlace {
-    /// The local or parameter the place starts from.
-    pub local: DefId,
+    /// The storage class and definition the place starts from.
+    pub root: PlaceRoot,
     /// The declared type of that local.
     pub root_ty: TyId,
     /// The projections in application order.
@@ -63,6 +88,11 @@ pub struct ResolvedPlace {
 }
 
 impl ResolvedPlace {
+    /// Returns the definition that roots the place.
+    pub const fn root_def(&self) -> DefId {
+        self.root.def()
+    }
+
     /// Returns `true` if any projection reads through a reference.
     ///
     /// A custom index also dereferences the reference returned by the protocol

@@ -304,6 +304,14 @@ pub enum ExprKind {
     },
     /// A block expression, written `{ statements; tail }`.
     Block(HirBlockId),
+    /// An `unsafe { ... }` expression.
+    ///
+    /// The block has its ordinary value; the wrapper only lifts the unsafe
+    /// access rules for what it contains.
+    Unsafe {
+        /// The wrapped block.
+        block: HirBlockId,
+    },
     /// A conditional expression.
     If {
         /// The condition, which must have type `bool`.

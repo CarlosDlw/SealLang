@@ -169,11 +169,11 @@ impl<'a> Lowering<'a> {
                     codes::E3060,
                     span,
                     format!(
-                        "a local static initializer cannot capture `{}` from the enclosing function",
+                        "a local value initializer cannot capture `{}` from the enclosing function",
                         self.interner.resolve(name)
                     ),
                 )
-                .help("move the value into the static, or use a file-scope item")
+                .help("move the value into the declaration, or use a file-scope item")
                 .emit();
                 return None;
             }

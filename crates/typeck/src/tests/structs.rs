@@ -28,7 +28,10 @@ fn a_struct_literal_has_the_nominal_type_and_its_fields_are_checked() {
         place.projections.as_slice(),
         [PlaceProjection::Field(_)]
     ));
-    assert_eq!(fixture.symbol(hir.definitions().name(place.local)), "p");
+    assert_eq!(
+        fixture.symbol(hir.definitions().name(place.root_def())),
+        "p"
+    );
 }
 
 #[test]

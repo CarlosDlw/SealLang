@@ -29,6 +29,11 @@ pub struct Body {
     pub kind: BodyKind,
     /// The declared return type; `None` means unit.
     pub ret: Option<TyId>,
+    /// Whether this is the body of a `const func`.
+    ///
+    /// Only a [`BodyKind::Function`] may be const; value initializers and
+    /// trait default bodies are always `false`.
+    pub is_const: bool,
     /// Parameters in source order.
     pub params: Vec<ParamData>,
     /// The root block.

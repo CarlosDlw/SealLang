@@ -141,6 +141,7 @@ impl Checker<'_> {
             direct_iterator: pending.direct_iterator,
         };
         self.results.record_iteration(source, protocol);
+        self.check_const_iteration(source, span);
         Some(item_ty)
     }
 

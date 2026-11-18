@@ -9,7 +9,7 @@ use seal_ty::{InitState, TyId};
 
 use super::Checker;
 use super::flow::Flow;
-use crate::results::{PlaceProjection, ResolvedPlace};
+use crate::results::{PlaceProjection, PlaceRoot, ResolvedPlace};
 
 impl Checker<'_> {
     pub(super) fn check_assign(
@@ -21,15 +21,19 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         let target_span = self.hir.expr(target).span;
-        let Some(place) = self.hir.place(target) else {
+        if self.hir.place(target).is_none() {
             self.report_bad_target(target, target_span);
             self.results.record_expr(target, self.error_ty());
             self.infer_expr(value, None, flow);
             return self.error_ty();
-        };
+        }
 
         let ty = self.infer_place(target, flow);
         let resolved = self.results.place(target).cloned();
+        let Some(root) = resolved.as_ref().map(|place| place.root) else {
+            self.check_expr(value, ty, flow);
+            return self.unit();
+        };
         let plain = op == AssignOp::Assign;
 
         // A write through a reference needs `*mut T`: the last dereference is
@@ -47,8 +51,7 @@ impl Checker<'_> {
             return self.unit();
         }
 
-        let local = place.local_def();
-        let mutable = self.hir.definitions().is_mutable(local);
+        let mutable = self.root_is_writable(root);
         let whole = resolved.as_ref().is_none_or(ResolvedPlace::is_whole);
         let initialized = resolved
             .as_ref()
@@ -71,8 +74,8 @@ impl Checker<'_> {
         // D9: an uninitialized immutable binding may be initialized once by a
         // whole assignment. Field writes always require `mut`, because they do
         // not initialize the binding as a whole.
-        if !mutable && (!plain || !whole || initialized) {
-            let name = self.def_name(local);
+        if root.is_local() && !mutable && (!plain || !whole || initialized) {
+            let name = self.def_name(root.def());
             self.error(
                 codes::E3004,
                 target_span,
@@ -90,9 +93,10 @@ impl Checker<'_> {
 
         self.check_expr(value, ty, flow);
         if let Some(place) = resolved
+            && place.root.is_local()
             && !place.contains_custom_index()
         {
-            flow.assign(place.local, &place.path());
+            flow.assign(place.root.def(), &place.path());
         }
         self.unit()
     }
@@ -105,14 +109,17 @@ impl Checker<'_> {
         span: Span,
     ) -> TyId {
         let target_span = self.hir.expr(target).span;
-        let Some(place) = self.hir.place(target) else {
+        if self.hir.place(target).is_none() {
             self.report_bad_target(target, target_span);
             self.results.record_expr(target, self.error_ty());
             return self.error_ty();
-        };
+        }
 
         let ty = self.infer_place(target, flow);
         let resolved = self.results.place(target).cloned();
+        let Some(root) = resolved.as_ref().map(|place| place.root) else {
+            return self.unit();
+        };
 
         if let Some(kind) = self.deref_kind(target) {
             if !kind.is_exclusive() {
@@ -123,9 +130,8 @@ impl Checker<'_> {
             return self.unit();
         }
 
-        let local = place.local_def();
-        if !self.hir.definitions().is_mutable(local) {
-            let name = self.def_name(local);
+        if root.is_local() && !self.root_is_writable(root) {
+            let name = self.def_name(root.def());
             self.error(
                 codes::E3004,
                 target_span,
@@ -143,11 +149,22 @@ impl Checker<'_> {
         self.check_update_numeric(op, ty, span);
 
         if let Some(place) = resolved
+            && place.root.is_local()
             && !place.contains_custom_index()
         {
-            flow.assign(place.local, &place.path());
+            flow.assign(place.root.def(), &place.path());
         }
         self.unit()
+    }
+
+    /// Returns `true` when the root definition permits writes.
+    pub(super) fn root_is_writable(&self, root: PlaceRoot) -> bool {
+        match root {
+            PlaceRoot::Local(def) | PlaceRoot::Static(def) => {
+                self.hir.definitions().is_mutable(def)
+            }
+            PlaceRoot::Const(_) => false,
+        }
     }
 
     /// Requires a place expression to be initialized before it is read.
@@ -155,7 +172,7 @@ impl Checker<'_> {
         let Some(place) = self.results.place(expr).cloned() else {
             return;
         };
-        if place.contains_deref() {
+        if place.contains_deref() || !place.root.is_local() {
             return;
         }
         if self.place_state(&place, flow) != InitState::Initialized {
@@ -172,8 +189,11 @@ impl Checker<'_> {
 
     /// Returns the initialization state of a resolved place.
     pub(super) fn place_state(&self, place: &ResolvedPlace, flow: &Flow) -> InitState {
+        if !place.root.is_local() {
+            return InitState::Initialized;
+        }
         flow.state(
-            place.local,
+            place.root.def(),
             &place.path(),
             place.root_ty,
             self.hir.ty_ctxt(),
@@ -182,7 +202,7 @@ impl Checker<'_> {
 
     /// Renders a place as written, for diagnostics.
     pub(super) fn place_text(&self, place: &ResolvedPlace) -> String {
-        let mut text = self.def_name(place.local).to_owned();
+        let mut text = self.def_name(place.root.def()).to_owned();
         for projection in &place.projections {
             match projection {
                 PlaceProjection::Field(field) => {

@@ -169,6 +169,7 @@ impl Lowering<'_> {
             owner,
             kind,
             ret: Some(ret),
+            is_const: false,
             params: Vec::new(),
             root,
         });

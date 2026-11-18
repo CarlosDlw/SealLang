@@ -564,11 +564,11 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     the value namespace after their initializer is lowered, shadow an outer
     value in an inner rib, and are rejected as `E2068` when they collide with
     another value in the same rib or with a file-scope function.
-79. **A local static captures nothing.** Its initializer may name file-scope
-    items only; naming a parameter, binding, local value, generic parameter, or
-    `Self` from the enclosing function is `E3060`, because the static outlives
-    the call frame. The check runs during resolution, so a captured name never
-    becomes a `Res`.
+79. **A local value captures nothing.** A local `const` or `static`
+    initializer may name file-scope items only; naming a parameter, binding,
+    local value, generic parameter, or `Self` from the enclosing function is
+    `E3060`, because the item is evaluated outside the call frame. The check
+    runs during resolution, so a captured name never becomes a `Res`.
 
 ## Global data and constant evaluation
 

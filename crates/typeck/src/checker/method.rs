@@ -926,8 +926,7 @@ impl Checker<'_> {
     fn receiver_place_is_writable(&self, place: Option<&ResolvedPlace>) -> bool {
         match place {
             Some(place) => {
-                self.hir.definitions().get(place.local).mutable
-                    || place.deref == Some(RefKind::Exclusive)
+                self.root_is_writable(place.root) || place.deref == Some(RefKind::Exclusive)
             }
             None => true,
         }
@@ -1033,8 +1032,8 @@ impl Checker<'_> {
         }
         if def.receiver == ReceiverMode::Exclusive && derefs == 0 && form == ReceiverForm::Place {
             if let Some(place) = receiver_place {
-                let definition = self.hir.definitions().get(place.local);
-                let writable = definition.mutable || place.deref == Some(RefKind::Exclusive);
+                let writable =
+                    self.root_is_writable(place.root) || place.deref == Some(RefKind::Exclusive);
                 if !writable {
                     self.error(
                         codes::E3029,
@@ -1076,8 +1075,7 @@ impl Checker<'_> {
         }
         match place {
             Some(place) => {
-                self.hir.definitions().get(place.local).mutable
-                    || place.deref == Some(RefKind::Exclusive)
+                self.root_is_writable(place.root) || place.deref == Some(RefKind::Exclusive)
             }
             None => {
                 // A temporary has its own storage, which exists only for this

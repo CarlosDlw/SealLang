@@ -189,7 +189,9 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
                 collect_expr(hir, arm.body, stmts, exprs);
             }
         }
-        ExprKind::Block(block) => collect_block(hir, *block, stmts, exprs),
+        ExprKind::Block(block) | ExprKind::Unsafe { block } => {
+            collect_block(hir, *block, stmts, exprs)
+        }
         ExprKind::If {
             condition,
             then_branch,
