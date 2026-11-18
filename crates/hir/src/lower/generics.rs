@@ -346,6 +346,21 @@ impl Lowering<'_> {
                 .iter()
                 .find(|parameter| parameter.is_self)
                 .map(|parameter| parameter.param);
+            let method_defs: Vec<seal_def::DefId> = methods
+                .iter()
+                .filter(|method| {
+                    self.trait_methods
+                        .get(&(trait_def, method.name))
+                        .is_some_and(|raw| raw.body.is_some())
+                })
+                .map(|method| method.def)
+                .collect();
+            let trait_arguments: Vec<seal_ty::TyId> = generics
+                .params
+                .iter()
+                .filter(|parameter| !parameter.is_self)
+                .map(|parameter| self.hir.ty_ctxt().param_ty(parameter.param))
+                .collect();
             let mut supertraits = Vec::new();
             if let Some(self_param) = self_param {
                 for bound in self.hir.param_env(trait_def).bounds(self_param) {
@@ -365,6 +380,30 @@ impl Lowering<'_> {
                     supertraits,
                     methods,
                 ));
+
+            // A default body may call any method of its own trait through
+            // `self`. The implicit `Self: Trait` bound is visible while
+            // checking that body, but it is not a declared bound: keeping it
+            // out of `Generics` leaves coherence, object safety, and the
+            // trait's own supertrait list unchanged.
+            if let Some(self_param) = self_param {
+                let self_ty = self.hir.ty_ctxt().param_ty(self_param);
+                let trait_ref = seal_ty::TraitRef::new(
+                    trait_def,
+                    self_ty,
+                    self.hir.ty_ctxt().substs(&trait_arguments),
+                );
+                for method in method_defs {
+                    let mut env = self.hir.param_env(method);
+                    let already = env.bounds(self_param).iter().any(|bound| {
+                        matches!(bound, Bound::Trait(existing) if existing.trait_def == trait_def && existing.self_ty == self_ty)
+                    });
+                    if !already {
+                        env.insert(self_param, vec![Bound::Trait(trait_ref)]);
+                        self.hir.ty_ctxt_mut().set_param_env(method, env);
+                    }
+                }
+            }
         }
     }
 

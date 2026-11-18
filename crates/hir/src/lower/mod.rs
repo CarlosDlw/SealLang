@@ -99,6 +99,8 @@ struct TraitMethodSig {
     params: Vec<(AstTypeId, Span)>,
     /// The declared return type, or `None` for unit.
     ret: Option<AstTypeId>,
+    /// The default body, or `None` when every implementation must supply one.
+    body: Option<AstBlockId>,
 }
 
 /// One `impl Trait for Type` block waiting for signature validation.
@@ -155,6 +157,7 @@ impl<'a> Lowering<'a> {
         self.validate_coherence();
         self.validate_trait_impls();
         self.lower_bodies();
+        self.lower_trait_bodies();
         self.validate_dyn_types();
         self.hir
     }
@@ -286,6 +289,7 @@ impl<'a> Lowering<'a> {
         let (name, name_span) = (declaration.name, declaration.name_span);
         let params = declaration.params.clone();
         let ret = declaration.ret;
+        let body = declaration.body;
         let generics_decl = declaration.generics.clone();
         let where_clause = declaration.where_clause.clone();
 
@@ -329,6 +333,7 @@ impl<'a> Lowering<'a> {
                 has_self_parameter,
                 params: parameters,
                 ret,
+                body,
             },
         );
         order.push(name);
@@ -795,6 +800,7 @@ impl<'a> Lowering<'a> {
                     continue;
                 };
                 match implemented.get(name) {
+                    None if raw.body.is_some() => {}
                     None => {
                         self.error(
                             codes::E2022,
@@ -805,7 +811,7 @@ impl<'a> Lowering<'a> {
                             ),
                         )
                         .help(format!(
-                            "add `func {}(...)` to this impl block",
+                            "add `func {}(...)` to this impl block, or give the trait method a default body",
                             self.interner.resolve(*name)
                         ))
                         .emit();
@@ -1207,31 +1213,71 @@ impl<'a> Lowering<'a> {
                 )
             };
 
-            self.function = Some(function);
-            self.loop_depth = 0;
-            let generic_levels = self.push_generic_scope(function);
-            let saved_self = self.self_ty;
-            self.self_ty = self.impl_self_ty_of_function.get(&function).copied();
-            self.scopes.push();
-            let ret = ret.map(|ty| self.lower_type(ty));
-            let params = params
-                .iter()
-                .map(|param| self.lower_param(*param, function))
-                .collect();
-            let root = self.lower_block(body);
-            self.scopes.pop();
-            self.self_ty = saved_self;
-            self.pop_generic_scope(generic_levels);
-
-            let body = self.hir.push_body(Body {
-                owner: function,
-                ret,
-                params,
-                root,
-            });
-            self.hir.set_body_of(function, body);
+            let self_ty = self.impl_self_ty_of_function.get(&function).copied();
+            self.lower_body(function, ret, &params, body, self_ty);
         }
         self.function = None;
+    }
+
+    /// Lowers every trait method that declares a default body.
+    ///
+    /// A default body belongs to the trait method itself, not to an impl, so
+    /// `Self` stays the trait's implicit parameter. The body is otherwise an
+    /// ordinary function body and is checked and lowered like one.
+    fn lower_trait_bodies(&mut self) {
+        let items = self.trait_method_items.clone();
+        for (item_id, method) in items {
+            let (ret, params, body) = {
+                let item = self.ast.item(item_id);
+                let ItemKind::TraitMethod(declaration) = &item.kind else {
+                    continue;
+                };
+                let Some(body) = declaration.body else {
+                    continue;
+                };
+                (declaration.ret, declaration.params.clone(), body)
+            };
+
+            self.lower_body(method, ret, &params, body, None);
+        }
+        self.function = None;
+    }
+
+    /// Lowers one body under its owner's generic scope.
+    ///
+    /// `self_ty` replaces `Self` for an impl member; trait methods and free
+    /// functions pass `None`, which leaves `Self` as a generic parameter.
+    fn lower_body(
+        &mut self,
+        owner: DefId,
+        ret: Option<AstTypeId>,
+        params: &[ParamId],
+        body: AstBlockId,
+        self_ty: Option<TyId>,
+    ) {
+        self.function = Some(owner);
+        self.loop_depth = 0;
+        let generic_levels = self.push_generic_scope(owner);
+        let saved_self = self.self_ty;
+        self.self_ty = self_ty;
+        self.scopes.push();
+        let ret = ret.map(|ty| self.lower_type(ty));
+        let params = params
+            .iter()
+            .map(|param| self.lower_param(*param, owner))
+            .collect();
+        let root = self.lower_block(body);
+        self.scopes.pop();
+        self.self_ty = saved_self;
+        self.pop_generic_scope(generic_levels);
+
+        let body = self.hir.push_body(Body {
+            owner,
+            ret,
+            params,
+            root,
+        });
+        self.hir.set_body_of(owner, body);
     }
 
     fn lower_param(&mut self, param: seal_ast::ParamId, function: DefId) -> ParamData {

@@ -207,10 +207,9 @@ impl Reachability<'_> {
                 "body {body_id:?} visited twice"
             );
             let owner = self.hir.definitions().get(body.owner);
-            assert_eq!(
-                owner.kind,
-                DefKind::Function,
-                "a body must be owned by a function"
+            assert!(
+                matches!(owner.kind, DefKind::Function | DefKind::TraitMethod),
+                "a body must be owned by a function or a trait method"
             );
             assert_eq!(
                 self.hir.body_id_of(body.owner),
