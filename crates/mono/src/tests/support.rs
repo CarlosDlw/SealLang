@@ -67,6 +67,12 @@ impl Fixture {
         seal_parser::parse(&lexed, &self.dcx, &self.interner)
     }
 
+    /// Lowers to HIR while retaining diagnostics for negative tests.
+    pub(crate) fn hir_with_errors(&self) -> Hir {
+        let ast = self.parse();
+        seal_hir::lower(&ast, &self.dcx, &self.interner)
+    }
+
     /// Runs the front end without collection, requiring no diagnostics.
     pub(crate) fn frontend(&self) -> (Hir, Mir) {
         let ast = self.parse();

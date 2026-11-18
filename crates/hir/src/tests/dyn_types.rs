@@ -100,6 +100,21 @@ fn by_value_receiver_is_not_object_safe() {
 }
 
 #[test]
+fn built_in_into_iterator_is_not_object_safe() {
+    let fixture = Fixture::new("func f(value: *dyn IntoIterator<i32, i32>) {}");
+    let _ = fixture.lower();
+    fixture.expect("E2065", "cannot be used as a trait object");
+    let notes = note_messages(&fixture, "E2065");
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("iter") && note.contains("by value")),
+        "unexpected notes: {notes:?}"
+    );
+    assert_eq!(count(&fixture, "E2065"), 1);
+}
+
+#[test]
 fn static_associated_function_is_not_object_safe() {
     let fixture = Fixture::new("trait Bad { func make() -> i32; } func f(value: *dyn Bad) {}");
     let _ = fixture.lower();

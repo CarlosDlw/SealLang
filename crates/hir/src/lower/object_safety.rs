@@ -129,11 +129,28 @@ impl Lowering<'_> {
         for method in &definition.methods {
             let span = self.hir.definitions().get(method.def).name_span;
             let name = self.interner.resolve(method.name).to_owned();
-            let Some(raw) = self.trait_methods.get(&(trait_def, method.name)) else {
-                continue;
+            let violation = match self.trait_methods.get(&(trait_def, method.name)) {
+                Some(raw) => match raw.receiver {
+                    Some(ReceiverKind::Value) => Some(ViolationKind::ValueReceiver),
+                    Some(ReceiverKind::Shared | ReceiverKind::Exclusive) => None,
+                    // An invalid receiver was already reported by signature
+                    // lowering; do not turn that error into an object-safety
+                    // error.
+                    None if raw.has_self_parameter => None,
+                    None => Some(ViolationKind::AssociatedFunction),
+                },
+                // Built-in protocol traits have no source declaration in
+                // `trait_methods`; their lowered receiver is authoritative.
+                None => match method.receiver {
+                    Some(receiver) if receiver.reference.is_none() => {
+                        Some(ViolationKind::ValueReceiver)
+                    }
+                    Some(_) => None,
+                    None => Some(ViolationKind::AssociatedFunction),
+                },
             };
-            match raw.receiver {
-                Some(ReceiverKind::Value) => push_violation(
+            match violation {
+                Some(ViolationKind::ValueReceiver) => push_violation(
                     violations,
                     seen,
                     method_violation(
@@ -145,11 +162,7 @@ impl Lowering<'_> {
                         ),
                     ),
                 ),
-                Some(ReceiverKind::Shared | ReceiverKind::Exclusive) => {}
-                // An invalid receiver was already reported by signature
-                // lowering; do not turn that error into an object-safety error.
-                None if raw.has_self_parameter => {}
-                None => push_violation(
+                Some(ViolationKind::AssociatedFunction) => push_violation(
                     violations,
                     seen,
                     method_violation(
@@ -161,6 +174,12 @@ impl Lowering<'_> {
                         ),
                     ),
                 ),
+                Some(
+                    ViolationKind::GenericMethod
+                    | ViolationKind::SelfOutsideReceiver
+                    | ViolationKind::SupertraitSelfArgument,
+                )
+                | None => {}
             }
             if !method.generics.params.is_empty() {
                 push_violation(
