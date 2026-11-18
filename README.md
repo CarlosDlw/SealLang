@@ -178,10 +178,15 @@ isolation check on its own.
 
 There are no implicit numeric conversions: every arithmetic and comparison
 operand must already have the expected type, and an unsuffixed integer literal
-defaults to `i32` while an unsuffixed float defaults to `f64`.
+defaults to `i32` while an unsuffixed float defaults to `f64`. Conversions are
+explicit and numeric-only, written `value as Type`: integers narrow and extend,
+integers convert to and from `f32`/`f64`, and float-to-integer truncates toward
+zero, saturates, and maps NaN to zero. `bool`, `char`, enums, references, and
+aggregates are not `as` casts; `bool.to_i32()` and `char.to_u32()` remain the
+named conversions for those scalars.
 
 See [`docs/types.md`](docs/types.md) for sizes, alignments, ranges, literal
-syntax, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
+syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 
 ## Documentation
 
@@ -199,7 +204,8 @@ structural tuples, fixed-size arrays, slices, shared and exclusive references, `
 definite initialization, `if`, `if let`, `while`, `while let`, `for` over integer ranges and sequences,
 `break`, `continue`, `return`, `match`
 expressions with structural patterns, guards, and exhaustiveness checking, the
-usual arithmetic, comparison, logical, and bitwise operators, compiler-owned intrinsic
+usual arithmetic, comparison, logical, and bitwise operators, explicit numeric
+casts with `as`, compiler-owned intrinsic
 methods on integers, floats, `bool`, `char`, arrays, and slices, inherent `impl`
 methods and associated functions on nominal types, traits with static
 dispatch, and trait objects with dynamic dispatch. A call on a concrete type or
@@ -221,4 +227,5 @@ and the trait-object section of `docs/types.md` define the surface; owning
 `Box<dyn Trait>`, upcasting between trait objects, and an `unsafe` layer are not
 part of it yet. The trait-object examples in
 `examples/032_trait_objects.sl` through
-`examples/034_trait_objects_generic.sl` show dispatch end to end.
+`examples/034_trait_objects_generic.sl` show dispatch end to end, and
+`examples/035_numeric_casts.sl` shows every cast family and its boundary.

@@ -45,6 +45,7 @@ fn all_examples_lex_cleanly() {
         "029_generic_enums.sl",
         "030_generic_traits.sl",
         "031_generic_recursion.sl",
+        "035_numeric_casts.sl",
     ] {
         let source = example(name);
         let fixture = Fixture::new(&source);

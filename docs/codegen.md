@@ -282,6 +282,25 @@ Code generation must not leave undefined behavior on ordinary arithmetic:
 - Bitwise operators require integer operands (or `bool` for `!`), which the type
   checker enforces before code generation.
 
+### Numeric casts
+
+An explicit cast lowers from `Rvalue::Cast` and never re-infers the conversion:
+
+- Integer to integer uses `trunc` when narrowing. A same-width cast is a no-op;
+  widening uses `sext` for a signed source and `zext` for an unsigned one.
+- Integer to float uses `sitofp` for a signed source and `uitofp` for an
+  unsigned one. Rounding is LLVM's round-to-nearest, ties-to-even.
+- Float to float uses `fpext` or `fptrunc`; the result follows IEEE rounding,
+  signed zero, NaN, and overflow to infinity.
+- Float to integer calls `llvm.fptosi.sat` or `llvm.fptoui.sat`. The saturating
+  intrinsic truncates toward zero, maps NaN to zero, and clamps at both bounds.
+  Plain `fptosi`/`fptoui` is deliberately never emitted, because it is undefined
+  for out-of-range values, NaN, and infinity.
+
+A cast emits no runtime call, allocation, temporary owner, or metadata. It reads
+its operand once and stores one destination value, and debug locations still
+describe the surrounding statement.
+
 ## Native runtime
 
 `build.rs` compiles `runtime/seal_rt.c` with the `cc` crate and embeds the

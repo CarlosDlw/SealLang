@@ -210,8 +210,12 @@ reordered.
 
 Integer literals take the type their context requires; otherwise two numeric
 types only unify when they are identical. Mixed-width arithmetic is an error.
-Widening and narrowing require explicit casts (added with the cast syntax), so
-no silent truncation or sign change can happen.
+Widening and narrowing exist only through the explicit `as` cast, so no silent
+truncation or sign change can happen. A cast is a pure value operation: it
+reads its operand once, allocates nothing, creates no loan, and does not change
+the operand's place or initialization state. Casts between pointers,
+references, aggregates, and validity-checked types are separate features and
+remain absent.
 
 ### D13 — Nominal aggregates, structural tuples, and deterministic layout
 
@@ -485,6 +489,9 @@ whole-program proof, so the attribute would make the contract unverifiable.
 15. Every vtable method slot has one collected concrete instance and no null
     entry. Constructing or copying a trait-object pointer allocates nothing and
     copies no concrete value.
+16. An explicit numeric cast reads its operand exactly once, creates no loan,
+    and writes only its destination. Float-to-integer conversion is saturated
+    and maps NaN to zero, so no source value can invoke undefined behavior.
 16. A function reachable through a vtable is excluded from `noalias` unless a
     future whole-program proof covers indirect calls.
 
@@ -504,7 +511,6 @@ above and only waits for the surrounding features.
 - Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
   usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.
-- Explicit casts — D12's widening and narrowing.
 
 ## References
 

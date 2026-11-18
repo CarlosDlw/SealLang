@@ -169,6 +169,44 @@ Six widths, all two's complement. A value of width `n` ranges from `−2^(n−1)
 comparisons follow IEEE semantics: ordered comparisons are false when either
 operand is NaN, and `!=` is true when either operand is NaN.
 
+### Explicit numeric casts
+
+`value as Type` converts a value between primitive numeric types. The operator
+binds tighter than the multiplicative operators and looser than prefix
+operators, and chains associate left to right:
+
+```seal
+let truncated = 300 as u8;        // 44: narrowing keeps the low bits
+let extended = -5 as i64;         // -5: signed widening sign-extends
+let scaled = 7 as f64;            // 7.0: integer to float rounds
+let rounded = 3.9 as i32;         // 3: float to integer truncates toward zero
+let chained = 200 as i8 as i64;   // -56
+```
+
+Only these pairs are accepted:
+
+| Source | Target | Result |
+|--------|--------|--------|
+| any integer | any integer | Same width preserves the bit pattern; narrowing truncates; widening sign-extends a signed source and zero-extends an unsigned one |
+| any integer | `f32`/`f64` | The mathematical value rounded to nearest, ties to even; a value beyond the destination range becomes infinity of the same sign |
+| `f32`/`f64` | any integer | Truncates toward zero; NaN becomes `0`; values above the maximum saturate to the maximum; values below the minimum saturate to the minimum |
+| `f32` | `f64` | Exact widening, including signed zero and NaN |
+| `f64` | `f32` | Rounded to nearest, ties to even; overflow becomes infinity of the same sign |
+| numeric `T` | the same `T` | A no-op |
+
+A cast is infallible and pure: it never panics, allocates, moves a non-`Copy`
+value, creates a loan, or changes the operand's initialization state. The
+operand is inferred without the target as an expectation, so `1 as u8` first
+types `1` as `i32` and then truncates; the literal is not silently a `u8` that
+must fit. A cast that loses information is legal — that is why it must be
+written explicitly.
+
+`bool`, `char`, enums, references, slices, arrays, tuples, structs, trait
+objects, `str`, unit, and the never type are not castable (`E3048`). Use
+`bool.to_i32()` and `char.to_u32()` for those two named conversions. A cast
+whose source or target is a type parameter is rejected (`E3049`), because there
+is no numeric-bound trait from which to select a concrete conversion.
+
 ### Quick reference
 
 | Property | Behavior |
@@ -177,6 +215,7 @@ operand is NaN, and `!=` is true when either operand is NaN.
 | Division and remainder | Panic on a zero divisor, and on `MIN / -1` for signed integers; exit status 101 |
 | Shift amounts | Masked to the operand width, so an oversized shift is defined |
 | Implicit numeric conversions | None; operands must already have the expected type |
+| Explicit numeric conversion | `value as Type`, numeric pairs only; may lose information |
 | Unsuffixed integer literal | Defaults to `i32` |
 | Unsuffixed float literal | Defaults to `f64` |
 
@@ -231,7 +270,7 @@ A raw line break is not allowed inside a string literal; it must be escaped.
 
 Both kinds are non-null, non-owning, and `Copy`; copying the pointer copies the
 loan, so the pointee stays borrowed until the last use of every copy. Neither
-kind supports arithmetic, casts, or null values. A reference is a machine
+kind supports arithmetic, pointer casts, or null values. A reference is a machine
 pointer, except `*str`, `*[T]`, and `*mut [T]`, which are two-word fat pointers
 holding a data address and a length, and `*dyn Trait`/`*mut dyn Trait`, whose
 second word addresses the vtable.

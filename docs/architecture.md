@@ -26,16 +26,16 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, and the shared initialization lattice. |
+| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, the shared initialization lattice, and the single classification of numeric cast pairs. |
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, trait and impl coherence, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, bounds checks, match dispatch, terminators, and structural plus type validation. |
-| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, escaping references, `E5xxx` diagnostics. |
-| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types and aggregate arguments, resolution of trait calls to impl methods, vtable collection, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
-| `seal-codegen` | LLVM lowering of checked MIR, vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric casts, bounds checks, match dispatch, terminators, and structural plus type validation. |
+| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
+| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods, vtable collection, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
+| `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
@@ -443,6 +443,13 @@ allowed to depend only on crates below it in the list.
     concrete type at runtime. The drop slot is a compiler-generated no-op while
     no type has a destructor, and the header stays reserved for that future
     implementation. Every vtable-reachable method is excluded from `noalias`.
+68. **Numeric casts have one classification from source to machine code.**
+    `seal-ty`'s `NumericCastKind` and `TyCtxt::numeric_cast_kind` decide which
+    conversion a pair of concrete numeric types performs. Type checking records
+    the kind once, MIR carries it with both endpoint types, monomorphization
+    substitutes the endpoints and rejects a surviving `Param` or `Infer`, and
+    code generation switches on the kind instead of re-classifying the types.
+    No phase introduces a second numeric-pair table or an implicit conversion.
 
 ## Extension points
 
@@ -454,6 +461,11 @@ allowed to depend only on crates below it in the list.
   an arm to `FunctionLowerer::emit_rvalue`/`load_operand` for a new rvalue. Keep
   `seal-layout` authoritative for size, alignment, and offsets, and finalize any
   new debug metadata before verification.
+- **New cast family.** A new category, such as bool or enum conversion, adds a
+  variant beside `NumericCastKind` and a new code generation path. It never
+  reinterprets the numeric variants, and it must define its validity or
+  saturation rule before the surface syntax is accepted. Numeric casts stay one
+  classification table shared by type checking, MIR, and code generation.
 - **New artifact.** Extend `Emit` and `artifact::emit_artifact`; write through
   `seal-fs::write_atomic` and remove temporary inputs on every path. Linker
   selection belongs in the backend, never in a language phase.

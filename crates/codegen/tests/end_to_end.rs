@@ -37,6 +37,7 @@ const FOR_LOOP: &str = include_str!("../../../examples/023_for.sl");
 const IF_LET: &str = include_str!("../../../examples/024_if_let.sl");
 const WHILE_LET: &str = include_str!("../../../examples/025_while_let.sl");
 const TUPLES: &str = include_str!("../../../examples/026_tuples.sl");
+const NUMERIC_CASTS: &str = include_str!("../../../examples/035_numeric_casts.sl");
 
 /// A program that returns zero only when every cast family produces its
 /// documented value, including saturation and NaN handling.
@@ -69,6 +70,29 @@ func main() -> i32 {
   0
 }
 ";
+
+#[test]
+fn the_numeric_cast_example_produces_its_documented_result() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "cast-example-debug"),
+        (OptLevel::O2, false, "cast-example-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            NUMERIC_CASTS,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the example compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(46),
+            "the example produced the wrong result at {opt_level:?}"
+        );
+    }
+}
 
 #[test]
 fn numeric_casts_produce_their_documented_values() {

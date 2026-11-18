@@ -21,6 +21,8 @@ const TRAIT_OBJECT_EXAMPLES: [&str; 3] = [
     "034_trait_objects_generic.sl",
 ];
 
+const NUMERIC_CAST_EXAMPLES: [&str; 1] = ["035_numeric_casts.sl"];
+
 fn check_examples(names: &[&str]) {
     for name in names {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,4 +54,9 @@ fn generic_examples_check_cleanly() {
 #[test]
 fn trait_object_examples_check_cleanly() {
     check_examples(&TRAIT_OBJECT_EXAMPLES);
+}
+
+#[test]
+fn numeric_cast_examples_check_cleanly() {
+    check_examples(&NUMERIC_CAST_EXAMPLES);
 }
