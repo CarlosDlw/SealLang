@@ -5,7 +5,7 @@ use seal_def::{DefData, DefKind};
 use seal_error_codes as codes;
 
 use super::Lowering;
-use crate::body::{ForSource, Stmt, StmtKind};
+use crate::body::{BodyKind, ForSource, Stmt, StmtKind};
 use crate::id::HirStmtId;
 
 impl Lowering<'_> {
@@ -33,9 +33,44 @@ impl Lowering<'_> {
                 self.scopes.insert(binding.name, local);
                 StmtKind::Let { local, ty, init }
             }
-            // Block-scope declarations introduce definitions, so they are
-            // lowered by the value-item pass together with file-scope items.
-            AstStmtKind::Const(_) | AstStmtKind::Static(_) => StmtKind::Error,
+            AstStmtKind::Const(declaration) => {
+                let definition = self.define_local_value(
+                    DefKind::Const,
+                    declaration.name,
+                    declaration.name_span,
+                    span,
+                    false,
+                );
+                self.lower_value_body(
+                    definition,
+                    declaration.ty,
+                    declaration.init,
+                    BodyKind::Const,
+                    None,
+                );
+                self.declare_local_value(definition, declaration.name, declaration.name_span);
+                StmtKind::Const { def: definition }
+            }
+            AstStmtKind::Static(declaration) => {
+                let definition = self.define_local_value(
+                    DefKind::Static,
+                    declaration.name,
+                    declaration.name_span,
+                    span,
+                    declaration.mutable,
+                );
+                self.lower_value_body(
+                    definition,
+                    declaration.ty,
+                    declaration.init,
+                    BodyKind::Static {
+                        mutable: declaration.mutable,
+                    },
+                    self.function,
+                );
+                self.declare_local_value(definition, declaration.name, declaration.name_span);
+                StmtKind::Static { def: definition }
+            }
             AstStmtKind::Return(value) => {
                 StmtKind::Return(value.map(|value| self.lower_expr(value)))
             }

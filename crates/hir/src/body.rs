@@ -6,11 +6,27 @@ use seal_ty::TyId;
 
 use crate::id::{HirBlockId, HirExprId, HirPatternId, HirStmtId};
 
-/// An executable body, owned by a function.
+/// What an executable body belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyKind {
+    /// A function body. It may have parameters.
+    Function,
+    /// A constant initializer. It has no parameters.
+    Const,
+    /// A static initializer. It has no parameters.
+    Static {
+        /// Whether the static is declared `mut`.
+        mutable: bool,
+    },
+}
+
+/// An executable body, owned by a function, constant, or static.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
-    /// The function this body implements.
+    /// The definition this body implements.
     pub owner: DefId,
+    /// What kind of initializer or function the owner declares.
+    pub kind: BodyKind,
     /// The declared return type; `None` means unit.
     pub ret: Option<TyId>,
     /// Parameters in source order.
@@ -78,6 +94,22 @@ pub enum StmtKind {
         ty: Option<TyId>,
         /// The initializer, if any.
         init: Option<HirExprId>,
+    },
+    /// A block-scope constant declaration.
+    ///
+    /// The initializer is the body owned by `def`, not an expression of the
+    /// enclosing function.
+    Const {
+        /// The constant's definition.
+        def: DefId,
+    },
+    /// A block-scope static declaration.
+    ///
+    /// The initializer is the body owned by `def`, shared by every execution of
+    /// the declaration.
+    Static {
+        /// The static's definition.
+        def: DefId,
     },
     /// A `return`, with an optional value.
     Return(Option<HirExprId>),

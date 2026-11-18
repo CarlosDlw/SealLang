@@ -40,7 +40,7 @@ mod traits;
 #[cfg(test)]
 mod tests;
 
-pub use body::{Block, Body, ForSource, ParamData, Stmt, StmtKind};
+pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
@@ -206,7 +206,7 @@ impl Hir {
     pub fn place(&self, expr: HirExprId) -> Option<Place> {
         match self.exprs[expr].kind {
             ExprKind::Path {
-                res: Res::Local(def),
+                res: Res::Local(def) | Res::Const(def) | Res::Static(def),
                 ..
             } => Some(Place::local(def)),
             ExprKind::Deref { operand } => self.place(operand).map(Place::deref),

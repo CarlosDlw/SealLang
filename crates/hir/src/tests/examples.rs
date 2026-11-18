@@ -108,6 +108,7 @@ fn collect_stmt(
             collect_block(hir, *body, stmts, exprs);
         }
         StmtKind::Expr(expr) => collect_expr(hir, *expr, stmts, exprs),
+        StmtKind::Const { .. } | StmtKind::Static { .. } => {}
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
     }
     stmts.push(kind);

@@ -123,6 +123,9 @@ fn check_stmt(checker: &mut Checker<'_>, statement: HirStmtId, mut flow: Flow) -
         } => {
             flow = checker.check_for(pattern, source, body, span, flow);
         }
+        StmtKind::Const { .. } | StmtKind::Static { .. } => {
+            // The initializer is its own body, checked by the global-data phase.
+        }
         StmtKind::Break | StmtKind::Continue => {
             flow.diverges = true;
         }

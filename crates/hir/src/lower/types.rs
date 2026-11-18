@@ -63,6 +63,13 @@ impl Lowering<'_> {
                 object
             }
             TypeKind::Path(path) if path.name == self.self_symbol => {
+                if self.capture.is_some() {
+                    let span = self.ast.ty(ty).span;
+                    self.error(codes::E3060, span, "a local static cannot mention `Self`")
+                        .help("write the concrete type, or move the declaration to file scope")
+                        .emit();
+                    return self.hir.ty_ctxt_mut().error_ty();
+                }
                 if let Some(args) = &path.args {
                     self.error(
                         codes::E2053,
@@ -96,6 +103,20 @@ impl Lowering<'_> {
             TypeKind::Path(path) => {
                 let symbol = path.name;
                 if let Some(param) = self.generic_scope_param(symbol) {
+                    if self.capture.is_some() {
+                        let span = self.ast.ty(ty).span;
+                        self.error(
+                            codes::E3060,
+                            span,
+                            format!(
+                                "a local static cannot mention the generic parameter `{}`",
+                                self.interner.resolve(symbol)
+                            ),
+                        )
+                        .help("write a concrete type, or move the declaration to file scope")
+                        .emit();
+                        return self.hir.ty_ctxt_mut().error_ty();
+                    }
                     if let Some(args) = &path.args {
                         self.error(
                             codes::E2053,
@@ -157,6 +178,16 @@ impl Lowering<'_> {
                         format!("`{name}` is a value, not a type"),
                     )
                     .help("annotations accept primitive types, references, and struct names")
+                    .emit();
+                } else if self.capture.is_some()
+                    && self.generic_parameter_declared_somewhere(symbol).is_some()
+                {
+                    self.error(
+                        codes::E3060,
+                        span,
+                        format!("a local static cannot mention the generic parameter `{name}`"),
+                    )
+                    .help("write a concrete type, or move the declaration to file scope")
                     .emit();
                 } else if let Some(first) = self.generic_parameter_declared_somewhere(symbol) {
                     self.error(

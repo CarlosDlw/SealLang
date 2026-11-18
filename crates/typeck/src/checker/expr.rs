@@ -321,6 +321,26 @@ impl Checker<'_> {
                 }
                 ty
             }
+            Res::Const(def) | Res::Static(def) => {
+                // The initializer body carries the declared type; the global-data
+                // phase adds storage classes, write rules, and unsafe gating.
+                let ty = self
+                    .hir
+                    .body_of(def)
+                    .and_then(|body| body.ret)
+                    .unwrap_or_else(|| self.error_ty());
+                self.results.record_place(
+                    expr,
+                    ResolvedPlace {
+                        local: def,
+                        root_ty: ty,
+                        projections: Vec::new(),
+                        ty,
+                        deref: None,
+                    },
+                );
+                ty
+            }
             Res::Function(_) | Res::TraitFunction { .. } => {
                 self.report_function_as_value(span);
                 self.error_ty()

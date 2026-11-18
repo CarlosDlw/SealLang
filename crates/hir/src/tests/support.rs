@@ -5,8 +5,8 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    Body, BodyId, ExprKind, Hir, HirBlockId, HirExprId, HirPatternId, HirStmtId, PatternKind, Res,
-    StmtKind,
+    Body, BodyId, BodyKind, ExprKind, Hir, HirBlockId, HirExprId, HirPatternId, HirStmtId,
+    PatternKind, Res, StmtKind,
 };
 use seal_ast::Ast;
 use seal_def::{DefId, DefKind};
@@ -207,10 +207,21 @@ impl Reachability<'_> {
                 "body {body_id:?} visited twice"
             );
             let owner = self.hir.definitions().get(body.owner);
-            assert!(
-                matches!(owner.kind, DefKind::Function | DefKind::TraitMethod),
-                "a body must be owned by a function or a trait method"
-            );
+            match body.kind {
+                BodyKind::Function => assert!(
+                    matches!(owner.kind, DefKind::Function | DefKind::TraitMethod),
+                    "a function body must be owned by a function or a trait method"
+                ),
+                BodyKind::Const => {
+                    assert_eq!(owner.kind, DefKind::Const, "a const body owns a constant");
+                    assert!(body.params.is_empty(), "a const body has no parameters");
+                }
+                BodyKind::Static { mutable } => {
+                    assert_eq!(owner.kind, DefKind::Static, "a static body owns a static");
+                    assert_eq!(owner.mutable, mutable, "the body records static mutability");
+                    assert!(body.params.is_empty(), "a static body has no parameters");
+                }
+            }
             assert_eq!(
                 self.hir.body_id_of(body.owner),
                 Some(body_id),
@@ -313,6 +324,23 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
         match kind {
+            StmtKind::Const { def } | StmtKind::Static { def } => {
+                let data = self.hir.definitions().get(def);
+                assert!(
+                    matches!(data.kind, DefKind::Const | DefKind::Static),
+                    "a declaration statement names a constant or static"
+                );
+                assert_eq!(
+                    data.parent, self.owner,
+                    "a local value belongs to its function"
+                );
+                assert!(
+                    self.hir.body_of(def).is_some(),
+                    "a local value owns its initializer body"
+                );
+                self.assert_span(data.name_span);
+                self.assert_span(data.span);
+            }
             StmtKind::Let { local, ty, init } => {
                 let data = self.hir.definitions().get(local);
                 assert_eq!(data.kind, DefKind::Binding);
@@ -376,8 +404,16 @@ impl Reachability<'_> {
 
         if let Some(place) = self.hir.place(id) {
             let data = self.hir.definitions().get(place.local_def());
-            assert!(data.kind.is_local(), "a place must name a local");
-            assert_eq!(data.parent, self.owner);
+            match data.kind {
+                DefKind::Binding | DefKind::Param => assert_eq!(data.parent, self.owner),
+                DefKind::Const | DefKind::Static => assert!(
+                    data.parent.is_none() || data.parent == self.owner,
+                    "a value root belongs to file scope or to this body's owner"
+                ),
+                other => {
+                    panic!("a place must name a local, a constant, or a static, got {other:?}")
+                }
+            }
         }
 
         match kind {

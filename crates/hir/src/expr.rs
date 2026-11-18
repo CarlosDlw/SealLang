@@ -35,7 +35,10 @@ pub enum Projection {
 }
 
 impl Place {
-    /// Creates the place for a whole local.
+    /// Creates the place for a whole definition-rooted place.
+    ///
+    /// The root may be a binding, a parameter, a constant, or a static; later
+    /// phases distinguish those storage classes.
     #[inline]
     pub fn local(local: DefId) -> Self {
         Self {
@@ -44,7 +47,7 @@ impl Place {
         }
     }
 
-    /// Returns the local definition this place starts from.
+    /// Returns the root definition this place starts from.
     #[inline]
     pub const fn local_def(&self) -> DefId {
         self.local

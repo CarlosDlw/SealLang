@@ -9,6 +9,7 @@ mod enums;
 mod examples;
 mod for_loop;
 mod generics;
+mod globals;
 mod if_let;
 mod match_advanced;
 mod match_expr;

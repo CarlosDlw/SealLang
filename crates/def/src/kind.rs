@@ -5,6 +5,10 @@
 pub enum DefKind {
     /// A function item.
     Function,
+    /// A constant item or block-scope constant declaration.
+    Const,
+    /// A static item or block-scope static declaration.
+    Static,
     /// A struct item.
     Struct,
     /// An enum item.
@@ -39,6 +43,8 @@ impl DefKind {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Function => "function",
+            Self::Const => "constant",
+            Self::Static => "static",
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Variant => "variant",
@@ -63,6 +69,8 @@ mod tests {
         assert!(!DefKind::Enum.is_local());
         assert!(!DefKind::Variant.is_local());
         assert!(!DefKind::Trait.is_local());
+        assert!(!DefKind::Const.is_local());
+        assert!(!DefKind::Static.is_local());
         assert!(DefKind::Param.is_local());
         assert!(DefKind::Binding.is_local());
     }
@@ -71,6 +79,8 @@ mod tests {
     fn descriptions_are_distinct() {
         let descriptions = [
             DefKind::Function.description(),
+            DefKind::Const.description(),
+            DefKind::Static.description(),
             DefKind::Struct.description(),
             DefKind::Enum.description(),
             DefKind::Variant.description(),

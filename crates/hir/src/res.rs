@@ -23,6 +23,10 @@ pub enum Res {
         /// The trait reference it is called through.
         trait_ref: TraitRef,
     },
+    /// A constant item or block-scope constant declaration.
+    Const(DefId),
+    /// A static item or block-scope static declaration.
+    Static(DefId),
     /// A parameter or `let` binding.
     Local(DefId),
 }
@@ -32,7 +36,7 @@ impl Res {
     #[inline]
     pub const fn def(self) -> DefId {
         match self {
-            Self::Function(def) | Self::Local(def) => def,
+            Self::Function(def) | Self::Const(def) | Self::Static(def) | Self::Local(def) => def,
             Self::TraitFunction { function, .. } => function,
         }
     }

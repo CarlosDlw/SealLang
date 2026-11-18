@@ -35,7 +35,7 @@ impl Lowering<'_> {
                         | crate::Res::TraitFunction { function, .. } => {
                             self.own_generic_count(function)
                         }
-                        crate::Res::Local(_) => 0,
+                        crate::Res::Const(_) | crate::Res::Static(_) | crate::Res::Local(_) => 0,
                     };
                     let args = self.lower_expr_arguments(args.as_ref(), expected);
                     ExprKind::Path { res, args }

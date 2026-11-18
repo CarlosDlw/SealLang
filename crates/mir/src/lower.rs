@@ -316,6 +316,10 @@ impl<'a> BodyLowering<'a> {
                     .continue_to;
                 self.terminate_goto(target, span);
             }
+            StmtKind::Const { .. } | StmtKind::Static { .. } => {
+                // The initializer is its own body; the statement only scopes the
+                // name for name resolution.
+            }
             StmtKind::Expr(expr) => self.lower_expr_into(expr, None),
             StmtKind::Error => {}
         }
@@ -470,6 +474,16 @@ impl<'a> BodyLowering<'a> {
                     let ty = self.expr_ty(expr);
                     let operand = self.place_operand(place, ty);
                     self.assign_operand(dest, operand, span);
+                }
+            }
+            ExprKind::Path {
+                res: Res::Const(_) | Res::Static(_),
+                ..
+            } => {
+                // Constant evaluation gives value items their operands; MIR only
+                // keeps the destination defined here.
+                if let Some(dest) = dest {
+                    self.assign_constant(dest, Constant::Unit, span);
                 }
             }
             ExprKind::Path {

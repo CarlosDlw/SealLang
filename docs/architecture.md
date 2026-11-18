@@ -30,7 +30,7 @@ allowed to depend only on crates below it in the list.
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
-| `seal-hir` | AST lowering and name resolution: one body per function or trait default method, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
+| `seal-hir` | AST lowering and name resolution: one body per function, trait default method, constant, or static, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, default trait method resolution, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric casts, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
@@ -555,6 +555,20 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     vtables are collected deterministically before code generation; the backend
     declares every global before initializing it, so relocations always name a
     declared symbol.
+77. **Every value definition owns one initializer body.** A file-scope or local
+    `const` has a `BodyKind::Const` body, and a file-scope or local `static` has
+    a `BodyKind::Static { mutable }` body matching its definition. The body has
+    no parameters and its return type is the declared type, so consumers never
+    read an initializer expression outside a body.
+78. **A value declaration follows `let` scoping.** `const` and `static` enter
+    the value namespace after their initializer is lowered, shadow an outer
+    value in an inner rib, and are rejected as `E2068` when they collide with
+    another value in the same rib or with a file-scope function.
+79. **A local static captures nothing.** Its initializer may name file-scope
+    items only; naming a parameter, binding, local value, generic parameter, or
+    `Self` from the enclosing function is `E3060`, because the static outlives
+    the call frame. The check runs during resolution, so a captured name never
+    becomes a `Res`.
 
 ## Global data and constant evaluation
 
