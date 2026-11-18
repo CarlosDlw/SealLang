@@ -1432,6 +1432,173 @@ fn a_repeated_array_inside_a_loop_allocates_its_temporary_once() {
     assert_eq!(run(output.path()).code(), Some(232));
 }
 
+fn assert_exit_at_both_levels(source: &str, expected: i32, tag: &str) {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "debug"),
+        (OptLevel::O2, false, "release"),
+    ] {
+        let output = TempOutput::new(&format!("{tag}-{suffix}"));
+        compile(
+            source,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("the default-method program compiles");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(expected),
+            "wrong result for {tag} at {opt_level:?}"
+        );
+    }
+}
+
+#[test]
+fn default_method_returns_value() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\n\
+         impl Shape for Circle { }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 1 };\n\
+             circle.area()\n\
+         }\n",
+        7,
+        "default-returns",
+    );
+}
+
+#[test]
+fn override_wins_over_default() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\n\
+         impl Shape for Circle { func area(self: *Circle) -> i32 { 9 } }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 1 };\n\
+             circle.area()\n\
+         }\n",
+        9,
+        "default-override",
+    );
+}
+
+#[test]
+fn default_dispatches_to_override() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Shape {\n\
+             func area(self: *Self) -> i32;\n\
+             func twice(self: *Self) -> i32 { self.area() * 2 }\n\
+         }\n\
+         impl Shape for Circle {\n\
+             func area(self: *Circle) -> i32 { (*self).radius }\n\
+         }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 4 };\n\
+             circle.twice()\n\
+         }\n",
+        8,
+        "default-symbolic",
+    );
+}
+
+#[test]
+fn dyn_dispatch_uses_default_slot() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\n\
+         impl Shape for Circle { }\n\
+         func dispatch(shape: *dyn Shape) -> i32 { shape.area() }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 1 };\n\
+             dispatch(&circle)\n\
+         }\n",
+        7,
+        "dyn-default",
+    );
+}
+
+#[test]
+fn dyn_dispatch_uses_override_slot() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Shape { func area(self: *Self) -> i32 { 7 } }\n\
+         impl Shape for Circle { func area(self: *Circle) -> i32 { 11 } }\n\
+         func dispatch(shape: *dyn Shape) -> i32 { shape.area() }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 1 };\n\
+             dispatch(&circle)\n\
+         }\n",
+        11,
+        "dyn-override",
+    );
+}
+
+#[test]
+fn generic_trait_default() {
+    assert_exit_at_both_levels(
+        "struct Wrapper<T> { value: T }\n\
+         trait Convert<T> {\n\
+             func value(self: *Self) -> T;\n\
+             func twice(self: *Self) -> T { self.value() }\n\
+         }\n\
+         impl Convert<i32> for Wrapper<i32> {\n\
+             func value(self: *Wrapper<i32>) -> i32 { (*self).value * 2 }\n\
+         }\n\
+         func main() -> i32 {\n\
+             let wrapper = Wrapper { value: 5 };\n\
+             wrapper.twice()\n\
+         }\n",
+        10,
+        "generic-default",
+    );
+}
+
+#[test]
+fn supertrait_default() {
+    assert_exit_at_both_levels(
+        "struct Circle { radius: i32 }\n\
+         trait Root { func value(self: *Self) -> i32 { 13 } }\n\
+         trait Leaf: Root { }\n\
+         impl Root for Circle { }\n\
+         impl Leaf for Circle { }\n\
+         func read<T: Leaf>(value: *T) -> i32 { value.value() }\n\
+         func main() -> i32 {\n\
+             let circle = Circle { radius: 1 };\n\
+             read(&circle)\n\
+         }\n",
+        13,
+        "supertrait-default",
+    );
+}
+
+#[test]
+fn default_receivers_run_at_both_levels() {
+    assert_exit_at_both_levels(
+        "struct Item { value: i32 }\n\
+         trait Counter {\n\
+             func read(self: *Self) -> i32;\n\
+             func increment(self: *mut Self);\n\
+             func bump(self: *mut Self) -> i32 { self.increment(); self.read() }\n\
+             func consume(self: Self) -> i32 { self.read() }\n\
+         }\n\
+         impl Counter for Item {\n\
+             func read(self: *Item) -> i32 { (*self).value }\n\
+             func increment(self: *mut Item) { (*self).value += 1; }\n\
+         }\n\
+         func main() -> i32 {\n\
+             let mut item = Item { value: 3 };\n\
+             let bumped = item.bump();\n\
+             let consumed = item.consume();\n\
+             bumped * 10 + consumed\n\
+         }\n",
+        44,
+        "default-receivers",
+    );
+}
+
 #[test]
 fn arrays_pass_by_value_through_function_parameters() {
     let source = "func first(values: [i32; 3]) -> i32 { values[0] }\n\

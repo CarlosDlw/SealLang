@@ -70,6 +70,29 @@ fn generic_examples_produce_their_documented_result_at_o0_and_o2() {
 }
 
 #[test]
+fn an_inline_generic_default_runs_at_o0_and_o2() {
+    let source = "\
+        struct Wrapper<T> { value: T }\n\
+        trait Convert<T> {\n\
+            func value(self: *Self) -> T;\n\
+            func doubled(self: *Self) -> T { self.value() }\n\
+        }\n\
+        impl Convert<i32> for Wrapper<i32> {\n\
+            func value(self: *Wrapper<i32>) -> i32 { (*self).value * 2 }\n\
+        }\n\
+        func main() -> i32 {\n\
+            let wrapper = Wrapper { value: 21 };\n\
+            wrapper.doubled()\n\
+        }\n";
+    for opt_level in [OptLevel::O0, OptLevel::O2] {
+        let output = TempOutput::new("inline-generic-default");
+        compile(source, output.path(), Emit::Executable, opt_level, false)
+            .expect("the inline generic default compiles");
+        assert_eq!(run(output.path()).code(), Some(42));
+    }
+}
+
+#[test]
 fn generic_examples_emit_objects_and_assembly() {
     for example in &EXAMPLES {
         for emit in [Emit::Object, Emit::Assembly] {
