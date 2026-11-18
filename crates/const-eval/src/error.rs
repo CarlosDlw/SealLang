@@ -50,7 +50,21 @@ pub enum EvalErrorKind {
     ValueTooLarge,
     /// A reference escapes the frame that owns its storage.
     EscapingReference,
-    /// A constant panicked, or a compile-time call kept a symbolic type.
+    /// A constant context called a non-`const` function.
+    NonConstFunction {
+        /// Whether the caller is a `const func` rather than an initializer.
+        const_fn: bool,
+    },
+    /// A constant context used dynamic dispatch or a trait-bound call.
+    DynamicDispatch {
+        /// Whether the caller is a `const func` rather than an initializer.
+        const_fn: bool,
+    },
+    /// An intrinsic is outside the const whitelist.
+    IntrinsicNotWhitelisted,
+    /// A compile-time call kept a symbolic type argument.
+    NonConcreteArguments,
+    /// A constant panicked, or a compile-time call had an invalid body.
     Panic(String),
     /// An internal evaluator invariant failed.
     Internal(String),
@@ -74,7 +88,12 @@ impl EvalErrorKind {
             Self::ResourceLimit => codes::E4010,
             Self::ValueTooLarge => codes::E4025,
             Self::EscapingReference => codes::E4013,
-            Self::Panic(_) => codes::E4027,
+            Self::NonConstFunction { const_fn: false } => codes::E4011,
+            Self::NonConstFunction { const_fn: true } => codes::E4018,
+            Self::DynamicDispatch { const_fn: false } => codes::E4016,
+            Self::DynamicDispatch { const_fn: true } => codes::E4021,
+            Self::IntrinsicNotWhitelisted => codes::E4022,
+            Self::NonConcreteArguments | Self::Panic(_) => codes::E4027,
             Self::Internal(_) => return None,
         })
     }
@@ -112,6 +131,18 @@ impl EvalErrorKind {
             Self::EscapingReference => {
                 "a reference to const-fn local or promoted storage escapes evaluation".to_owned()
             }
+            Self::NonConstFunction { .. } => {
+                "a constant context cannot call a non-const function".to_owned()
+            }
+            Self::DynamicDispatch { .. } => {
+                "a constant context cannot use dynamic dispatch or a trait-bound call".to_owned()
+            }
+            Self::IntrinsicNotWhitelisted => {
+                "this intrinsic is outside the const-evaluation whitelist".to_owned()
+            }
+            Self::NonConcreteArguments => {
+                "a compile-time call has non-concrete type arguments".to_owned()
+            }
             Self::Panic(message) => format!("constant evaluation panicked: {message}"),
             Self::Internal(message) => {
                 format!("internal const-evaluator invariant failed: {message}")
@@ -133,12 +164,18 @@ pub struct EvalError {
     pub kind: EvalErrorKind,
     /// Where it went wrong.
     pub span: seal_span::Span,
+    /// The call frames active when the failure was created.
+    pub call_chain: Vec<seal_def::DefId>,
 }
 
 impl EvalError {
     /// Creates a failure at `span`.
     pub const fn new(kind: EvalErrorKind, span: seal_span::Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            call_chain: Vec::new(),
+        }
     }
 }
 
@@ -184,6 +221,24 @@ mod tests {
             (EvalErrorKind::ResourceLimit, Some("E4010")),
             (EvalErrorKind::ValueTooLarge, Some("E4025")),
             (EvalErrorKind::EscapingReference, Some("E4013")),
+            (
+                EvalErrorKind::NonConstFunction { const_fn: false },
+                Some("E4011"),
+            ),
+            (
+                EvalErrorKind::NonConstFunction { const_fn: true },
+                Some("E4018"),
+            ),
+            (
+                EvalErrorKind::DynamicDispatch { const_fn: false },
+                Some("E4016"),
+            ),
+            (
+                EvalErrorKind::DynamicDispatch { const_fn: true },
+                Some("E4021"),
+            ),
+            (EvalErrorKind::IntrinsicNotWhitelisted, Some("E4022")),
+            (EvalErrorKind::NonConcreteArguments, Some("E4027")),
             (EvalErrorKind::Panic("boom".to_owned()), Some("E4027")),
             (EvalErrorKind::Internal("bug".to_owned()), None),
         ];

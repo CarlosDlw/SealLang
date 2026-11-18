@@ -42,6 +42,20 @@ fn calls_need_one_span_per_argument() {
 }
 
 #[test]
+fn only_function_bodies_may_be_const_functions() {
+    let (_fixture, hir, mir) = lower_clean("const VALUE: i32 = 1;");
+    let value = hir
+        .definitions()
+        .iter_enumerated()
+        .find(|(_, data)| data.kind == seal_def::DefKind::Const)
+        .map(|(def, _)| def)
+        .expect("VALUE is a const");
+    let mut body = mir.body_of(value).expect("VALUE has a body").clone();
+    body.is_const = true;
+    assert_eq!(body.validate(), Err(ValidationError::ConstFlagOnValueBody));
+}
+
+#[test]
 fn bodies_without_blocks_are_rejected() {
     let mut body = main_body("func main() {}\n");
     body.blocks.clear();

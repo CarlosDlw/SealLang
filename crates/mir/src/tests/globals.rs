@@ -40,6 +40,23 @@ fn places(body: &crate::Body) -> Vec<PlaceRoot> {
 }
 
 #[test]
+fn const_function_bodies_carry_the_const_flag() {
+    let (fixture, hir, mir) = lower_clean(
+        "const func twice(value: i32) -> i32 { value * 2 } \
+         const RESULT: i32 = twice(21);",
+    );
+    let function = definition(&fixture, &hir, DefKind::Function, "twice");
+    let body = mir.body_of(function).expect("twice has a body");
+    assert!(body.is_const);
+    assert_eq!(body.kind, BodyKind::Function);
+
+    let value = definition(&fixture, &hir, DefKind::Const, "RESULT");
+    let body = mir.body_of(value).expect("RESULT has a body");
+    assert!(!body.is_const);
+    assert_eq!(body.kind, BodyKind::Const);
+}
+
+#[test]
 fn a_static_read_uses_a_static_rooted_place() {
     let (fixture, hir, mir) = lower_clean("static LIMIT: i32 = 3; func main() -> i32 { LIMIT }");
     let limit = definition(&fixture, &hir, DefKind::Static, "LIMIT");

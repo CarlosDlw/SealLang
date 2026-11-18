@@ -214,24 +214,19 @@ impl<'a> Interpreter<'a> {
                 })
             }
             Rvalue::TraitObjectReborrow { source, .. } => self.read_operand(source, span),
-            Rvalue::Call {
-                target: CallTarget::Direct { .. },
+            Rvalue::Call { target, args, .. } => self.eval_call(*target, args, span),
+            Rvalue::Intrinsic {
+                method,
+                receiver,
+                args,
                 ..
-            }
-            | Rvalue::Call {
-                target: CallTarget::TraitMethod { .. },
-                ..
-            } => self.internal(
-                "const-function interpretation is not available in this phase",
-                span,
-            ),
-            Rvalue::Intrinsic { .. } => Err(self.error(
-                EvalErrorKind::Internal("intrinsic is not available in this phase".into()),
+            } => self.eval_intrinsic(*method, receiver, args, destination, span),
+            Rvalue::DynamicCall { .. } => Err(self.error(
+                EvalErrorKind::DynamicDispatch {
+                    const_fn: self.caller_is_const_fn(),
+                },
                 span,
             )),
-            Rvalue::DynamicCall { .. } => {
-                self.internal("dynamic dispatch in const evaluation", span)
-            }
         }
     }
 

@@ -13,6 +13,7 @@ seal-hash.workspace = true
 seal-hir.workspace = true
 seal-index.workspace = true
 seal-layout.workspace = true
+seal-methods.workspace = true
 seal-mir.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true

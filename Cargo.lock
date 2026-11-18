@@ -291,6 +291,7 @@ dependencies = [
  "seal-index",
  "seal-layout",
  "seal-lexer",
+ "seal-methods",
  "seal-mir",
  "seal-parser",
  "seal-span",

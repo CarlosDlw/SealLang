@@ -13,8 +13,8 @@ use seal_hir::{Body as HirBody, Hir};
 use seal_index::IndexVec;
 use seal_layout::{Layout, LayoutCtxt};
 use seal_mir::{
-    AggregateKind, Body, BodyKind, CallTarget, Constant, Operand, Place, PlaceRoot, Projection,
-    Rvalue, StatementKind, TerminatorKind, UnOp,
+    AggregateKind, Body, BodyKind, Constant, Operand, Place, PlaceRoot, Projection, Rvalue,
+    StatementKind, TerminatorKind, UnOp,
 };
 use seal_span::Span;
 use seal_symbol::Interner;
@@ -30,7 +30,9 @@ use crate::value::{
     TraitObjectKey,
 };
 
+mod call;
 mod execution;
+mod intrinsic;
 mod memory;
 mod rvalue;
 
@@ -208,11 +210,23 @@ impl<'a> Interpreter<'a> {
         if let Some(code) = error.kind.code() {
             builder = builder.code(code.diag_code());
         }
+        if !error.call_chain.is_empty() {
+            let chain: Vec<String> = error
+                .call_chain
+                .iter()
+                .map(|def| self.def_name(*def))
+                .collect();
+            builder = builder.note(format!("compile-time call chain: {}", chain.join(" -> ")));
+        }
         builder.emit();
     }
 
     fn error(&self, kind: EvalErrorKind, span: Span) -> EvalError {
-        EvalError::new(kind, span)
+        EvalError {
+            kind,
+            span,
+            call_chain: self.frames.iter().map(|frame| frame.owner).collect(),
+        }
     }
 
     fn internal<T>(&self, message: impl Into<String>, span: Span) -> Result<T, EvalError> {

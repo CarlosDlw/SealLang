@@ -3,10 +3,9 @@
 use seal_diagnostics::DiagCtxt;
 use seal_error_codes as codes;
 use seal_hir::Hir;
-use seal_mir::{
-    AggregateKind, Body, CallTarget, Constant, IntrinsicReceiver, Operand, Rvalue, StatementKind,
-    TerminatorKind,
-};
+use seal_mir::{Body, CallTarget, Rvalue, StatementKind};
+
+pub(crate) use seal_mir::instantiate_body;
 use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::{Bound, Instance, SubstsId, TemplateUnifier, TraitImplDef, TyCtxt, TyId};
@@ -33,26 +32,6 @@ pub(crate) enum BodyEvent {
         /// The coercion's source span.
         span: Span,
     },
-}
-
-/// Returns `body` with every type replaced by the instance's arguments.
-pub(crate) fn instantiate_body(hir: &Hir, body: &Body, instance: Instance) -> Body {
-    let tcx = hir.ty_ctxt();
-    let substs = instance.args;
-    let mut specialized = body.clone();
-    for declaration in &mut specialized.locals {
-        declaration.ty = tcx.substitute(declaration.ty, substs);
-    }
-    for block in &mut specialized.blocks {
-        for statement in &mut block.statements {
-            let StatementKind::Assign { rvalue, .. } = &mut statement.kind;
-            substitute_rvalue(tcx, substs, rvalue);
-        }
-        if let TerminatorKind::SwitchInt { discriminant, .. } = &mut block.terminator.kind {
-            substitute_operand(tcx, substs, discriminant);
-        }
-    }
-    specialized
 }
 
 /// Resolves symbolic calls and records vtable requests in statement order.
@@ -397,161 +376,6 @@ fn has_impl(hir: &Hir, trait_def: seal_def::DefId, self_ty: TyId, arguments: &[T
                 .zip(arguments.iter().copied())
                 .all(|(pattern, argument)| unifier.unify(pattern, argument))
     })
-}
-
-fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
-    match rvalue {
-        Rvalue::Use(operand) => substitute_operand(tcx, substs, operand),
-        Rvalue::Cast {
-            operand, from, to, ..
-        } => {
-            substitute_operand(tcx, substs, operand);
-            *from = tcx.substitute(*from, substs);
-            *to = tcx.substitute(*to, substs);
-        }
-        Rvalue::MakeTraitObject {
-            source,
-            source_ty,
-            target_ty,
-        } => {
-            substitute_operand(tcx, substs, source);
-            *source_ty = tcx.substitute(*source_ty, substs);
-            *target_ty = tcx.substitute(*target_ty, substs);
-        }
-        Rvalue::TraitObjectReborrow {
-            source, from, to, ..
-        } => {
-            substitute_operand(tcx, substs, source);
-            *from = tcx.substitute(*from, substs);
-            *to = tcx.substitute(*to, substs);
-        }
-        Rvalue::DynamicCall {
-            object_trait_ref,
-            receiver,
-            args,
-            arg_tys,
-            ret_ty,
-            ..
-        } => {
-            *object_trait_ref = substitute_trait_ref(tcx, substs, *object_trait_ref);
-            substitute_operand(tcx, substs, receiver);
-            for argument in args {
-                substitute_operand(tcx, substs, argument);
-            }
-            for ty in arg_tys {
-                *ty = tcx.substitute(*ty, substs);
-            }
-            *ret_ty = tcx.substitute(*ret_ty, substs);
-        }
-        Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
-        Rvalue::SliceRef { start, end, ty, .. } => {
-            if let Some(start) = start {
-                substitute_operand(tcx, substs, start);
-            }
-            if let Some(end) = end {
-                substitute_operand(tcx, substs, end);
-            }
-            *ty = tcx.substitute(*ty, substs);
-        }
-        Rvalue::Len { slice } => substitute_operand(tcx, substs, slice),
-        Rvalue::Binary { lhs, rhs, .. } => {
-            substitute_operand(tcx, substs, lhs);
-            substitute_operand(tcx, substs, rhs);
-        }
-        Rvalue::Unary { operand, .. } => substitute_operand(tcx, substs, operand),
-        Rvalue::Intrinsic { receiver, args, .. } => {
-            if let IntrinsicReceiver::Value(operand) = receiver {
-                substitute_operand(tcx, substs, operand);
-            }
-            for argument in args {
-                substitute_operand(tcx, substs, argument);
-            }
-        }
-        Rvalue::Call { target, args, .. } => {
-            *target = substitute_target(tcx, substs, *target);
-            for argument in args {
-                substitute_operand(tcx, substs, argument);
-            }
-        }
-        Rvalue::Aggregate { kind, fields } => {
-            *kind = match *kind {
-                AggregateKind::Struct { adt, args } => AggregateKind::Struct {
-                    adt,
-                    args: substitute_substs(tcx, substs, args),
-                },
-                AggregateKind::Variant { adt, variant, args } => AggregateKind::Variant {
-                    adt,
-                    variant,
-                    args: substitute_substs(tcx, substs, args),
-                },
-            };
-            for (_, field) in fields {
-                substitute_operand(tcx, substs, field);
-            }
-        }
-        Rvalue::Tuple { elements, ty } | Rvalue::Array { elements, ty } => {
-            for element in elements {
-                substitute_operand(tcx, substs, element);
-            }
-            *ty = tcx.substitute(*ty, substs);
-        }
-        Rvalue::Repeat { value, ty, .. } => {
-            substitute_operand(tcx, substs, value);
-            *ty = tcx.substitute(*ty, substs);
-        }
-    }
-}
-
-fn substitute_trait_ref(
-    tcx: &TyCtxt,
-    substs: SubstsId,
-    target: seal_ty::TraitRef,
-) -> seal_ty::TraitRef {
-    seal_ty::TraitRef::new(
-        target.trait_def,
-        tcx.substitute(target.self_ty, substs),
-        substitute_substs(tcx, substs, target.args),
-    )
-}
-
-fn substitute_target(tcx: &TyCtxt, substs: SubstsId, target: CallTarget) -> CallTarget {
-    match target {
-        CallTarget::Direct {
-            instance,
-            parameters,
-        } => CallTarget::Direct {
-            instance: Instance::new(instance.def, substitute_substs(tcx, substs, instance.args)),
-            parameters,
-        },
-        CallTarget::TraitMethod {
-            instance,
-            parameters,
-        } => CallTarget::TraitMethod {
-            instance: Instance::new(instance.def, substitute_substs(tcx, substs, instance.args)),
-            parameters,
-        },
-    }
-}
-
-fn substitute_substs(tcx: &TyCtxt, substs: SubstsId, target: SubstsId) -> SubstsId {
-    let arguments: Vec<TyId> = tcx
-        .substs_args(target)
-        .iter()
-        .map(|argument| tcx.substitute(*argument, substs))
-        .collect();
-    tcx.substs(&arguments)
-}
-
-fn substitute_operand(tcx: &TyCtxt, substs: SubstsId, operand: &mut Operand) {
-    let Operand::Constant(constant) = operand else {
-        return;
-    };
-    match constant {
-        Constant::Int { ty, .. } | Constant::Float { ty, .. } | Constant::Str { ty, .. } => {
-            *ty = tcx.substitute(*ty, substs);
-        }
-        Constant::Bool(_) | Constant::Char(_) | Constant::Unit => {}
-    }
 }
 
 fn display_def(hir: &Hir, interner: &Interner, def: seal_def::DefId) -> String {

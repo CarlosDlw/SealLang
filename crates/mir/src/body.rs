@@ -76,6 +76,11 @@ pub struct Body {
     pub owner: DefId,
     /// What kind of initializer or function the owner declares.
     pub kind: BodyKind,
+    /// Whether the owner is a `const func`.
+    ///
+    /// Only a function body may carry this flag; a constant or static
+    /// initializer is a value body and is always interpreted, never called.
+    pub is_const: bool,
     /// The number of parameters, excluding the return place.
     pub arg_count: usize,
     /// All locals, indexable by [`LocalId`].

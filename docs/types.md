@@ -398,6 +398,27 @@ for division or remainder by zero (`E4002`, `E4003`), signed division overflow
 cycles (`E4007`), step, depth, allocation, and size limits (`E4008`–`E4010`,
 `E4025`), and forbidden operations in a constant context (`E4011`–`E4027`).
 
+#### Compile-time calls
+
+A call from a constant context to a `const func` is interpreted directly from
+its MIR body. Arguments are evaluated in source order, the body runs with its
+own frame, and `return` copies the return place into the caller. Direct
+recursion and mutual calls are ordinary call-stack frames bounded by the depth
+and step limits, not dependency cycles. A generic call substitutes the
+instance's concrete type arguments into every local and rvalue type before
+interpretation; a call that still mentions a type parameter or inference
+variable is rejected (`E4027`) because no layout exists for it. A callee that
+is not a `const func` is an error (`E4011` in an initializer, `E4018` in a
+`const func`), and a trait-bound or dynamic call is likewise rejected (`E4016`,
+`E4021`). Panics and limit failures include the compile-time call chain.
+
+The intrinsic whitelist is closed and mirrors runtime code generation: `len`
+and `is_empty`, `swap`/`reverse`/`fill` on local arrays and slices, every
+integer and float method, `bool`/`char` conversions and predicates, and
+`char::len_utf8`. An intrinsic outside the whitelist reports `E4022` during
+type checking; the evaluator never guesses at an operation it cannot reproduce
+exactly.
+
 ### Constant evaluation
 
 The evaluator interprets each `const` and `static` initializer's MIR before

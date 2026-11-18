@@ -58,6 +58,8 @@ pub enum ValidationError {
         /// The recorded argument count.
         arg_count: usize,
     },
+    /// A constant or static body is marked as a `const func`.
+    ConstFlagOnValueBody,
     /// A place root names a definition of the wrong kind.
     PlaceRootKindMismatch {
         /// The block containing the place.
@@ -256,6 +258,9 @@ impl fmt::Display for ValidationError {
                 f,
                 "a constant or static body declares {arg_count} argument(s)"
             ),
+            Self::ConstFlagOnValueBody => {
+                f.write_str("a constant or static body is marked as a const function")
+            }
             Self::PlaceRootKindMismatch { block, def } => write!(
                 f,
                 "block {block:?} roots a place at {def:?}, which has the wrong kind"
@@ -401,6 +406,9 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
         return Err(ValidationError::ValueBodyHasArguments {
             arg_count: body.arg_count,
         });
+    }
+    if body.kind != BodyKind::Function && body.is_const {
+        return Err(ValidationError::ConstFlagOnValueBody);
     }
 
     for (local, declaration) in body.locals.iter_enumerated() {

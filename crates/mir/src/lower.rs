@@ -83,6 +83,7 @@ struct BodyLowering<'a> {
     typeck: &'a TypeckResults,
     owner: DefId,
     kind: BodyKind,
+    is_const: bool,
     locals: IndexVec<LocalId, LocalDecl>,
     local_of: FxHashMap<DefId, LocalId>,
     blocks: IndexVec<BasicBlockId, BlockBuilder>,
@@ -109,6 +110,7 @@ impl<'a> BodyLowering<'a> {
             typeck,
             owner: body.owner,
             kind: body_kind(body.kind),
+            is_const: body.is_const,
             locals: IndexVec::new(),
             local_of: FxHashMap::default(),
             blocks: IndexVec::new(),
@@ -166,6 +168,7 @@ impl<'a> BodyLowering<'a> {
         let Self {
             owner,
             kind,
+            is_const,
             arg_count,
             locals,
             blocks,
@@ -184,6 +187,7 @@ impl<'a> BodyLowering<'a> {
         Body {
             owner,
             kind,
+            is_const,
             arg_count,
             locals,
             blocks,

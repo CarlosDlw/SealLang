@@ -42,6 +42,7 @@ fn body(
     Body {
         owner,
         kind: seal_mir::BodyKind::Function,
+        is_const: false,
         arg_count,
         locals: IndexVec::from_raw(locals),
         blocks: IndexVec::from_raw(vec![BasicBlock {

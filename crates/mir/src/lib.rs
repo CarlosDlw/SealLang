@@ -50,6 +50,7 @@
 
 mod body;
 mod id;
+mod instantiate;
 mod lower;
 mod mir;
 mod operand;
@@ -60,6 +61,8 @@ mod terminator;
 #[cfg(test)]
 mod tests;
 mod validate;
+
+pub use instantiate::instantiate_body;
 
 pub use body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
 pub use id::{BasicBlockId, BodyId, LocalId};
