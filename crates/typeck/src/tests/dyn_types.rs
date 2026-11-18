@@ -591,8 +591,15 @@ fn a_default_method_stays_dispatchable_through_a_trait_object() {
             func twice(self: *Self) -> i32 { self.area() * 2 } \
         } \
         impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+        func upcast(circle: *Circle) -> *dyn Shape { circle } \
         func twice(object: *dyn Shape) -> i32 { object.twice() }";
     let (fixture, hir, results) = check_clean(source);
+    let (_, upcast) = function(&fixture, &hir, "upcast");
+    let value = tail(&hir, upcast);
+    assert!(matches!(
+        results.coercion(value),
+        Some(Coercion::TraitObject { .. })
+    ));
     let (_, body) = function(&fixture, &hir, "twice");
     let resolved = results
         .method(tail(&hir, body))

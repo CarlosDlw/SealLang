@@ -734,6 +734,25 @@ fn a_default_body_handles_exclusive_and_value_receivers() {
 }
 
 #[test]
+fn an_exclusive_default_receiver_requires_a_writable_place() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Counter { \
+            func read(self: *Self) -> i32; \
+            func bump(self: *mut Self) { self.read(); } \
+        } \
+        impl Counter for Item { \
+            func read(self: *Item) -> i32 { (*self).value } \
+        } \
+        func main() { \
+            let item = Item { value: 4 }; \
+            item.bump(); \
+        }";
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3029", "needs to modify");
+}
+
+#[test]
 fn a_default_method_can_return_self() {
     let source = "\
         struct Item { value: i32 } \
