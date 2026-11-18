@@ -1,9 +1,9 @@
 //! Lowering `for` loops.
 //!
-//! Every form lowers to one counted loop: a condition block, a block that
-//! matches the pattern and binds its names, the body, and an increment block.
-//! `continue` targets the increment, so a skipped iteration still advances the
-//! source; `break` targets the exit.
+//! Built-in ranges and sequences lower to one counted loop: a condition block,
+//! a block that matches the pattern and binds its names, the body, and an
+//! increment block. `continue` targets the increment, so a skipped iteration
+//! still advances the source; `break` targets the exit.
 //!
 //! The iterable is evaluated once before the loop. An array is moved into a
 //! temporary and indexed through an exclusive borrow of that temporary, so a
@@ -11,10 +11,16 @@
 //! treating the whole array as moved on every iteration. A reference to an
 //! array or a slice is kept in a temporary and each element is reborrowed with
 //! the same shared or exclusive kind as the source.
+//!
+//! A custom source records protocol calls during type checking. Its loop has a
+//! condition, a bind block that calls `next`, the body, and an exit, with no
+//! increment: `continue` returns to the condition so only `has_next` decides
+//! whether another item is produced.
 
 use seal_hir::{ForSource, HirBlockId, HirExprId, HirPatternId};
 use seal_span::Span;
 use seal_ty::{RefKind, TyId, TyKind};
+use seal_typeck::IterationProtocol;
 
 use super::BodyLowering;
 use crate::operand::{Constant, Operand};
@@ -50,8 +56,116 @@ impl BodyLowering<'_> {
                 end,
                 inclusive,
             } => self.lower_for_range(pattern, start, end, inclusive, body, span),
-            ForSource::Expr(iterable) => self.lower_for_sequence(pattern, iterable, body, span),
+            ForSource::Expr(iterable) => {
+                if let Some(protocol) = self.typeck.iteration(iterable).cloned() {
+                    self.lower_for_protocol(pattern, iterable, protocol, body, span);
+                } else {
+                    self.lower_for_sequence(pattern, iterable, body, span);
+                }
+            }
         }
+    }
+
+    /// Lowers a custom `IntoIterator` or direct-`Iterator` loop.
+    ///
+    /// The source is evaluated once. `IntoIterator::iter` runs before the first
+    /// condition when present; otherwise the source temporary is the iterator.
+    /// The shared `has_next` borrow ends before the exclusive `next` borrow, and
+    /// the body returns directly to the condition so `continue` checks the next
+    /// item without calling `next` twice.
+    fn lower_for_protocol(
+        &mut self,
+        pattern: HirPatternId,
+        iterable: HirExprId,
+        protocol: IterationProtocol,
+        body: HirBlockId,
+        span: Span,
+    ) {
+        let source_ty = self.expr_ty(iterable);
+        let source = self.new_temp(source_ty, span);
+        self.lower_expr_into(iterable, Some(source.clone()));
+        let iterator = match protocol.iter.as_ref() {
+            Some(iter) => {
+                let receiver =
+                    self.lower_place_receiver(source.clone(), source_ty, &iter.method, span);
+                let iterator = self.new_temp(protocol.iterator_ty, span);
+                self.lower_protocol_call(
+                    iter,
+                    receiver,
+                    Vec::new(),
+                    vec![span],
+                    Some(iterator.clone()),
+                    span,
+                );
+                iterator
+            }
+            None => source,
+        };
+
+        let condition = self.new_block();
+        let bind = self.new_block();
+        let body_block = self.new_block();
+        let exit = self.new_block();
+
+        self.terminate_goto(condition, span);
+        self.current = Some(condition);
+        let test = self.new_temp(protocol.has_next.method.ret_ty, span);
+        let receiver = self.lower_place_receiver(
+            iterator.clone(),
+            protocol.iterator_ty,
+            &protocol.has_next.method,
+            span,
+        );
+        self.lower_protocol_call(
+            &protocol.has_next,
+            receiver,
+            Vec::new(),
+            vec![span],
+            Some(test.clone()),
+            span,
+        );
+        self.terminate(
+            TerminatorKind::SwitchInt {
+                discriminant: Operand::Copy(test),
+                targets: vec![SwitchTarget {
+                    value: 1,
+                    target: bind,
+                }],
+                otherwise: exit,
+            },
+            span,
+        );
+
+        self.current = Some(bind);
+        let receiver = self.lower_place_receiver(
+            iterator.clone(),
+            protocol.iterator_ty,
+            &protocol.next.method,
+            span,
+        );
+        let item = self.new_temp(protocol.item_ty, span);
+        self.lower_protocol_call(
+            &protocol.next,
+            receiver,
+            Vec::new(),
+            vec![span],
+            Some(item.clone()),
+            span,
+        );
+        self.lower_for_pattern(pattern, item, protocol.item_ty, condition, body_block, span);
+
+        self.current = Some(body_block);
+        self.loops.push(super::LoopTargets {
+            break_to: exit,
+            continue_to: condition,
+        });
+        self.lower_block(body, None);
+        self.loops.pop();
+        if self.current.is_some() {
+            self.terminate_goto(condition, span);
+        }
+
+        self.current = Some(exit);
     }
 
     /// Lowers `for pattern in start..end` and `start..=end`.

@@ -13,8 +13,8 @@ use seal_index::IndexVec;
 use seal_span::Span;
 use seal_ty::{Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
-    Coercion, IndexProtocol, MethodKind, PlaceProjection, ReceiverAdjust, ResolvedMethod,
-    ResolvedPlace, TypeckResults,
+    Coercion, IndexProtocol, MethodKind, PlaceProjection, ProtocolCall, ReceiverAdjust,
+    ResolvedMethod, ResolvedPlace, TypeckResults,
 };
 
 use crate::body::{BasicBlock, Body, LocalDecl, LocalKind};
@@ -1010,6 +1010,64 @@ impl<'a> BodyLowering<'a> {
         );
     }
 
+    /// Emits a call recorded by a built-in protocol.
+    ///
+    /// Protocol calls are ordinary calls or dynamic calls. The receiver is
+    /// already lowered because protocol callers frequently start from a
+    /// storage place rather than an HIR method-call expression.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_protocol_call(
+        &mut self,
+        call: &ProtocolCall,
+        receiver: Operand,
+        args: Vec<Operand>,
+        arg_spans: Vec<Span>,
+        dest: Option<Place>,
+        span: Span,
+    ) {
+        match call.method.kind {
+            MethodKind::Dynamic {
+                object_trait_ref,
+                method,
+                slot,
+                ..
+            } => self.lower_dynamic_resolved_call(
+                object_trait_ref,
+                method,
+                slot,
+                &call.method,
+                receiver,
+                args,
+                arg_spans,
+                dest,
+                span,
+            ),
+            MethodKind::Intrinsic(_) => {
+                panic!("a protocol call cannot resolve to an intrinsic; this is a compiler bug")
+            }
+            MethodKind::User { .. } | MethodKind::Trait { .. } | MethodKind::TraitBound { .. } => {
+                let instance = call.lowering_instance.unwrap_or_else(|| {
+                    panic!(
+                        "protocol call at {span:?} has no lowering instance; this is a compiler bug"
+                    )
+                });
+                let symbolic = matches!(call.method.kind, MethodKind::TraitBound { .. });
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+                call_args.push(receiver);
+                call_args.extend(args);
+                self.lower_resolved_call(
+                    &call.method,
+                    instance,
+                    symbolic,
+                    call_args,
+                    arg_spans,
+                    dest,
+                    span,
+                );
+            }
+        }
+    }
+
     /// Lowers a method call dispatched through a trait-object vtable.
     fn lower_dynamic_call(
         &mut self,
@@ -1339,45 +1397,14 @@ impl<'a> BodyLowering<'a> {
         let receiver = self.lower_place_receiver(base_place, base_ty, &call.method, span);
         let arg_spans = vec![self.hir.expr(base).span, self.hir.expr(index).span];
         let destination = self.new_temp(call.method.ret_ty, span);
-
-        match call.method.kind {
-            MethodKind::Dynamic {
-                object_trait_ref,
-                method,
-                slot,
-                ..
-            } => self.lower_dynamic_resolved_call(
-                object_trait_ref,
-                method,
-                slot,
-                &call.method,
-                receiver,
-                vec![index_value],
-                arg_spans,
-                Some(destination.clone()),
-                span,
-            ),
-            MethodKind::Intrinsic(_) => {
-                panic!("indexing cannot resolve to an intrinsic method; this is a compiler bug")
-            }
-            MethodKind::User { .. } | MethodKind::Trait { .. } | MethodKind::TraitBound { .. } => {
-                let instance = call.lowering_instance.unwrap_or_else(|| {
-                    panic!(
-                        "custom index at {span:?} has no lowering instance; this is a compiler bug"
-                    )
-                });
-                let symbolic = matches!(call.method.kind, MethodKind::TraitBound { .. });
-                self.lower_resolved_call(
-                    &call.method,
-                    instance,
-                    symbolic,
-                    vec![receiver, index_value],
-                    arg_spans,
-                    Some(destination.clone()),
-                    span,
-                );
-            }
-        }
+        self.lower_protocol_call(
+            &call,
+            receiver,
+            vec![index_value],
+            arg_spans,
+            Some(destination.clone()),
+            span,
+        );
 
         (destination.deref(), element_ty)
     }
