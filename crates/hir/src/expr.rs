@@ -4,7 +4,7 @@ use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::DefId;
 use seal_span::Span;
 use seal_symbol::Symbol;
-use seal_ty::SubstsId;
+use seal_ty::{SubstsId, TyId};
 
 use crate::id::{HirBlockId, HirExprId, HirPatternId};
 use crate::pattern::MatchArm;
@@ -238,6 +238,17 @@ pub enum ExprKind {
         lhs: HirExprId,
         /// The right operand.
         rhs: HirExprId,
+    },
+    /// An explicit cast, written `value as Type`.
+    Cast {
+        /// The value being converted.
+        operand: HirExprId,
+        /// The resolved target type.
+        ty: TyId,
+        /// The span of the `as` token, for diagnostics.
+        as_span: Span,
+        /// The span of the target type, for diagnostics.
+        target_span: Span,
     },
     /// An assignment, including compound assignment.
     ///

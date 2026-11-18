@@ -159,6 +159,7 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
             collect_expr(hir, *lhs, stmts, exprs);
             collect_expr(hir, *rhs, stmts, exprs);
         }
+        ExprKind::Cast { operand, .. } => collect_expr(hir, *operand, stmts, exprs),
         ExprKind::Assign { target, value, .. } => {
             collect_expr(hir, *target, stmts, exprs);
             collect_expr(hir, *value, stmts, exprs);

@@ -644,6 +644,14 @@ impl<'a> BodyLowering<'a> {
                     );
                 }
             }
+            ExprKind::Cast { operand, .. } => {
+                // Casts reach MIR with their own rvalue in the cast phase;
+                // until then the operand is lowered for reachability only.
+                let operand = self.lower_operand(operand);
+                if let Some(dest) = dest {
+                    self.assign_rvalue(dest, Rvalue::Use(operand), span);
+                }
+            }
             ExprKind::Assign { op, target, value } => {
                 self.lower_assign(op, target, value, dest, span)
             }
