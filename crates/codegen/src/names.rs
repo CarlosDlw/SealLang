@@ -34,6 +34,18 @@ pub(crate) fn instance(base: &str, fingerprint: Fingerprint) -> String {
     format!("{base}.{fingerprint}")
 }
 
+/// The compiler-generated no-op drop function used in vtable slot 0.
+pub(crate) const DROP: &str = "seal.drop.noop";
+
+/// Returns the linker symbol for one vtable.
+///
+/// The fingerprint covers the concrete pointee, the principal trait, and its
+/// instantiated arguments, so repeated builds emit the same name and distinct
+/// trait objects cannot collide.
+pub(crate) fn vtable(fingerprint: Fingerprint) -> String {
+    format!("seal.vtable.{fingerprint}")
+}
+
 /// Returns a unique IR name for a local slot.
 pub(crate) fn local(name: Option<&str>, index: usize) -> String {
     match name {

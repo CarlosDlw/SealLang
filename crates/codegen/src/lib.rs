@@ -59,7 +59,9 @@ mod panic;
 mod place;
 mod runtime;
 mod rvalue;
+mod trait_object;
 mod types;
+mod vtable;
 
 #[cfg(test)]
 mod tests;

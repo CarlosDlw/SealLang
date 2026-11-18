@@ -270,9 +270,8 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 self.basic_type(ty, float.as_str(), u64::from(float.bits()), encoding::FLOAT)?
             }
             TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. }) => {
-                return Err(CodegenError::internal(
-                    "a trait-object pointer reached debug information before vtable lowering",
-                ));
+                let name = self.tcx.display_with(ty, self.interner).to_string();
+                self.dyn_type(&name)?
             }
             TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Str) => {
                 self.string_type()?
@@ -380,11 +379,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Adt { adt, args } => self.adt_type(adt, args)?,
             TyKind::Str => self.basic_type(ty, "str", 0, encoding::UNSIGNED)?,
             TyKind::Slice { .. } => self.basic_type(ty, "slice", 0, encoding::UNSIGNED)?,
-            TyKind::Dyn { .. } => {
-                return Err(CodegenError::internal(
-                    "an unsized trait object reached debug information without its pointer",
-                ));
-            }
+            // A bare `dyn Trait` is unsized and never a value, but debug
+            // information may still ask about it while describing a pointer.
+            // A zero-sized basic type keeps `-g` total without inventing a
+            // storage layout for an unsized type.
+            TyKind::Dyn { .. } => self.basic_type(ty, "dyn", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {
                 self.basic_type(ty, "()", 0, encoding::UNSIGNED)?
             }
@@ -432,6 +431,73 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
     fn slice_type(&self, element: TyId) -> Result<DIType<'ctx>, CodegenError> {
         let element = self.di_type(element)?;
         self.fat_type("&[T]", element)
+    }
+
+    /// Describes a trait-object pointer as its data and vtable pointers.
+    fn dyn_type(&self, name: &str) -> Result<DIType<'ctx>, CodegenError> {
+        let pointer_bits = u64::from(self.mapper.pointer_width());
+        let align = bits_u32(pointer_bits)?;
+        let scope = self.unit.as_debug_info_scope();
+        let byte = self
+            .builder
+            .create_basic_type("u8", 8, encoding::UNSIGNED, DIFlags::ZERO)
+            .map_err(|error| {
+                CodegenError::internal(format!("cannot describe `u8` in debug info: {error:?}"))
+            })?
+            .as_type();
+        let data = self
+            .builder
+            .create_pointer_type("data", byte, pointer_bits, align, AddressSpace::default())
+            .as_type();
+        let vtable = self
+            .builder
+            .create_pointer_type("vtable", byte, pointer_bits, align, AddressSpace::default())
+            .as_type();
+        let data_member = self
+            .builder
+            .create_member_type(
+                scope,
+                "data",
+                self.unit_file,
+                0,
+                pointer_bits,
+                align,
+                0,
+                DIFlags::ZERO,
+                data,
+            )
+            .as_type();
+        let vtable_member = self
+            .builder
+            .create_member_type(
+                scope,
+                "vtable",
+                self.unit_file,
+                0,
+                pointer_bits,
+                align,
+                pointer_bits,
+                DIFlags::ZERO,
+                vtable,
+            )
+            .as_type();
+        Ok(self
+            .builder
+            .create_struct_type(
+                scope,
+                name,
+                self.unit_file,
+                0,
+                pointer_bits * 2,
+                align,
+                DIFlags::ZERO,
+                None,
+                &[data_member, vtable_member],
+                0,
+                None,
+                "",
+            )
+            .as_type())
     }
 
     fn fat_type(&self, name: &str, data: DIType<'ctx>) -> Result<DIType<'ctx>, CodegenError> {

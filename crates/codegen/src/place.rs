@@ -44,6 +44,11 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                                 "a string reference cannot be dereferenced into a sized place",
                             ));
                         }
+                        TyKind::Dyn { .. } => {
+                            return Err(CodegenError::internal(
+                                "a trait-object reference has no sized place; reborrow it instead",
+                            ));
+                        }
                         _ => reference.into_pointer_value(),
                     };
                     ty = pointee;

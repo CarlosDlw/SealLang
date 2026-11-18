@@ -34,6 +34,23 @@ pub struct VtableKey {
     pub trait_ref: TraitRef,
 }
 
+impl VtableKey {
+    /// Derives a vtable key from a trait-object coercion.
+    ///
+    /// Code generation uses this to resolve the exact table emitted for a
+    /// `MakeTraitObject` rvalue. Returns `None` for malformed pointer or
+    /// trait-object shapes; MIR validation rejects those before lowering.
+    pub fn from_coercion(tcx: &TyCtxt, source_ty: TyId, target_ty: TyId) -> Option<Self> {
+        let (_, concrete) = tcx.ref_parts(source_ty)?;
+        let (_, object) = tcx.ref_parts(target_ty)?;
+        let (trait_def, args) = tcx.dyn_parts(object)?;
+        Some(Self {
+            concrete,
+            trait_ref: TraitRef::new(trait_def, concrete, args),
+        })
+    }
+}
+
 /// One collected vtable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonoVTable {
@@ -54,13 +71,7 @@ pub struct MonoVTable {
 /// not a trait object. MIR validation rejects those shapes before
 /// monomorphization; this is a defensive check.
 pub(crate) fn key_of(tcx: &TyCtxt, source_ty: TyId, target_ty: TyId) -> Option<VtableKey> {
-    let (_, concrete) = tcx.ref_parts(source_ty)?;
-    let (_, object) = tcx.ref_parts(target_ty)?;
-    let (trait_def, args) = tcx.dyn_parts(object)?;
-    Some(VtableKey {
-        concrete,
-        trait_ref: TraitRef::new(trait_def, concrete, args),
-    })
+    VtableKey::from_coercion(tcx, source_ty, target_ty)
 }
 
 /// Resolves every method entry for `key`.

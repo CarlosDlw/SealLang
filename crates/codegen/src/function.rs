@@ -20,6 +20,7 @@ use crate::debug::DebugContext;
 use crate::error::CodegenError;
 use crate::names;
 use crate::types::TypeMapper;
+use crate::vtable::Vtables;
 
 /// Everything needed to lower one body.
 pub(crate) struct FunctionRequest<'a, 'ctx> {
@@ -43,6 +44,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) constants: &'a Constants<'a, 'ctx>,
     /// Declared functions, keyed by instance.
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
+    /// Emitted vtable globals, keyed by coercion.
+    pub(crate) vtables: &'a Vtables<'ctx>,
     /// Symbol interner.
     pub(crate) interner: &'a Interner,
     /// Source map, used for runtime panic locations.
@@ -65,6 +68,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     pub(crate) constants: &'a Constants<'a, 'ctx>,
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
+    pub(crate) vtables: &'a Vtables<'ctx>,
     pub(crate) interner: &'a Interner,
     pub(crate) source_map: &'a SourceMap,
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
@@ -99,6 +103,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             mapper: self.mapper,
             constants: self.constants,
             functions: self.functions,
+            vtables: self.vtables,
             interner: self.interner,
             source_map: self.source_map,
             debug: self.debug,

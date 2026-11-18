@@ -31,6 +31,7 @@ use crate::function::FunctionRequest;
 use crate::names;
 use crate::options::{CodegenOptions, Emit};
 use crate::types::TypeMapper;
+use crate::vtable::Vtables;
 
 /// The checked program a code generation request consumes.
 pub struct CodegenInput<'a> {
@@ -139,6 +140,10 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         None
     };
 
+    // Dynamic calls add call sites the static aliasing proof never saw, so any
+    // method reachable through a vtable is excluded before declarations are
+    // annotated. The input set stays untouched.
+    let noalias = crate::vtable::filtered_noalias(input.mono, input.noalias_functions);
     let functions = declare_functions(
         &context,
         &module,
@@ -146,7 +151,12 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         input.mono,
         input.interner,
         &mapper,
-        input.noalias_functions,
+        &noalias,
+    )?;
+    // Vtable globals point at method functions, so every function must exist
+    // before the globals are initialized.
+    let vtables = Vtables::declare(
+        &context, &module, input.hir, input.mono, &mapper, &functions,
     )?;
     let builder = context.create_builder();
     let constants = Constants::new(&context, &module, &mapper, input.interner);
@@ -175,6 +185,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             mapper: &mapper,
             constants: &constants,
             functions: &functions,
+            vtables: &vtables,
             interner: input.interner,
             source_map: input.source_map,
             debug: debug.as_ref(),
@@ -358,9 +369,9 @@ pub(crate) fn symbol(hir: &Hir, interner: &Interner, instance: Instance) -> Stri
 /// through it, so the promise holds without a whole-program proof. An exclusive
 /// `*mut T` parameter is `noalias` only when the facts proved that the callee
 /// never reaches the pointee through an unknown pointer and that every call site
-/// keeps the argument disjoint from every other reference. A `*str` or `*mut
-/// str` parameter is a fat pointer, which LLVM cannot annotate, so it keeps the
-/// ordinary ABI.
+/// keeps the argument disjoint from every other reference. A `*str`, `*mut str`,
+/// `*dyn Trait`, or `*mut dyn Trait` parameter is a fat pointer, which LLVM
+/// cannot annotate, so it keeps the ordinary ABI.
 fn add_reference_attributes<'ctx>(
     context: &'ctx Context,
     function: FunctionValue<'ctx>,
@@ -374,7 +385,7 @@ fn add_reference_attributes<'ctx>(
         };
         if matches!(
             hir.ty_ctxt().kind(pointee),
-            TyKind::Str | TyKind::Slice { .. }
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. }
         ) {
             continue;
         }

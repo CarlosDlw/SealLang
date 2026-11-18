@@ -39,7 +39,9 @@ pub(crate) struct TypeMapper<'ctx> {
     pointer_width: u8,
     empty: StructType<'ctx>,
     fat_pointer: StructType<'ctx>,
+    dyn_pointer: StructType<'ctx>,
     adts: RefCell<FxHashMap<(AdtId, SubstsId), StructType<'ctx>>>,
+    vtables: RefCell<FxHashMap<usize, StructType<'ctx>>>,
     next_instantiation: Cell<u32>,
     tuples: RefCell<FxHashMap<TupleId, StructType<'ctx>>>,
 }
@@ -64,6 +66,10 @@ impl<'ctx> TypeMapper<'ctx> {
             }
         };
         let fat_pointer = context.struct_type(&[byte_ptr.into(), usize_ty.into()], false);
+        // A trait-object pointer is a data pointer followed by its vtable
+        // pointer. Both members are opaque pointers, so the pair has exactly
+        // two pointer-sized words on every supported target.
+        let dyn_pointer = context.struct_type(&[byte_ptr.into(), byte_ptr.into()], false);
         let layouts = LayoutCtxt::new(tcx, pointer_width);
 
         let mapper = Self {
@@ -74,7 +80,9 @@ impl<'ctx> TypeMapper<'ctx> {
             pointer_width,
             empty,
             fat_pointer,
+            dyn_pointer,
             adts: RefCell::new(FxHashMap::default()),
+            vtables: RefCell::new(FxHashMap::default()),
             next_instantiation: Cell::new(0),
             tuples: RefCell::new(FxHashMap::default()),
         };
@@ -144,13 +152,8 @@ impl<'ctx> TypeMapper<'ctx> {
             TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
                 // `*str` and `*[T]` are fat pointers: data plus length.
                 TyKind::Str | TyKind::Slice { .. } => BasicTypeEnum::StructType(self.fat_pointer),
-                // The data/vtable pair is emitted with the trait-object lowering;
-                // treating it as a thin pointer now would silently corrupt the ABI.
-                TyKind::Dyn { .. } => {
-                    return Err(CodegenError::internal(
-                        "a trait-object pointer reached code generation before vtable lowering",
-                    ));
-                }
+                // `*dyn Trait` and `*mut dyn Trait` are data plus vtable.
+                TyKind::Dyn { .. } => BasicTypeEnum::StructType(self.dyn_pointer),
                 _ => BasicTypeEnum::PointerType(self.pointer()),
             },
             TyKind::Array { element, length } => {
@@ -306,6 +309,35 @@ impl<'ctx> TypeMapper<'ctx> {
         self.empty
     }
 
+    /// Returns the vtable struct with `slots` pointer-sized entries.
+    ///
+    /// Slots 0..3 are the drop pointer, size, and alignment header; the rest
+    /// are method pointers. The struct shape follows the language's vtable
+    /// layout so every slot can be addressed with a checked struct GEP instead
+    /// of an unsafe byte offset. Types are cached by slot count because every
+    /// vtable with the same number of entries has the same LLVM type.
+    pub(crate) fn vtable_type(&self, slots: usize) -> Result<StructType<'ctx>, CodegenError> {
+        if slots < seal_layout::VTABLE_HEADER_SLOTS as usize {
+            return Err(CodegenError::internal(format!(
+                "a vtable needs at least {} slots, but {slots} were requested",
+                seal_layout::VTABLE_HEADER_SLOTS
+            )));
+        }
+        if let Some(found) = self.vtables.borrow().get(&slots).copied() {
+            return Ok(found);
+        }
+        let mut fields = Vec::with_capacity(slots);
+        fields.push(self.pointer().into());
+        fields.push(self.usize_type()?.into());
+        fields.push(self.usize_type()?.into());
+        for _ in seal_layout::VTABLE_HEADER_SLOTS as usize..slots {
+            fields.push(self.pointer().into());
+        }
+        let created = self.context.struct_type(&fields, false);
+        self.vtables.borrow_mut().insert(slots, created);
+        Ok(created)
+    }
+
     /// Returns the pointer type of the target.
     pub(crate) fn pointer(&self) -> inkwell::types::PointerType<'ctx> {
         self.context.ptr_type(AddressSpace::default())
@@ -362,6 +394,7 @@ pub(crate) fn uint_width(uint: UintTy, pointer_width: u8) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use inkwell::AddressSpace;
     use inkwell::context::Context;
     use seal_symbol::Interner;
     use seal_ty::TyCtxt;
@@ -383,6 +416,57 @@ mod tests {
             .expect("a slice reference is sized")
             .into_struct_type();
         assert_eq!(fat.get_field_types().len(), 2);
+    }
+
+    #[test]
+    fn a_dyn_pointer_is_two_pointer_words() {
+        let context = Context::create();
+        let tcx = TyCtxt::new();
+        let interner = Interner::new();
+        let trait_def = seal_def::DefId::from_usize_checked(0).expect("zero is a valid id");
+        let object = tcx.dyn_ty(trait_def, tcx.empty_substs());
+        let pointer = tcx.ref_ty(object);
+
+        for pointer_width in [32, 64] {
+            let mapper = TypeMapper::new(&context, &tcx, &interner, pointer_width)
+                .expect("pointer width is supported");
+            let fat = mapper
+                .basic(pointer)
+                .expect("a trait-object pointer is sized")
+                .into_struct_type();
+            let fields = fat.get_field_types();
+            assert_eq!(fields.len(), 2);
+            for field in fields {
+                assert_eq!(
+                    field.into_pointer_type().get_address_space(),
+                    AddressSpace::default()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vtable_types_are_cached_by_slot_count() {
+        let context = Context::create();
+        let tcx = TyCtxt::new();
+        let interner = Interner::new();
+        let mapper = TypeMapper::new(&context, &tcx, &interner, 64).expect("types map");
+
+        let three = mapper.vtable_type(3).expect("header-only vtable exists");
+        assert_eq!(three.get_field_types().len(), 3);
+        assert_eq!(
+            mapper.vtable_type(3).expect("cached").print_to_string(),
+            three.print_to_string()
+        );
+        assert_eq!(
+            mapper
+                .vtable_type(5)
+                .expect("two method slots exist")
+                .get_field_types()
+                .len(),
+            5
+        );
+        assert!(mapper.vtable_type(2).is_err());
     }
 
     #[test]

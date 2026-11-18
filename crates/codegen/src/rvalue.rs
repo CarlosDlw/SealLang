@@ -63,11 +63,23 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             Rvalue::Tuple { elements, ty } => self.tuple_aggregate(elements, *ty),
             Rvalue::Array { elements, ty } => self.array_aggregate(elements, *ty),
             Rvalue::Repeat { value, count, ty } => self.array_repeat(value, *count, *ty),
-            Rvalue::MakeTraitObject { .. }
-            | Rvalue::TraitObjectReborrow { .. }
-            | Rvalue::DynamicCall { .. } => Err(CodegenError::internal(
-                "trait-object code generation requires the vtable lowering phase",
-            )),
+            Rvalue::MakeTraitObject {
+                source,
+                source_ty,
+                target_ty,
+            } => self.make_trait_object(source, *source_ty, *target_ty),
+            Rvalue::TraitObjectReborrow {
+                source, from, to, ..
+            } => self.reborrow_trait_object(source, *from, *to),
+            Rvalue::DynamicCall {
+                object_trait_ref,
+                slot,
+                receiver,
+                args,
+                arg_tys,
+                ret_ty,
+                ..
+            } => self.dynamic_call(*object_trait_ref, *slot, receiver, args, arg_tys, *ret_ty),
         }
     }
 
