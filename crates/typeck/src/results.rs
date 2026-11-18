@@ -265,6 +265,27 @@ pub struct ProtocolCall {
     pub lowering_instance: Option<Instance>,
 }
 
+/// The protocol calls selected for one custom `for` source.
+///
+/// Built-in ranges, arrays, and slices leave no entry in [`TypeckResults`];
+/// their loop form is already known from the source type. This record contains
+/// everything MIR needs to build the protocol loop without repeating lookup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IterationProtocol {
+    /// The type bound by the loop pattern.
+    pub item_ty: TyId,
+    /// The type stored in the iterator temporary.
+    pub iterator_ty: TyId,
+    /// The `IntoIterator::iter` call, or `None` for the direct-`Iterator` form.
+    pub iter: Option<ProtocolCall>,
+    /// The `Iterator::has_next` call.
+    pub has_next: ProtocolCall,
+    /// The `Iterator::next` call.
+    pub next: ProtocolCall,
+    /// Whether the source itself is the iterator.
+    pub direct_iterator: bool,
+}
+
 /// The protocol selected for one index expression.
 ///
 /// Built-in arrays and slices leave no entry in [`TypeckResults`]; their
@@ -314,6 +335,7 @@ pub struct TypeckResults {
     places: FxHashMap<HirExprId, ResolvedPlace>,
     methods: FxHashMap<HirExprId, ResolvedMethod>,
     index_protocols: FxHashMap<HirExprId, IndexProtocol>,
+    iterations: FxHashMap<HirExprId, IterationProtocol>,
     instantiations: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
     casts: FxHashMap<HirExprId, NumericCastKind>,
@@ -352,6 +374,13 @@ impl TypeckResults {
         self.index_protocols.get(&expr)
     }
 
+    /// Returns the custom iteration protocol selected for a `for` source.
+    ///
+    /// `None` means the source uses a built-in range, array, or slice loop.
+    pub fn iteration(&self, source: HirExprId) -> Option<&IterationProtocol> {
+        self.iterations.get(&source)
+    }
+
     /// Returns the complete instantiation of a call, literal, or method call.
     pub fn instantiation(&self, expr: HirExprId) -> Option<Instance> {
         self.instantiations.get(&expr).copied()
@@ -380,6 +409,7 @@ impl TypeckResults {
             places: FxHashMap::default(),
             methods: FxHashMap::default(),
             index_protocols: FxHashMap::default(),
+            iterations: FxHashMap::default(),
             instantiations: FxHashMap::default(),
             coercions: FxHashMap::default(),
             casts: FxHashMap::default(),
@@ -408,6 +438,10 @@ impl TypeckResults {
 
     pub(crate) fn record_index_protocol(&mut self, expr: HirExprId, protocol: IndexProtocol) {
         self.index_protocols.insert(expr, protocol);
+    }
+
+    pub(crate) fn record_iteration(&mut self, source: HirExprId, protocol: IterationProtocol) {
+        self.iterations.insert(source, protocol);
     }
 
     pub(crate) fn record_instantiation(&mut self, expr: HirExprId, instance: Instance) {

@@ -24,6 +24,7 @@ impl Checker<'_> {
         span: Span,
         mut flow: Flow,
     ) -> Flow {
+        let mut custom_iteration = None;
         let element_ty = match source {
             ForSource::Range { start, end, .. } => {
                 self.check_for_range(start, end, span, &mut flow)
@@ -31,7 +32,20 @@ impl Checker<'_> {
             ForSource::Expr(iterable) => {
                 let iterable_ty = self.infer_expr(iterable, None, &mut flow);
                 let iterable_span = self.hir.expr(iterable).span;
-                self.for_element_ty(iterable_ty, iterable_span)
+                if self.is_builtin_iteration_source(iterable_ty) {
+                    self.for_element_ty(iterable_ty, iterable_span)
+                } else if self.is_error(iterable_ty) {
+                    iterable_ty
+                } else {
+                    match self.resolve_iteration(iterable, iterable_ty, iterable_span) {
+                        Some(protocol) => {
+                            let item_ty = protocol.item_ty;
+                            custom_iteration = Some((iterable, iterable_ty, protocol));
+                            item_ty
+                        }
+                        None => self.error_ty(),
+                    }
+                }
             }
         };
 
@@ -48,7 +62,26 @@ impl Checker<'_> {
             .emit();
         }
         let _body = self.check_block(body, None, body_flow);
+        if let Some((iterable, iterable_ty, protocol)) = custom_iteration {
+            self.finalize_iteration(iterable, pattern, iterable_ty, protocol, span);
+        }
         flow
+    }
+
+    /// Returns whether a `for` source uses built-in sequence iteration.
+    ///
+    /// Ranges are handled before this classification. Arrays, slices, and one
+    /// reference layer to either keep the existing loop lowering; any other
+    /// type may resolve through `IntoIterator` or `Iterator`.
+    fn is_builtin_iteration_source(&self, ty: TyId) -> bool {
+        match self.hir.ty_ctxt().kind(ty) {
+            TyKind::Array { .. } | TyKind::Slice { .. } => true,
+            TyKind::Ref { pointee, .. } => matches!(
+                self.hir.ty_ctxt().kind(pointee),
+                TyKind::Array { .. } | TyKind::Slice { .. }
+            ),
+            _ => false,
+        }
     }
 
     /// Checks the bounds of an integer range and returns their common type.

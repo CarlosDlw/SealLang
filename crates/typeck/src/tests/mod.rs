@@ -13,6 +13,7 @@ mod generics;
 mod if_let;
 mod indexing_protocol;
 mod init;
+mod iteration_protocol;
 mod literals;
 mod match_advanced;
 mod match_expr;

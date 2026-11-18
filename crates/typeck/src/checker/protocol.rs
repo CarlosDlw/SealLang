@@ -46,7 +46,7 @@ pub(super) struct IndexAccess {
 
 /// How a selected protocol candidate dispatches its method.
 #[derive(Clone, Debug)]
-enum CandidateTarget {
+pub(super) enum CandidateTarget {
     /// A concrete impl function.
     Impl {
         function: DefId,
@@ -66,12 +66,12 @@ enum CandidateTarget {
     },
 }
 
-/// One implementation or bound that can satisfy an indexing protocol.
+/// One implementation or bound that can satisfy a built-in protocol.
 #[derive(Clone, Debug)]
-struct ProtocolCandidate {
-    trait_ref: TraitRef,
-    self_ty: TyId,
-    target: CandidateTarget,
+pub(super) struct ProtocolCandidate {
+    pub(super) trait_ref: TraitRef,
+    pub(super) self_ty: TyId,
+    pub(super) target: CandidateTarget,
 }
 
 impl Checker<'_> {
@@ -120,7 +120,7 @@ impl Checker<'_> {
         let method_name = self.hir.definitions().name(method_def);
 
         for layer_ty in self.reference_layers(base_ty) {
-            let candidates = self.index_candidates(layer_ty, trait_def, method_name);
+            let candidates = self.protocol_candidates(layer_ty, trait_def, method_name, true);
             if candidates.is_empty() {
                 continue;
             }
@@ -152,7 +152,7 @@ impl Checker<'_> {
 
     /// Returns the base type followed by each pointee reached by one more
     /// reference layer.
-    fn reference_layers(&self, ty: TyId) -> Vec<TyId> {
+    pub(super) fn reference_layers(&self, ty: TyId) -> Vec<TyId> {
         let mut layers = vec![ty];
         let mut current = ty;
         while let TyKind::Ref { pointee, .. } = self.hir.ty_ctxt().kind(current) {
@@ -163,16 +163,21 @@ impl Checker<'_> {
     }
 
     /// Collects every protocol candidate whose self type is `layer_ty`.
-    fn index_candidates(
+    ///
+    /// `allow_dynamic` includes a trait-object receiver when the layer is a
+    /// reference to the protocol's principal trait object. Iteration rejects
+    /// dynamic sources by object safety, so it passes `false`.
+    pub(super) fn protocol_candidates(
         &mut self,
         layer_ty: TyId,
         trait_def: DefId,
         method_name: Symbol,
+        allow_dynamic: bool,
     ) -> Vec<ProtocolCandidate> {
         let mut candidates = Vec::new();
         for implementation in self.hir.ty_ctxt().trait_impls_matching(layer_ty) {
             if let Some(candidate) =
-                self.impl_index_candidate(&implementation, layer_ty, trait_def, method_name)
+                self.impl_candidate(&implementation, layer_ty, trait_def, method_name)
             {
                 candidates.push(candidate);
             }
@@ -204,7 +209,9 @@ impl Checker<'_> {
             }
         }
 
-        if let Some(candidate) = self.dynamic_index_candidate(layer_ty, trait_def, method_name) {
+        if allow_dynamic
+            && let Some(candidate) = self.dynamic_candidate(layer_ty, trait_def, method_name)
+        {
             candidates.push(candidate);
         }
 
@@ -212,7 +219,7 @@ impl Checker<'_> {
     }
 
     /// Instantiates one concrete impl header against `layer_ty`.
-    fn impl_index_candidate(
+    fn impl_candidate(
         &mut self,
         implementation: &TraitImplDef,
         layer_ty: TyId,
@@ -249,9 +256,6 @@ impl Checker<'_> {
             .into_iter()
             .map(|argument| self.hir.ty_ctxt().substitute(argument, substs))
             .collect();
-        if trait_arguments.len() != 2 {
-            return None;
-        }
         let function = implementation.method(method_name)?;
         let receiver = self.hir.receiver(function)?;
 
@@ -270,8 +274,8 @@ impl Checker<'_> {
         })
     }
 
-    /// Recognizes an indexing trait object reached through a reference.
-    fn dynamic_index_candidate(
+    /// Recognizes a protocol trait object reached through a reference.
+    fn dynamic_candidate(
         &self,
         layer_ty: TyId,
         trait_def: DefId,
@@ -398,12 +402,65 @@ impl Checker<'_> {
         }
     }
 
-    fn candidate_trait_args(&self, candidate: &ProtocolCandidate) -> Option<Vec<TyId>> {
+    pub(super) fn candidate_trait_args(&self, candidate: &ProtocolCandidate) -> Option<Vec<TyId>> {
         let args = self.hir.ty_ctxt().substs_args(candidate.trait_ref.args);
-        (args.len() == 2).then_some(args)
+        (!args.is_empty()).then_some(args)
     }
 
-    fn candidate_base_ty(&self, candidate: &ProtocolCandidate) -> TyId {
+    /// Rebuilds a selected candidate for another method of the same protocol.
+    ///
+    /// The candidate's instantiation is preserved, so inference variables that
+    /// tie a protocol type argument to the impl stay shared across calls.
+    pub(super) fn with_protocol_method(
+        &self,
+        candidate: &ProtocolCandidate,
+        method_name: Symbol,
+    ) -> Option<ProtocolCandidate> {
+        let target = match &candidate.target {
+            CandidateTarget::Impl { function, seed, .. } => {
+                let implementations = self.hir.trait_impls();
+                let implementation = implementations.iter().find(|implementation| {
+                    implementation
+                        .methods
+                        .iter()
+                        .any(|(_, candidate_function)| candidate_function == function)
+                })?;
+                let function = implementation.method(method_name)?;
+                let receiver = self.hir.receiver(function)?;
+                CandidateTarget::Impl {
+                    function,
+                    receiver,
+                    seed: seed.clone(),
+                }
+            }
+            CandidateTarget::Bound { .. } => {
+                let declaration = self.hir.trait_definition(candidate.trait_ref.trait_def)?;
+                let method = declaration.method(method_name)?.clone();
+                let receiver = trait_receiver_kind(method.receiver?);
+                CandidateTarget::Bound { method, receiver }
+            }
+            CandidateTarget::Dynamic { .. } => {
+                let declaration = self.hir.trait_definition(candidate.trait_ref.trait_def)?;
+                let method = declaration.method(method_name)?.clone();
+                let receiver = trait_receiver_kind(method.receiver?);
+                let slot = VtableLayout::new(self.hir.ty_ctxt(), candidate.trait_ref)
+                    .ok()?
+                    .slot_of(method.def)?;
+                CandidateTarget::Dynamic {
+                    method,
+                    receiver,
+                    slot,
+                }
+            }
+        };
+        Some(ProtocolCandidate {
+            trait_ref: candidate.trait_ref,
+            self_ty: candidate.self_ty,
+            target,
+        })
+    }
+
+    pub(super) fn candidate_base_ty(&self, candidate: &ProtocolCandidate) -> TyId {
         candidate.trait_ref.self_ty
     }
 
@@ -450,7 +507,7 @@ impl Checker<'_> {
             return self.error_ty();
         }
 
-        let Some(call) = self.build_index_call(&candidate, base_ty, span) else {
+        let Some(call) = self.build_protocol_call(&candidate, base_ty, span) else {
             return self.error_ty();
         };
 
@@ -494,13 +551,13 @@ impl Checker<'_> {
     }
 
     /// Builds the recorded method call for a selected candidate.
-    fn build_index_call(
+    pub(super) fn build_protocol_call(
         &mut self,
         candidate: &ProtocolCandidate,
         base_ty: TyId,
         span: Span,
     ) -> Option<ProtocolCall> {
-        let (receiver_adjust, receiver_derefs) = self.index_receiver_adjustment(
+        let (receiver_adjust, receiver_derefs) = self.protocol_receiver_adjustment(
             base_ty,
             candidate.self_ty,
             receiver_kind(candidate),
@@ -618,7 +675,7 @@ impl Checker<'_> {
 
     /// Chooses the receiver adjustment needed to pass the base expression to
     /// the selected protocol method.
-    fn index_receiver_adjustment(
+    fn protocol_receiver_adjustment(
         &mut self,
         base_ty: TyId,
         self_ty: TyId,
@@ -720,7 +777,7 @@ impl Checker<'_> {
         .emit();
     }
 
-    fn candidate_text(&self, candidate: &ProtocolCandidate) -> String {
+    pub(super) fn candidate_text(&self, candidate: &ProtocolCandidate) -> String {
         let args = self.candidate_trait_args(candidate).unwrap_or_default();
         let args = args
             .iter()

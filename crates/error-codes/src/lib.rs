@@ -1891,8 +1891,11 @@ pub const E3035: ErrorCode = ErrorCode {
     title: "value is not iterable",
     explanation: "\
 A for loop iterates an integer range, an array by value, or a reference to an
-array or slice. Other values have no elements to visit, so the loop cannot run.\n\nIterate an integer range such as `0..len(values)`, an array, `&array`, or a
-slice reference. A custom type needs its own loop over one of these forms.",
+array or slice. A custom source may instead implement `IntoIterator` with an
+`Iterator` for the resulting cursor, or implement `Iterator` directly. Other
+values have no elements to visit, so the loop cannot run.\n\nIterate an integer range such as `0..len(values)`, an array, `&array`, or a
+slice reference. For a custom type, implement `IntoIterator` and `Iterator`,
+or implement `Iterator` on the source itself.",
 };
 
 /// A tuple element index is outside the tuple.
@@ -2058,6 +2061,43 @@ cannot postpone that choice: the cast kind is recorded before instantiation.\n\n
 or perform the conversion inside the impl that supplies the concrete type.",
 };
 
+/// A `for` source matches more than one `IntoIterator` implementation.
+pub const E3050: ErrorCode = ErrorCode {
+    code: "E3050",
+    title: "ambiguous IntoIterator protocol",
+    explanation: "\
+A `for` source resolves through the `IntoIterator` protocol before falling back
+to a direct `Iterator` implementation. If the exact source type matches more
+than one reachable `IntoIterator` implementation, the loop cannot choose the
+iterator type or item type, and the compiler does not guess from declaration
+order.\n\nUse a source type with exactly one implementation, add a more specific type, or
+wrap the source in a newtype with one iteration behavior.",
+};
+
+/// An iterator type does not implement `Iterator<T>`.
+pub const E3051: ErrorCode = ErrorCode {
+    code: "E3051",
+    title: "iterator protocol is not implemented",
+    explanation: "\
+`IntoIterator::iter` returns the iterator type `I`, and the loop then requires
+`I: Iterator<T>` for the item type declared by the `IntoIterator`
+implementation. Without that second protocol, the compiler cannot call
+`has_next` or `next`.\n\nImplement `Iterator<T>` for the iterator type, or change the
+`IntoIterator` implementation to return a type that already implements it.",
+};
+
+/// An iterator type matches more than one `Iterator` implementation.
+pub const E3052: ErrorCode = ErrorCode {
+    code: "E3052",
+    title: "ambiguous Iterator protocol",
+    explanation: "\
+A custom loop or a direct-`Iterator` source needs exactly one reachable
+`Iterator` implementation for the iterator type. Several implementations with
+different item types would make the loop binding and every `next` call
+ambiguous, so the compiler does not choose one by declaration order.\n\nUse a type with one `Iterator` implementation, a newtype, or an explicit
+conversion that selects the intended item type.",
+};
+
 /// An index expression matches more than one protocol implementation.
 pub const E3053: ErrorCode = ErrorCode {
     code: "E3053",
@@ -2109,9 +2149,9 @@ pub static ALL: &[ErrorCode] = &[
     E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013,
     E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026,
     E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039,
-    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3053, E3054, E3055,
-    E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E6001, E6002, E6003,
-    E7001, E7002, E7003, E7004, E7005, E7006, E9001, E9002,
+    E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052,
+    E3053, E3054, E3055, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E6001, E6002, E6003, E7001, E7002, E7003, E7004, E7005, E7006, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2206,6 +2246,9 @@ mod tests {
     #[test]
     fn protocol_codes_have_explanations() {
         for (code, fragment) in [
+            ("E3050", "does not guess"),
+            ("E3051", "cannot call"),
+            ("E3052", "does not choose one"),
             ("E3053", "does not guess"),
             ("E3054", "protocols are independent"),
             ("E3055", "remains unresolved"),
@@ -2282,7 +2325,8 @@ mod tests {
                 "E3019", "E3020", "E3021", "E3022", "E3023", "E3024", "E3025", "E3026", "E3027",
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
-                "E3046", "E3047", "E3048", "E3049", "E3053", "E3054", "E3055",
+                "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
+                "E3055",
             ]
         );
     }
