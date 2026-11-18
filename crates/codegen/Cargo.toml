@@ -10,6 +10,7 @@ cc = "1.11"
 
 [dependencies]
 inkwell = { version = "0.11.0", default-features = false, features = ["llvm23-1", "target-all"] }
+seal-const-eval.workspace = true
 seal-def.workspace = true
 seal-diagnostics.workspace = true
 seal-error-codes.workspace = true
@@ -31,7 +32,6 @@ seal-ty.workspace = true
 [dev-dependencies]
 seal-ast.workspace = true
 seal-borrowck.workspace = true
-seal-const-eval.workspace = true
 seal-lexer.workspace = true
 seal-mono.workspace = true
 seal-parser.workspace = true

@@ -11,6 +11,7 @@ use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple};
 use inkwell::values::FunctionValue;
+use seal_const_eval::ConstProgram;
 use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
@@ -23,13 +24,16 @@ use seal_target::TargetSpec;
 use seal_ty::{Instance, RefKind, TyId, TyKind};
 
 use crate::artifact;
+use crate::const_value::ConstValues;
 use crate::constant::Constants;
 use crate::debug::DebugContext;
 use crate::entry;
 use crate::error::CodegenError;
 use crate::function::FunctionRequest;
+use crate::global::Globals;
 use crate::names;
 use crate::options::{CodegenOptions, Emit};
+use crate::relocation::Pointers;
 use crate::types::TypeMapper;
 use crate::vtable::Vtables;
 
@@ -41,6 +45,12 @@ pub struct CodegenInput<'a> {
     /// its instance arguments substituted and every call names a collected
     /// instance, so no parameter or symbolic trait call can reach LLVM.
     pub mono: &'a MonoProgram,
+    /// The evaluated constants: static storage, const allocations, and the
+    /// value of every `const` item a body reads.
+    ///
+    /// Code generation never evaluates source. A constant that the evaluator did
+    /// not produce is an internal invariant violation, not a user error.
+    pub constants: &'a ConstProgram,
     /// HIR, used for aggregate definitions and debug names.
     pub hir: &'a Hir,
     /// Source map, used to resolve debug file names and positions.
@@ -160,6 +170,32 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     )?;
     let builder = context.create_builder();
     let constants = Constants::new(&context, &module, &mapper, input.interner);
+    // Globals are declared before any initializer is built, so a relocation may
+    // name a global that appears later in the program. Vtable globals already
+    // exist, because a constant trait object points at one.
+    let values = ConstValues::new(
+        &context,
+        input.hir,
+        &mapper,
+        input.constants,
+        input.interner,
+        input.target.endianness(),
+    );
+    let globals = Globals::declare(
+        &module,
+        input.hir,
+        input.mono,
+        input.constants,
+        &values,
+        input.interner,
+    )?;
+    let pointers = Pointers::new(&context, &constants, &vtables, &globals);
+    globals.initialize(&values, &pointers)?;
+    if let Some(debug) = &debug {
+        for (def, global, ty) in globals.statics() {
+            debug.declare_static(def, global, ty)?;
+        }
+    }
 
     for mono in input.mono.instances().iter() {
         let body = &mono.body;
@@ -184,6 +220,9 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             tcx: input.hir.ty_ctxt(),
             mapper: &mapper,
             constants: &constants,
+            values: &values,
+            pointers: &pointers,
+            globals: &globals,
             functions: &functions,
             vtables: &vtables,
             interner: input.interner,

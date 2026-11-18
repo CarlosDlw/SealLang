@@ -31,10 +31,10 @@ assembly output do not require an entry point; executables do.
    `ConstProgram`. Monomorphization adds the reachable statics and const
    allocations to `MonoProgram` in discovery order, including allocations
    reached only through another static and vtables named by constant values.
-   Code generation reads those lists instead of a source initializer: a `const`
-   use is materialized as its value, a static is one global initialized from its
-   allocation, and a promoted temporary or addressed const becomes a private
-   constant global.
+   Code generation reads those lists instead of a source initializer. Every
+   reachable global is declared after the functions and vtables and before any
+   initializer is built, then all initializers are filled, and only then are
+   bodies lowered; see [Global data](#global-data).
 3. **Debug information.** When requested, a `DISubprogram`, parameter and binding
    variables, aggregate types, and a `DILocation` per statement and terminator
    are emitted alongside the IR.
@@ -250,6 +250,43 @@ The ABI is defined by the language, not by a C header:
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 
+## Global data
+
+`global.rs`, `const_value.rs`, `const_image.rs`, and `relocation.rs` lower
+everything with program lifetime: the first owns the globals, the second encodes
+a value into its memory image, the third turns an image into an LLVM type and
+initializer, and the fourth resolves the pointers inside it.
+
+- A `static` is one global with internal linkage and the exact language
+  alignment. An immutable static is `constant`, so the target places it in
+  read-only data; `static mut` is writable, and a zero-initialized writable
+  static becomes a local common symbol in BSS. There is no `unnamed_addr` on a
+  user static: two statics are distinct addresses even when their values are
+  equal.
+- An addressed `const` and every promoted temporary become one private
+  `constant` global. A `const` read by value has no address in the language, so
+  it is copied from one private, constant value global created on first use and
+  never mutated.
+- A zero-sized `static` or `const` allocation still receives one byte of backing
+  storage, never read or written, so its address is unique. At `-O2` an LLVM
+  pass may remove such a global when nothing observes its address.
+- Every value is encoded as its exact memory image: a byte buffer with one
+  symbolic pointer slot per address it contains. The global's LLVM type is a
+  packed struct of byte runs and pointer fields, so padding, enum tags and
+  payloads, and nested pointers follow `seal-layout` without a type-shaped
+  second emitter. The opaque pointer ABI lets every load, store, and GEP use the
+  language type.
+- Slots are resolved after every global exists, which is what lets a static
+  refer to a static declared later and an allocation refer to itself. A
+  reference is the address of its allocation plus a byte offset, emitted as a
+  constant `getelementptr i8`; a `*str` or `*[T]` is that pointer plus its
+  length; a `*dyn Trait` is the data pointer plus the vtable global collected by
+  monomorphization. `seal-llvm-debug` exposes the constant GEP because inkwell's
+  `PointerValue::const_gep` is `unsafe` and `seal-codegen` forbids unsafe code.
+- Constant data is fully initialized at load time. No `llvm.global_ctors` is
+  emitted, and no static becomes `thread_local`; a program can therefore start
+  without a constructor and keeps the single-threaded global contract.
+
 ## Debug information
 
 `-g` requests `DWARFEmissionKind::Full` with `DWARFSourceLanguage::Rust`:
@@ -269,6 +306,10 @@ The ABI is defined by the language, not by a C header:
   variant's fields; the layout is still exact;
 - pointer and fat-pointer types, including `*str`, `*[T]`, and `*dyn Trait` as
   two-member structs with data and length or vtable metadata;
+- `DW_TAG_variable` with a `DIGlobalVariableExpression` for every reachable
+  static, including a static declared inside a function, attached to the
+  global's `!dbg` metadata. The record is local to the unit, matching the
+  static's internal linkage;
 - array types with their element type, length, size, and alignment;
 - a line-table entry for every statement and terminator, so debuggers stop on
   source lines rather than function boundaries.
@@ -280,8 +321,10 @@ legal recursion.
 LLVM 19 replaced debug intrinsics with debug records. The C API that appends a
 declaration returns a record, not an instruction, and inkwell 0.11 mis-wraps
 that return value. `seal-llvm-debug` is a deliberately tiny crate that calls the
-record API directly and discards the returned handle. It is the only crate that
-permits `unsafe`; every other compiler crate keeps `unsafe_code = "forbid"`.
+record API directly and discards the returned handle. The same crate wraps the
+constant GEP used by global relocations, because inkwell exposes it only as an
+unsafe function. It is the only crate that permits `unsafe`; every other
+compiler crate keeps `unsafe_code = "forbid"`.
 
 ## Defined runtime behavior
 

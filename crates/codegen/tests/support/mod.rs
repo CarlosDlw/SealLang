@@ -147,6 +147,7 @@ pub(crate) fn compile_for_target_with_runtime(
     seal_codegen::emit(
         CodegenInput {
             mono: &mono,
+            constants: &constants,
             hir: &hir,
             source_map: session.source_map(),
             interner: session.interner(),

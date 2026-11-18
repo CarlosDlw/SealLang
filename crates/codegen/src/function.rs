@@ -15,10 +15,13 @@ use seal_span::{SourceMap, Span};
 use seal_symbol::Interner;
 use seal_ty::{Instance, TyCtxt, TyId};
 
+use crate::const_value::ConstValues;
 use crate::constant::Constants;
 use crate::debug::DebugContext;
 use crate::error::CodegenError;
+use crate::global::Globals;
 use crate::names;
+use crate::relocation::Pointers;
 use crate::types::TypeMapper;
 use crate::vtable::Vtables;
 
@@ -42,6 +45,12 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     /// Constants for this module.
     pub(crate) constants: &'a Constants<'a, 'ctx>,
+    /// Constant encoding, including the storage of values read by operand.
+    pub(crate) values: &'a ConstValues<'a, 'ctx>,
+    /// Resolver for the pointers inside constant data.
+    pub(crate) pointers: &'a Pointers<'a, 'ctx>,
+    /// Static and const-allocation storage.
+    pub(crate) globals: &'a Globals<'ctx>,
     /// Declared functions, keyed by instance.
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     /// Emitted vtable globals, keyed by coercion.
@@ -67,6 +76,9 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) tcx: &'a TyCtxt,
     pub(crate) mapper: &'a TypeMapper<'ctx>,
     pub(crate) constants: &'a Constants<'a, 'ctx>,
+    pub(crate) values: &'a ConstValues<'a, 'ctx>,
+    pub(crate) pointers: &'a Pointers<'a, 'ctx>,
+    pub(crate) globals: &'a Globals<'ctx>,
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     pub(crate) vtables: &'a Vtables<'ctx>,
     pub(crate) interner: &'a Interner,
@@ -102,6 +114,9 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             tcx: self.tcx,
             mapper: self.mapper,
             constants: self.constants,
+            values: self.values,
+            pointers: self.pointers,
+            globals: self.globals,
             functions: self.functions,
             vtables: self.vtables,
             interner: self.interner,

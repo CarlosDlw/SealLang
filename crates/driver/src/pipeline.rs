@@ -327,6 +327,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     };
     let codegen_input = CodegenInput {
         mono: &mono,
+        constants: &program,
         hir: &hir,
         source_map: session.source_map(),
         interner: session.interner(),

@@ -84,6 +84,15 @@ impl<'ctx> Vtables<'ctx> {
                 "coercion from `{source_ty:?}` to `{target_ty:?}` is not a trait-object conversion"
             ))
         })?;
+        self.global_for_key(key)
+    }
+
+    /// Resolves the vtable collected for `key`.
+    ///
+    /// Constant trait objects name their table by the concrete type and trait
+    /// reference recorded in the value, which is the same key a coercion
+    /// produces, so both paths share one lookup.
+    pub(crate) fn global_for_key(&self, key: VtableKey) -> Result<GlobalValue<'ctx>, CodegenError> {
         let id = self.ids.get(&key).copied().ok_or_else(|| {
             CodegenError::internal(format!(
                 "monomorphization did not collect a vtable for `{key:?}`"

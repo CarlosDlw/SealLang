@@ -193,12 +193,17 @@ impl<'a> Interpreter<'a> {
                     TyKind::Ref { pointee, .. } => pointee,
                     _ => *target_ty,
                 };
-                let trait_ref = *self.tcx.dyn_trait_refs(dyn_ty).first().ok_or_else(|| {
+                let principal = *self.tcx.dyn_trait_refs(dyn_ty).first().ok_or_else(|| {
                     self.error(
                         EvalErrorKind::Internal("trait object has no principal trait".into()),
                         span,
                     )
                 })?;
+                // The dyn type records its own unsized self type. A vtable key
+                // is always built from the concrete pointee, exactly as a
+                // runtime coercion does, so the constant and the coercion name
+                // the same table.
+                let trait_ref = TraitRef::new(principal.trait_def, concrete, principal.args);
                 let key = TraitObjectKey {
                     concrete,
                     trait_ref,

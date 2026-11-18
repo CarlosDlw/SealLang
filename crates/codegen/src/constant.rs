@@ -6,7 +6,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
 use seal_hash::FxHashMap;
-use seal_symbol::Interner;
+use seal_symbol::{Interner, Symbol};
 
 use crate::error::CodegenError;
 use crate::types::TypeMapper;
@@ -76,6 +76,17 @@ impl<'a, 'ctx> Constants<'a, 'ctx> {
             .borrow_mut()
             .insert(text.to_owned(), (pointer, length));
         Ok((pointer, length))
+    }
+
+    /// Returns the private global for an interned string and its byte length.
+    ///
+    /// Constant encoding names strings by symbol, so it resolves the text here
+    /// instead of repeating the cache lookup at every call site.
+    pub(crate) fn string_pointer(
+        &self,
+        symbol: Symbol,
+    ) -> Result<(PointerValue<'ctx>, IntValue<'ctx>), CodegenError> {
+        self.string_global(self.interner.resolve(symbol))
     }
 
     /// Returns the LLVM value of `constant`.

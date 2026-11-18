@@ -12,11 +12,13 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     pub(crate) fn operand_type(&self, operand: &Operand) -> Result<TyId, CodegenError> {
         Ok(match operand {
             Operand::Copy(place) | Operand::Move(place) => self.place_type(place)?,
-            Operand::Const(def) => {
-                return Err(CodegenError::internal(format!(
-                    "constant operand {def:?} needs constant evaluation"
-                )));
-            }
+            Operand::Const(def) => self
+                .hir
+                .body_of(*def)
+                .and_then(|body| body.ret)
+                .ok_or_else(|| {
+                    CodegenError::internal(format!("constant operand {def:?} has no declared type"))
+                })?,
             Operand::Constant(constant) => match constant {
                 Constant::Int { ty, .. }
                 | Constant::Float { ty, .. }
@@ -35,9 +37,18 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match operand {
             Operand::Constant(constant) => self.constants.emit(constant),
-            Operand::Const(def) => Err(CodegenError::internal(format!(
-                "constant operand {def:?} needs constant evaluation"
-            ))),
+            // A value constant is read from one private global holding its
+            // evaluated memory image, so aggregate constants with relocations
+            // reach the body as ordinary loads of the language type.
+            Operand::Const(def) => {
+                let global = self.values.value_global(self.module, *def, self.pointers)?;
+                let ty = self.mapper.basic(self.operand_type(operand)?)?;
+                self.build(
+                    self.builder
+                        .build_load(ty, global.as_pointer_value(), "constant value"),
+                    "constant load",
+                )
+            }
             Operand::Copy(place) | Operand::Move(place) => {
                 let pointer = self.place_ptr(place)?;
                 let ty = self.mapper.basic(self.place_type(place)?)?;

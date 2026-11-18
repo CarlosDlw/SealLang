@@ -18,7 +18,7 @@ use seal_mir::{
 };
 use seal_span::Span;
 use seal_symbol::Interner;
-use seal_ty::{Instance, TyCtxt, TyId, TyKind, VariantIdx};
+use seal_ty::{Instance, TraitRef, TyCtxt, TyId, TyKind, VariantIdx};
 
 use crate::error::{EvalError, EvalErrorKind};
 use crate::limits::EvalLimits;

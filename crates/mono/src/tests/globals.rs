@@ -109,6 +109,12 @@ fn a_static_trait_object_collects_its_vtable_and_methods() {
     );
     assert_eq!(static_names(&fixture, &hir, &program), ["SQUARE"]);
     assert_eq!(program.vtables().len(), 1);
+    // A constant trait object must key its table on the concrete pointee, the
+    // same way a runtime coercion does, or the emitted global would name a
+    // table the backend cannot resolve.
+    program
+        .validate(&hir)
+        .expect("the constant trait object has a consistent vtable key");
     assert!(
         program
             .vtables()

@@ -7,14 +7,20 @@
 //!
 //! 1. Every monomorphized instance's body is declared as an LLVM function first,
 //!    so calls can target functions declared later. A generic instance appends a
-//!    stable fingerprint of its type arguments to its symbol.
-//! 2. Each body is lowered with stack slots for its locals, explicit projections
+//!    stable fingerprint of its type arguments to its symbol. Vtable globals come
+//!    next, because their slots name functions.
+//! 2. Every reachable static and const allocation is declared, then initialized
+//!    from its evaluated memory image. Declaring before initializing lets a
+//!    global name one that appears later in the program. A `const` read by value
+//!    is copied from a private constant global created on first use.
+//! 3. Each body is lowered with stack slots for its locals, explicit projections
 //!    for fields and dereferences, and one LLVM block per MIR block. Generic
-//!    aggregates get one LLVM struct per instantiation.
-//! 3. DWARF information is emitted alongside the IR when requested: compile unit,
-//!    subroutine and aggregate types, parameters, bindings, and one location per
-//!    statement and terminator.
-//! 4. The module is verified, optimized at the requested level, and emitted.
+//!    aggregates get one LLVM struct per instantiation. A static place is the
+//!    address of its global.
+//! 4. DWARF information is emitted alongside the IR when requested: compile unit,
+//!    subroutine and aggregate types, parameters, bindings, statics, and one
+//!    location per statement and terminator.
+//! 5. The module is verified, optimized at the requested level, and emitted.
 //!    Executables are linked from a temporary object and the embedded C runtime
 //!    archive with the system C toolchain.
 //!
@@ -46,11 +52,14 @@
 mod artifact;
 mod backend;
 mod cast;
+mod const_image;
+mod const_value;
 mod constant;
 mod debug;
 mod entry;
 mod error;
 mod function;
+mod global;
 mod intrinsic;
 mod linker;
 mod names;
@@ -58,6 +67,7 @@ mod operand;
 mod options;
 mod panic;
 mod place;
+mod relocation;
 mod runtime;
 mod rvalue;
 mod trait_object;

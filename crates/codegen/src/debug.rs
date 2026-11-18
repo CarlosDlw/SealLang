@@ -22,7 +22,7 @@ use inkwell::debug_info::{
     DWARFEmissionKind, DWARFSourceLanguage, DebugInfoBuilder,
 };
 use inkwell::module::Module;
-use inkwell::values::PointerValue;
+use inkwell::values::{GlobalValue, PointerValue};
 use seal_def::Definitions;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_mir::{Body, LocalDecl};
@@ -221,6 +221,41 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             location,
             entry,
         );
+        Ok(())
+    }
+
+    /// Declares a program-lifetime static at its global storage.
+    ///
+    /// Every static has internal or private linkage, so its symbol is local to
+    /// the unit. Local statics use the same record: their scope is lexical, but
+    /// their storage and lifetime are still the module's.
+    pub(crate) fn declare_static(
+        &self,
+        def: seal_def::DefId,
+        global: GlobalValue<'ctx>,
+        ty: TyId,
+    ) -> Result<(), CodegenError> {
+        let definition = self.definitions.get(def);
+        let name = self.interner.resolve(definition.name);
+        let linkage = global.get_name().to_str().unwrap_or(name).to_owned();
+        let (file, line, _) = self.definition_location(def);
+        let di_type = self.di_type(ty)?;
+        let align = bits_u32(self.mapper.layout(ty)?.align().max(1) * 8)?;
+        let expression = self.builder.create_global_variable_expression(
+            self.unit.as_debug_info_scope(),
+            name,
+            &linkage,
+            file,
+            line,
+            di_type,
+            true,
+            None,
+            None,
+            align,
+        );
+        // LLVM requires the `!dbg` attachment of a global to be the global
+        // variable expression itself, not a node wrapping it.
+        global.set_metadata(expression.as_metadata_value(self.context), 0);
         Ok(())
     }
 

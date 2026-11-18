@@ -21,6 +21,8 @@ pub(crate) struct Compiled {
     pub(crate) hir: Hir,
     /// Concrete instances reachable from the program's roots.
     pub(crate) mono: MonoProgram,
+    /// Every evaluated constant, static, and allocation.
+    pub(crate) constants: seal_const_eval::ConstProgram,
     /// Whole-program aliasing facts.
     pub(crate) facts: AliasingFacts,
     /// The primary source file.
@@ -80,6 +82,7 @@ pub(crate) fn front_end(source: &str) -> Compiled {
         session,
         hir,
         mono,
+        constants,
         facts,
         file,
     }
@@ -172,6 +175,34 @@ pub(crate) fn build_module<'ctx>(
     let builder = context.create_builder();
     let constants =
         crate::constant::Constants::new(context, &module, &mapper, compiled.session.interner());
+    let values = crate::const_value::ConstValues::new(
+        context,
+        &compiled.hir,
+        &mapper,
+        &compiled.constants,
+        compiled.session.interner(),
+        compiled.session.target().endianness(),
+    );
+    let globals = crate::global::Globals::declare(
+        &module,
+        &compiled.hir,
+        &compiled.mono,
+        &compiled.constants,
+        &values,
+        compiled.session.interner(),
+    )
+    .expect("globals declare");
+    let pointers = crate::relocation::Pointers::new(context, &constants, &vtables, &globals);
+    globals
+        .initialize(&values, &pointers)
+        .expect("globals initialize");
+    if let Some(debug) = &debug {
+        for (def, global, ty) in globals.statics() {
+            debug
+                .declare_static(def, global, ty)
+                .expect("a static is described");
+        }
+    }
     for mono in compiled.mono.instances().iter() {
         let scope = debug.as_ref().map(|debug| {
             let name =
@@ -194,6 +225,9 @@ pub(crate) fn build_module<'ctx>(
             tcx: compiled.hir.ty_ctxt(),
             mapper: &mapper,
             constants: &constants,
+            values: &values,
+            pointers: &pointers,
+            globals: &globals,
             functions: &functions,
             vtables: &vtables,
             interner: compiled.session.interner(),

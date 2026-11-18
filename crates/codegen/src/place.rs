@@ -10,15 +10,27 @@ use crate::function::FunctionLowerer;
 impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     /// Computes the address of `place`, projecting through fields and shared
     /// references.
+    ///
+    /// A local root is a stack slot and a static root is the address of its
+    /// global. A const root never reaches code generation: MIR materializes it
+    /// into a temporary, so a const root here is an invariant violation.
     pub(crate) fn place_ptr(&self, place: &Place) -> Result<PointerValue<'ctx>, CodegenError> {
-        let Some(local) = place.local_id() else {
-            return Err(CodegenError::internal(format!(
-                "place rooted at {:?} has no local allocation",
-                place.root
-            )));
+        let (mut pointer, mut ty) = match place.root {
+            seal_mir::PlaceRoot::Local(local) => (self.alloca(local), self.local_type(local)),
+            seal_mir::PlaceRoot::Static(def) => {
+                let ty = self.globals.static_type(def).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "static {def:?} has no declared global during code generation"
+                    ))
+                })?;
+                (self.globals.static_pointer(def)?, ty)
+            }
+            seal_mir::PlaceRoot::Const(def) => {
+                return Err(CodegenError::internal(format!(
+                    "place rooted at const {def:?} was not materialized into a temporary"
+                )));
+            }
         };
-        let mut pointer = self.alloca(local);
-        let mut ty = self.local_type(local);
         for projection in &place.projections {
             match projection {
                 Projection::Deref => {
@@ -235,7 +247,15 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     pub(crate) fn place_type(&self, place: &Place) -> Result<TyId, CodegenError> {
         let mut ty = match place.root {
             seal_mir::PlaceRoot::Local(local) => self.local_type(local),
-            seal_mir::PlaceRoot::Static(def) | seal_mir::PlaceRoot::Const(def) => self
+            // A static's storage is the authoritative source of its type, so a
+            // missing global is an invariant violation. A const root still
+            // resolves through HIR even though MIR should have materialized it.
+            seal_mir::PlaceRoot::Static(def) => self.globals.static_type(def).ok_or_else(|| {
+                CodegenError::internal(format!(
+                    "static {def:?} has no declared global during code generation"
+                ))
+            })?,
+            seal_mir::PlaceRoot::Const(def) => self
                 .hir
                 .body_of(def)
                 .and_then(|body| body.ret)
