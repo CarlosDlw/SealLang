@@ -7,6 +7,7 @@ use seal_ty::{RefKind, TyId, TyKind};
 
 use super::flow::Flow;
 use super::{Checker, PlaceMode};
+use crate::results::Coercion;
 
 impl Checker<'_> {
     /// Types `&place` as `*T` and `&mut place` as `*mut T`, where `T` is the
@@ -23,6 +24,7 @@ impl Checker<'_> {
     /// declared `mut`, or a place whose last dereference is `*mut T`.
     pub(super) fn check_borrow(
         &mut self,
+        expr: HirExprId,
         operand: HirExprId,
         kind: RefKind,
         expected: Option<TyId>,
@@ -44,6 +46,9 @@ impl Checker<'_> {
 
         if self.is_error(ty) {
             return ty;
+        }
+        if matches!(self.hir.ty_ctxt().kind(ty), TyKind::Dyn { .. }) {
+            return self.check_dynamic_borrow(expr, operand, kind, ty);
         }
         if !self.is_sized(ty) && !matches!(self.hir.ty_ctxt().kind(ty), TyKind::Str) {
             self.error(
@@ -78,6 +83,54 @@ impl Checker<'_> {
             return expected;
         }
         reference
+    }
+
+    /// Reborrows a dyn place reached through a trait-object pointer.
+    ///
+    /// The new reference copies the data and vtable pair. It never creates a new
+    /// vtable or inspects the concrete type, so the coercion records the source
+    /// pointer type for later lowering.
+    fn check_dynamic_borrow(
+        &mut self,
+        expr: HirExprId,
+        operand: HirExprId,
+        kind: RefKind,
+        object: TyId,
+    ) -> TyId {
+        let Some((pointer_ty, pointer_kind)) = self.dyn_pointer_source(operand) else {
+            self.error(
+                codes::E3024,
+                self.hir.expr(operand).span,
+                "cannot borrow a bare trait-object place",
+            )
+            .help("borrow through a trait-object pointer, as in `&*pointer`")
+            .emit();
+            return self.error_ty();
+        };
+        if kind.is_exclusive() && !pointer_kind.is_exclusive() {
+            self.report_mutable_borrow(operand);
+            return self.error_ty();
+        }
+        let target = self.ref_ty(kind, object);
+        self.results.record_coercion(
+            expr,
+            Coercion::TraitObjectReborrow {
+                source: pointer_ty,
+                target,
+            },
+        );
+        target
+    }
+
+    /// Returns the pointer type and kind behind `*pointer`, when the pointer
+    /// reaches a trait object.
+    fn dyn_pointer_source(&self, operand: HirExprId) -> Option<(TyId, RefKind)> {
+        let ExprKind::Deref { operand: pointer } = self.hir.expr(operand).kind else {
+            return None;
+        };
+        let pointer_ty = self.results.expr_ty(pointer)?;
+        let (kind, pointee) = self.hir.ty_ctxt().ref_parts(pointer_ty)?;
+        matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Dyn { .. }).then_some((pointer_ty, kind))
     }
 
     /// Returns `true` when `operand` names a place an exclusive borrow may

@@ -16,6 +16,7 @@ use seal_ty::{RefKind, TyId, TyKind};
 
 use super::Checker;
 use super::PlaceMode;
+use super::dynamic::DynamicCall;
 use super::flow::Flow;
 use super::trait_solver::match_type;
 use crate::results::{MethodKind, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace};
@@ -53,6 +54,23 @@ impl Checker<'_> {
         // moved or borrowed, so typing it must not read a non-`Copy` pointee.
         let receiver_ty = self.infer_expr_mode(receiver, None, flow, PlaceMode::Borrow);
         let receiver_place = self.results.place(receiver).cloned();
+
+        if let Some(ty) = self.check_dynamic_method_call(
+            DynamicCall {
+                expr,
+                receiver,
+                receiver_ty,
+                name,
+                name_span,
+                generic_args,
+                args,
+                span,
+                expected,
+            },
+            flow,
+        ) {
+            return ty;
+        }
 
         let target = match self.user_method_target(receiver_ty, name, name_span) {
             UserLookup::NotAStruct => None,
@@ -462,7 +480,7 @@ impl Checker<'_> {
         }
     }
 
-    fn report_associated_as_method(&self, base: TyId, name: Symbol, span: Span) {
+    pub(super) fn report_associated_as_method(&self, base: TyId, name: Symbol, span: Span) {
         self.error(
             codes::E2019,
             span,
@@ -479,7 +497,7 @@ impl Checker<'_> {
         .emit();
     }
 
-    fn report_ambiguous_trait_method(
+    pub(super) fn report_ambiguous_trait_method(
         &self,
         base: TyId,
         name: Symbol,
@@ -749,7 +767,7 @@ impl Checker<'_> {
         ret_ty
     }
 
-    fn method_type_arguments(
+    pub(super) fn method_type_arguments(
         &mut self,
         generic_args: Option<seal_ty::SubstsId>,
         expected: usize,
@@ -1019,7 +1037,7 @@ impl Checker<'_> {
         }
     }
 
-    fn report_missing_method(&self, receiver_ty: TyId, name: Symbol, span: Span) {
+    pub(super) fn report_missing_method(&self, receiver_ty: TyId, name: Symbol, span: Span) {
         let name = self.interner.resolve(name);
         self.error(
             codes::E3027,
@@ -1150,7 +1168,7 @@ struct BoundCall<'a> {
     expected: Option<TyId>,
 }
 
-fn trait_receiver_kind(receiver: seal_ty::TraitMethodReceiver) -> ReceiverKind {
+pub(super) fn trait_receiver_kind(receiver: seal_ty::TraitMethodReceiver) -> ReceiverKind {
     match receiver.reference {
         None => ReceiverKind::Value,
         Some(RefKind::Shared) => ReceiverKind::Shared,

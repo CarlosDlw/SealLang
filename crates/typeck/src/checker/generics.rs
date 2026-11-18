@@ -22,6 +22,54 @@ pub(super) struct Instantiated {
 }
 
 impl Checker<'_> {
+    /// Checks the own type arguments of every declared trait reference.
+    ///
+    /// Bounds and impl headers are declarations, not values, so `storage_ty`
+    /// never sees their arguments. A trait argument still has to be `Sized`: an
+    /// unsized argument could not be instantiated by any implementor and would
+    /// produce an unusable trait reference.
+    pub(super) fn validate_bound_arguments(&mut self) {
+        for (definition, data) in self.hir.definitions().iter_enumerated() {
+            let Some(generics) = self.hir.generics(definition) else {
+                continue;
+            };
+            for parameter in generics.params {
+                for bound in &parameter.bounds {
+                    let Bound::Trait(trait_ref) = bound else {
+                        continue;
+                    };
+                    self.validate_trait_argument_sizes(*trait_ref, data.span);
+                }
+            }
+        }
+        for implementation in self.hir.trait_impls() {
+            let span = self.hir.definitions().get(implementation.def).span;
+            self.validate_trait_argument_sizes(implementation.trait_ref, span);
+        }
+        for (definition, data) in self.hir.definitions().iter_enumerated() {
+            if data.kind != DefKind::Trait {
+                continue;
+            }
+            let Some(trait_definition) = self.hir.trait_definition(definition) else {
+                continue;
+            };
+            for supertrait in &trait_definition.supertraits {
+                self.validate_trait_argument_sizes(*supertrait, data.span);
+            }
+        }
+    }
+
+    fn validate_trait_argument_sizes(&mut self, trait_ref: TraitRef, span: Span) {
+        if !self.validated_trait_arguments.insert(trait_ref) {
+            return;
+        }
+        for argument in self.hir.ty_ctxt().substs_args(trait_ref.args) {
+            if !self.is_error(argument) && !self.is_sized(argument) {
+                self.report_unsized(span, argument, "trait argument");
+            }
+        }
+    }
+
     /// Creates one type argument for each visible parameter.
     ///
     /// Parameters already bound by an impl header use the matched type.
@@ -181,6 +229,13 @@ impl Checker<'_> {
         let mut valid = true;
         for (parameter, argument) in generics.iter().zip(&resolved) {
             if self.is_error(*argument) {
+                continue;
+            }
+            // A trait's implicit `Self` may be a trait object: the object type
+            // is unsized by construction and dispatch never stores it by value.
+            if !parameter.is_self && !self.is_sized(*argument) {
+                self.report_unsized(span, *argument, "type argument");
+                valid = false;
                 continue;
             }
             for bound in &parameter.bounds {

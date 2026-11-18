@@ -672,8 +672,9 @@ pub const E2024: ErrorCode = ErrorCode {
     explanation: "\
 An implementation must reproduce every method signature exactly: the same
 receiver kind, the same parameter types in the same order, and the same return
-type. Seal has no overloading and no implicit conversions, so a mismatch would
-make the trait's guarantee untrue for one implementor.\n\nIn the trait, write the implementing type as `Self`; in the impl, write the
+type. Seal has no overloading and no implicit conversions between method
+parameter types, so a mismatch would make the trait's guarantee untrue for one
+implementor.\n\nIn the trait, write the implementing type as `Self`; in the impl, write the
 concrete struct name. Adjust the receiver or the parameter and return types to
 match the declaration.",
 };
@@ -1122,9 +1123,11 @@ pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
     title: "mismatched types",
     explanation: "\
-Seal has no implicit conversions: the type an expression has must be exactly the
-type its context requires. This applies to initializers, assignments, arguments,
-returns, conditions, and the two branches of an `if`.
+Seal has one implicit conversion: a thin pointer to a sized concrete value may
+become a trait-object pointer of the same reference kind. Apart from that, the
+type an expression has must be exactly the type its context requires. This
+applies to initializers, assignments, arguments, returns, conditions, and the
+two branches of an `if`.
 
 A literal takes the type its context requires when that type is compatible, so
 `let x: i64 = 1;` is accepted, while `let x: i64 = 1i32;` is not: the suffix

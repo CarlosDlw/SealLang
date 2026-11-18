@@ -821,6 +821,9 @@ impl<'a> BodyLowering<'a> {
                 (function, false)
             }
             MethodKind::TraitBound { method, .. } => (method, true),
+            MethodKind::Dynamic { .. } => {
+                panic!("dynamic dispatch lowering is not implemented; this is a compiler bug")
+            }
         };
         let receiver_argument = match resolved.receiver_adjust {
             ReceiverAdjust::None => self.lower_operand(receiver),

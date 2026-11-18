@@ -3,6 +3,7 @@
 mod arrays;
 mod borrows;
 mod calls;
+mod dyn_types;
 mod enums;
 mod examples;
 mod flow;

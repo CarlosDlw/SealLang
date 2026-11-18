@@ -26,16 +26,15 @@ pub(super) fn check_block(
     let tail = checker.hir.block(block).tail;
     let ty = match tail {
         Some(tail) => {
-            let found = checker.infer_expr(tail, expected, &mut flow);
             if let Some(expected) = expected {
-                checker.mismatch(checker.hir.expr(tail).span, expected, found);
+                let found = checker.check_expr_against(tail, expected, &mut flow);
                 if !checker.is_compatible(expected, found) {
                     checker.error_ty()
                 } else {
                     found
                 }
             } else {
-                found
+                checker.infer_expr(tail, None, &mut flow)
             }
         }
         None if flow.diverges => checker.never(),

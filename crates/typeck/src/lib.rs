@@ -13,11 +13,13 @@
 //! compatible; otherwise they fall back to `i32` and `f64`. Suffixed literals
 //! take their suffix, and an out-of-range literal is `E3009`.
 //!
-//! There are no implicit conversions: two distinct scalar types never match
-//! (decision D12 of the memory model). `!` is the only type that fits any
-//! expected type, because an expression of type `!` never produces a value.
-//! Conditions must be `bool`, values stored in locals, parameters, and return
-//! positions must be `Sized`, and assignments require a mutable local.
+//! There is one implicit conversion: a thin pointer to a concrete value may
+//! coerce to a trait-object pointer at a coercion site. Two distinct scalar
+//! types never match (decision D12 of the memory model), and `!` is the only
+//! type that fits any expected type because an expression of type `!` never
+//! produces a value. Conditions must be `bool`, values stored in locals,
+//! parameters, and return positions must be `Sized`, and assignments require a
+//! mutable local.
 //!
 //! # Definite initialization
 //!
@@ -43,8 +45,8 @@ mod results;
 mod tests;
 
 pub use results::{
-    MethodKind, PlaceProjection, ReceiverAdjust, ReceiverForm, ResolvedMethod, ResolvedPlace,
-    Signature, TypeckResults,
+    Coercion, MethodKind, PlaceProjection, ReceiverAdjust, ReceiverForm, ResolvedMethod,
+    ResolvedPlace, Signature, TypeckResults,
 };
 
 use seal_diagnostics::DiagCtxt;

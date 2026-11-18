@@ -2,6 +2,8 @@
 
 mod borrow;
 mod call;
+mod coerce;
+mod dynamic;
 mod exhaustive;
 mod expr;
 mod flow;
@@ -54,6 +56,10 @@ pub(crate) struct Checker<'a> {
     pub(super) infer: InferCtxt,
     pub(super) env: ParamEnv,
     pub(super) proof_cache: FxHashMap<TraitRef, trait_solver::Proof>,
+    /// Trait references whose own type arguments have been checked for
+    /// `Sized` storage. Impl methods share their impl's parameters, so a
+    /// reference may be validated more than once without repeating errors.
+    pub(super) validated_trait_arguments: FxHashSet<TraitRef>,
     /// The definition whose body is being checked, for its generic scope.
     pub(super) owner: Option<DefId>,
     pub(super) ret: TyId,
@@ -86,10 +92,12 @@ impl<'a> Checker<'a> {
             infer: InferCtxt::new(),
             env: ParamEnv::new(),
             proof_cache: FxHashMap::default(),
+            validated_trait_arguments: FxHashSet::default(),
             owner: None,
             ret: unit,
             guard_moves: None,
         };
+        checker.validate_bound_arguments();
         checker.build_signatures();
         checker
     }

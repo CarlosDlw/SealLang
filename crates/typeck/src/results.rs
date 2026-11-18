@@ -3,8 +3,9 @@
 use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
+use seal_layout::VtableSlot;
 use seal_methods::MethodId;
-use seal_ty::{GenericParamDef, Instance, PathElem, RefKind, TyId};
+use seal_ty::{GenericParamDef, Instance, PathElem, RefKind, TraitRef, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -94,6 +95,29 @@ impl ResolvedPlace {
     }
 }
 
+/// One implicit conversion selected by type checking.
+///
+/// A coercion is recorded on the expression that produces the converted value;
+/// later phases lower it explicitly instead of re-inferring why the source and
+/// target types differ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Coercion {
+    /// A thin pointer to a concrete value becomes a fat trait-object pointer.
+    TraitObject {
+        /// The pointer type before the coercion.
+        source: TyId,
+        /// The trait-object pointer type after the coercion.
+        target: TyId,
+    },
+    /// A trait-object pointer is reborrowed, copying its data and vtable pair.
+    TraitObjectReborrow {
+        /// The source pointer type.
+        source: TyId,
+        /// The resulting reference type.
+        target: TyId,
+    },
+}
+
 /// How a method receives its receiver at the MIR level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiverForm {
@@ -138,6 +162,21 @@ pub enum MethodKind {
         trait_def: DefId,
         /// The trait method declaration.
         method: DefId,
+        /// How the trait method declares its receiver.
+        receiver: ReceiverKind,
+    },
+    /// A method dispatched through a trait-object vtable.
+    ///
+    /// `object_trait_ref` is the receiver's principal trait, not the trait that
+    /// declares the method. It validates the receiver and selects the slot from
+    /// that principal vtable; the vtable pointer travels inside the receiver.
+    Dynamic {
+        /// The receiver's principal trait reference.
+        object_trait_ref: TraitRef,
+        /// The trait method declaration.
+        method: DefId,
+        /// The method's slot in the principal vtable.
+        slot: VtableSlot,
         /// How the trait method declares its receiver.
         receiver: ReceiverKind,
     },
@@ -210,6 +249,7 @@ pub struct TypeckResults {
     places: FxHashMap<HirExprId, ResolvedPlace>,
     methods: FxHashMap<HirExprId, ResolvedMethod>,
     instantiations: FxHashMap<HirExprId, Instance>,
+    coercions: FxHashMap<HirExprId, Coercion>,
 }
 
 impl TypeckResults {
@@ -243,6 +283,11 @@ impl TypeckResults {
         self.instantiations.get(&expr).copied()
     }
 
+    /// Returns the implicit conversion applied to `expr`, if any.
+    pub fn coercion(&self, expr: HirExprId) -> Option<Coercion> {
+        self.coercions.get(&expr).copied()
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -256,6 +301,7 @@ impl TypeckResults {
             places: FxHashMap::default(),
             methods: FxHashMap::default(),
             instantiations: FxHashMap::default(),
+            coercions: FxHashMap::default(),
         }
     }
 
@@ -281,5 +327,9 @@ impl TypeckResults {
 
     pub(crate) fn record_instantiation(&mut self, expr: HirExprId, instance: Instance) {
         self.instantiations.insert(expr, instance);
+    }
+
+    pub(crate) fn record_coercion(&mut self, expr: HirExprId, coercion: Coercion) {
+        self.coercions.insert(expr, coercion);
     }
 }

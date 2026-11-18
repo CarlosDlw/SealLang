@@ -97,9 +97,11 @@ allowed to depend only on crates below it in the list.
     exactly when their IDs are equal; the arena never holds two equal kinds, and
     comparing two types never walks the structure.
 18. **Unification is sound.** Only inference variables are bound, every binding
-    passes an occurs check, and no implicit conversion exists: distinct scalar
-    types never unify. `Error` is the only type that absorbs another, and it is
-    only built after a diagnostic was reported.
+    passes an occurs check, and distinct scalar types never unify. The only
+    implicit conversion is trait-object pointer unsizing, selected at an
+    expected-type boundary and recorded on the expression. `Error` is the only
+    type that absorbs another, and it is only built after a diagnostic was
+    reported.
 19. **Memory classification is derived.** `Copy`, `Sized`, and `Drop` are
     queries over the interned type, never flags stored beside it, so they cannot
     contradict the type or the memory model.
@@ -131,10 +133,12 @@ allowed to depend only on crates below it in the list.
     a `for` pattern is scoped to its body, an `if let` pattern is scoped to its
     then block and never its else branch, and a `while let` pattern is scoped to
     the loop body.
-27. **Types are assigned without coercion.** Checked types are exactly equal, or
-    one side is `!`/`Error`; there is no implicit numeric conversion (D12). A
-    literal adopts the expected type only when that type belongs to the same
-    numeric family, and a suffix always wins.
+27. **Types are assigned under one coercion rule.** Checked types are exactly
+    equal, or one side is `!`/`Error`, or a thin pointer to a sized concrete
+    value coerces to a trait-object pointer of the same reference kind. There is
+    no implicit numeric conversion (D12). A literal adopts the expected type
+    only when that type belongs to the same numeric family, and a suffix always
+    wins.
 28. **Every value expression has a type.** The results map covers every HIR
     expression except the callee of a valid call, which is not a value because
     the language has no first-class function type. Every local has a type and

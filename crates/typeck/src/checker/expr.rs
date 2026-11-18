@@ -40,9 +40,11 @@ struct VariantLiteral<'a> {
 
 impl Checker<'_> {
     /// Checks `expr` against `expected`, reporting a mismatch at the expression.
+    ///
+    /// Every expected-type boundary routes through here, so a trait-object
+    /// coercion is selected exactly once and recorded on the expression.
     pub(super) fn check_expr(&mut self, expr: HirExprId, expected: TyId, flow: &mut Flow) {
-        let found = self.infer_expr(expr, Some(expected), flow);
-        self.mismatch(self.hir.expr(expr).span, expected, found);
+        self.check_expr_against(expr, expected, flow);
     }
 
     /// Computes the type of `expr`, using `expected` as a hint where it changes
@@ -98,7 +100,9 @@ impl Checker<'_> {
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
             ExprKind::Path { res, .. } => self.check_path(expr, res, span, flow, mode),
-            ExprKind::Borrow { operand, kind } => self.check_borrow(operand, kind, expected, flow),
+            ExprKind::Borrow { operand, kind } => {
+                self.check_borrow(expr, operand, kind, expected, flow)
+            }
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
                 let deref = self.reference_kind(operand);
@@ -522,7 +526,10 @@ impl Checker<'_> {
         }
 
         let element_expected = expected_parts.map(|(element, _)| element);
-        let first = self.infer_expr(elements[0], element_expected, flow);
+        let first = match element_expected {
+            Some(expected) => self.check_expr_against(elements[0], expected, flow),
+            None => self.infer_expr(elements[0], None, flow),
+        };
         let element_ty = element_expected.unwrap_or(first);
         for element in &elements[1..] {
             self.check_expr(*element, element_ty, flow);
@@ -552,7 +559,10 @@ impl Checker<'_> {
     ) -> TyId {
         let expected_parts = expected.and_then(|ty| self.array_parts(ty));
         let element_expected = expected_parts.map(|(element, _)| element);
-        let value_ty = self.infer_expr(value, element_expected, flow);
+        let value_ty = match element_expected {
+            Some(expected) => self.check_expr_against(value, expected, flow),
+            None => self.infer_expr(value, None, flow),
+        };
         if !self.is_error(value_ty) && !self.is_copy(value_ty) {
             self.error(
                 seal_error_codes::E3020,
