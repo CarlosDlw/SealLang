@@ -12,13 +12,58 @@
 
 use std::collections::VecDeque;
 
+use seal_const_eval::{AllocId, AllocSource, ConstProgram, ConstValue};
 use seal_def::DefId;
-use seal_hash::FxHashSet;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_mir::{
-    Body, LocalId, LocalKind, Operand, Place, Projection, Rvalue, Statement, StatementKind,
+    Body, LocalId, LocalKind, Operand, Place, PlaceRoot, Projection, Rvalue, Statement,
+    StatementKind,
 };
 use seal_ty::{TyId, TyKind};
+
+/// Locals that hold a materialized constant value.
+///
+/// Lowering gives a const place no root of its own: it assigns the evaluated
+/// value to a fresh temporary. Recording that binding lets a borrow of the
+/// temporary name the const's program-lifetime allocation instead of frame
+/// storage that dies with the function.
+pub(crate) type ConstLocals = FxHashMap<LocalId, DefId>;
+
+/// Returns the locals that are assigned exactly once, from `Operand::Const`.
+///
+/// A local written by anything else is omitted: it may hold an ordinary value,
+/// so treating its storage as global would hide a dangling reference.
+pub(crate) fn const_locals(body: &Body) -> ConstLocals {
+    let mut constants = ConstLocals::default();
+    let mut shadowed = FxHashSet::default();
+    for block in body.blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign { place, rvalue } = &statement.kind;
+            let PlaceRoot::Local(local) = place.root else {
+                continue;
+            };
+            // A source `let` binding is frame storage even when its value came
+            // from a const; only a compiler materialization is program lifetime.
+            if body.local(local).kind != LocalKind::Temp {
+                continue;
+            }
+            if shadowed.contains(&local) {
+                continue;
+            }
+            if place.projections.is_empty()
+                && let Rvalue::Use(Operand::Const(def)) = rvalue
+                && !constants.contains_key(&local)
+            {
+                constants.insert(local, *def);
+                continue;
+            }
+            shadowed.insert(local);
+            constants.remove(&local);
+        }
+    }
+    constants
+}
 
 /// One owned-storage component below a local.
 ///
@@ -35,10 +80,10 @@ pub(crate) enum StorageField {
 
 /// A storage location a reference may point at.
 ///
-/// A key either names storage this frame owns (`Frame`) or the pointee of a
-/// reference whose target lies outside the frame (`Pointee`). The two never
-/// overlap: a local's own storage and the data its reference points at are
-/// different allocations.
+/// A key names frame storage (`Frame`), the pointee of a reference whose target
+/// lies outside the frame (`Pointee`), or the allocation of a global item
+/// (`Static`, `Const`). The variants never overlap: a local's storage, a
+/// pointer's target, and a global allocation are distinct places.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum StorageKey {
     /// Storage of a local path in this frame.
@@ -53,6 +98,20 @@ pub(crate) enum StorageKey {
         /// The reference local that names the storage.
         local: LocalId,
         /// The field path below the pointee.
+        fields: Vec<StorageField>,
+    },
+    /// The program-lifetime allocation of a static.
+    Static {
+        /// The static definition.
+        def: DefId,
+        /// The field path below the static; empty for the whole allocation.
+        fields: Vec<StorageField>,
+    },
+    /// The program-lifetime allocation of an addressed const or promotion.
+    Const {
+        /// The const definition, or the definition owning a promotion.
+        def: DefId,
+        /// The field path below the allocation; empty for the whole value.
         fields: Vec<StorageField>,
     },
 }
@@ -92,6 +151,33 @@ impl OriginSet {
         let mut set = Self::default();
         set.insert(StorageKey::Frame { local, fields });
         set
+    }
+
+    fn global(key: StorageKey) -> Self {
+        let mut set = Self::default();
+        set.insert(key);
+        set
+    }
+
+    /// Returns the static and const allocations this set may name.
+    pub(crate) fn globals(&self) -> impl Iterator<Item = StorageKey> + '_ {
+        self.keys.iter().filter_map(|key| match key {
+            StorageKey::Static { .. } | StorageKey::Const { .. } => Some(key.clone()),
+            StorageKey::Frame { .. } | StorageKey::Pointee { .. } => None,
+        })
+    }
+
+    /// Returns `true` when every known target is a static or const allocation.
+    ///
+    /// Such a reference outlives the frame. An unknown target does not qualify:
+    /// it may still name frame storage.
+    pub(crate) fn only_globals(&self) -> bool {
+        !self.unknown
+            && !self.keys.is_empty()
+            && self
+                .keys
+                .iter()
+                .all(|key| matches!(key, StorageKey::Static { .. } | StorageKey::Const { .. }))
     }
 
     /// Returns `true` when the set names no storage at all.
@@ -220,7 +306,12 @@ pub(crate) struct Origins {
 /// A reference parameter starts by naming its own pointee, which is storage
 /// outside this frame. Every other local starts empty; definite initialization
 /// guarantees it is assigned before it is read.
-pub(crate) fn analyze(hir: &Hir, body: &Body) -> Origins {
+pub(crate) fn analyze(
+    hir: &Hir,
+    body: &Body,
+    program: Option<&ConstProgram>,
+    const_locals: &ConstLocals,
+) -> Origins {
     let local_count = body.locals.len();
     let mut entry = OriginState::new(local_count);
     for (local, declaration) in body.locals.iter_enumerated() {
@@ -240,7 +331,7 @@ pub(crate) fn analyze(hir: &Hir, body: &Body) -> Origins {
             .clone()
             .expect("a queued block has an incoming state");
         for statement in &body.block(block).statements {
-            transfer(hir, body, statement, &mut state);
+            transfer(hir, body, program, const_locals, statement, &mut state);
         }
         for successor in body.block(block).terminator.kind.successors() {
             let slot = &mut in_states[successor.index() as usize];
@@ -266,7 +357,7 @@ pub(crate) fn analyze(hir: &Hir, body: &Body) -> Origins {
         let mut row = Vec::with_capacity(block.statements.len());
         for statement in &block.statements {
             row.push(state.clone());
-            transfer(hir, body, statement, &mut state);
+            transfer(hir, body, program, const_locals, statement, &mut state);
         }
         before.push(row);
         exit.push(state);
@@ -276,7 +367,14 @@ pub(crate) fn analyze(hir: &Hir, body: &Body) -> Origins {
 }
 
 /// Applies one statement to the may-name state.
-fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginState) {
+fn transfer(
+    hir: &Hir,
+    body: &Body,
+    program: Option<&ConstProgram>,
+    const_locals: &ConstLocals,
+    statement: &Statement,
+    state: &mut OriginState,
+) {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
     if place.is_deref() {
         return;
@@ -289,7 +387,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
         Rvalue::Ref {
             place: borrowed, ..
         } => {
-            let origins = keys_of(state, borrowed);
+            let origins = keys_of(state, borrowed, const_locals);
             state.assign(place, origins);
         }
         Rvalue::SliceRef { base, .. } => {
@@ -301,11 +399,11 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             } else {
                 base.clone()
             };
-            let origins = keys_of(state, &effective);
+            let origins = keys_of(state, &effective, const_locals);
             state.assign(place, origins);
         }
         Rvalue::MakeTraitObject { source, .. } => {
-            let origins = operand_origins(hir, body, state, source);
+            let origins = operand_origins(hir, body, program, state, source);
             if destination_holds_references {
                 state.assign(place, origins);
             } else {
@@ -315,14 +413,14 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
         Rvalue::TraitObjectReborrow {
             place: borrowed, ..
         } => {
-            let origins = keys_of(state, borrowed);
+            let origins = keys_of(state, borrowed, const_locals);
             state.assign(place, origins);
         }
         Rvalue::DynamicCall { receiver, args, .. } => {
             if destination_holds_references {
-                let mut origins = operand_origins(hir, body, state, receiver);
+                let mut origins = operand_origins(hir, body, program, state, receiver);
                 for arg in args {
-                    origins.extend(&operand_origins(hir, body, state, arg));
+                    origins.extend(&operand_origins(hir, body, program, state, arg));
                 }
                 state.assign(place, origins);
             } else {
@@ -331,7 +429,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
         }
         Rvalue::Len { .. } | Rvalue::Discriminant(_) | Rvalue::Cast { .. } => state.clear(place),
         Rvalue::Use(operand) => {
-            let origins = operand_origins(hir, body, state, operand);
+            let origins = operand_origins(hir, body, program, state, operand);
             if let Some(source) = operand.place()
                 && matches!(operand, Operand::Move(_))
             {
@@ -347,7 +445,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             if destination_holds_references {
                 let mut origins = OriginSet::default();
                 for arg in args {
-                    origins.extend(&operand_origins(hir, body, state, arg));
+                    origins.extend(&operand_origins(hir, body, program, state, arg));
                 }
                 state.assign(place, origins);
             } else {
@@ -358,7 +456,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             state.clear(place);
             if destination_holds_references {
                 for (field, operand) in fields {
-                    let origins = operand_origins(hir, body, state, operand);
+                    let origins = operand_origins(hir, body, program, state, operand);
                     if !origins.is_empty() {
                         state.assign(&place.clone().field(*field), origins);
                     }
@@ -369,7 +467,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             state.clear(place);
             if destination_holds_references {
                 for (index, operand) in elements.iter().enumerate() {
-                    let origins = operand_origins(hir, body, state, operand);
+                    let origins = operand_origins(hir, body, program, state, operand);
                     if !origins.is_empty() {
                         state.assign(&place.clone().tuple_field(index as u32), origins);
                     }
@@ -381,13 +479,13 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
             if destination_holds_references {
                 let mut origins = OriginSet::default();
                 for operand in elements {
-                    origins.extend(&operand_origins(hir, body, state, operand));
+                    origins.extend(&operand_origins(hir, body, program, state, operand));
                 }
                 state.assign(place, origins);
             }
         }
         Rvalue::Repeat { value, .. } => {
-            let origins = operand_origins(hir, body, state, value);
+            let origins = operand_origins(hir, body, program, state, value);
             if destination_holds_references {
                 state.assign(place, origins);
             } else {
@@ -401,10 +499,33 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
 }
 
 /// Returns the storage the reference held by `operand` may name.
-fn operand_origins(hir: &Hir, body: &Body, state: &OriginState, operand: &Operand) -> OriginSet {
+fn operand_origins(
+    hir: &Hir,
+    body: &Body,
+    program: Option<&ConstProgram>,
+    state: &OriginState,
+    operand: &Operand,
+) -> OriginSet {
+    if let Operand::Const(def) = operand {
+        return match program.and_then(|program| program.value(*def).map(|value| (program, value))) {
+            Some((program, value)) => value_origins(program, value),
+            None => OriginSet::unknown(),
+        };
+    }
     let Some(place) = operand.place() else {
         return OriginSet::default();
     };
+    if let PlaceRoot::Static(def) | PlaceRoot::Const(def) = place.root
+        && matches!(
+            hir.ty_ctxt().kind(place_ty(hir, body, &place)),
+            TyKind::Ref { .. }
+        )
+    {
+        return match program.and_then(|program| program.value(def).map(|value| (program, value))) {
+            Some((program, value)) => value_origins(program, value),
+            None => OriginSet::unknown(),
+        };
+    }
     if !matches!(
         hir.ty_ctxt().kind(place_ty(hir, body, &place)),
         TyKind::Ref { .. }
@@ -423,21 +544,89 @@ fn operand_origins(hir: &Hir, body: &Body, state: &OriginState, operand: &Operan
     }
 }
 
+/// Returns the global storage the references inside `value` may name.
+///
+/// References in an evaluated constant always point at compiler-owned
+/// allocations. Mapping the allocation source to a storage key lets a copied
+/// constant participate in the same overlap rules as a local borrow.
+fn value_origins(program: &ConstProgram, value: &ConstValue) -> OriginSet {
+    match value {
+        ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
+            allocation_origins(program, *target)
+        }
+        ConstValue::Dyn { data, .. } => allocation_origins(program, *data),
+        ConstValue::Tuple(elements) | ConstValue::Array(elements) => {
+            let mut origins = OriginSet::default();
+            for element in elements {
+                origins.extend(&value_origins(program, element));
+            }
+            origins
+        }
+        ConstValue::Struct { fields, .. } | ConstValue::Variant { fields, .. } => {
+            let mut origins = OriginSet::default();
+            for (_, field) in fields {
+                origins.extend(&value_origins(program, field));
+            }
+            origins
+        }
+        ConstValue::Int { .. }
+        | ConstValue::Float { .. }
+        | ConstValue::Bool(_)
+        | ConstValue::Char(_)
+        | ConstValue::Unit
+        | ConstValue::Str { .. } => OriginSet::default(),
+    }
+}
+
+fn allocation_origins(program: &ConstProgram, target: AllocId) -> OriginSet {
+    match program.allocation(target).source {
+        AllocSource::Static(def) => OriginSet::global(StorageKey::Static {
+            def,
+            fields: Vec::new(),
+        }),
+        AllocSource::Const(def) => OriginSet::global(StorageKey::Const {
+            def,
+            fields: Vec::new(),
+        }),
+        AllocSource::Promoted { owner, .. } => OriginSet::global(StorageKey::Const {
+            def: owner,
+            fields: Vec::new(),
+        }),
+        // A reference to a const-function frame cannot appear in a finished
+        // constant; reporting it as unknown keeps the checker conservative if
+        // a future evaluator ever produces one.
+        AllocSource::ConstFnLocal { .. } => OriginSet::unknown(),
+    }
+}
+
 /// Returns the storage `place` may name.
 ///
 /// A place without a dereference names frame storage directly. A dereference
 /// resolves the reference stored just before it and continues from each storage
 /// key that reference may name. A second dereference inside a pointee is not
 /// modeled: the checker does not read the contents of borrowed storage.
-pub(crate) fn keys_of(state: &OriginState, place: &Place) -> OriginSet {
+pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLocals) -> OriginSet {
     let Some(index) = place
         .projections
         .iter()
         .position(|projection| *projection == Projection::Deref)
     else {
-        return match place.local_id() {
-            Some(local) => OriginSet::frame(local, field_path(&place.projections)),
-            None => OriginSet::unknown(),
+        return match place.root {
+            PlaceRoot::Local(local) => match const_locals.get(&local) {
+                Some(def) => OriginSet::global(StorageKey::Const {
+                    def: *def,
+                    fields: field_path(&place.projections),
+                }),
+                None => OriginSet::frame(local, field_path(&place.projections)),
+            },
+            PlaceRoot::Static(def) => OriginSet::global(StorageKey::Static {
+                def,
+                fields: field_path(&place.projections),
+            }),
+            PlaceRoot::Const(def) => OriginSet::global(StorageKey::Const {
+                def,
+                fields: field_path(&place.projections),
+            }),
         };
     };
 
@@ -464,7 +653,7 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place) -> OriginSet {
                     .collect();
                 projections.extend_from_slice(rest);
                 let storage = Place::with_projections(*local, projections);
-                resolved.extend(&keys_of(state, &storage));
+                resolved.extend(&keys_of(state, &storage, const_locals));
             }
             StorageKey::Pointee { local, fields } => {
                 if rest.contains(&Projection::Deref) {
@@ -476,6 +665,24 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place) -> OriginSet {
                         local: *local,
                         fields,
                     });
+                }
+            }
+            StorageKey::Static { def, fields } => {
+                if rest.contains(&Projection::Deref) {
+                    resolved.insert_unknown();
+                } else {
+                    let mut fields = fields.clone();
+                    fields.extend(field_path(rest));
+                    resolved.insert(StorageKey::Static { def: *def, fields });
+                }
+            }
+            StorageKey::Const { def, fields } => {
+                if rest.contains(&Projection::Deref) {
+                    resolved.insert_unknown();
+                } else {
+                    let mut fields = fields.clone();
+                    fields.extend(field_path(rest));
+                    resolved.insert(StorageKey::Const { def: *def, fields });
                 }
             }
         }
@@ -530,6 +737,26 @@ fn key_overlap(left: &StorageKey, right: &StorageKey) -> bool {
                 fields: right_fields,
             },
         ) => left_local == right_local && paths_overlap(left_fields, right_fields),
+        (
+            StorageKey::Static {
+                def: left_def,
+                fields: left_fields,
+            },
+            StorageKey::Static {
+                def: right_def,
+                fields: right_fields,
+            },
+        )
+        | (
+            StorageKey::Const {
+                def: left_def,
+                fields: left_fields,
+            },
+            StorageKey::Const {
+                def: right_def,
+                fields: right_fields,
+            },
+        ) => left_def == right_def && paths_overlap(left_fields, right_fields),
         _ => false,
     }
 }

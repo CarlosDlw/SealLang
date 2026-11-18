@@ -53,7 +53,7 @@ pub(crate) fn front_end(source: &str) -> Compiled {
         session.target().pointer_width(),
     );
     let mir = seal_mir::lower(&hir, &typeck);
-    let facts = seal_borrowck::check(&hir, &mir, session.diag(), session.interner());
+    let facts = seal_borrowck::check(&hir, &mir, None, session.diag(), session.interner());
     let mono = seal_mono::collect(&hir, &mir, session.diag(), session.interner());
     assert!(
         !session.diag().has_errors(),

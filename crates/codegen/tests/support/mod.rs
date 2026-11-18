@@ -116,7 +116,7 @@ pub(crate) fn compile_for_target_with_runtime(
     let mir = seal_mir::lower(&hir, &typeck);
     mir.validate()
         .expect("MIR lowering preserves its invariants");
-    let aliasing = seal_borrowck::check(&hir, &mir, session.diag(), session.interner());
+    let aliasing = seal_borrowck::check(&hir, &mir, None, session.diag(), session.interner());
     assert!(!session.diag().has_errors(), "borrow checking failed");
 
     // Monomorphization diagnostics are not asserted here: a generic `main` is

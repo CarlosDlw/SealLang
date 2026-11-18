@@ -416,6 +416,22 @@ value for the rest of the program. Static roots are always initialized and are
 never dropped. A block-scope static is one allocation per declaration, shared by
 every call and every monomorphization of the enclosing function.
 
+Borrow checking keys global storage by definition, not by the place syntax that
+reaches it. A loan rooted at a static or at an addressed const is an ordinary
+loan whose storage is that allocation, so two loans of disjoint fields do not
+conflict while a loan of the whole allocation conflicts with a loan of any
+field. A const materialized into a temporary remains a program-lifetime
+allocation: the temporary is recognized as the const's storage, so returning
+`&CONST` is valid. A reference copied out of an evaluated constant names the
+allocation recorded by constant evaluation, including references nested in
+aggregates.
+
+A reference into any static or const outlives the function that created it and
+is not a dangling local. A reference into a `static mut` is different: because
+later callees cannot see that global loan in their effect summaries, returning
+it is rejected (`E5012`). Passing it to an ordinary function is allowed for the
+duration of the call.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -559,7 +575,13 @@ every call and every monomorphization of the enclosing function.
     temporary and an addressed const each own a program-lifetime allocation.
 23. A reference to a const-fn frame allocation never survives that frame
     (`E4013`); promotion is the only way for a temporary's address to escape.
-24. Constant evaluation is deterministic: allocation order, dependency order,
+24. A loan rooted at a static, an addressed const, or a materialized const
+    temporary names that program-lifetime allocation. Disjoint fields stay
+    disjoint, and a whole-allocation loan conflicts with every field loan.
+25. A reference into a static or const may be returned without being treated as
+    a dangling local. A reference into a `static mut` may not escape the
+    function that created it (`E5012`).
+26. Constant evaluation is deterministic: allocation order, dependency order,
     step counting, and diagnostics do not depend on hash iteration. A value
     dependency cycle is reported (`E4007`), while an address-only cycle is
     accepted because every static allocation exists before evaluation.

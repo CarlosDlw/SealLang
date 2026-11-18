@@ -1,5 +1,6 @@
 //! Building borrow-check diagnostics.
 
+use seal_def::DefId;
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_hir::Hir;
@@ -223,6 +224,19 @@ impl<'a> Reporter<'a> {
             .primary(span, "returned here")
             .secondary(loan.span, "borrow created here")
             .help("return a reference to a parameter, or to data the caller owns")
+            .emit();
+    }
+
+    /// A reference into a mutable static escapes its function.
+    pub(crate) fn return_mutable_static_reference(&self, def: DefId, span: Span) {
+        let name = self.interner.resolve(self.hir.definitions().name(def));
+        self.dcx
+            .error(format!(
+                "cannot return a reference to the mutable static `{name}`"
+            ))
+            .code(codes::E5012.diag_code())
+            .primary(span, "returned here")
+            .help("use the reference only inside this function, and reborrow the static where it is needed")
             .emit();
     }
 

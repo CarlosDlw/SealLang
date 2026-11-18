@@ -79,6 +79,7 @@ pub(crate) fn resolve(
     loan_at: &[Vec<Option<LoanId>>],
     origins: &Origins,
     holds: &Holds,
+    const_locals: &origins::ConstLocals,
 ) {
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (position, statement) in block.statements.iter().enumerate() {
@@ -95,7 +96,8 @@ pub(crate) fn resolve(
             let loan = &loans[id.index() as usize];
             let place = loan.place.clone();
             let loan = &mut loans[id.index() as usize];
-            loan.keys = origins::keys_of(&origins.before[block_index][position], &place);
+            loan.keys =
+                origins::keys_of(&origins.before[block_index][position], &place, const_locals);
             let mut parents: Vec<LoanId> = origins::first_deref_base(&place)
                 .map(|base| {
                     holds.before[block_index][position]

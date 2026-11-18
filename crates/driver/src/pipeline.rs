@@ -263,7 +263,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     // Constant evaluation runs before borrow checking: a constant that cannot
     // be evaluated is an error in the initializer, not an ownership question.
     // Later phases read the resulting program instead of evaluating again.
-    let _program = session.profiler().time("const-eval", || {
+    let program = session.profiler().time("const-eval", || {
         seal_const_eval::evaluate(
             &hir,
             &mir,
@@ -276,7 +276,13 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
     let aliasing = session.profiler().time("borrowck", || {
-        seal_borrowck::check(&hir, &mir, session.diag(), session.interner())
+        seal_borrowck::check(
+            &hir,
+            &mir,
+            Some(&program),
+            session.diag(),
+            session.interner(),
+        )
     });
     if session.diag().error_count() != errors {
         return;

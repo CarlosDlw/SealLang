@@ -27,6 +27,7 @@ struct Context<'a> {
     holds: &'a holds::Holds,
     holds_at: &'a HoldState,
     origins: &'a OriginState,
+    const_locals: &'a origins::ConstLocals,
     /// The loan this statement creates, when it is a borrow.
     current_loan: Option<LoanId>,
     hir: &'a Hir,
@@ -39,12 +40,18 @@ impl Context<'_> {
     fn loan(&self, id: LoanId) -> &Loan {
         &self.loans[id.index() as usize]
     }
+
+    /// Returns the storage `place` may name.
+    fn keys_of(&self, place: &Place) -> origins::OriginSet {
+        origins::keys_of(self.origins, place, self.const_locals)
+    }
 }
 
 /// Checks one body and records the alias facts its parameters depend on.
 pub(crate) fn check_body(
     hir: &Hir,
     body: &Body,
+    program: Option<&seal_const_eval::ConstProgram>,
     dcx: &DiagCtxt,
     interner: &Interner,
     calls: &mut CallSites,
@@ -52,8 +59,9 @@ pub(crate) fn check_body(
     let (mut loans, loan_at) = loans::collect(hir, body);
     let liveness = liveness::analyze(body);
     let holds = holds::analyze(hir, body, &loans, &loan_at);
-    let origins = origins::analyze(hir, body);
-    loans::resolve(body, &mut loans, &loan_at, &origins, &holds);
+    let const_locals = origins::const_locals(body);
+    let origins = origins::analyze(hir, body, program, &const_locals);
+    loans::resolve(body, &mut loans, &loan_at, &origins, &holds, &const_locals);
     record_last_uses(body, &liveness, &holds, &mut loans);
     let init = init::analyze(body);
     let reporter = Reporter::new(hir, dcx, body, interner);
@@ -73,6 +81,7 @@ pub(crate) fn check_body(
                 holds: &holds,
                 holds_at: &holds.before[index][position],
                 origins: &origins.before[index][position],
+                const_locals: &const_locals,
                 current_loan: loan_at[index][position],
                 hir,
                 body,
@@ -90,6 +99,7 @@ pub(crate) fn check_body(
             holds: &holds,
             holds_at: &holds.exit[index],
             origins: &origins.exit[index],
+            const_locals: &const_locals,
             current_loan: None,
             hir,
             body,
@@ -143,7 +153,7 @@ fn record_last_uses(
 /// target the may-name analysis does not model.
 fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut CallSites) -> bool {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
-    let mut unknown = origins::keys_of(context.origins, place).is_unknown();
+    let mut unknown = context.keys_of(place).is_unknown();
 
     match rvalue {
         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
@@ -159,7 +169,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         } => {
             unknown |= operand_unknown(source, context);
             check_operand(statement, source, context);
-            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            unknown |= context.keys_of(place).is_unknown();
             check_borrow(
                 place,
                 loans::reborrow_kind(context.hir, *to),
@@ -186,6 +196,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 arg_spans,
                 span: statement.span,
                 origins: context.origins,
+                const_locals: context.const_locals,
                 holds: context.holds_at,
                 loans: context.loans,
                 active: context.active,
@@ -196,11 +207,11 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= outcome.unknown;
         }
         Rvalue::Discriminant(place) => {
-            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            unknown |= context.keys_of(place).is_unknown();
             check_read(place, statement.span, context);
         }
         Rvalue::Ref { place, kind } => {
-            unknown |= origins::keys_of(context.origins, place).is_unknown();
+            unknown |= context.keys_of(place).is_unknown();
             check_borrow(place, *kind, statement.span, context);
         }
         Rvalue::SliceRef {
@@ -222,7 +233,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             } else {
                 base.clone()
             };
-            unknown |= origins::keys_of(context.origins, &borrow_place).is_unknown();
+            unknown |= context.keys_of(&borrow_place).is_unknown();
             check_borrow(&borrow_place, *kind, statement.span, context);
             for operand in start.iter().chain(end.iter()) {
                 unknown |= operand_unknown(operand, context);
@@ -257,7 +268,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             let exclusive = method.def().receiver == seal_methods::ReceiverMode::Exclusive;
             match receiver {
                 seal_mir::IntrinsicReceiver::Place(place) => {
-                    unknown |= origins::keys_of(context.origins, place).is_unknown();
+                    unknown |= context.keys_of(place).is_unknown();
                     if exclusive {
                         check_borrow(place, RefKind::Exclusive, statement.span, context);
                     } else {
@@ -287,6 +298,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 arg_spans,
                 span: statement.span,
                 origins: context.origins,
+                const_locals: context.const_locals,
                 holds: context.holds_at,
                 loans: context.loans,
                 active: context.active,
@@ -341,7 +353,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
 fn operand_unknown(operand: &Operand, context: &Context<'_>) -> bool {
     operand
         .place()
-        .is_some_and(|place| origins::keys_of(context.origins, &place).is_unknown())
+        .is_some_and(|place| context.keys_of(&place).is_unknown())
 }
 
 /// Checks an operand's read and, when it moves, its conflict with live loans.
@@ -485,6 +497,11 @@ fn state(context: &Context<'_>, place: &Place) -> Init {
     init::state_of(context.init, place, context.hir.ty_ctxt(), root_ty)
 }
 
+/// Returns whether a loan targets a static or const allocation.
+fn has_global_target(keys: &origins::OriginSet) -> bool {
+    keys.only_globals()
+}
+
 /// Collects the frame loans that escape with a returned loan.
 ///
 /// A loan created by `&*reference` borrows whatever that reference points at. A
@@ -522,7 +539,7 @@ fn escaping_loans(
 /// reborrow may use the loans it was derived from. The IDs are sorted so
 /// diagnostics do not depend on hash iteration order.
 fn overlapping(context: &Context<'_>, place: &Place) -> Vec<LoanId> {
-    let keys = origins::keys_of(context.origins, place);
+    let keys = context.keys_of(place);
     if keys.is_empty() {
         return Vec::new();
     }
@@ -564,7 +581,7 @@ fn check_terminator(
         TerminatorKind::SwitchInt { discriminant, .. } => {
             let mut unknown = false;
             if let Some(place) = discriminant.place() {
-                unknown = origins::keys_of(context.origins, &place).is_unknown();
+                unknown = context.keys_of(&place).is_unknown();
                 let exit = &init.exit[block_index];
                 let context = Context {
                     init: exit,
@@ -597,13 +614,30 @@ fn check_terminator(
                     &mut escaped,
                 );
             }
-            // A loan through a reference borrows data outside this frame unless
-            // the reference itself borrowed this frame's storage, so report the
-            // loans that actually would dangle, in a deterministic order.
+            // A reference into a static or const allocation outlives the frame,
+            // so only frame storage and untracked pointees can dangle. A
+            // mutable static is rejected separately: its global origin is not
+            // visible to later callees' effect summaries.
+            let returned = context.origins.at(&Place::local(Body::return_local()));
+            let mut escaped_statics = Vec::new();
+            for key in returned.globals() {
+                if let origins::StorageKey::Static { def, .. } = key
+                    && context.hir.definitions().is_mutable(def)
+                    && !escaped_statics.contains(&def)
+                {
+                    escaped_statics.push(def);
+                }
+            }
+            escaped_statics.sort();
+            for def in escaped_statics {
+                context
+                    .reporter
+                    .return_mutable_static_reference(def, block.terminator.span);
+            }
             escaped.sort_by_key(|id| id.index());
             for id in escaped {
                 let loan = &context.loans[id.index() as usize];
-                if loan.reported.get() {
+                if loan.reported.get() || has_global_target(&loan.keys) {
                     continue;
                 }
                 context

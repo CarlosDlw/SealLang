@@ -84,13 +84,15 @@ impl Fixture {
     /// Runs the whole pipeline through borrow checking.
     pub(crate) fn check(&self) {
         let (hir, mir) = self.lower();
-        crate::check(&hir, &mir, &self.dcx, &self.interner);
+        let program = seal_const_eval::evaluate(&hir, &mir, &self.dcx, &self.interner, 64);
+        crate::check(&hir, &mir, Some(&program), &self.dcx, &self.interner);
     }
 
     /// Runs borrow checking and returns the `noalias` facts for the program.
     pub(crate) fn check_facts(&self) -> (Hir, Mir, crate::AliasingFacts) {
         let (hir, mir) = self.lower();
-        let facts = crate::check(&hir, &mir, &self.dcx, &self.interner);
+        let program = seal_const_eval::evaluate(&hir, &mir, &self.dcx, &self.interner, 64);
+        let facts = crate::check(&hir, &mir, Some(&program), &self.dcx, &self.interner);
         self.assert_clean();
         (hir, mir, facts)
     }

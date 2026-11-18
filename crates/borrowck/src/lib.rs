@@ -84,6 +84,7 @@ mod report;
 #[cfg(test)]
 mod tests;
 
+use seal_const_eval::ConstProgram;
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_hir::Hir;
@@ -97,15 +98,24 @@ pub use aliasing::AliasingFacts;
 ///
 /// The caller must have lowered `mir` from a HIR tree that type checking
 /// accepted, which guarantees that every place, edge, and operand is well
-/// formed. Errors are reported through `dcx`; a body with an error still gets
-/// the rest of its checks, so one mistake does not hide another. The facts are
-/// computed even when a diagnostic was emitted, but the driver only reaches
-/// code generation when there are no errors.
-pub fn check(hir: &Hir, mir: &Mir, dcx: &DiagCtxt, interner: &Interner) -> AliasingFacts {
+/// formed. `program` supplies the evaluated constants, so a reference copied
+/// out of a const names its real allocation; `None` is only for tests that
+/// build a body directly and contain no such reference. Errors are reported
+/// through `dcx`; a body with an error still gets the rest of its checks, so
+/// one mistake does not hide another. The facts are computed even when a
+/// diagnostic was emitted, but the driver only reaches code generation when
+/// there are no errors.
+pub fn check(
+    hir: &Hir,
+    mir: &Mir,
+    program: Option<&ConstProgram>,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+) -> AliasingFacts {
     let mut calls = aliasing::CallSites::default();
     let mut bodies = FxHashMap::default();
     for body in mir.bodies().iter() {
-        let facts = check::check_body(hir, body, dcx, interner, &mut calls);
+        let facts = check::check_body(hir, body, program, dcx, interner, &mut calls);
         bodies.insert(body.owner, facts);
     }
     aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls)
@@ -119,5 +129,5 @@ pub fn check(hir: &Hir, mir: &Mir, dcx: &DiagCtxt, interner: &Interner) -> Alias
 /// for the whole program and are therefore returned by [`check`] alone.
 pub fn check_body(hir: &Hir, body: &Body, dcx: &DiagCtxt, interner: &Interner) {
     let mut calls = aliasing::CallSites::default();
-    check::check_body(hir, body, dcx, interner, &mut calls);
+    check::check_body(hir, body, None, dcx, interner, &mut calls);
 }

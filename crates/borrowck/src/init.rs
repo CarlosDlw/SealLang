@@ -180,7 +180,9 @@ pub(crate) fn state_of(
     tcx: &TyCtxt,
     root_ty: TyId,
 ) -> Init {
-    if place.is_deref() {
+    // A static lives for the whole program and a const is materialized before
+    // use, so neither can be uninitialized or moved from.
+    if place.is_deref() || !matches!(place.root, seal_mir::PlaceRoot::Local(_)) {
         return Init::Initialized;
     }
     let mut path = Vec::new();

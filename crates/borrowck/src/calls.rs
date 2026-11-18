@@ -40,6 +40,8 @@ pub(crate) struct CallSite<'a> {
     pub(crate) loans: &'a [Loan],
     /// The loans active at the call.
     pub(crate) active: &'a LoanSet,
+    /// Locals holding a materialized constant value.
+    pub(crate) const_locals: &'a origins::ConstLocals,
     /// HIR, used for place types.
     pub(crate) hir: &'a Hir,
     /// The body being checked.
@@ -90,7 +92,7 @@ pub(crate) fn check(site: CallSite<'_>) -> Outcome {
             continue;
         }
         // A scalar argument reached through a dereference is still an access.
-        if origins::keys_of(site.origins, &place).is_unknown() {
+        if origins::keys_of(site.origins, &place, site.const_locals).is_unknown() {
             unknown = true;
             proven = false;
         }
