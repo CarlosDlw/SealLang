@@ -38,6 +38,61 @@ const IF_LET: &str = include_str!("../../../examples/024_if_let.sl");
 const WHILE_LET: &str = include_str!("../../../examples/025_while_let.sl");
 const TUPLES: &str = include_str!("../../../examples/026_tuples.sl");
 
+/// A program that returns zero only when every cast family produces its
+/// documented value, including saturation and NaN handling.
+const CAST_MATRIX: &str = "\
+func main() -> i32 {
+  if 300 as u8 != 44u8 { return 1; }
+  if 255 as i8 != -1i8 { return 2; }
+  if -1 as u32 != 4294967295u32 { return 3; }
+  if -5 as i64 != -5i64 { return 4; }
+  if 7 as f64 != 7.0 { return 5; }
+  if 1.9 as i32 != 1 { return 6; }
+  if -1.9 as i32 != -1 { return 7; }
+  if 1.0e300 as i32 != 2147483647 { return 8; }
+  if -1.0e300 as i32 != -2147483648 { return 9; }
+  if 1.0e300 as u32 != 4294967295u32 { return 10; }
+  if -1.5 as u32 != 0 { return 11; }
+  if 1.0e300 as i64 != 9223372036854775807i64 { return 12; }
+  if 1.0e300 as i128 != 170141183460469231731687303715884105727i128 { return 13; }
+  if 1.0e300 as f32 < 3.0e38f32 { return 14; }
+  if 1.5f32 as f64 != 1.5 { return 15; }
+  if (0.0 / 0.0) as i32 != 0 { return 16; }
+  if (0.0 / 0.0) as u64 != 0u64 { return 17; }
+  if (1.0 / 0.0) as i32 != 2147483647 { return 18; }
+  if (-1.0 / 0.0) as i32 != -2147483648 { return 19; }
+  if 200 as i8 as i64 != -56i64 { return 20; }
+  if 255 as u8 as i64 != 255i64 { return 21; }
+  if -1 as i64 as u128 != 340282366920938463463374607431768211455u128 { return 22; }
+  if 1.0e300 as u128 != 340282366920938463463374607431768211455u128 { return 23; }
+  if -1.0e300 as i128 != -170141183460469231731687303715884105728i128 { return 24; }
+  0
+}
+";
+
+#[test]
+fn numeric_casts_produce_their_documented_values() {
+    for (opt_level, debug_info, suffix) in [
+        (OptLevel::O0, true, "cast-debug"),
+        (OptLevel::O2, false, "cast-release"),
+    ] {
+        let output = TempOutput::new(suffix);
+        compile(
+            CAST_MATRIX,
+            output.path(),
+            Emit::Executable,
+            opt_level,
+            debug_info,
+        )
+        .expect("cast code generation succeeds");
+        assert_eq!(
+            run(output.path()).code(),
+            Some(0),
+            "a cast family produced the wrong value at {opt_level:?}"
+        );
+    }
+}
+
 #[test]
 fn debug_and_release_executables_produce_the_language_result() {
     for (opt_level, debug_info, suffix) in [
