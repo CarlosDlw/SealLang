@@ -97,7 +97,7 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
 fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
     let StatementKind::Assign { place, rvalue } = &statement.kind;
     match rvalue {
-        Rvalue::Use(operand) => move_operand(operand, state),
+        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => move_operand(operand, state),
         Rvalue::Binary { lhs, rhs, .. } => {
             move_operand(lhs, state);
             move_operand(rhs, state);

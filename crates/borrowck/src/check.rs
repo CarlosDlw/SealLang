@@ -146,7 +146,7 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
     let mut unknown = origins::keys_of(context.origins, place).is_unknown();
 
     match rvalue {
-        Rvalue::Use(operand) => {
+        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
             unknown |= operand_unknown(operand, context);
             check_operand(statement, operand, context);
         }

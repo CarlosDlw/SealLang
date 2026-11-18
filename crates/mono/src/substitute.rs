@@ -319,6 +319,13 @@ fn has_impl(hir: &Hir, trait_def: seal_def::DefId, self_ty: TyId, arguments: &[T
 fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
     match rvalue {
         Rvalue::Use(operand) => substitute_operand(tcx, substs, operand),
+        Rvalue::Cast {
+            operand, from, to, ..
+        } => {
+            substitute_operand(tcx, substs, operand);
+            *from = tcx.substitute(*from, substs);
+            *to = tcx.substitute(*to, substs);
+        }
         Rvalue::MakeTraitObject {
             source,
             source_ty,

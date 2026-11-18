@@ -318,7 +318,7 @@ fn transfer(hir: &Hir, body: &Body, statement: &Statement, state: &mut OriginSta
                 state.clear(place);
             }
         }
-        Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
+        Rvalue::Len { .. } | Rvalue::Discriminant(_) | Rvalue::Cast { .. } => state.clear(place),
         Rvalue::Use(operand) => {
             let origins = operand_origins(hir, body, state, operand);
             if let Some(source) = operand.place()

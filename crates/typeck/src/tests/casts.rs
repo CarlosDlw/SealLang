@@ -248,6 +248,12 @@ fn a_type_parameter_target_is_rejected_with_its_name() {
 }
 
 #[test]
+fn a_cast_of_a_possibly_uninitialized_local_is_rejected() {
+    let (fixture, _, _) = check_errors("func f() -> i32 { let value: i32; value as i64 as i32 }");
+    fixture.expect("E3011", "possibly uninitialized");
+}
+
+#[test]
 fn a_cast_in_a_local_initializer_records_its_kind() {
     let (fixture, hir, results) =
         check_clean("func f(value: u64) -> f64 { let converted = value as f64; converted }");

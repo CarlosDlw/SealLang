@@ -5,7 +5,7 @@ use std::fmt;
 use seal_def::{DefId, DefKind};
 use seal_hir::Hir;
 use seal_layout::VtableLayout;
-use seal_ty::{RefKind, TraitRef, TyId, TyKind};
+use seal_ty::{NumericCastKind, RefKind, TraitRef, TyId, TyKind};
 
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -126,6 +126,26 @@ pub enum ValidationError {
     /// An operand's type differs from the type recorded on its rvalue.
     RvalueOperandTypeMismatch {
         /// The block containing the rvalue.
+        block: BasicBlockId,
+    },
+    /// A cast operand's type differs from its recorded source type.
+    CastOperandTypeMismatch {
+        /// The block containing the cast.
+        block: BasicBlockId,
+    },
+    /// A cast destination does not have the recorded target type.
+    CastDestinationTypeMismatch {
+        /// The block containing the cast.
+        block: BasicBlockId,
+    },
+    /// A cast records a kind that does not match its source and target types.
+    CastKindMismatch {
+        /// The block containing the cast.
+        block: BasicBlockId,
+    },
+    /// A cast endpoint is not a concrete numeric type.
+    CastTypeNotConcrete {
+        /// The block containing the cast.
         block: BasicBlockId,
     },
     /// A dyn reborrow does not preserve the trait reference.
@@ -253,6 +273,22 @@ impl fmt::Display for ValidationError {
                 f,
                 "block {block:?} uses an operand whose type differs from the recorded rvalue type"
             ),
+            Self::CastOperandTypeMismatch { block } => write!(
+                f,
+                "block {block:?} casts an operand whose type differs from the recorded source type"
+            ),
+            Self::CastDestinationTypeMismatch { block } => write!(
+                f,
+                "block {block:?} casts into a destination with a different type"
+            ),
+            Self::CastKindMismatch { block } => write!(
+                f,
+                "block {block:?} records a cast kind that does not match its endpoint types"
+            ),
+            Self::CastTypeNotConcrete { block } => write!(
+                f,
+                "block {block:?} casts a type that is not concrete and numeric"
+            ),
             Self::TraitObjectReborrowMismatch { block } => write!(
                 f,
                 "block {block:?} reborrows between different trait-object types"
@@ -346,7 +382,7 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
         for statement in &data.statements {
             let StatementKind::Assign { place, rvalue } = &statement.kind;
             check_place(body, block, place.clone())?;
-            check_rvalue(body, block, rvalue, hir)?;
+            check_rvalue(body, block, place, rvalue, hir)?;
         }
         match &data.terminator.kind {
             TerminatorKind::Goto(target) => check_target(body, block, *target)?,
@@ -624,14 +660,71 @@ fn constant_ty(operand: &Operand) -> Option<seal_ty::TyId> {
     }
 }
 
+/// The pieces of one cast statement under validation.
+struct CastCheck<'a> {
+    block: BasicBlockId,
+    destination: &'a Place,
+    kind: NumericCastKind,
+    operand: &'a Operand,
+    from: TyId,
+    to: TyId,
+}
+
+fn check_cast(body: &Body, cast: &CastCheck<'_>, hir: &Hir) -> Result<(), ValidationError> {
+    let tcx = hir.ty_ctxt();
+    let block = cast.block;
+    if !is_concrete_numeric(tcx, cast.from) || !is_concrete_numeric(tcx, cast.to) {
+        return Err(ValidationError::CastTypeNotConcrete { block });
+    }
+    if operand_ty(tcx, body, cast.operand) != Some(cast.from) {
+        return Err(ValidationError::CastOperandTypeMismatch { block });
+    }
+    if place_ty_mir(tcx, body, cast.destination) != cast.to {
+        return Err(ValidationError::CastDestinationTypeMismatch { block });
+    }
+    if tcx.numeric_cast_kind(cast.from, cast.to) != Some(cast.kind) {
+        return Err(ValidationError::CastKindMismatch { block });
+    }
+    Ok(())
+}
+
+/// Returns `true` when `ty` is a concrete integer or float type.
+fn is_concrete_numeric(tcx: &seal_ty::TyCtxt, ty: TyId) -> bool {
+    matches!(
+        tcx.kind(ty),
+        TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
+    )
+}
+
 fn check_rvalue(
     body: &Body,
     block: BasicBlockId,
+    destination: &Place,
     rvalue: &Rvalue,
     hir: Option<&Hir>,
 ) -> Result<(), ValidationError> {
     match rvalue {
         Rvalue::Use(operand) => check_operand(body, block, operand, hir),
+        Rvalue::Cast {
+            kind,
+            operand,
+            from,
+            to,
+        } => {
+            check_operand(body, block, operand, hir)?;
+            if let Some(hir) = hir {
+                let cast = CastCheck {
+                    block,
+                    destination,
+                    kind: *kind,
+                    operand,
+                    from: *from,
+                    to: *to,
+                };
+                check_cast(body, &cast, hir)?;
+            }
+            Ok(())
+        }
         Rvalue::MakeTraitObject {
             source,
             source_ty,

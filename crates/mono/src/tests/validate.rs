@@ -3,6 +3,7 @@
 use seal_hash::FxHashMap;
 use seal_index::{Idx, IndexVec};
 use seal_mir::{Body, CallTarget, Rvalue, StatementKind, ValidationError};
+use seal_ty::NumericCastKind;
 use seal_ty::{InferTyId, Instance};
 
 use crate::tests::support::collect_clean;
@@ -82,6 +83,81 @@ fn a_leftover_inference_variable_is_rejected() {
         malformed.validate(&hir),
         Err(MonoValidationError::Body(
             ValidationError::InferredType { .. }
+        ))
+    ));
+}
+
+#[test]
+fn a_cast_survives_monomorphization_with_its_kind() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "func convert<T>(value: i32, extra: T) -> i64 { value as i64 }\
+         func main() -> i64 { convert(1, 2) }",
+    );
+    let mono = instance(&program, "convert<i32>", &hir, fixture.interner());
+    let Rvalue::Cast { kind, from, to, .. } = cast_in(&mono.body) else {
+        panic!("the instance contains a cast");
+    };
+    assert_eq!(*kind, NumericCastKind::IntToInt);
+    let text = |ty| {
+        hir.ty_ctxt()
+            .display_with(ty, fixture.interner())
+            .to_string()
+    };
+    assert_eq!(text(*from), "i32");
+    assert_eq!(text(*to), "i64");
+}
+
+/// Returns the first cast rvalue of a body.
+fn cast_in(body: &Body) -> &Rvalue {
+    body.blocks
+        .iter()
+        .flat_map(|block| block.statements.iter())
+        .find_map(|statement| match &statement.kind {
+            StatementKind::Assign {
+                rvalue: rvalue @ Rvalue::Cast { .. },
+                ..
+            } => Some(rvalue),
+            _ => None,
+        })
+        .expect("the body contains a cast")
+}
+
+#[test]
+fn a_cast_with_a_type_parameter_endpoint_is_rejected() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "func convert<T>(value: i32, extra: T) -> i64 { value as i64 }\
+         func main() -> i64 { convert(1, 2) }",
+    );
+    let mut mono = instance(&program, "convert<i32>", &hir, fixture.interner());
+    let owner = mono.instance.def;
+    let parameter = hir
+        .flattened_generics(owner)
+        .first()
+        .expect("convert is generic")
+        .param;
+    let param_ty = hir.ty_ctxt().param_ty(parameter);
+    let mut found = false;
+    for statement in mono
+        .body
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+    {
+        if let StatementKind::Assign {
+            rvalue: Rvalue::Cast { from, .. },
+            ..
+        } = &mut statement.kind
+        {
+            *from = param_ty;
+            found = true;
+        }
+    }
+    assert!(found, "the instance contains a cast");
+    let malformed = program_with(mono);
+    assert!(matches!(
+        malformed.validate(&hir),
+        Err(MonoValidationError::Body(
+            ValidationError::CastTypeNotConcrete { .. }
         ))
     ));
 }

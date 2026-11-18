@@ -182,6 +182,13 @@ fn check_rvalue(
 ) -> Result<(), MonoValidationError> {
     match rvalue {
         Rvalue::Use(operand) => check_operand(tcx, instance, operand),
+        Rvalue::Cast {
+            operand, from, to, ..
+        } => {
+            check_operand(tcx, instance, operand)?;
+            check_type(tcx, instance, *from)?;
+            check_type(tcx, instance, *to)
+        }
         Rvalue::MakeTraitObject {
             source,
             source_ty,

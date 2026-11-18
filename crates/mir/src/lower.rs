@@ -645,11 +645,26 @@ impl<'a> BodyLowering<'a> {
                 }
             }
             ExprKind::Cast { operand, .. } => {
-                // Casts reach MIR with their own rvalue in the cast phase;
-                // until then the operand is lowered for reachability only.
+                let from = self.expr_ty(operand);
+                let to = self.expr_ty(expr);
+                let kind = self.typeck.cast_kind(expr).unwrap_or_else(|| {
+                    panic!(
+                        "cast expression {expr:?} has no recorded kind; \
+                         this is an internal compiler error"
+                    )
+                });
                 let operand = self.lower_operand(operand);
                 if let Some(dest) = dest {
-                    self.assign_rvalue(dest, Rvalue::Use(operand), span);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::Cast {
+                            kind,
+                            operand,
+                            from,
+                            to,
+                        },
+                        span,
+                    );
                 }
             }
             ExprKind::Assign { op, target, value } => {

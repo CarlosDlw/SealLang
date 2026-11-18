@@ -3,6 +3,7 @@
 mod arrays;
 mod borrows;
 mod calls;
+mod casts;
 mod constructed;
 mod dyn_types;
 mod examples;

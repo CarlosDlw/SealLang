@@ -24,6 +24,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
             Rvalue::Use(operand) => self.load_operand(operand),
+            Rvalue::Cast { .. } => Err(CodegenError::internal(
+                "numeric cast code generation is not implemented yet",
+            )),
             Rvalue::Discriminant(place) => self.discriminant(place),
             Rvalue::Ref { place, .. } => Ok(self.place_ptr(place)?.into()),
             Rvalue::SliceRef {
