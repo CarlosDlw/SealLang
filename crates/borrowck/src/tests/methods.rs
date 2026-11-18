@@ -74,6 +74,38 @@ fn a_modifying_method_is_allowed_after_the_shared_borrow_ends() {
 }
 
 #[test]
+fn calling_a_default_with_an_exclusive_receiver_conflicts_with_a_live_loan() {
+    let fixture = check_errors(
+        "struct Item { value: i32 } \
+         trait Counter { func bump(self: *mut Self) { } } \
+         impl Counter for Item {} \
+         func f() -> i32 { \
+             let mut item = Item { value: 0 }; \
+             let view = &item; \
+             item.bump(); \
+             (*view).value \
+         }",
+    );
+    fixture.expect("E5008", "already borrowed");
+}
+
+#[test]
+fn a_default_body_borrow_checks_its_own_receiver_calls() {
+    check_clean(
+        "struct Item { value: i32 } \
+         trait Counter { \
+             func read(self: *Self) -> i32; \
+             func twice(self: *Self) -> i32 { self.read() * 2 } \
+         } \
+         impl Counter for Item { func read(self: *Item) -> i32 { (*self).value } } \
+         func f() -> i32 { \
+             let item = Item { value: 3 }; \
+             item.twice() \
+         }",
+    );
+}
+
+#[test]
 fn an_exclusive_slice_receiver_permits_modification() {
     check_clean("func f(values: *mut [i32]) { values.reverse(); }");
 }

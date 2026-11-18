@@ -91,6 +91,19 @@ pub enum ValidationError {
         /// The parameters the target declares.
         parameters: usize,
     },
+    /// A symbolic call carries the wrong number of type arguments.
+    ///
+    /// A trait method instance must be flattened as
+    /// `[Self, trait args, method args]`, because monomorphization uses exactly
+    /// that order to select the implementing function.
+    CallInstanceArityMismatch {
+        /// The referenced function or method.
+        def: DefId,
+        /// The number of generic parameters the declaration takes.
+        expected: usize,
+        /// The number of type arguments recorded on the instance.
+        found: usize,
+    },
     /// An aggregate literal supplies the wrong number of type arguments.
     AggregateArgsMismatch {
         /// The aggregate definition.
@@ -244,6 +257,14 @@ impl fmt::Display for ValidationError {
             Self::CallArityMismatch { args, parameters } => write!(
                 f,
                 "call passes {args} argument(s) but the target takes {parameters}"
+            ),
+            Self::CallInstanceArityMismatch {
+                def,
+                expected,
+                found,
+            } => write!(
+                f,
+                "call instance for {def:?} has {found} type argument(s) but the declaration takes {expected}"
             ),
             Self::AggregateArgsMismatch {
                 adt,
@@ -846,6 +867,17 @@ fn check_rvalue(
                     && first_argument_is_param(hir, body, args)
                 {
                     return Err(ValidationError::ParamReceiverOnDirectCall { block });
+                }
+                if let CallTarget::TraitMethod { instance, .. } = target {
+                    let expected = hir.flattened_generics(instance.def).len();
+                    let found = hir.ty_ctxt().substs_args(instance.args).len();
+                    if found != expected {
+                        return Err(ValidationError::CallInstanceArityMismatch {
+                            def: instance.def,
+                            expected,
+                            found,
+                        });
+                    }
                 }
             }
             for arg in args {

@@ -47,6 +47,22 @@ fn source(name: &str) -> String {
 }
 
 #[test]
+fn a_default_method_example_borrow_checks() {
+    check_clean(
+        "struct Circle { radius: i32 } \
+         trait Shape { \
+             func area(self: *Self) -> i32; \
+             func twice(self: *Self) -> i32 { self.area() * 2 } \
+         } \
+         impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+         func main() -> i32 { \
+             let circle = Circle { radius: 3 }; \
+             circle.twice() \
+         }",
+    );
+}
+
+#[test]
 fn all_examples_borrow_check() {
     for name in EXAMPLES {
         check_clean(&source(name));

@@ -1,6 +1,6 @@
 //! Structural validation of MIR bodies.
 
-use seal_ty::InferTyId;
+use seal_ty::{InferTyId, Instance};
 
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -229,6 +229,59 @@ fn an_aggregate_must_carry_the_declared_type_arguments() {
         body.validate_with(&hir),
         Err(ValidationError::AggregateArgsMismatch {
             adt,
+            expected: 1,
+            found: 0
+        })
+    );
+}
+
+#[test]
+fn a_symbolic_call_must_carry_the_flattened_type_arguments() {
+    let source = "struct Circle { radius: i32 } \
+                  trait Shape { func area(self: *Self) -> i32 { 7 } } \
+                  impl Shape for Circle {} \
+                  func main() -> i32 { \
+                      let circle = Circle { radius: 1 }; \
+                      circle.area() \
+                  }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let statement = body
+        .blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+        .find(|statement| {
+            matches!(
+                statement.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Call { .. },
+                    ..
+                }
+            )
+        })
+        .expect("main calls the default method");
+    let StatementKind::Assign {
+        rvalue: Rvalue::Call { target, .. },
+        ..
+    } = &mut statement.kind
+    else {
+        unreachable!();
+    };
+    let CallTarget::TraitMethod {
+        instance,
+        parameters,
+    } = *target
+    else {
+        panic!("expected a symbolic target, got {target:?}");
+    };
+    *target = CallTarget::TraitMethod {
+        instance: Instance::new(instance.def, hir.ty_ctxt().empty_substs()),
+        parameters,
+    };
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::CallInstanceArityMismatch {
+            def: instance.def,
             expected: 1,
             found: 0
         })

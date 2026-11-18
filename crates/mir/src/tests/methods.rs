@@ -1,9 +1,11 @@
 //! Intrinsic method calls in MIR: receivers, side effects, and chaining.
 
-use seal_def::DefId;
+use seal_def::{DefId, DefKind};
 use seal_ty::RefKind;
 
-use crate::rvalue::{IntrinsicReceiver, Rvalue};
+use crate::body::Body;
+use crate::rvalue::{CallTarget, IntrinsicReceiver, Rvalue};
+use crate::terminator::TerminatorKind;
 
 use super::support::{assignment, function, lower_clean};
 
@@ -114,6 +116,39 @@ fn a_method_statement_keeps_its_side_effect() {
     assert_eq!(calls[0].1.len(), 1);
 }
 
+fn trait_method_def(fixture: &super::support::Fixture, hir: &seal_hir::Hir, name: &str) -> DefId {
+    hir.definitions()
+        .iter_enumerated()
+        .find(|(_, data)| data.kind == DefKind::TraitMethod && fixture.symbol(data.name) == name)
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no trait method named `{name}`"))
+}
+
+fn trait_method<'a>(
+    fixture: &super::support::Fixture,
+    hir: &seal_hir::Hir,
+    mir: &'a crate::mir::Mir,
+    name: &str,
+) -> &'a Body {
+    let owner = trait_method_def(fixture, hir, name);
+    mir.body_of(owner)
+        .unwrap_or_else(|| panic!("trait method `{name}` has no MIR body"))
+}
+
+fn first_call(body: &Body) -> (&CallTarget, &[crate::operand::Operand]) {
+    body.blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .find_map(|statement| {
+            let (_, rvalue) = assignment(statement);
+            match rvalue {
+                Rvalue::Call { target, args, .. } => Some((target, args.as_slice())),
+                _ => None,
+            }
+        })
+        .expect("the body contains a call")
+}
+
 fn call_named<'a>(
     fixture: &super::support::Fixture,
     hir: &seal_hir::Hir,
@@ -140,6 +175,144 @@ fn call_named<'a>(
                 arg_spans.as_slice(),
             ))
         })
+}
+
+#[test]
+fn a_default_body_lowers_like_a_normal_method_body() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { \
+            func area(self: *Self) -> i32; \
+            func twice(self: *Self) -> i32 { self.area() * 2 } \
+        } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+        func main() -> i32 { \
+            let circle = Circle { radius: 2 }; \
+            circle.twice() \
+        }";
+    let (fixture, hir, mir) = lower_clean(source);
+
+    let twice = trait_method(&fixture, &hir, &mir, "twice");
+    let (target, args) = first_call(twice);
+    let CallTarget::TraitMethod { instance, .. } = target else {
+        panic!("the inner call must stay symbolic, got {target:?}");
+    };
+    assert_eq!(instance.def, trait_method_def(&fixture, &hir, "area"));
+    assert_eq!(args.len(), 1, "only the receiver");
+
+    let main = function(&fixture, &hir, &mir, "main");
+    let (target, args) = first_call(main);
+    let CallTarget::TraitMethod { instance, .. } = target else {
+        panic!("the omitted concrete method must stay symbolic, got {target:?}");
+    };
+    assert_eq!(instance.def, trait_method_def(&fixture, &hir, "twice"));
+    assert_eq!(args.len(), 1);
+    assert!(
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .any(|statement| matches!(
+                assignment(statement).1,
+                Rvalue::Ref {
+                    kind: RefKind::Shared,
+                    ..
+                }
+            )),
+        "calling the default borrows its receiver automatically"
+    );
+}
+
+#[test]
+fn an_override_lowers_to_a_direct_call() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { func area(self: *Self) -> i32 { 7 } } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { 8 } } \
+        func main() -> i32 { \
+            let circle = Circle { radius: 2 }; \
+            circle.area() \
+        }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let main = function(&fixture, &hir, &mir, "main");
+    let (target, _) = first_call(main);
+    assert!(
+        matches!(target, CallTarget::Direct { .. }),
+        "an override must not stay symbolic, got {target:?}"
+    );
+}
+
+#[test]
+fn default_methods_cover_shared_exclusive_and_value_receivers() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Counter { \
+            func read(self: *Self) -> i32; \
+            func bump(self: *mut Self) -> i32 { self.read() } \
+            func consume(self: Self) -> i32 { self.read() } \
+        } \
+        impl Counter for Item { \
+            func read(self: *Item) -> i32 { (*self).value } \
+        } \
+        func main() -> i32 { \
+            let mut item = Item { value: 4 }; \
+            let first = item.bump(); \
+            first + item.consume() \
+        }";
+    let (fixture, hir, mir) = lower_clean(source);
+    for name in ["bump", "consume"] {
+        let body = trait_method(&fixture, &hir, &mir, name);
+        let (target, args) = first_call(body);
+        assert!(matches!(target, CallTarget::TraitMethod { .. }));
+        assert_eq!(args.len(), 1);
+    }
+}
+
+#[test]
+fn a_default_body_lowers_control_flow_to_a_valid_cfg() {
+    let source = "\
+        trait Flow { \
+            func compute(self: *Self) -> i32 { \
+                let mut index = 0; \
+                if index > 10 { return 1; } \
+                while index < 3 { index += 1; } \
+                if index == 3 { \
+                    match index { 3 => 3, _ => 2 } \
+                } else { \
+                    0 \
+                } \
+            } \
+        }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let body = trait_method(&fixture, &hir, &mir, "compute");
+    assert!(
+        body.blocks.len() > 4,
+        "branches and a loop need several blocks"
+    );
+    assert!(
+        body.blocks
+            .iter()
+            .filter(|block| matches!(block.terminator.kind, TerminatorKind::SwitchInt { .. }))
+            .count()
+            >= 2,
+        "the loop and the if need switches"
+    );
+    assert!(
+        body.blocks.iter().enumerate().any(|(index, block)| {
+            matches!(
+                block.terminator.kind,
+                TerminatorKind::Goto(target) if target.index() as usize <= index
+            )
+        }),
+        "the while loop needs a back edge"
+    );
+}
+
+#[test]
+fn an_associated_default_body_has_no_receiver() {
+    let (fixture, hir, mir) = lower_clean("trait Factory { func make() -> i32 { 7 } }");
+    let body = trait_method(&fixture, &hir, &mir, "make");
+    assert_eq!(body.arg_count, 0);
+    assert_eq!(body.locals.len(), 1, "only the return local");
 }
 
 #[test]

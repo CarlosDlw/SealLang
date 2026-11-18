@@ -57,6 +57,23 @@ fn all_examples_lower_and_validate() {
 }
 
 #[test]
+fn a_default_method_example_lowers_and_validates() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Shape { \
+            func area(self: *Self) -> i32; \
+            func twice(self: *Self) -> i32 { self.area() * 2 } \
+        } \
+        impl Shape for Circle { func area(self: *Circle) -> i32 { (*self).radius } } \
+        func main() -> i32 { \
+            let circle = Circle { radius: 3 }; \
+            circle.twice() \
+        }";
+    let (fixture, hir, mir) = lower_clean(source);
+    function(&fixture, &hir, &mir, "main");
+}
+
+#[test]
 fn while_example_lowers_switches_and_back_edges() {
     let (fixture, hir, mir) = lower_clean(&source("005_while_loop.sl"));
     let body = function(&fixture, &hir, &mir, "sum_odd_below");
