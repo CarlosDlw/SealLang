@@ -288,14 +288,14 @@ semantic `Rvalue::Intrinsic` whose operation the backend chooses, and a call
 through a trait object lowers to `Rvalue::DynamicCall`, which loads a vtable slot
 (D16). The receiver borrow is visible to the same checker in every form.
 
-Traits use the same path. A trait declaration contributes signatures written
-against `Self`, and `impl Trait for Type` binds each one to a concrete function.
-Type checking tries the inherent registry first and then the trait
-implementations of the receiver's type, recording the call as a direct
-`Rvalue::Call` to that function. Two implemented traits declaring one method
-name make the call ambiguous (`E2028`), while an inherent method always wins. A
-static trait call therefore owns and borrows exactly what the concrete function
-declares. The dynamic case, where the receiver's pointee is `dyn Trait`, is D16.
+Traits use the same path. A trait declaration contributes signatures and
+optional default bodies written against `Self`, and `impl Trait for Type` binds
+each method to a concrete function or inherits the default. Type checking tries
+the inherent registry first and then the trait implementations of the receiver's
+type, recording the call as a direct `Rvalue::Call` to that function or default
+body. Two implemented traits declaring one method name make the call ambiguous
+(`E2028`), while an inherent method always wins. A static trait call therefore
+owns and borrows exactly what the selected function or default body declares. The dynamic case, where the receiver's pointee is `dyn Trait`, is D16.
 
 With generics, the receiver may be a declared type parameter. The generic body
 cannot select an implementation, so the call stays symbolic until
@@ -438,8 +438,9 @@ whole-program proof, so the attribute would make the contract unverifiable.
   liveness of those statements, and place conflicts compare path prefixes so
   field borrows are as precise as the moves they guard.
 - **Monomorphization** collects every reachable `(definition, arguments)` pair,
-  substitutes the body, resolves a trait-bound call to the unique impl method,
-  and validates that no parameter or inference variable survives. It also
+  substitutes the body, resolves a trait-bound call to the unique impl method or
+  its inherited default, and validates that no parameter or inference variable
+  survives. It also
   collects one vtable per reachable `(concrete type, trait reference)` pair and
   every method instance in its slots. It is the only phase that turns a generic
   body into concrete code.

@@ -661,8 +661,9 @@ before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
 scalar method, and a `*Point` can call a `Point` method written for `*Point`.
 There is no method value. A call on a nominal type, a type parameter, or an
 intrinsic receiver is static: a trait method on a concrete type is a direct call
-to the implementing function, and a method declared by a trait bound records the
-trait method until monomorphization selects the implementation. A call through
+to the implementing function or to the trait's default body when the impl omits
+it, and a method declared by a trait bound records the trait method until
+monomorphization selects the implementation or default. A call through
 `*dyn Trait` or `*mut dyn Trait` is dynamic and loads the function from the
 receiver's vtable, as described under trait objects below. Methods and impls may
 declare type parameters in both cases. An unknown name is `E3027`, an associated
@@ -740,9 +741,12 @@ as a real loan, so a live conflicting loan is `E5008`.
 
 ### Traits and static dispatch
 
-A trait declares a set of method signatures. `Self` in a signature stands for
-the implementing struct, including in the receiver, so one declaration describes
-every implementor. `impl Trait for Struct` supplies one function per signature.
+A trait declares a set of methods, each with a signature and optionally a
+default body. `Self` in a signature stands for the implementing struct,
+including in the receiver, so one declaration describes every implementor.
+`impl Trait for Struct` supplies a function for each required method; a method
+with a default body may be omitted, and the implementation then inherits that
+body.
 
 ```seal
 struct Circle {
@@ -783,33 +787,72 @@ requirement is kept once.
 
 Lookup is ordered: an inherent method on the struct wins, then the bounds
 visible on a type parameter, then the trait methods implemented for a concrete
-type, and finally the intrinsic catalog for receivers with no user method. Every
-concrete candidate is the function of one impl, so a static trait call is a
-direct call with no vtable involved. A call through a type parameter has no
-known impl yet; it records the trait method and its arguments for
+type, and finally the intrinsic catalog for receivers with no user method. A
+concrete candidate is either the function an impl supplies or, when the impl
+omits a method that has a default body, that default body, so a static trait
+call is a direct call with no vtable involved. A call through a type parameter
+has no known impl yet; it records the trait method and its arguments for
 monomorphization instead. When two implemented traits declare the same method
 name and nothing earlier resolves it, the call is ambiguous (`E2028`). Seal has
 no syntax for naming the trait at a call, so the fix is to rename one of the
 methods; an inherent method with the name resolves the call instead.
 
+A default body is checked once, with `Self` as a parameter and with the
+implicit `Self: Trait` bound. It may call required methods, other defaults, and
+associated functions through `self`; those calls are symbolic and
+monomorphization selects the override or the default for the concrete `Self`.
+An impl that supplies a method with the same name overrides the default. The
+override must have the same receiver, parameter types, and return type after
+`Self` and the trait arguments are replaced (`E2024`).
+
+```seal
+struct Circle { radius: i32 }
+
+trait Shape {
+  func area(self: *Self) -> i32;
+  func twice(self: *Self) -> i32 { self.area() * 2 }
+  func unit() -> i32 { 1 }
+}
+
+impl Shape for Circle {
+  func area(self: *Circle) -> i32 {
+    (*self).radius * (*self).radius
+  }
+}
+
+func main() -> i32 {
+  let circle = Circle { radius: 3 };
+  circle.twice() + Circle::unit()
+}
+```
+
+Here `twice` dispatches to the override of `area`, and `Circle::unit()` uses
+the default associated function because the impl omits it. `Self::unit()`
+inside a default body is symbolic in the same way: it selects the override when
+the concrete impl supplies one. An inherent associated function with the same
+name still wins over the trait default. An associated function with a default
+body is not dispatchable through `dyn Trait`; object safety still rejects every
+associated function without a receiver (`E2065`).
+
 Implementing a trait is checked as a complete contract. Every declared method
-must be present (`E2022`), nothing else may appear in the block (`E2023`), and
-the receiver, parameter types, and return type must match the declaration after
-`Self` and the trait arguments are replaced (`E2024`). A trait receiver uses one
-of the three `Self` forms (`E2016`), while an impl writes the concrete type. A
-type implements a trait once: an identical header is `E2021`, and two headers
-that can describe the same instance are rejected as overlapping (`E2058`), with
-the unifying substitution in the message. Bounds on an impl do not make it
-disjoint, so `impl<T: Copy> Trait for Pair<T, T>` overlaps
-`impl<T> Trait for Pair<T, T>`. A trait name is neither a type nor a value
-(`E2027`), and `Self` outside a trait signature is `E2025`.
+without a default body must be present (`E2022`), nothing else may appear in the
+block (`E2023`), and the receiver, parameter types, and return type must match
+the declaration after `Self` and the trait arguments are replaced (`E2024`). A
+trait receiver uses one of the three `Self` forms (`E2016`), while an impl writes
+the concrete type. A type implements a trait once: an identical header is
+`E2021`, and two headers that can describe the same instance are rejected as
+overlapping (`E2058`), with the unifying substitution in the message. Bounds on
+an impl do not make it disjoint, so `impl<T: Copy> Trait for Pair<T, T>`
+overlaps `impl<T> Trait for Pair<T, T>`. A trait name is neither a type nor a
+value (`E2027`), and `Self` outside a trait signature is `E2025`.
 
 A method that declares `self: *Struct` can also be called through a
 `*mut Struct` receiver: the compiler reborrows it as `*Struct`, a shared loan of
 the pointee, so the borrow checker sees the same access a written `&*reference`
 would create. The conversion is one-way; a `*Struct` never reaches an exclusive
 receiver (`E3031`). A trait may declare an associated function with no receiver,
-which is called as `Struct::name()` like an inherent one.
+which is called as `Struct::name()` like an inherent one and may also have a
+default body.
 
 ### Trait objects and dynamic dispatch
 

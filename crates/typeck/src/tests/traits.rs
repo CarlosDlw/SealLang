@@ -802,6 +802,140 @@ fn a_generic_default_method_substitutes_the_trait_arguments() {
 }
 
 #[test]
+fn an_empty_associated_default_returns_unit() {
+    let source = "\
+        struct Circle { radius: i32 } \
+        trait Factory { func reset() { } } \
+        impl Factory for Circle { } \
+        func main() { Circle::reset() }";
+    check_clean(source);
+}
+
+#[test]
+fn a_default_method_may_declare_its_own_where_clause() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Duplicate { \
+            func copy<U>(self: *Self, value: U) -> U where U: Copy { value } \
+        } \
+        impl Duplicate for Item { } \
+        func main() -> i32 { \
+            let item = Item { value: 1 }; \
+            item.copy(7) \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_default_method_with_own_generics_accepts_explicit_arguments() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Echo { \
+            func echo<U>(self: *Self, value: U) -> U { value } \
+        } \
+        impl Echo for Item { } \
+        func main() -> bool { \
+            let item = Item { value: 1 }; \
+            item.echo::<bool>(true) \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_default_method_uses_two_trait_parameters() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Pairing<A, B> { \
+            func combine(self: *Self, first: A, second: B) -> (A, B) { \
+                (first, second) \
+            } \
+        } \
+        impl Pairing<i32, bool> for Item { } \
+        func main() -> i32 { \
+            let item = Item { value: 1 }; \
+            let pair = item.combine(1, true); \
+            pair.0 \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_copy_bound_generic_impl_uses_a_default_for_repeated_parameters() {
+    let source = "\
+        struct Pair<T, U> { first: T, second: U } \
+        trait Mark { func value(self: *Self) -> i32 { 12 } } \
+        impl<T: Copy> Mark for Pair<T, T> { } \
+        func main() -> i32 { \
+            let pair = Pair { first: 1, second: 2 }; \
+            pair.value() \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_transitive_supertrait_chain_reaches_a_default() {
+    let source = "\
+        struct Item { value: i32 } \
+        trait Base { func value(self: *Self) -> i32 { 9 } } \
+        trait Mid: Base { } \
+        trait Leaf: Mid { } \
+        impl Base for Item { } \
+        impl Mid for Item { } \
+        impl Leaf for Item { } \
+        func main() -> i32 { \
+            let item = Item { value: 1 }; \
+            item.value() \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn a_non_exhaustive_match_in_a_default_body_is_reported() {
+    let fixture = super::support::Fixture::new(
+        "trait Flow { func value(self: *Self) -> i32 { match 3 { 3 => 1 } } }",
+    );
+    let _ = fixture.check(64);
+    fixture.expect("E3032", "non-exhaustive match");
+}
+
+#[test]
+fn two_types_use_their_own_defaults_and_overrides() {
+    let source = "\
+        struct Left { value: i32 } \
+        struct Right { value: i32 } \
+        trait Show { func value(self: *Self) -> i32 { 1 } } \
+        impl Show for Left { } \
+        impl Show for Right { func value(self: *Right) -> i32 { 2 } } \
+        func main() -> i32 { \
+            let left = Left { value: 0 }; \
+            let right = Right { value: 0 }; \
+            left.value() * 10 + right.value() \
+        }";
+    check_clean(source);
+}
+
+#[test]
+fn default_methods_cover_primitive_array_tuple_and_reference_impls() {
+    let source = "\
+        trait IntTag { func int_tag(self: *Self) -> i32 { 1 } } \
+        trait ArrayTag { func array_tag(self: *Self) -> i32 { 2 } } \
+        trait TupleTag { func tuple_tag(self: *Self) -> i32 { 3 } } \
+        trait RefTag { func ref_tag(self: *Self) -> i32 { 4 } } \
+        impl IntTag for i32 { } \
+        impl ArrayTag for [i32; 2] { } \
+        impl TupleTag for (i32, bool) { } \
+        impl RefTag for *i32 { } \
+        func main() -> i32 { \
+            let values = [1, 2]; \
+            let pair = (1, true); \
+            let value = 1; \
+            let pointer = &value; \
+            1.int_tag() + values.array_tag() + pair.tuple_tag() + pointer.ref_tag() \
+        }";
+    check_clean(source);
+}
+
+#[test]
 fn a_default_body_handles_exclusive_and_value_receivers() {
     let source = "\
         struct Item { value: i32 } \

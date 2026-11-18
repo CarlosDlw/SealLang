@@ -173,7 +173,7 @@ isolation check on its own.
 | Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
 | Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is not `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls on concrete types, dynamic calls through trait objects |
-| Traits | `trait T { … }`, `impl T for S { … }` | Static dispatch on concrete types and bounds; object-safe traits also dispatch dynamically through `*dyn T` |
+| Traits | `trait T { … }`, `impl T for S { … }` | Methods may declare default bodies, which impls inherit or override; static dispatch on concrete types and bounds, and object-safe traits dispatch dynamically through `*dyn T` |
 | Generics | `func f<T>(…)`, `struct S<T>`, `enum E<T>`, `impl<T> S<T>` | Monomorphized: one concrete body and layout per type argument; bounds are static and closed-world |
 
 There are no implicit numeric conversions: every arithmetic and comparison
@@ -215,11 +215,13 @@ form allocates, and modifying methods borrow the receiver exclusively. User
 methods declare their receiver explicitly as `self: S`, `self: *S`, or
 `self: *mut S`; the compiler borrows a value receiver automatically when the
 method expects a reference, and reborrows a `*mut S` receiver as `*S` for a
-read-only method. A trait writes `Self` for the implementing type and every
-`impl Trait for S` binds one concrete function per method, so a static trait
-call is an ordinary direct call. Coercing `*S` or `*mut S` to a trait-object
-pointer preserves the reference kind and requires an implemented, object-safe
-trait. Generic functions, structs, enums, inherent impls, associated functions,
+read-only method. A trait writes `Self` for the implementing type; a method may
+declare a default body, and an impl that omits it inherits the body while any
+supplied function overrides it. Default bodies dispatch symbolically to the
+concrete implementation, including associated functions such as `Type::unit()`
+and `Self::unit()`, so a static trait call remains an ordinary direct call.
+Coercing `*S` or `*mut S` to a trait-object pointer preserves the reference kind
+and requires an implemented, object-safe trait. Generic functions, structs, enums, inherent impls, associated functions,
 traits, trait methods, and trait impls accept type parameters with inline or
 `where` bounds; every reachable instance is monomorphized, so a generic call is
 still one direct call with no dictionary or runtime type search. The type table
@@ -227,5 +229,8 @@ and the trait-object section of `docs/types.md` define the surface; owning
 `Box<dyn Trait>`, upcasting between trait objects, and an `unsafe` layer are not
 part of it yet. The trait-object examples in
 `examples/032_trait_objects.sl` through
-`examples/034_trait_objects_generic.sl` show dispatch end to end, and
-`examples/035_numeric_casts.sl` shows every cast family and its boundary.
+`examples/034_trait_objects_generic.sl` show dispatch end to end,
+`examples/035_numeric_casts.sl` shows every cast family and its boundary, and
+`examples/036_default_methods.sl` exercises required methods, defaults,
+overrides, symbolic dispatch, supertraits, generic defaults, dynamic dispatch,
+and associated default functions.

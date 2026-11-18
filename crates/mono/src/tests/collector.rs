@@ -291,6 +291,40 @@ fn a_symbolic_trait_call_resolves_to_the_impl_method() {
 }
 
 #[test]
+fn a_generic_default_method_keeps_its_own_type_arguments() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        "struct Item { value: i32 }\
+         trait Echo { func echo<U>(self: *Self, value: U) -> U { value } }\
+         impl Echo for Item {}\
+         func main() -> bool {\
+             let item = Item { value: 1 };\
+             item.echo::<bool>(true)\
+         }",
+    );
+    let main = instance_named(&fixture, &hir, &program, "main");
+    let target = call_targets(&main.body)
+        .into_iter()
+        .next()
+        .expect("main calls echo");
+    let CallTarget::Direct { instance, .. } = target else {
+        panic!("the generic default was not resolved");
+    };
+    assert_eq!(hir.definitions().kind(instance.def), DefKind::TraitMethod);
+    let arguments: Vec<String> = hir
+        .ty_ctxt()
+        .substs_args(instance.args)
+        .iter()
+        .map(|argument| {
+            hir.ty_ctxt()
+                .display_with(*argument, fixture.interner())
+                .to_string()
+        })
+        .collect();
+    assert_eq!(arguments, ["Item", "bool"]);
+    assert!(program.id_of(instance).is_some());
+}
+
+#[test]
 fn a_generic_trait_method_keeps_its_own_type_arguments() {
     let (fixture, hir, _mir, program) = collect_clean(
         "trait Convert { func convert<U>(self: *Self, value: U) -> U; }\

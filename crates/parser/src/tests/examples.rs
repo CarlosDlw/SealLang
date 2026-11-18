@@ -47,6 +47,7 @@ fn all_examples_parse_without_diagnostics() {
         ("030_generic_traits.sl", 7),
         ("031_generic_recursion.sl", 5),
         ("035_numeric_casts.sl", 1),
+        ("036_default_methods.sl", 17),
     ] {
         let source = example(name);
         let (fixture, ast) = parse_clean(&source);

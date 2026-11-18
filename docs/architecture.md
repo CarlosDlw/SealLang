@@ -30,11 +30,11 @@ allowed to depend only on crates below it in the list.
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
-| `seal-hir` | AST lowering and name resolution: one body per function, inherent impl and receiver registries, trait and impl coherence, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
+| `seal-hir` | AST lowering and name resolution: one body per function or trait default method, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, default trait method resolution, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric casts, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
-| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods, vtable collection, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
+| `seal-mono` | Monomorphization: reachable-instance collection from non-generic roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods or default bodies, vtable collection, recursion and instance limits, stable instance fingerprints (`E7xxx`). |
 | `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
@@ -387,7 +387,9 @@ allowed to depend only on crates below it in the list.
     shadows an intrinsic with the same name. Trait methods add one layer to the
     nominal lookup: the inherent registry wins, then the functions bound by the
     type's `impl Trait` blocks, and a name two implemented traits declare is
-    ambiguous (`E2028`). Each implementation is validated as a contract
+    ambiguous (`E2028`). An omitting impl contributes the trait's default body
+    as its candidate, so the same lookup selects either an override or the
+    default before monomorphization. Each implementation is validated as a contract
     (`E2021`–`E2026`) with `Self` substituted by the implementing type, and it
     lives beside the inherent registry rather than in it, so an inherent method
     and a trait method may share a name. A `*mut T` receiver passed to a shared
@@ -450,6 +452,18 @@ allowed to depend only on crates below it in the list.
     substitutes the endpoints and rejects a surviving `Param` or `Infer`, and
     code generation switches on the kind instead of re-classifying the types.
     No phase introduces a second numeric-pair table or an implicit conversion.
+69. **Default trait methods are bodies with a symbolic fallback.** A trait
+    method declaration may own a body; HIR lowers it with `Self` as a parameter
+    and records a `ParamEnv` bound proving `Self` implements the declaring
+    trait, without adding `Self` to the trait's `Generics` or changing coherence
+    or object safety. An impl that omits the name stores the trait reference in
+    the lookup registry, and a call on a concrete type records the default body
+    with a fully substituted `Instance`. Calls inside a default body stay
+    symbolic, and monomorphization selects an override when the implementation
+    supplies one or the default instance otherwise. Associated functions without
+    a receiver follow the same fallback, including `Self::name()` inside a
+    default body. Vtable slots use the same resolver, so an omitted method points
+    at the default instance; layout and MIR shapes do not change.
 
 ## Extension points
 
@@ -509,11 +523,14 @@ allowed to depend only on crates below it in the list.
   with an object-safe subset usable behind `dyn`. Parse the declaration in
   `seal-parser`, register the trait and its `Self`-relative signatures in
   `seal-hir`, validate each impl as a contract, and resolve a static call
-  through the same lookup that serves inherent methods. A static trait call
-  stays a direct `Rvalue::Call`; a call on an object receiver becomes
-  `Rvalue::DynamicCall` with the slot chosen by the shared vtable order. A new
-  rule changes the registry order and its ambiguity check or the object-safety
-  check, never the direct-call shape. Add parser, HIR, typeck, MIR, borrowck,
+  through the same lookup that serves inherent methods. A default body is one
+  more candidate in that lookup and falls back to the trait declaration only
+  when the impl omits the name; monomorphization owns the final choice between
+  the override and that default. A static trait call stays a direct
+  `Rvalue::Call`; a call on an object receiver becomes `Rvalue::DynamicCall` with
+  the slot chosen by the shared vtable order. A new rule changes the registry
+  order and its ambiguity check or the object-safety check, never the direct-call
+  shape. Add parser, HIR, typeck, MIR, borrowck,
   codegen, and end-to-end coverage.
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,

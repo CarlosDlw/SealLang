@@ -23,6 +23,8 @@ const TRAIT_OBJECT_EXAMPLES: [&str; 3] = [
 
 const NUMERIC_CAST_EXAMPLES: [&str; 1] = ["035_numeric_casts.sl"];
 
+const DEFAULT_METHOD_EXAMPLES: [&str; 1] = ["036_default_methods.sl"];
+
 fn check_examples(names: &[&str]) {
     for name in names {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -59,4 +61,9 @@ fn trait_object_examples_check_cleanly() {
 #[test]
 fn numeric_cast_examples_check_cleanly() {
     check_examples(&NUMERIC_CAST_EXAMPLES);
+}
+
+#[test]
+fn default_method_examples_check_cleanly() {
+    check_examples(&DEFAULT_METHOD_EXAMPLES);
 }

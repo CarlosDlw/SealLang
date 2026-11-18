@@ -174,8 +174,11 @@ The ABI is defined by the language, not by a C header:
   without changing either. The vtable starts with a no-op drop function, size,
   and alignment, followed by method pointers in the shared `seal-layout` order:
   principal-trait methods in declaration order, then supertraits depth-first,
-  deduplicated by method identity. `DynamicCall` loads the recorded slot from
-  the receiver's own vtable, extracts the data word, and emits an indirect call
+  deduplicated by method identity. A slot for a method whose impl omits it
+  points at the trait's default-body instance, resolved by the same
+  monomorphization fallback as a static call; the vtable layout does not change.
+  `DynamicCall` loads the recorded slot from the receiver's own vtable, extracts
+  the data word, and emits an indirect call
   whose first argument is that data pointer. It never inspects the concrete type
   or searches for a vtable at run time. Construction and dispatch allocate nothing and copy no concrete
   value. The vtable layout is compiler-private; Seal does not promise a stable

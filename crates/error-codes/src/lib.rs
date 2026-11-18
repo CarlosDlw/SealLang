@@ -647,11 +647,10 @@ pub const E2022: ErrorCode = ErrorCode {
     code: "E2022",
     title: "trait method is not implemented",
     explanation: "\
-A trait is a complete list of signatures: implementing it means supplying one
-function for each method, with the name and the signature the trait declares.
-Seal has no default methods, so there is nothing to inherit when a method is
-missing.\n\nAdd the missing function to the impl block, or remove the method from the trait
-declaration.",
+A trait method may declare a default body. An impl may omit only those methods
+and inherits the body; a method without a default must be supplied, with the
+name and the signature the trait declares.\n\nAdd the missing function to the impl block, give the trait method a default
+body, or remove the method from the trait declaration.",
 };
 
 /// An impl block defines a function the trait does not declare.
