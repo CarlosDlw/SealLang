@@ -25,24 +25,28 @@ impl Checker<'_> {
         self.interned(TyKind::Bool)
     }
 
+    fn primitive(&self, primitive: PrimitiveType) -> TyId {
+        self.interned(primitive_kind(primitive, self.hir.ty_ctxt().c_abi()))
+    }
+
     pub(super) fn i32_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::I32))
+        self.primitive(PrimitiveType::I32)
     }
 
     pub(super) fn u32_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::U32))
+        self.primitive(PrimitiveType::U32)
     }
 
     pub(super) fn isize_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::Isize))
+        self.primitive(PrimitiveType::Isize)
     }
 
     pub(super) fn u8_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::U8))
+        self.primitive(PrimitiveType::U8)
     }
 
     pub(super) fn f64_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::F64))
+        self.primitive(PrimitiveType::F64)
     }
 
     pub(super) fn error_ty(&self) -> TyId {
@@ -54,7 +58,7 @@ impl Checker<'_> {
     }
 
     pub(super) fn usize_ty(&self) -> TyId {
-        self.interned(primitive_kind(PrimitiveType::Usize))
+        self.primitive(PrimitiveType::Usize)
     }
 
     pub(super) fn array_ty(&self, element: TyId, length: u64) -> TyId {

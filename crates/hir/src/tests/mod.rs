@@ -2,6 +2,7 @@
 
 mod arrays;
 mod borrows;
+mod c_types;
 mod casts;
 mod control_flow;
 mod copy_impls;

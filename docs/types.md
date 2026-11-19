@@ -52,6 +52,11 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Inference variable | internal | unknown | unknown | no | no | no |
 | Type parameter | `T` | after instantiation | after instantiation | by bound | yes | no |
 
+The C scalar names described under [C scalar types](#c-scalar-types) are
+transparent aliases of the integer and float types above. Their width and
+signedness come from the target's C ABI, so `c_int` is `i32` everywhere and
+`c_long` is `i64` on LP64 targets and `i32` on 64-bit Windows.
+
 A type runs a destructor when it declares `impl Drop`; otherwise it inherits
 destructors from its fields or elements. Scalars, references, `str`, `()`, and
 `!` are trivially disposable, so dropping them runs nothing. A `static` is never
@@ -175,6 +180,44 @@ Six widths, all two's complement. A value of width `n` ranges from `−2^(n−1)
 comparisons follow IEEE semantics: ordered comparisons are false when either
 operand is NaN, and `!=` is true when either operand is NaN.
 
+### C scalar types
+
+The C scalar names resolve to the integer or float type with the width and
+signedness the target's C ABI uses. They are transparent aliases: `c_int` is
+`i32` on every supported target, and a value of one type is accepted wherever
+the other is expected.
+
+| Name | C type | Seal type |
+|------|--------|-----------|
+| `c_char` | `char` | `i8` or `u8`, according to the target |
+| `c_schar` | `signed char` | `i8` |
+| `c_uchar` | `unsigned char` | `u8` |
+| `c_short` | `short` | `i16` |
+| `c_ushort` | `unsigned short` | `u16` |
+| `c_int` | `int` | `i32` |
+| `c_uint` | `unsigned int` | `u32` |
+| `c_long` | `long` | `i64` on LP64, `i32` on LLP64 and 32-bit targets |
+| `c_ulong` | `unsigned long` | `u64` on LP64, `u32` on LLP64 and 32-bit targets |
+| `c_longlong` | `long long` | `i64` |
+| `c_ulonglong` | `unsigned long long` | `u64` |
+| `c_float` | `float` | `f32` |
+| `c_double` | `double` | `f64` |
+| `c_bool` | `_Bool` inside an aggregate | `u8`, holding 0 or 1 |
+| `c_wchar` | `wchar_t` | `u16` on Windows; `i32` elsewhere |
+| `size_t` | `size_t` | `usize` |
+| `ssize_t` | `ssize_t` | `isize` |
+| `ptrdiff_t` | `ptrdiff_t` | `isize` |
+| `intptr_t` | `intptr_t` | `isize` |
+| `uintptr_t` | `uintptr_t` | `usize` |
+
+Plain `char` is signed on Windows, Darwin, and the x86 family, and unsigned on
+the ARM, AArch64, RISC-V, and WebAssembly ABIs. `wchar_t` is a 16-bit unsigned
+type on Windows and a 32-bit signed type elsewhere. The opaque `c_void` type is
+not a scalar; it belongs to the C interop layer.
+
+These names are type names, not literal suffixes: write `1 as c_int` or annotate
+the binding, never `1c_int`.
+
 ### Explicit numeric casts
 
 `value as Type` converts a value between primitive numeric types. The operator
@@ -239,7 +282,8 @@ is no numeric-bound trait from which to select a concrete conversion.
 - `_` may separate digits (`1_000_000`, `0xdead_BEEF`). Separators are allowed
   between digits, including several in a row, but never at the start or end, next
   to the decimal point, next to the exponent marker, or next to the suffix.
-- Every numeric type is a valid suffix: `0u8`, `-1i64`, `42usize`, `0xFFFFu16`.
+- Every built-in numeric type is a valid suffix: `0u8`, `-1i64`, `42usize`,
+  `0xFFFFu16`. The C scalar names are not suffixes.
 - An integer literal with an `f32` or `f64` suffix is a floating-point literal.
 - A negative literal is unary minus applied to a positive literal.
 

@@ -19,6 +19,7 @@ seal-ty.workspace = true
 [dev-dependencies]
 seal-lexer.workspace = true
 seal-parser.workspace = true
+seal-target.workspace = true
 
 [lints]
 workspace = true

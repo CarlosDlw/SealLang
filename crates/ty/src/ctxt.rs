@@ -6,6 +6,7 @@ use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_index::IndexVec;
 use seal_symbol::Symbol;
+use seal_target::CAbiProperties;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 use crate::copy::CopyImpls;
@@ -126,12 +127,31 @@ pub struct TyCtxt {
     /// [`crate::drop`]. A query on a type never observes a half-filled registry,
     /// because lowering finishes before type checking starts.
     drop_impls: RefCell<DropImpls>,
+    /// The C ABI facts used to resolve the C scalar type names.
+    c_abi: CAbiProperties,
 }
 
 impl TyCtxt {
-    /// Creates an empty context.
+    /// Creates an empty context for the default C ABI.
+    ///
+    /// The default describes the LP64 Unix ABI. Compiler phases that resolve
+    /// the C scalar names for a real target use [`TyCtxt::with_c_abi`].
     pub fn new() -> Self {
-        Self::default()
+        Self::with_c_abi(CAbiProperties::default())
+    }
+
+    /// Creates an empty context whose C scalar names resolve for `c_abi`.
+    pub fn with_c_abi(c_abi: CAbiProperties) -> Self {
+        Self {
+            c_abi,
+            ..Self::default()
+        }
+    }
+
+    /// Returns the C ABI facts used to resolve the C scalar names.
+    #[inline]
+    pub fn c_abi(&self) -> CAbiProperties {
+        self.c_abi
     }
 
     /// Interns `kind` and returns its canonical ID.

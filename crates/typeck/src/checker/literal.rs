@@ -92,7 +92,10 @@ impl Checker<'_> {
     fn suffix_ty(&self, suffix: Symbol, integer: bool) -> Option<TyId> {
         let name = self.interner.resolve(suffix);
         let primitive = PrimitiveType::from_name(name)?;
-        let kind = primitive_kind(primitive);
+        if !primitive.is_literal_suffix() {
+            return None;
+        }
+        let kind = primitive_kind(primitive, self.hir.ty_ctxt().c_abi());
         let matches_family = if integer {
             matches!(kind, TyKind::Int(_) | TyKind::Uint(_))
         } else {

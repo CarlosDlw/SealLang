@@ -25,7 +25,10 @@ impl Lowering<'_> {
     pub(super) fn lower_type_inner(&mut self, ty: TypeId, unknown_parameter: bool) -> TyId {
         match self.ast.ty(ty).kind.clone() {
             TypeKind::Primitive(primitive) => {
-                self.hir.ty_ctxt_mut().intern(primitive_kind(primitive))
+                let c_abi = self.hir.ty_ctxt().c_abi();
+                self.hir
+                    .ty_ctxt_mut()
+                    .intern(primitive_kind(primitive, c_abi))
             }
             TypeKind::Pointer { pointee, mutable } => {
                 let pointee = self.lower_type_inner(pointee, unknown_parameter);
@@ -238,8 +241,9 @@ impl Lowering<'_> {
 /// the string-literal type `*str`. A later phase that introduces aggregate types
 /// will extend this set or take the context mutably.
 pub(crate) fn intern_primitives(ctxt: &mut TyCtxt) {
+    let c_abi = ctxt.c_abi();
     for primitive in seal_ast::PrimitiveType::ALL {
-        ctxt.intern(primitive_kind(primitive));
+        ctxt.intern(primitive_kind(primitive, c_abi));
     }
     ctxt.unit_ty();
     ctxt.never_ty();

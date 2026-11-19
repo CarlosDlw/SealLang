@@ -232,7 +232,12 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     }
 
     let hir = session.profiler().time("hir", || {
-        seal_hir::lower(&ast, session.diag(), session.interner())
+        seal_hir::lower_with_c_abi(
+            &ast,
+            session.diag(),
+            session.interner(),
+            session.target().c_abi(),
+        )
     });
     if session.diag().error_count() != errors {
         return;

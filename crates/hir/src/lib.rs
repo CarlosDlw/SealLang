@@ -58,8 +58,8 @@ use seal_index::IndexVec;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{
-    AdtId, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef, TraitImplDef,
-    TyCtxt, TyId, TyKind, VariantIdx,
+    AdtId, CAbiProperties, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef,
+    TraitImplDef, TyCtxt, TyId, TyKind, VariantIdx,
 };
 
 /// How an instance method takes its receiver.
@@ -118,7 +118,20 @@ impl Hir {
     /// The returned tree is always complete; syntax or names that failed are
     /// represented by `Error` nodes after their diagnostic was emitted.
     pub fn lower(ast: &Ast, dcx: &DiagCtxt, interner: &Interner) -> Self {
-        lower::lower_ast(ast, dcx, interner)
+        Self::lower_with_c_abi(ast, dcx, interner, CAbiProperties::default())
+    }
+
+    /// Lowers a parsed file whose C scalar names resolve for `c_abi`.
+    ///
+    /// The compiler passes the target's C ABI so `c_char`, `c_long`, and
+    /// `c_wchar` have the width and signedness C uses on that target.
+    pub fn lower_with_c_abi(
+        ast: &Ast,
+        dcx: &DiagCtxt,
+        interner: &Interner,
+        c_abi: CAbiProperties,
+    ) -> Self {
+        lower::lower_ast(ast, dcx, interner, c_abi)
     }
 
     /// Returns the definition table.
@@ -570,4 +583,14 @@ impl Hir {
 /// Lowers a parsed file, reporting name-resolution errors through `dcx`.
 pub fn lower(ast: &Ast, dcx: &DiagCtxt, interner: &Interner) -> Hir {
     Hir::lower(ast, dcx, interner)
+}
+
+/// Lowers a parsed file whose C scalar names resolve for `c_abi`.
+pub fn lower_with_c_abi(
+    ast: &Ast,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    c_abi: CAbiProperties,
+) -> Hir {
+    Hir::lower_with_c_abi(ast, dcx, interner, c_abi)
 }

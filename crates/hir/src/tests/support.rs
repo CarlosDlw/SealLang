@@ -74,6 +74,11 @@ impl Fixture {
         crate::lower(&ast, &self.dcx, &self.interner)
     }
 
+    pub(crate) fn lower_with_c_abi(&self, c_abi: seal_ty::CAbiProperties) -> Hir {
+        let ast = self.parse();
+        crate::lower_with_c_abi(&ast, &self.dcx, &self.interner, c_abi)
+    }
+
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         self.recording.diagnostics()
     }

@@ -13,7 +13,7 @@ use seal_error_codes::ErrorCode;
 use seal_hash::FxHashMap;
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
-use seal_ty::{TyCtxt, TyId};
+use seal_ty::{CAbiProperties, TyCtxt, TyId};
 
 use crate::generics::GenericScopes;
 use crate::res::Res;
@@ -39,8 +39,13 @@ mod values;
 
 pub(crate) use types::intern_primitives;
 
-pub(crate) fn lower_ast(ast: &Ast, dcx: &DiagCtxt, interner: &Interner) -> Hir {
-    Lowering::new(ast, dcx, interner).run()
+pub(crate) fn lower_ast(
+    ast: &Ast,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    c_abi: CAbiProperties,
+) -> Hir {
+    Lowering::new(ast, dcx, interner, c_abi).run()
 }
 
 /// One lowering pass over a parsed file.
@@ -102,8 +107,8 @@ struct PendingBounds {
 }
 
 impl<'a> Lowering<'a> {
-    fn new(ast: &'a Ast, dcx: &'a DiagCtxt, interner: &'a Interner) -> Self {
-        let hir = Hir::empty(TyCtxt::new(), interner);
+    fn new(ast: &'a Ast, dcx: &'a DiagCtxt, interner: &'a Interner, c_abi: CAbiProperties) -> Self {
+        let hir = Hir::empty(TyCtxt::with_c_abi(c_abi), interner);
         let mut traits = FxHashMap::default();
         for protocol in Protocol::ALL {
             let definition = hir.protocol_trait(protocol);

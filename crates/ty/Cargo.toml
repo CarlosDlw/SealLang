@@ -10,6 +10,7 @@ seal-def.workspace = true
 seal-hash.workspace = true
 seal-index.workspace = true
 seal-symbol.workspace = true
+seal-target.workspace = true
 
 [lints]
 workspace = true

@@ -373,6 +373,7 @@ dependencies = [
  "seal-parser",
  "seal-span",
  "seal-symbol",
+ "seal-target",
  "seal-ty",
 ]
 
@@ -531,6 +532,7 @@ dependencies = [
  "seal-hash",
  "seal-index",
  "seal-symbol",
+ "seal-target",
 ]
 
 [[package]]

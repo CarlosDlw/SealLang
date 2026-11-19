@@ -22,6 +22,7 @@ mod copy;
 mod ctxt;
 mod display;
 mod drop;
+mod ffi;
 mod generics;
 mod id;
 mod infer;
@@ -34,6 +35,7 @@ pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 pub use cast::{CastKind, NumericCastKind};
 pub use ctxt::{ImplHead, TyCtxt};
 pub use display::TyDisplay;
+pub use ffi::{FfiPosition, NotFfiSafe, safety};
 pub use generics::{
     Bound, GenericParamDef, GenericSignature, Generics, Instance, ParamEnv, ParamTy, TraitDef,
     TraitImplDef, TraitMethodDef, TraitMethodReceiver, TraitRef,
@@ -42,4 +44,5 @@ pub use id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 pub use infer::{InferCtxt, UnifyError};
 pub use init::{InitPaths, InitState, PathElem, place_type};
 pub use kind::{FloatTy, IntTy, RawPtrKind, RefKind, TyKind, UintTy};
+pub use seal_target::CAbiProperties;
 pub use template::{TemplateMatch, TemplateUnifier, match_template, unify_templates};

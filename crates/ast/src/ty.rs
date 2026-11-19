@@ -42,11 +42,51 @@ pub enum PrimitiveType {
     Char,
     /// `str`
     Str,
+    /// `c_char`
+    CChar,
+    /// `c_schar`
+    CSchar,
+    /// `c_uchar`
+    CUchar,
+    /// `c_short`
+    CShort,
+    /// `c_ushort`
+    CUshort,
+    /// `c_int`
+    CInt,
+    /// `c_uint`
+    CUint,
+    /// `c_long`
+    CLong,
+    /// `c_ulong`
+    CUlong,
+    /// `c_longlong`
+    CLongLong,
+    /// `c_ulonglong`
+    CUlongLong,
+    /// `c_float`
+    CFloat,
+    /// `c_double`
+    CDouble,
+    /// `c_bool`
+    CBool,
+    /// `c_wchar`
+    CWchar,
+    /// `size_t`
+    SizeT,
+    /// `ssize_t`
+    SsizeT,
+    /// `ptrdiff_t`
+    PtrdiffT,
+    /// `intptr_t`
+    IntptrT,
+    /// `uintptr_t`
+    UintptrT,
 }
 
 impl PrimitiveType {
     /// Every primitive type, in declaration order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 37] = [
         Self::I8,
         Self::I16,
         Self::I32,
@@ -64,6 +104,26 @@ impl PrimitiveType {
         Self::Bool,
         Self::Char,
         Self::Str,
+        Self::CChar,
+        Self::CSchar,
+        Self::CUchar,
+        Self::CShort,
+        Self::CUshort,
+        Self::CInt,
+        Self::CUint,
+        Self::CLong,
+        Self::CUlong,
+        Self::CLongLong,
+        Self::CUlongLong,
+        Self::CFloat,
+        Self::CDouble,
+        Self::CBool,
+        Self::CWchar,
+        Self::SizeT,
+        Self::SsizeT,
+        Self::PtrdiffT,
+        Self::IntptrT,
+        Self::UintptrT,
     ];
 
     /// Parses a primitive type by its source spelling.
@@ -94,7 +154,95 @@ impl PrimitiveType {
             Self::Bool => "bool",
             Self::Char => "char",
             Self::Str => "str",
+            Self::CChar => "c_char",
+            Self::CSchar => "c_schar",
+            Self::CUchar => "c_uchar",
+            Self::CShort => "c_short",
+            Self::CUshort => "c_ushort",
+            Self::CInt => "c_int",
+            Self::CUint => "c_uint",
+            Self::CLong => "c_long",
+            Self::CUlong => "c_ulong",
+            Self::CLongLong => "c_longlong",
+            Self::CUlongLong => "c_ulonglong",
+            Self::CFloat => "c_float",
+            Self::CDouble => "c_double",
+            Self::CBool => "c_bool",
+            Self::CWchar => "c_wchar",
+            Self::SizeT => "size_t",
+            Self::SsizeT => "ssize_t",
+            Self::PtrdiffT => "ptrdiff_t",
+            Self::IntptrT => "intptr_t",
+            Self::UintptrT => "uintptr_t",
         }
+    }
+
+    /// Returns whether this name may suffix a numeric literal.
+    ///
+    /// The C scalar names are type names only: `1c_int` is not a literal.
+    pub const fn is_literal_suffix(self) -> bool {
+        matches!(
+            self,
+            Self::I8
+                | Self::I16
+                | Self::I32
+                | Self::I64
+                | Self::I128
+                | Self::Isize
+                | Self::U8
+                | Self::U16
+                | Self::U32
+                | Self::U64
+                | Self::U128
+                | Self::Usize
+                | Self::F32
+                | Self::F64
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PrimitiveType;
+
+    #[test]
+    fn c_scalar_names_are_primitives() {
+        for name in [
+            "c_char",
+            "c_schar",
+            "c_uchar",
+            "c_short",
+            "c_ushort",
+            "c_int",
+            "c_uint",
+            "c_long",
+            "c_ulong",
+            "c_longlong",
+            "c_ulonglong",
+            "c_float",
+            "c_double",
+            "c_bool",
+            "c_wchar",
+            "size_t",
+            "ssize_t",
+            "ptrdiff_t",
+            "intptr_t",
+            "uintptr_t",
+        ] {
+            let primitive = PrimitiveType::from_name(name).expect("the C name is a primitive");
+            assert_eq!(primitive.as_str(), name);
+        }
+    }
+
+    #[test]
+    fn only_numeric_primitives_suffix_a_literal() {
+        assert!(PrimitiveType::I32.is_literal_suffix());
+        assert!(PrimitiveType::Usize.is_literal_suffix());
+        assert!(PrimitiveType::F64.is_literal_suffix());
+        assert!(!PrimitiveType::CInt.is_literal_suffix());
+        assert!(!PrimitiveType::CBool.is_literal_suffix());
+        assert!(!PrimitiveType::Bool.is_literal_suffix());
+        assert!(!PrimitiveType::Str.is_literal_suffix());
     }
 }
 

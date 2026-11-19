@@ -7,7 +7,11 @@
 
 #![warn(missing_docs)]
 
+mod c_abi;
+
 use std::fmt;
+
+pub use c_abi::CAbiProperties;
 
 /// Machine architecture.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -220,6 +224,13 @@ impl TargetSpec {
     #[inline]
     pub const fn is_32_bit(&self) -> bool {
         self.pointer_width == 32
+    }
+
+    /// Returns the C ABI properties of this target.
+    ///
+    /// The properties decide how `c_char`, `c_long`, and `c_wchar` resolve.
+    pub fn c_abi(&self) -> CAbiProperties {
+        CAbiProperties::for_target(self)
     }
 }
 
