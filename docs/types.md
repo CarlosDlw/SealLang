@@ -48,9 +48,11 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Inference variable | internal | unknown | unknown | no | no | no |
 | Type parameter | `T` | after instantiation | after instantiation | by bound | yes | no |
 
-No current type runs a destructor: scalars, references, `str`, `()`, and `!` are
-trivially disposable, and an aggregate inherits destructors from its fields once
-owning heap types exist.
+A type runs a destructor when it declares `impl Drop`; otherwise it inherits
+destructors from its fields or elements. Scalars, references, `str`, `()`, and
+`!` are trivially disposable, so dropping them runs nothing. A `static` is never
+dropped, and constant evaluation rejects a drop that would run a destructor
+(`E4028`).
 
 ## Generic types
 
@@ -1332,7 +1334,7 @@ kinds and never unify. The compiler answers three structural queries:
 |-------|------|
 | `Copy` | Scalars, `()`, `!`, and every reference, including `*dyn Trait` and `*mut dyn Trait`, are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, `dyn Trait`, and every struct or enum are not, even when all their fields are `Copy`. |
 | `Sized` | Every type has a compile-time size except `str`, slices, `dyn Trait`, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
-| `needs_drop` | An aggregate with a declared destructor answers `true`; otherwise an array, tuple, struct, and enum derive the answer from their elements or fields. A trait object's vtable points its drop slot at the concrete type's glue, which is empty for a type that declares no destructor. |
+| `needs_drop` | An aggregate with a declared destructor answers `true`; otherwise an array, tuple, struct, and enum derive the answer from their elements or fields. A trait object's vtable points its drop slot at the concrete type's glue, which runs the destructor and then drops the parts that need it. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the

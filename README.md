@@ -62,6 +62,13 @@ two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
 safe code into undefined behavior.
 
+A type may declare `impl Drop` and own the release of what it holds. The
+destructor runs when the value leaves its scope, when a function returns early,
+or when a loop body leaves, and fields, the active enum variant, and array
+elements follow in a fixed order. `drop(value)` releases a value early and
+consumes it like a move, so using it afterwards is `E5005`. A `static` is never
+released, and a constant cannot run a destructor (`E4028`).
+
 Tuples are structural product types: `(i32, bool)` is the same type wherever it
 is written, and elements are accessed by position with `.0`, `.1`, and so on.
 `(T,)` is a one-element tuple, `(T)` only groups, and `()` is the unit type. A

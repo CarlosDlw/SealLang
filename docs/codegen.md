@@ -208,6 +208,17 @@ The ABI is defined by the language, not by a C header:
   or searches for a vtable at run time. Construction and dispatch allocate nothing and copy no concrete
   value. The vtable layout is compiler-private; Seal does not promise a stable
   external ABI for it.
+- Drop glue is one internal `void (ptr)` per concrete type that must be
+  released, named `seal.drop.glue.<fingerprint>` from the type's structural
+  hash. The function receives the erased data pointer, calls the recorded
+  destructor instance first, and then visits the children monomorphization
+  listed: the fields that need dropping in declaration order, the active
+  variant of an enum, or every array element in increasing index order. A glue
+  whose type declares no destructor and whose parts need none consists of a
+  single return. Glue is emitted for every concrete type whose vtable is
+  collected, even without a destructor, because vtable slot 0 has no fallback;
+  the function carries no debug info and never marks its parameter `noalias`,
+  since the destructor may hand the address to code the caller does not see.
 - Intrinsic methods lower from `Rvalue::Intrinsic`. Scalar methods use LLVM
   instructions and target intrinsics: `llvm.abs`, `llvm.ctpop`, `llvm.ctlz`,
   `llvm.cttz`, `llvm.fshl`/`llvm.fshr`, `llvm.bswap`, `llvm.fabs`,

@@ -590,6 +590,25 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     `unnamed_addr`, a zero-sized allocation keeps one byte so its address stays
     unique, and no constructor or thread-local storage is emitted for any
     global.
+81. **Drop sites are explicit MIR statements.** Every lexical scope exit, early
+    return, loop exit, and temporary owns a `Drop` statement where the value is
+    released, and elaboration replaces an unreachable site with nothing and
+    guards a conditional one with a `bool` flag that assignments set, moves and
+    drops clear. An assignment to an initialized place whose type needs a
+    destructor drops the old value first (`DropKind::Overwrite`). No phase after
+    elaboration invents or removes a release.
+82. **Drop glue is one function per concrete type.** Monomorphization collects
+    one `void (ptr)` glue for every concrete type it must release, calls the
+    recorded destructor first, and then lists the fields, the active variant, or
+    the array elements that follow. Code generation emits each glue with the
+    `seal.drop.glue.<fingerprint>` symbol, and the first slot of every vtable
+    points at the glue of the concrete type, including a type that declares no
+    destructor, because the slot has no fallback.
+83. **Destructors never run at compile time nor for statics.** Constant
+    evaluation rejects a drop that would run a destructor (`E4028`) and never
+    executes user code as a destructor, and a `static` is initialized before the
+    program starts and is never released. Only a value a runtime scope owns is
+    dropped, and a panic ends the program without unwinding.
 
 ## Global data and constant evaluation
 

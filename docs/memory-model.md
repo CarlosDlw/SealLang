@@ -471,6 +471,38 @@ The guarantee is single-threaded. Seal has no threads: when they arrive, safe
 contract. The unsafe gate keeps that future change localized to the access rule
 and this summary.
 
+### D20 — Destructors run at scope exit, without unwinding
+
+A value is released when the scope that owns it ends, when its function returns
+early, when a loop body leaves through `break` or `continue`, and when the value
+is overwritten. Locals drop in reverse declaration order, so a value defined
+later is released first; parameters follow the locals of the body. A struct
+runs its destructor and then drops the fields that need it, in declaration
+order; an enum drops the active variant only; an array drops elements in
+increasing index order. A move transfers the release to the destination and
+leaves nothing behind at the source.
+
+A value may also be released by `drop(value)`, which consumes the operand like a
+move and runs the destructor at the call. A `Copy` value, a reference, or a raw
+pointer is accepted and runs nothing, because no destructor exists and nothing
+is owned.
+
+This ordering is compiled, not observed: MIR drop sites are explicit statements,
+drop elaboration prunes the sites a path can never reach and guards the ones that
+depend on initialization with a `bool` flag, and an assignment to an initialized
+place whose type needs a destructor drops the old value first
+(`DropKind::Overwrite`).
+
+A `static` is initialized before the program starts and is never released, so
+its destructor never runs. Constant evaluation has no scope to leave either: a
+constant initializer or `const func` that drops a value declaring a destructor
+is `E4028`, while constructing the value and storing or returning it is allowed.
+
+Seal has no unwinding. A panic ends the program with status 101, so destructors
+that would have run during a stack unwind do not run. The decision keeps the
+release order purely lexical and makes every drop site statically visible to the
+borrow checker.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:

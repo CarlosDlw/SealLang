@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Destructors
+
+A type may now declare `impl Drop` and take ownership of its release. The
+destructor runs at scope exit, before the fields the type owns, and the built-in
+`drop(value)` releases a value early:
+
+```seal
+struct Guard {
+  id: i32,
+}
+
+impl Drop for Guard {
+  func drop(self: *mut Guard) {
+    // Release whatever `id` names.
+  }
+}
+
+func main() {
+  let guard = Guard { id: 1 };
+  drop(guard); // runs the destructor here
+}
+```
+
+Field drops follow declaration order, an enum drops only its active variant, an
+array drops elements in index order, and a value moved into another function or
+returned from one is released by its new owner. `impl Drop` is checked: one
+implementation per type, covering the declaration's parameters, for a type that
+is not `Copy`. `Drop` is not a bound or a trait object, and the destructor
+cannot be called directly.
+
+A `static` is never released, a constant cannot run a destructor (`E4028`), and
+a panic ends the program without unwinding, so destructors do not run during a
+panic.
+
 ### `const`, `static`, and `unsafe` are reserved keywords
 
 Global data is now part of the language, and the three keywords it needs are
