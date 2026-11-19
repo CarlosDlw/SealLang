@@ -52,6 +52,10 @@ impl VtableKey {
 }
 
 /// One collected vtable.
+///
+/// The first emitted slot is the drop glue of [`VtableKey::concrete`], which
+/// code generation resolves from the key and the collected glue rather than
+/// storing a second copy of the same instance here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonoVTable {
     /// The concrete type and principal trait this vtable belongs to.
@@ -61,8 +65,6 @@ pub struct MonoVTable {
     /// Header entries are not instances; `entries[0]` is the first method
     /// after the three-entry header.
     pub entries: Vec<Instance>,
-    /// The concrete destructor instance, once the language has destructors.
-    pub drop: Option<Instance>,
 }
 
 /// Derives a vtable key from a trait-object coercion.
@@ -106,11 +108,7 @@ pub(crate) fn build_vtable(
         let instance = Instance::new(method, tcx.substs(&arguments));
         entries.push(resolve_trait_instance(hir, interner, instance)?);
     }
-    Ok(MonoVTable {
-        key,
-        entries,
-        drop: None,
-    })
+    Ok(MonoVTable { key, entries })
 }
 
 /// Reports a vtable failure as the user-facing missing-entry diagnostic.

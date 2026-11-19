@@ -331,7 +331,7 @@ impl Collector<'_> {
         let id = VtableId::from_usize(self.vtables.len());
         self.vtables.push(table);
         self.vtable_ids.insert(key, id);
-        self.request_glue(key.concrete, 0, chain, span);
+        self.request_vtable_glue(key.concrete, 0, chain, span);
         for entry in entries {
             let mut chain = chain.to_vec();
             chain.push((entry, span));
@@ -339,17 +339,51 @@ impl Collector<'_> {
         }
     }
 
+    /// Records the glue for a drop site and schedules its destructor and
+    /// children.
+    ///
+    /// A type that needs no destructor gets no entry: its drop sites call
+    /// nothing.
+    fn request_glue(&mut self, ty: TyId, depth: usize, chain: &[(Instance, Span)], span: Span) {
+        self.request_glue_inner(ty, depth, chain, span, false);
+    }
+
+    /// Records the glue a vtable names as its concrete type.
+    ///
+    /// The first slot always points at that type's own glue, even when dropping
+    /// the type runs nothing, so no shared no-op function is ever emitted.
+    fn request_vtable_glue(
+        &mut self,
+        ty: TyId,
+        depth: usize,
+        chain: &[(Instance, Span)],
+        span: Span,
+    ) {
+        self.request_glue_inner(ty, depth, chain, span, true);
+    }
+
     /// Records the glue for `ty` and schedules its destructor and children.
     ///
     /// The entry and its ID exist before any child is visited, so a type that
-    /// reaches the same glue again stops instead of recursing forever. A type
-    /// that needs no destructor gets no entry: its drop sites call nothing.
-    fn request_glue(&mut self, ty: TyId, depth: usize, chain: &[(Instance, Span)], span: Span) {
-        if self.glue_ids.contains_key(&ty) || !self.hir.ty_ctxt().needs_drop(ty) {
+    /// reaches the same glue again stops instead of recursing forever.
+    fn request_glue_inner(
+        &mut self,
+        ty: TyId,
+        depth: usize,
+        chain: &[(Instance, Span)],
+        span: Span,
+        required: bool,
+    ) {
+        if self.glue_ids.contains_key(&ty) {
             return;
         }
-        let Some(glue) = drop::glue_shape(self.hir, ty) else {
-            return;
+        let glue = match drop::glue_shape(self.hir, ty) {
+            Some(glue) => glue,
+            None if required => crate::DropGlue {
+                destructor: None,
+                children: crate::GlueChildren::None,
+            },
+            None => return,
         };
         if depth > self.limits.glue_depth {
             let message = format!(

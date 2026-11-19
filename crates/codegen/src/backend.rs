@@ -163,10 +163,21 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         &mapper,
         &noalias,
     )?;
-    // Vtable globals point at method functions, so every function must exist
+    // Drop glue is declared and filled before vtables, whose first slot points
+    // at the concrete type's glue, and before bodies, whose drop statements call
+    // it.
+    let drop_glues =
+        crate::drop_glue::DropGlues::declare(&context, &module, input.hir, input.mono)?;
+    drop_glues.emit(&context, input.hir, &mapper, input.mono, &functions)?;
+    // Vtable globals point at glue and method functions, so both must exist
     // before the globals are initialized.
     let vtables = Vtables::declare(
-        &context, &module, input.hir, input.mono, &mapper, &functions,
+        &module,
+        input.hir,
+        input.mono,
+        &mapper,
+        &functions,
+        &drop_glues,
     )?;
     let builder = context.create_builder();
     let constants = Constants::new(&context, &module, &mapper, input.interner);
@@ -225,6 +236,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             globals: &globals,
             functions: &functions,
             vtables: &vtables,
+            drop_glues: &drop_glues,
             interner: input.interner,
             source_map: input.source_map,
             debug: debug.as_ref(),

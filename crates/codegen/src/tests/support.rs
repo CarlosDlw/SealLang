@@ -7,6 +7,7 @@
 use inkwell::context::Context;
 use inkwell::module::Module;
 use seal_borrowck::AliasingFacts;
+use seal_def::DefKind;
 use seal_hir::Hir;
 use seal_mono::MonoProgram;
 use seal_session::{Options, Session};
@@ -36,6 +37,17 @@ pub(crate) struct Compiled {
 /// Panics when any phase reports a diagnostic. A fixture that is expected to
 /// fail belongs in a phase-specific test, not in this harness.
 pub(crate) fn front_end(source: &str) -> Compiled {
+    front_end_with_destructors(source, &[])
+}
+
+/// Runs every phase up to and including monomorphization after registering a
+/// destructor for each named aggregate.
+///
+/// `impl Drop` is not part of the surface yet, so a test that needs a concrete
+/// type to need dropping registers one before MIR lowering, which is exactly
+/// where HIR lowering will record it once the syntax exists. Each pair is the
+/// aggregate and the function standing in for its destructor.
+pub(crate) fn front_end_with_destructors(source: &str, destructors: &[(&str, &str)]) -> Compiled {
     let session = Session::new(Options::default()).expect("session starts");
     let file = session
         .add_file(FileName::virtual_name("test.sl"), source.to_owned())
@@ -48,13 +60,48 @@ pub(crate) fn front_end(source: &str) -> Compiled {
     let tokens = seal_lexer::lex(&source_file, session.diag(), session.interner());
     let ast = seal_parser::parse(&tokens, session.diag(), session.interner());
     let hir = seal_hir::lower(&ast, session.diag(), session.interner());
+    for (aggregate, destructor) in destructors {
+        let aggregate_symbol = session
+            .interner()
+            .lookup(aggregate)
+            .unwrap_or_else(|| panic!("`{aggregate}` is never interned"));
+        let adt = hir
+            .definitions()
+            .iter_enumerated()
+            .find(|(_, data)| {
+                matches!(data.kind, DefKind::Struct | DefKind::Enum)
+                    && data.name == aggregate_symbol
+            })
+            .and_then(|(id, _)| hir.adt(id))
+            .unwrap_or_else(|| panic!("no aggregate named `{aggregate}`"));
+        let destructor_symbol = session
+            .interner()
+            .lookup(destructor)
+            .unwrap_or_else(|| panic!("`{destructor}` is never interned"));
+        let method = hir
+            .definitions()
+            .iter_enumerated()
+            .find(|(_, data)| data.kind == DefKind::Function && data.name == destructor_symbol)
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| panic!("no function named `{destructor}`"));
+        assert_eq!(
+            hir.ty_ctxt().set_drop_method(adt, method),
+            None,
+            "`{aggregate}` starts without a destructor"
+        );
+    }
     let typeck = seal_typeck::check(
         &hir,
         session.diag(),
         session.interner(),
         session.target().pointer_width(),
     );
-    let mir = seal_mir::lower(&hir, &typeck);
+    let mut mir = seal_mir::lower(&hir, &typeck);
+    mir.validate()
+        .expect("MIR lowering preserves its invariants");
+    seal_mir::elaborate_drops(&hir, &mut mir).expect("drop elaboration preserves its invariants");
+    mir.validate_with(&hir)
+        .expect("drop elaboration preserves the MIR invariants");
     let constants = seal_const_eval::evaluate(
         &hir,
         &mir,
@@ -145,13 +192,19 @@ pub(crate) fn build_module<'ctx>(
         &noalias,
     )
     .expect("functions declare");
+    let glues =
+        crate::drop_glue::DropGlues::declare(context, &module, &compiled.hir, &compiled.mono)
+            .expect("drop glue declares");
+    glues
+        .emit(context, &compiled.hir, &mapper, &compiled.mono, &functions)
+        .expect("drop glue emits");
     let vtables = crate::vtable::Vtables::declare(
-        context,
         &module,
         &compiled.hir,
         &compiled.mono,
         &mapper,
         &functions,
+        &glues,
     )
     .expect("vtables emit");
     let debug = if debug_info {
@@ -230,6 +283,7 @@ pub(crate) fn build_module<'ctx>(
             globals: &globals,
             functions: &functions,
             vtables: &vtables,
+            drop_glues: &glues,
             interner: compiled.session.interner(),
             source_map: compiled.session.source_map(),
             debug: debug.as_ref(),
@@ -321,13 +375,16 @@ pub(crate) fn resolve_vtable(
         &noalias,
     )
     .expect("functions declare");
+    let glues =
+        crate::drop_glue::DropGlues::declare(&context, &module, &compiled.hir, &compiled.mono)
+            .expect("drop glue declares");
     let vtables = crate::vtable::Vtables::declare(
-        &context,
         &module,
         &compiled.hir,
         &compiled.mono,
         &mapper,
         &functions,
+        &glues,
     )
     .expect("vtables emit");
     vtables

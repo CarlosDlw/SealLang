@@ -50,7 +50,8 @@ fn vtable_header_has_drop_size_and_align() {
         .lines()
         .find(|line| line.contains(&name))
         .unwrap_or_else(|| panic!("missing vtable `{name}` in:\n{ir}"));
-    assert!(global.contains("@seal.drop.noop"), "{global}");
+    assert!(global.contains("@seal.drop.glue."), "{global}");
+    assert!(!global.contains("seal.drop.noop"), "{global}");
     assert!(global.contains("i64 4"), "{global}");
 }
 

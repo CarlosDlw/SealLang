@@ -35,7 +35,7 @@ allowed to depend only on crates below it in the list.
 | `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric casts, bounds checks, match dispatch, terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
 | `seal-mono` | Monomorphization: reachable-instance collection from non-generic function roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods or default bodies, vtable collection from code and constant values, drop glue collection per concrete type (destructor instance and children), reachable static and const-allocation collection, recursion, instance, vtable, and glue limits, stable instance and type fingerprints, and global validation (`E7xxx`). |
-| `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
+| `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, one internal drop glue function per concrete type (vtable slot 0 points at it), vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
 | `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
@@ -492,9 +492,11 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     copying the value, and `TraitObjectReborrow` copies the pair without a new
     loan. `DynamicCall` loads the recorded slot from the receiver's own vtable
     and emits an indirect call; code generation never looks up a vtable from the
-    concrete type at runtime. The drop slot is a compiler-generated no-op while
-    no type has a destructor, and the header stays reserved for that future
-    implementation. Every vtable-reachable method is excluded from `noalias`.
+    concrete type at runtime. The drop slot is the concrete type's own drop
+    glue: monomorphization collects one glue per vtable type, and the backend
+    emits it as an internal `void (ptr)` function, empty when the type declares
+    no destructor, so the slot is never null or shared. Every vtable-reachable
+    method is excluded from `noalias`.
 68. **Numeric casts have one classification from source to machine code.**
     `seal-ty`'s `NumericCastKind` and `TyCtxt::numeric_cast_kind` decide which
     conversion a pair of concrete numeric types performs. Type checking records

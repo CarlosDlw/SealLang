@@ -193,8 +193,11 @@ The ABI is defined by the language, not by a C header:
 - A trait-object pointer is the fat pointer `{ data, vtable }`. `MakeTraitObject`
   stores the concrete data address and the address of that pair's vtable
   constant; `TraitObjectReborrow` copies the two words and records the new loan
-  without changing either. The vtable starts with a no-op drop function, size,
-  and alignment, followed by method pointers in the shared `seal-layout` order:
+  without changing either. The vtable starts with the concrete type's drop glue
+  (`seal.drop.glue.<fingerprint>`, an internal `void (ptr)` that runs the
+  destructor and then drops fields, the active variant, or array elements),
+  size, and alignment, followed by method pointers in the shared `seal-layout`
+  order:
   principal-trait methods in declaration order, then supertraits depth-first,
   deduplicated by method identity. A slot for a method whose impl omits it
   points at the trait's default-body instance, resolved by the same

@@ -420,7 +420,6 @@ fn a_vtable_entry_uses_the_default_when_the_impl_omits_the_method() {
             .map(|(id, _)| id)
             .expect("area exists")
     });
-    assert!(table.drop.is_none());
     program.validate(&hir).expect("the default vtable is valid");
 }
 

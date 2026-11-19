@@ -406,7 +406,7 @@ pub(crate) fn validate_vtable(
     if table.key.trait_ref.self_ty != table.key.concrete {
         return Err(MonoValidationError::VtableSelfMismatch { vtable: id });
     }
-    if tcx.needs_drop(table.key.concrete) && program.drop_glue_id(table.key.concrete).is_none() {
+    if program.drop_glue_id(table.key.concrete).is_none() {
         return Err(MonoValidationError::MissingDropGlue {
             ty: table.key.concrete,
         });

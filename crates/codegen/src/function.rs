@@ -1,5 +1,6 @@
 //! Lowering one MIR body into an LLVM function.
 
+use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::{Builder, BuilderError};
 use inkwell::context::Context;
@@ -13,11 +14,12 @@ use seal_hir::Hir;
 use seal_mir::{Body, LocalId, LocalKind, StatementKind, SwitchTarget, TerminatorKind};
 use seal_span::{SourceMap, Span};
 use seal_symbol::Interner;
-use seal_ty::{Instance, TyCtxt, TyId};
+use seal_ty::{Instance, TyCtxt, TyId, TyKind};
 
 use crate::const_value::ConstValues;
 use crate::constant::Constants;
 use crate::debug::DebugContext;
+use crate::drop_glue::DropGlues;
 use crate::error::CodegenError;
 use crate::global::Globals;
 use crate::names;
@@ -55,6 +57,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     /// Emitted vtable globals, keyed by coercion.
     pub(crate) vtables: &'a Vtables<'ctx>,
+    /// Declared drop glue functions, keyed by concrete type.
+    pub(crate) drop_glues: &'a DropGlues<'ctx>,
     /// Symbol interner.
     pub(crate) interner: &'a Interner,
     /// Source map, used for runtime panic locations.
@@ -81,6 +85,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) globals: &'a Globals<'ctx>,
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     pub(crate) vtables: &'a Vtables<'ctx>,
+    pub(crate) drop_glues: &'a DropGlues<'ctx>,
     pub(crate) interner: &'a Interner,
     pub(crate) source_map: &'a SourceMap,
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
@@ -119,6 +124,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             globals: self.globals,
             functions: self.functions,
             vtables: self.vtables,
+            drop_glues: self.drop_glues,
             interner: self.interner,
             source_map: self.source_map,
             debug: self.debug,
@@ -141,17 +147,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 self.set_span(statement.span);
                 let (place, rvalue) = match &statement.kind {
                     StatementKind::Assign { place, rvalue } => (place, rvalue),
-                    // Drop glue is shared until destructors exist: the call keeps
-                    // the statement's shape in the IR, and the phase that adds
-                    // destructors fills the glue in.
-                    StatementKind::Drop { place, .. }
-                    | StatementKind::DropRemaining { place, .. } => {
-                        let glue = crate::drop::noop_drop(self.context, self.module)?;
-                        let address = self.place_ptr(place)?;
-                        self.build(
-                            self.builder.build_call(glue, &[address.into()], "drop"),
-                            "drop glue call",
-                        )?;
+                    StatementKind::Drop { place, .. } => {
+                        self.emit_drop(place)?;
+                        continue;
+                    }
+                    StatementKind::DropRemaining { place, from } => {
+                        self.emit_drop_remaining(place, from)?;
                         continue;
                     }
                 };
@@ -165,6 +166,98 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         if self.debug.is_some() {
             self.builder.unset_current_debug_location();
         }
+        Ok(())
+    }
+
+    /// Emits the glue call for one drop statement.
+    ///
+    /// A drop of a type that needs no destructor has no glue and no statement
+    /// to emit: a specialized body keeps the drop sites of a parameter that
+    /// resolved to a trivially disposable type.
+    fn emit_drop(&self, place: &seal_mir::Place) -> Result<(), CodegenError> {
+        let ty = self.place_type(place)?;
+        if !self.tcx.needs_drop(ty) {
+            return Ok(());
+        }
+        let glue = self.drop_glues.function_for(ty)?;
+        let address = self.place_ptr(place)?;
+        self.build(
+            self.builder.build_call(glue, &[address.into()], "drop"),
+            "drop glue call",
+        )?;
+        Ok(())
+    }
+
+    /// Emits the element loop of a `DropRemaining` statement.
+    ///
+    /// The array owns the elements that the loop did not move out, so the loop
+    /// starts at `from` and calls the element glue for every index below the
+    /// array length.
+    fn emit_drop_remaining(
+        &self,
+        place: &seal_mir::Place,
+        from: &seal_mir::Operand,
+    ) -> Result<(), CodegenError> {
+        let ty = self.place_type(place)?;
+        let TyKind::Array { element, length } = self.tcx.kind(ty) else {
+            return Err(CodegenError::internal(format!(
+                "a remaining-drop statement names `{ty:?}`, which is not an array"
+            )));
+        };
+        if !self.tcx.needs_drop(element) {
+            return Ok(());
+        }
+        let glue = self.drop_glues.function_for(element)?;
+        let address = self.place_ptr(place)?;
+        let start = self.load_operand(from)?.into_int_value();
+        let usize_type = self.mapper.usize_type()?;
+        let index = self.entry_alloca(usize_type.into(), "drop.index")?;
+        self.build(self.builder.build_store(index, start), "drop index store")?;
+        let check = self.context.append_basic_block(self.function, "drop.check");
+        let body = self.context.append_basic_block(self.function, "drop.body");
+        let done = self.context.append_basic_block(self.function, "drop.done");
+        self.build(
+            self.builder.build_unconditional_branch(check),
+            "drop branch",
+        )?;
+        self.builder.position_at_end(check);
+        let current = self
+            .build(
+                self.builder.build_load(usize_type, index, "drop.index"),
+                "drop index load",
+            )?
+            .into_int_value();
+        let keep = self.build(
+            self.builder.build_int_compare(
+                IntPredicate::ULT,
+                current,
+                usize_type.const_int(length, false),
+                "drop.keep",
+            ),
+            "drop comparison",
+        )?;
+        self.build(
+            self.builder.build_conditional_branch(keep, body, done),
+            "drop loop branch",
+        )?;
+        self.builder.position_at_end(body);
+        let element_address = self.index_ptr(address, current, element)?;
+        self.build(
+            self.builder
+                .build_call(glue, &[element_address.into()], "drop"),
+            "drop glue call",
+        )?;
+        let next = self.build(
+            self.builder
+                .build_int_add(current, usize_type.const_int(1, false), "drop.next"),
+            "drop index",
+        )?;
+        self.build(self.builder.build_store(index, next), "drop index store")?;
+        self.build(
+            self.builder.build_unconditional_branch(check),
+            "drop loop branch",
+        )?;
+        self.builder.position_at_end(done);
         Ok(())
     }
 

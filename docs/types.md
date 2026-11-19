@@ -1153,11 +1153,12 @@ supertrait methods depth-first in declaration order, deduplicated by method
 identity on first occurrence. The slot is fixed at compile time and shared by
 type checking, MIR, monomorphization, and code generation. A dynamic call loads
 the slot from the vtable already embedded in the receiver; it never searches for
-the concrete type at runtime. The drop slot is a compiler-generated no-op
-because no current Seal type has a destructor, and the size and alignment slots
-reserve the stable header for a future `Drop` implementation. A reference to a
-trait object is still a borrowed view: converting to it, copying it, and
-reborrowing it copy only the two pointer words.
+the concrete type at runtime. The drop slot names the concrete type's drop
+glue, an internal function that runs the declared destructor and then drops the
+fields; it is empty for a type that declares none. The size and alignment slots
+complete the header. A reference to a trait object is still a borrowed view:
+converting to it, copying it, and reborrowing it copy only the two pointer
+words.
 
 ### Signed and unsigned integers
 
@@ -1286,7 +1287,7 @@ kinds and never unify. The compiler answers three structural queries:
 |-------|------|
 | `Copy` | Scalars, `()`, `!`, and every reference, including `*dyn Trait` and `*mut dyn Trait`, are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, `dyn Trait`, and every struct or enum are not, even when all their fields are `Copy`. |
 | `Sized` | Every type has a compile-time size except `str`, slices, `dyn Trait`, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
-| `needs_drop` | No current type runs a destructor. An array, tuple, struct, and enum derive the answer from their elements or fields once a type with a destructor exists. A trait object's vtable reserves a drop slot, but the current slot is a no-op. |
+| `needs_drop` | An aggregate with a declared destructor answers `true`; otherwise an array, tuple, struct, and enum derive the answer from their elements or fields. A trait object's vtable points its drop slot at the concrete type's glue, which is empty for a type that declares no destructor. |
 
 `Copy` and a destructor are mutually exclusive, and there is no user-defined
 copy hook. A future opt-in `Copy` for structs derives the property from the

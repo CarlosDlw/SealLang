@@ -36,8 +36,13 @@ pub(crate) fn instance(base: &str, fingerprint: Fingerprint) -> String {
     format!("{base}.{fingerprint}")
 }
 
-/// The compiler-generated no-op drop function used in vtable slot 0.
-pub(crate) const DROP: &str = "seal.drop.noop";
+/// Returns the linker symbol for the drop glue of one concrete type.
+///
+/// The fingerprint covers the whole type structure, so distinct types never
+/// share a glue and repeated builds emit the same symbol.
+pub(crate) fn drop_glue(fingerprint: Fingerprint) -> String {
+    format!("seal.drop.glue.{fingerprint}")
+}
 
 /// Returns the linker symbol for one vtable.
 ///

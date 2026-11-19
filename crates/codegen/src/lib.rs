@@ -7,8 +7,10 @@
 //!
 //! 1. Every monomorphized instance's body is declared as an LLVM function first,
 //!    so calls can target functions declared later. A generic instance appends a
-//!    stable fingerprint of its type arguments to its symbol. Vtable globals come
-//!    next, because their slots name functions.
+//!    stable fingerprint of its type arguments to its symbol. One internal drop
+//!    glue function per concrete type is declared and filled next, then vtable
+//!    globals, because their first slot names the concrete type's glue and the
+//!    remaining slots name method functions.
 //! 2. Every reachable static and const allocation is declared, then initialized
 //!    from its evaluated memory image. Declaring before initializing lets a
 //!    global name one that appears later in the program. A `const` read by value
@@ -56,7 +58,7 @@ mod const_image;
 mod const_value;
 mod constant;
 mod debug;
-mod drop;
+mod drop_glue;
 mod entry;
 mod equality;
 mod error;

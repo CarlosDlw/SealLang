@@ -348,13 +348,14 @@ loan without touching the value. Coercion preserves the reference kind, so
 `&*pointer` reborrow.
 
 The vtable is a constant emitted once per `(concrete type, trait reference)`
-pair. Its first three slots are a no-op drop function, size, and alignment,
-followed by method pointers in the principal trait's declaration order and then
-supertraits depth-first, deduplicated by method identity. The drop slot is a
-compiler-generated no-op because no current type has a destructor; reserving it
-keeps the layout stable when `Drop` lands. Size and alignment are not read by a
-current operation. The layout is compiler-private and is not a stable external
-ABI.
+pair. Its first three slots are the concrete type's drop glue, size, and
+alignment, followed by method pointers in the principal trait's declaration
+order and then supertraits depth-first, deduplicated by method identity. The
+drop slot names one internal `void (ptr)` glue per type: it runs the declared
+destructor and then drops the struct fields in declaration order, the active
+enum variant, or every array element, and it is empty for a type with no
+destructor. Size and alignment are not read by a current operation. The layout
+is compiler-private and is not a stable external ABI.
 
 A dynamic call does not discover the concrete type at runtime. Type checking
 selects the vtable slot, monomorphization collects the concrete method instance,
