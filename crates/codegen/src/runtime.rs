@@ -1,7 +1,8 @@
 //! The native runtime archive embedded in the compiler.
 //!
-//! The archive is built for the architecture and operating system of the
-//! compiler itself. Objects and assembly for another target do not need it, but
+//! The archive is built from the runtime's C11 translation units under
+//! `runtime/core/` for the architecture and operating system of the compiler
+//! itself. Objects and assembly for another target do not need it, but
 //! linking an executable does, so cross-target executables are rejected with a
 //! clear artifact error instead of failing later in the linker.
 

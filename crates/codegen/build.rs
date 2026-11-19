@@ -8,17 +8,25 @@
 use std::env;
 use std::path::PathBuf;
 
+/// Native runtime translation units, in archive order.
+const SOURCES: &[&str] = &["runtime/core/io.c", "runtime/core/panic.c"];
+
+/// Shared ABI header included by every runtime translation unit.
+const HEADERS: &[&str] = &["runtime/include/seal_rt.h"];
+
 fn main() {
-    println!("cargo:rerun-if-changed=runtime/seal_rt.c");
+    for source in SOURCES.iter().chain(HEADERS.iter()) {
+        println!("cargo:rerun-if-changed={source}");
+    }
 
     let manifest = PathBuf::from(
         env::var_os("CARGO_MANIFEST_DIR").expect("Cargo always sets CARGO_MANIFEST_DIR"),
     );
-    let source = manifest.join("runtime/seal_rt.c");
+    let include = manifest.join("runtime/include");
 
     let mut build = cc::Build::new();
     build
-        .file(&source)
+        .include(&include)
         .std("c11")
         .opt_level(2)
         .pic(true)
@@ -29,6 +37,10 @@ fn main() {
         .flag_if_supported("-fvisibility=hidden")
         .flag_if_supported("-fno-unwind-tables")
         .flag_if_supported("-fno-asynchronous-unwind-tables");
+
+    for source in SOURCES {
+        build.file(manifest.join(source));
+    }
 
     let objects = build.compile_intermediates();
     let archive = build.create_archive("seal_rt", &objects);

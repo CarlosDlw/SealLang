@@ -469,9 +469,10 @@ Raw pointer code generation keeps the source contract visible in the IR:
 
 ## Native runtime
 
-`build.rs` compiles `runtime/seal_rt.c` with the `cc` crate and embeds the
-resulting archive in the compiler. The runtime is minimal C11 with no
-allocation, locks, stdio, locale, or `atexit` handlers:
+`build.rs` compiles the runtime's C11 translation units under `runtime/core/`
+with the `cc` crate and embeds the resulting archive in the compiler. The core
+runtime is minimal C11 with no allocation, locks, stdio, locale, or `atexit`
+handlers:
 
 - `seal_write` writes exactly the requested bytes to a descriptor, retrying
   `EINTR` and partial writes. `seal_print` and `seal_eprint` select stdout and
