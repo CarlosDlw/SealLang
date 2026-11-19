@@ -53,6 +53,24 @@ SEAL_NORETURN SEAL_EXPORT void seal_panic(const uint8_t *message,
                                           int32_t line,
                                           int32_t column);
 
+/*
+ * Allocates `size` bytes aligned to `align`, which must be a power of two.
+ * Returns NULL for invalid alignment, layout overflow, or allocation failure.
+ * A zero size returns a non-null dangling pointer equal to `align` without
+ * allocating; it must never be dereferenced.
+ */
+SEAL_EXPORT void *seal_alloc(size_t size, size_t align);
+
+/* Same contract as seal_alloc, with every allocated byte zeroed. */
+SEAL_EXPORT void *seal_alloc_zeroed(size_t size, size_t align);
+
+/*
+ * Releases a block returned by this ABI. `pointer == NULL` and `size == 0` are
+ * no-ops. `align` must be the alignment passed to seal_alloc or
+ * seal_alloc_zeroed for this block.
+ */
+SEAL_EXPORT void seal_dealloc(void *pointer, size_t size, size_t align);
+
 #ifdef __cplusplus
 }
 #endif

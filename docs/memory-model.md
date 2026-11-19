@@ -150,9 +150,11 @@ raw pointers opt into this runtime contract inside `unsafe`.
 
 There is no implicit heap. String literals are `*str` fat pointers (data and
 length) into static read-only memory, so `str` is an **unsized pointee** and is
-only usable behind a reference. Owned heap data arrives with the allocator API
-as a distinct owning type that implements `Drop`; allocation failure is returned
-as a value, not hidden behind an abort. Reallocation and growth are explicit
+only usable behind a reference. The runtime provides the internal allocation
+substrate (`seal_alloc`, `seal_alloc_zeroed`, `seal_dealloc`) and reports
+failure as `NULL`. Owned heap data arrives with the allocator API as a distinct
+owning type that implements `Drop`; allocation failure there is returned as a
+value, not hidden behind an abort. Reallocation and growth are explicit
 operations of that type, never implicit on assignment. A trait object also does
 not allocate: its vtable is a constant built at compile time per concrete type
 and trait reference, and coercing to it copies only the data and vtable words.

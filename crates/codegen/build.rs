@@ -9,10 +9,15 @@ use std::env;
 use std::path::PathBuf;
 
 /// Native runtime translation units, in archive order.
-const SOURCES: &[&str] = &["runtime/core/io.c", "runtime/core/panic.c"];
+const SOURCES: &[&str] = &[
+    "runtime/core/io.c",
+    "runtime/core/panic.c",
+    "runtime/heap/alloc.c",
+    "runtime/heap/system.c",
+];
 
-/// Shared ABI header included by every runtime translation unit.
-const HEADERS: &[&str] = &["runtime/include/seal_rt.h"];
+/// Shared ABI and backend headers included by the runtime translation units.
+const HEADERS: &[&str] = &["runtime/include/seal_rt.h", "runtime/heap/system.h"];
 
 fn main() {
     for source in SOURCES.iter().chain(HEADERS.iter()) {

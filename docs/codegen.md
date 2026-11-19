@@ -470,9 +470,9 @@ Raw pointer code generation keeps the source contract visible in the IR:
 ## Native runtime
 
 `build.rs` compiles the runtime's C11 translation units under `runtime/core/`
-with the `cc` crate and embeds the resulting archive in the compiler. The core
-runtime is minimal C11 with no allocation, locks, stdio, locale, or `atexit`
-handlers:
+and `runtime/heap/` with the `cc` crate and embeds the resulting archive in the
+compiler. The core runtime is minimal C11 with no allocation, locks, stdio,
+locale, or `atexit` handlers:
 
 - `seal_write` writes exactly the requested bytes to a descriptor, retrying
   `EINTR` and partial writes. `seal_print` and `seal_eprint` select stdout and
@@ -492,6 +492,23 @@ handlers:
   another architecture or OS is rejected with `E6003` unless
   `--runtime-archive <PATH>` supplies an archive built for that target.
   `sealc build --emit=obj` remains available for cross-compilation.
+
+### Heap
+
+The heap layer (`runtime/heap/`) is separate and is linked only when a program
+references one of its symbols:
+
+- `seal_alloc(size, align)` allocates `size` bytes with the requested
+  power-of-two alignment. Alignments up to `max_align_t` use the host
+  allocator; larger alignments over-allocate and store the base pointer in the
+  word immediately before the returned address. Invalid alignment and layout
+  overflow return `NULL`.
+- `seal_alloc_zeroed` has the same contract and zeroes every allocated byte.
+- `seal_dealloc(pointer, size, align)` releases a block; a null pointer and a
+  zero size are no-ops. A zero-size allocation returns a dangling aligned
+  pointer instead of calling `malloc(0)`. The heap never panics, takes no
+  locks, and does not use stdio or the locale.
+- The heap object is not pulled into programs that never allocate.
 
 ## Linking
 

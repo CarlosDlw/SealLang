@@ -28,7 +28,9 @@
 //!
 //! Runtime failures (division by zero and signed division overflow) call
 //! `seal_panic`, which writes a structured diagnostic to standard error and
-//! exits with status 101. The runtime never allocates or uses stdio.
+//! exits with status 101. The runtime core never allocates or uses stdio; the
+//! heap layer is a separate component, linked only when an allocation symbol
+//! is referenced.
 //! # Layout
 //!
 //! Aggregates are LLVM structs in declaration order. Scalars use their size as

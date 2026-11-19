@@ -390,15 +390,18 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     missing linker, unsupported cross-link, unreadable external runtime, or
     runtime/target mismatch without `--runtime-archive` is `E6003`. Linker
     arguments adapt to `cl`/`clang-cl`, `link`, and GNU-style toolchains.
-59. **The runtime is minimal and self-contained.** The embedded C11 runtime
-    allocates no memory, takes no locks, and uses no stdio, locale, or `atexit`
-    handlers.
-    Writes transfer exactly the requested bytes, retrying `EINTR` and partial
-    writes; panics never unwind and always terminate with status 101. The
-    archive is host-specific and linked only into executables, so object and
-    assembly output stay target-independent. `sealc emit-runtime` exports the
-    embedded archive, and `sealc build --runtime-archive <PATH>` supplies a
-    target archive.
+59. **The runtime is layered and self-contained.** The embedded C11 runtime has
+    an allocation-free core (I/O and panic) and a separate heap layer. The core
+    takes no locks and uses no stdio, locale, or `atexit` handlers; writes
+    transfer exactly the requested bytes, retrying `EINTR` and partial writes;
+    panics never unwind and always terminate with status 101. The heap exposes
+    `seal_alloc`, `seal_alloc_zeroed`, and `seal_dealloc`: it validates
+    alignment, returns `NULL` on failure or layout overflow, treats a zero size
+    as a dangling aligned pointer, and never panics. The archive is
+    host-specific and linked only into executables, so object and assembly
+    output stay target-independent; unused members, including the heap, are not
+    linked. `sealc emit-runtime` exports the embedded archive, and
+    `sealc build --runtime-archive <PATH>` supplies a target archive.
 60. **The command line is declarative.** `seal-driver` parses a required
     subcommand with `clap`. Each command declares only the options it honors:
     shared compile options (inputs, target, diagnostics, optimization, runtime)
