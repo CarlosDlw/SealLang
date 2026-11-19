@@ -214,6 +214,20 @@ impl<'a> LayoutCtxt<'a> {
         Ok(fields)
     }
 
+    /// Returns the layout of a pointer to `pointee`.
+    ///
+    /// References and raw pointers share one shape: a single word, or two when
+    /// the pointee is unsized and carries metadata (length or vtable). The
+    /// pointer width is already in bytes.
+    fn pointer_layout(&self, pointee: TyId, pointer: u64) -> Layout {
+        match self.tcx.kind(pointee) {
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
+                Layout::new(pointer * 2, pointer)
+            }
+            _ => Layout::new(pointer, pointer),
+        }
+    }
+
     fn layout_inner(
         &self,
         ty: TyId,
@@ -230,14 +244,9 @@ impl<'a> LayoutCtxt<'a> {
                 scalar(u64::from(uint.bits().unwrap_or(self.pointer_width_u16())) / 8)
             }
             TyKind::Float(float) => scalar(u64::from(float.bits()) / 8),
-            TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
-                // `*str` and `*[T]` are fat pointers: data plus a
-                // pointer-sized length.
-                TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
-                    Layout::new(pointer * 2, pointer)
-                }
-                _ => Layout::new(pointer, pointer),
-            },
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
+                self.pointer_layout(pointee, pointer)
+            }
             TyKind::Unit | TyKind::Never | TyKind::Error => Layout::new(0, 1),
             TyKind::Array { element, length } => {
                 let element_layout = self.layout_inner(element, stack)?;
@@ -642,6 +651,37 @@ mod tests {
             LayoutCtxt::new(&ctxt, 32).layout_of(reference),
             Ok(Layout::new(4, 4))
         );
+    }
+
+    #[test]
+    fn raw_pointers_follow_the_pointer_width() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let pointer = ctxt.raw_ptr_ty(int);
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 64).layout_of(pointer),
+            Ok(Layout::new(8, 8))
+        );
+        assert_eq!(
+            LayoutCtxt::new(&ctxt, 32).layout_of(pointer),
+            Ok(Layout::new(4, 4))
+        );
+    }
+
+    #[test]
+    fn raw_pointers_to_unsized_pointees_are_fat() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let text = ctxt.raw_mut_ptr_ty(ctxt.str_ty());
+        let slice = ctxt.raw_ptr_ty(ctxt.slice_ty(int));
+        let object = ctxt.raw_ptr_ty(ctxt.dyn_ty(def(0), ctxt.empty_substs()));
+        for width in [32, 64] {
+            let bytes = u64::from(width) / 8;
+            let layout = LayoutCtxt::new(&ctxt, width);
+            assert_eq!(layout.layout_of(text), Ok(Layout::new(bytes * 2, bytes)));
+            assert_eq!(layout.layout_of(slice), Ok(Layout::new(bytes * 2, bytes)));
+            assert_eq!(layout.layout_of(object), Ok(Layout::new(bytes * 2, bytes)));
+        }
     }
 
     #[test]

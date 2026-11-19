@@ -194,11 +194,45 @@ impl fmt::Display for RefKind {
     }
 }
 
+/// Whether a raw pointer permits writing through it.
+///
+/// Raw pointers are the unsafe layer's pointers: nullable, arithmetic, and
+/// distinct from references. `*raw T` is read-only; `*raw mut T` is writable.
+/// The kind is part of the type, so the two never unify.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RawPtrKind {
+    /// `*raw T`: read-only.
+    Const,
+    /// `*raw mut T`: writable.
+    Mut,
+}
+
+impl RawPtrKind {
+    /// Returns the prefix that names the kind in the source.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Const => "*raw ",
+            Self::Mut => "*raw mut ",
+        }
+    }
+
+    /// Returns `true` for `*raw mut T`.
+    pub const fn is_mut(self) -> bool {
+        matches!(self, Self::Mut)
+    }
+}
+
+impl fmt::Display for RawPtrKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.prefix())
+    }
+}
+
 /// The meaning of a type.
 ///
 /// The variants mirror the language surface: scalars, the unsized `str` and
-/// slices, references, nominal aggregates, the unit and never types, and the
-/// two non-user types (`Error` and `Infer`).
+/// slices, references, raw pointers, nominal aggregates, the unit and never
+/// types, and the two non-user types (`Error` and `Infer`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     /// The boolean type `bool`.
@@ -229,6 +263,17 @@ pub enum TyKind {
         /// Whether the reference permits writing through it.
         kind: RefKind,
         /// The referenced type.
+        pointee: TyId,
+    },
+    /// A raw pointer, written `*raw T` or `*raw mut T`.
+    ///
+    /// Unlike a reference, a raw pointer is nullable, supports arithmetic, and
+    /// is only dereferenced inside `unsafe`; see decisions D21 and D22 of the
+    /// memory model.
+    RawPtr {
+        /// Whether the pointer permits writing through it.
+        kind: RawPtrKind,
+        /// The pointed-to type.
         pointee: TyId,
     },
     /// A fixed-size array `[T; N]`.
@@ -288,7 +333,7 @@ pub enum TyKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{FloatTy, IntTy, RefKind, UintTy};
+    use super::{FloatTy, IntTy, RawPtrKind, RefKind, UintTy};
 
     #[test]
     fn every_int_type_has_a_distinct_spelling() {
@@ -344,5 +389,15 @@ mod tests {
         assert!(RefKind::Exclusive.is_exclusive());
         assert!(!RefKind::Shared.is_exclusive());
         assert_ne!(RefKind::Shared, RefKind::Exclusive);
+    }
+
+    #[test]
+    fn raw_pointer_kinds_have_distinct_spellings() {
+        assert_eq!(RawPtrKind::Const.prefix(), "*raw ");
+        assert_eq!(RawPtrKind::Mut.prefix(), "*raw mut ");
+        assert_eq!(RawPtrKind::Mut.to_string(), "*raw mut ");
+        assert!(RawPtrKind::Mut.is_mut());
+        assert!(!RawPtrKind::Const.is_mut());
+        assert_ne!(RawPtrKind::Const, RawPtrKind::Mut);
     }
 }

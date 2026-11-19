@@ -125,6 +125,63 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     seal_ty::AdtKind::Enum => self.equal_enum(adt, args, lhs, rhs, span),
                 }
             }
+            TyKind::RawPtr { pointee, .. } => {
+                let value_type = self.mapper.basic(ty)?;
+                let lhs = self.build(
+                    self.builder.build_load(value_type, lhs, "raw lhs"),
+                    "raw lhs load",
+                )?;
+                let rhs = self.build(
+                    self.builder.build_load(value_type, rhs, "raw rhs"),
+                    "raw rhs load",
+                )?;
+                let fat = matches!(
+                    self.tcx.kind(pointee),
+                    TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. }
+                );
+                let lhs = if fat {
+                    self.build(
+                        self.builder.build_extract_value(
+                            lhs.into_struct_value(),
+                            0,
+                            "raw lhs data",
+                        ),
+                        "raw lhs data",
+                    )?
+                    .into_pointer_value()
+                } else {
+                    lhs.into_pointer_value()
+                };
+                let rhs = if fat {
+                    self.build(
+                        self.builder.build_extract_value(
+                            rhs.into_struct_value(),
+                            0,
+                            "raw rhs data",
+                        ),
+                        "raw rhs data",
+                    )?
+                    .into_pointer_value()
+                } else {
+                    rhs.into_pointer_value()
+                };
+                let usize_type = self.mapper.usize_type()?;
+                let lhs = self.build(
+                    self.builder
+                        .build_ptr_to_int(lhs, usize_type, "raw lhs address"),
+                    "raw lhs address",
+                )?;
+                let rhs = self.build(
+                    self.builder
+                        .build_ptr_to_int(rhs, usize_type, "raw rhs address"),
+                    "raw rhs address",
+                )?;
+                Ok(self.build(
+                    self.builder
+                        .build_int_compare(inkwell::IntPredicate::EQ, lhs, rhs, "raw eq"),
+                    "raw pointer equality",
+                )?)
+            }
             TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Param(_) => Err(
                 CodegenError::internal("an unsized or uninstantiated type has no equality"),
             ),

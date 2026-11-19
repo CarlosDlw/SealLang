@@ -34,6 +34,10 @@ fn substitute_args(ctxt: &TyCtxt, ty: TyId, args: &[TyId]) -> TyId {
             let pointee = substitute_args(ctxt, pointee, args);
             ctxt.ref_ty_with(kind, pointee)
         }
+        TyKind::RawPtr { kind, pointee } => {
+            let pointee = substitute_args(ctxt, pointee, args);
+            ctxt.raw_ptr_ty_with(kind, pointee)
+        }
         TyKind::Array { element, length } => {
             let element = substitute_args(ctxt, element, args);
             ctxt.array_ty(element, length)
@@ -101,7 +105,9 @@ fn collect_free_params(
                 params.push(param);
             }
         }
-        TyKind::Ref { pointee, .. } => collect_free_params(ctxt, pointee, seen, params),
+        TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
+            collect_free_params(ctxt, pointee, seen, params)
+        }
         TyKind::Array { element, .. } | TyKind::Slice { element } => {
             collect_free_params(ctxt, element, seen, params);
         }
@@ -123,7 +129,9 @@ fn collect_free_params(
 pub(crate) fn contains_param(ctxt: &TyCtxt, ty: TyId) -> bool {
     match ctxt.kind(ty) {
         TyKind::Param(_) => true,
-        TyKind::Ref { pointee, .. } => contains_param(ctxt, pointee),
+        TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
+            contains_param(ctxt, pointee)
+        }
         TyKind::Array { element, .. } | TyKind::Slice { element } => contains_param(ctxt, element),
         TyKind::Tuple(tuple) => ctxt
             .tuple_elements(tuple)

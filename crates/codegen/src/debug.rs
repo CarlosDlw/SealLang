@@ -304,14 +304,18 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             TyKind::Float(float) => {
                 self.basic_type(ty, float.as_str(), u64::from(float.bits()), encoding::FLOAT)?
             }
-            TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. }) => {
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. }
+                if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. }) =>
+            {
                 let name = self.tcx.display_with(ty, self.interner).to_string();
                 self.dyn_type(&name)?
             }
-            TyKind::Ref { pointee, .. } if matches!(self.tcx.kind(pointee), TyKind::Str) => {
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. }
+                if matches!(self.tcx.kind(pointee), TyKind::Str) =>
+            {
                 self.string_type()?
             }
-            TyKind::Ref { pointee, .. }
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. }
                 if matches!(self.tcx.kind(pointee), TyKind::Slice { .. }) =>
             {
                 let TyKind::Slice { element } = self.tcx.kind(pointee) else {
@@ -319,7 +323,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 };
                 self.slice_type(element)?
             }
-            TyKind::Ref { pointee, .. } => {
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
                 let pointer_bits = u64::from(self.mapper.pointer_width());
                 let pointee = self.di_type(pointee)?;
                 self.builder

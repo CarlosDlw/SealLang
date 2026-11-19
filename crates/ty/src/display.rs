@@ -56,6 +56,9 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Ref { kind, pointee } => {
                 write!(f, "{}{}", kind.prefix(), self.display(pointee))
             }
+            TyKind::RawPtr { kind, pointee } => {
+                write!(f, "{}{}", kind.prefix(), self.display(pointee))
+            }
             TyKind::Array { element, length } => {
                 write!(f, "[{}; {length}]", self.display(element))
             }
@@ -185,6 +188,22 @@ mod tests {
         assert_eq!(ctxt.display(exclusive).to_string(), "*mut i32");
         let shared = ctxt.ref_ty(exclusive);
         assert_eq!(ctxt.display(shared).to_string(), "**mut i32");
+    }
+
+    #[test]
+    fn raw_pointers_render_with_their_own_prefix() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        assert_eq!(ctxt.display(ctxt.raw_ptr_ty(int)).to_string(), "*raw i32");
+        assert_eq!(
+            ctxt.display(ctxt.raw_mut_ptr_ty(int)).to_string(),
+            "*raw mut i32"
+        );
+        assert_eq!(
+            ctxt.display(ctxt.raw_mut_ptr_ty(ctxt.raw_ptr_ty(int)))
+                .to_string(),
+            "*raw mut *raw i32"
+        );
     }
 
     #[test]

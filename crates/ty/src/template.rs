@@ -80,6 +80,18 @@ pub fn match_template(
             match_template(ctxt, pattern_pointee, actual_pointee, mapping)
         }
         (
+            TyKind::RawPtr {
+                kind: pattern_kind,
+                pointee: pattern_pointee,
+            },
+            TyKind::RawPtr {
+                kind: actual_kind,
+                pointee: actual_pointee,
+            },
+        ) if pattern_kind == actual_kind => {
+            match_template(ctxt, pattern_pointee, actual_pointee, mapping)
+        }
+        (
             TyKind::Array {
                 element: pattern_element,
                 length: pattern_length,
@@ -235,6 +247,16 @@ impl TemplateUnifier<'_> {
                     pointee: left_pointee,
                 },
                 TyKind::Ref {
+                    kind: right_kind,
+                    pointee: right_pointee,
+                },
+            ) if left_kind == right_kind => self.unify(left_pointee, right_pointee),
+            (
+                TyKind::RawPtr {
+                    kind: left_kind,
+                    pointee: left_pointee,
+                },
+                TyKind::RawPtr {
                     kind: right_kind,
                     pointee: right_pointee,
                 },

@@ -112,6 +112,11 @@ fn hash_type(tcx: &TyCtxt, ty: TyId, hasher: &mut StableHasher) {
             hasher.write_u8(u8::from(kind.is_exclusive()));
             hash_type(tcx, pointee, hasher);
         }
+        TyKind::RawPtr { kind, pointee } => {
+            hasher.write_u8(17);
+            hasher.write_u8(u8::from(kind.is_mut()));
+            hash_type(tcx, pointee, hasher);
+        }
         TyKind::Slice { element } => {
             hasher.write_u8(10);
             hash_type(tcx, element, hasher);

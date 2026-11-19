@@ -810,7 +810,9 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
         match kind {
-            TypeKind::Pointer { pointee, .. } => self.check_type(pointee),
+            TypeKind::Pointer { pointee, .. } | TypeKind::RawPointer { pointee, .. } => {
+                self.check_type(pointee)
+            }
             TypeKind::Array {
                 element,
                 length_span,

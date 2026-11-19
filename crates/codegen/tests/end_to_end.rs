@@ -1605,3 +1605,12 @@ fn arrays_pass_by_value_through_function_parameters() {
         .expect("array parameters compile");
     assert_eq!(run(output.path()).code(), Some(42));
 }
+
+#[test]
+fn raw_pointer_locals_compile_without_runtime_work() {
+    assert_exit_at_both_levels(
+        "func main() { let pointer: *raw i32; }",
+        0,
+        "raw-pointer-local",
+    );
+}

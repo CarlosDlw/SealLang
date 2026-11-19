@@ -2,7 +2,7 @@
 
 use seal_ast::{TypeId, TypeKind};
 use seal_error_codes as codes;
-use seal_ty::{TyCtxt, TyId};
+use seal_ty::{RawPtrKind, TyCtxt, TyId};
 
 use super::Lowering;
 use crate::primitives::primitive_kind;
@@ -34,6 +34,15 @@ impl Lowering<'_> {
                 } else {
                     self.hir.ty_ctxt_mut().ref_ty(pointee)
                 }
+            }
+            TypeKind::RawPointer { pointee, mutable } => {
+                let pointee = self.lower_type_inner(pointee, unknown_parameter);
+                let kind = if mutable {
+                    RawPtrKind::Mut
+                } else {
+                    RawPtrKind::Const
+                };
+                self.hir.ty_ctxt_mut().raw_ptr_ty_with(kind, pointee)
             }
             TypeKind::Array {
                 element, length, ..

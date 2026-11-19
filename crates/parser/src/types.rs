@@ -18,11 +18,19 @@ impl Parser<'_> {
         self.depth += 1;
 
         let result = if self.eat(TokenKind::Star) {
+            let raw = self.at_contextual("raw");
+            if raw {
+                self.bump();
+            }
             let mutable = self.eat(TokenKind::Mut);
             let pointee = self.parse_type();
             let span = start.cover(self.builder.ast().ty(pointee).span);
-            self.builder
-                .push_type(TypeKind::Pointer { pointee, mutable }, span)
+            let kind = if raw {
+                TypeKind::RawPointer { pointee, mutable }
+            } else {
+                TypeKind::Pointer { pointee, mutable }
+            };
+            self.builder.push_type(kind, span)
         } else if self.eat(TokenKind::LParen) {
             if self.eat(TokenKind::RParen) {
                 let span = start.cover(self.previous_span());
@@ -127,6 +135,17 @@ impl Parser<'_> {
 
         self.depth -= 1;
         result
+    }
+
+    /// Returns `true` when the current token spells the contextual keyword.
+    ///
+    /// Contextual keywords are reserved in exactly one grammar position and
+    /// remain ordinary identifiers elsewhere, so `raw` stays a valid name.
+    fn at_contextual(&self, keyword: &str) -> bool {
+        match self.current_kind() {
+            TokenKind::Ident(symbol) => self.interner.resolve(symbol) == keyword,
+            _ => false,
+        }
     }
 
     /// Parses the trait path after `dyn` and recovers without cascading into

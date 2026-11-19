@@ -290,7 +290,9 @@ impl Lowering<'_> {
                     .iter()
                     .any(|argument| self.ast_type_mentions_self(*argument))
             }),
-            AstTypeKind::Pointer { pointee, .. } => self.ast_type_mentions_self(pointee),
+            AstTypeKind::Pointer { pointee, .. } | AstTypeKind::RawPointer { pointee, .. } => {
+                self.ast_type_mentions_self(pointee)
+            }
             AstTypeKind::Array { element, .. } | AstTypeKind::Slice { element } => {
                 self.ast_type_mentions_self(element)
             }

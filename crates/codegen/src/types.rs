@@ -149,13 +149,9 @@ impl<'ctx> TypeMapper<'ctx> {
                 FloatTy::F32 => self.context.f32_type(),
                 FloatTy::F64 => self.context.f64_type(),
             }),
-            TyKind::Ref { pointee, .. } => match self.tcx.kind(pointee) {
-                // `*str` and `*[T]` are fat pointers: data plus length.
-                TyKind::Str | TyKind::Slice { .. } => BasicTypeEnum::StructType(self.fat_pointer),
-                // `*dyn Trait` and `*mut dyn Trait` are data plus vtable.
-                TyKind::Dyn { .. } => BasicTypeEnum::StructType(self.dyn_pointer),
-                _ => BasicTypeEnum::PointerType(self.pointer()),
-            },
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
+                self.pointer_type(pointee)
+            }
             TyKind::Array { element, length } => {
                 let length = u32::try_from(length).map_err(|_| {
                     CodegenError::internal(format!(
@@ -199,6 +195,19 @@ impl<'ctx> TypeMapper<'ctx> {
             }
         };
         Ok(basic)
+    }
+
+    /// Returns the LLVM type of a pointer to `pointee`.
+    ///
+    /// References and raw pointers share one representation: an opaque
+    /// pointer, a `{ data, length }` pair for `str` and slices, and a
+    /// `{ data, vtable }` pair for trait objects.
+    fn pointer_type(&self, pointee: TyId) -> BasicTypeEnum<'ctx> {
+        match self.tcx.kind(pointee) {
+            TyKind::Str | TyKind::Slice { .. } => BasicTypeEnum::StructType(self.fat_pointer),
+            TyKind::Dyn { .. } => BasicTypeEnum::StructType(self.dyn_pointer),
+            _ => BasicTypeEnum::PointerType(self.pointer()),
+        }
     }
 
     /// Returns the function type with the given parameter and return types.

@@ -78,6 +78,7 @@ fn describe(kind: TyKind) -> String {
         TyKind::Uint(uint) => uint.as_str().to_owned(),
         TyKind::Float(float) => float.as_str().to_owned(),
         TyKind::Ref { kind, .. } => format!("{}T", kind.prefix()),
+        TyKind::RawPtr { kind, .. } => format!("{}T", kind.prefix()),
         TyKind::Array { .. } => "an array".to_owned(),
         TyKind::Tuple(_) => "a tuple".to_owned(),
         TyKind::Adt { .. } => "a struct".to_owned(),

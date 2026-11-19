@@ -13,7 +13,7 @@ use crate::generics::{
     GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
 };
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
-use crate::kind::{FloatTy, IntTy, RefKind, TyKind, UintTy};
+use crate::kind::{FloatTy, IntTy, RawPtrKind, RefKind, TyKind, UintTy};
 
 /// The outer constructor of an impl target or trait goal.
 ///
@@ -43,6 +43,8 @@ pub enum ImplHead {
     Never,
     /// A shared or exclusive reference.
     Ref(RefKind),
+    /// A read-only or writable raw pointer.
+    RawPtr(RawPtrKind),
     /// An array, independent of its length.
     Array,
     /// A slice.
@@ -72,6 +74,7 @@ impl TyCtxt {
             TyKind::Unit => ImplHead::Unit,
             TyKind::Never => ImplHead::Never,
             TyKind::Ref { kind, .. } => ImplHead::Ref(kind),
+            TyKind::RawPtr { kind, .. } => ImplHead::RawPtr(kind),
             TyKind::Array { .. } => ImplHead::Array,
             TyKind::Slice { .. } => ImplHead::Slice,
             TyKind::Dyn { .. } => ImplHead::Dyn,
@@ -756,6 +759,29 @@ impl TyCtxt {
         }
     }
 
+    /// Returns the read-only raw pointer type `*raw T`.
+    pub fn raw_ptr_ty(&self, pointee: TyId) -> TyId {
+        self.raw_ptr_ty_with(RawPtrKind::Const, pointee)
+    }
+
+    /// Returns the writable raw pointer type `*raw mut T`.
+    pub fn raw_mut_ptr_ty(&self, pointee: TyId) -> TyId {
+        self.raw_ptr_ty_with(RawPtrKind::Mut, pointee)
+    }
+
+    /// Returns the raw pointer type with `kind`.
+    pub fn raw_ptr_ty_with(&self, kind: RawPtrKind, pointee: TyId) -> TyId {
+        self.intern(TyKind::RawPtr { kind, pointee })
+    }
+
+    /// Returns the kind and pointee of `ty` when it is a raw pointer.
+    pub fn raw_parts(&self, ty: TyId) -> Option<(RawPtrKind, TyId)> {
+        match self.kind(ty) {
+            TyKind::RawPtr { kind, pointee } => Some((kind, pointee)),
+            _ => None,
+        }
+    }
+
     /// Returns the type standing for the inference variable `var`.
     pub fn infer_ty(&self, var: InferTyId) -> TyId {
         self.intern(TyKind::Infer(var))
@@ -784,6 +810,7 @@ impl TyCtxt {
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::Ref { .. }
+            | TyKind::RawPtr { .. }
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
@@ -1011,6 +1038,58 @@ impl TyCtxt {
                 for field in def.all_fields() {
                     let field_ty = self.substitute(field.ty, args);
                     if self.contains_exclusive_reference_inner(field_ty, visiting) {
+                        contains = true;
+                        break;
+                    }
+                }
+                visiting.remove(&key);
+                contains
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if `ty` is, or contains by value, a raw pointer.
+    ///
+    /// Each pointer kind answers `true` for itself. The walk stops at any
+    /// pointer, because the pointee is reached only through it; aliasing and
+    /// effect summaries use this to find bodies that may reach storage through
+    /// the unsafe layer.
+    pub fn contains_raw_pointer(&self, ty: TyId) -> bool {
+        self.contains_raw_pointer_inner(ty, &mut FxHashSet::default())
+    }
+
+    fn contains_raw_pointer_inner(
+        &self,
+        ty: TyId,
+        visiting: &mut FxHashSet<(AdtId, SubstsId)>,
+    ) -> bool {
+        match self.kind(ty) {
+            TyKind::RawPtr { .. } => true,
+            // A parameter may be instantiated with a raw pointer, so the walk
+            // cannot rule it out before monomorphization.
+            TyKind::Param(_) => true,
+            TyKind::Slice { element } | TyKind::Array { element, .. } => {
+                self.contains_raw_pointer_inner(element, visiting)
+            }
+            TyKind::Tuple(tuple) => self
+                .tuple_elements(tuple)
+                .iter()
+                .any(|element| self.contains_raw_pointer_inner(*element, visiting)),
+            TyKind::Dyn { args, .. } => self
+                .substs_args(args)
+                .into_iter()
+                .any(|argument| self.contains_raw_pointer_inner(argument, visiting)),
+            TyKind::Adt { adt, args } => {
+                let key = (adt, args);
+                if !visiting.insert(key) {
+                    return false;
+                }
+                let def = self.adt(adt);
+                let mut contains = false;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if self.contains_raw_pointer_inner(field_ty, visiting) {
                         contains = true;
                         break;
                     }

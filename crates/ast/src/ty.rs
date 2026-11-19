@@ -119,6 +119,16 @@ pub enum TypeKind {
         /// `true` for `*mut T`, which permits writing through the reference.
         mutable: bool,
     },
+    /// A raw pointer, written `*raw T` or `*raw mut T`.
+    ///
+    /// Raw pointers are nullable and support arithmetic; they are the unsafe
+    /// layer's pointer type and never unify with a reference.
+    RawPointer {
+        /// The pointed-to type.
+        pointee: TypeId,
+        /// `true` for `*raw mut T`, which permits writing through the pointer.
+        mutable: bool,
+    },
     /// A named type, resolved against the type namespace during lowering.
     ///
     /// The optional argument list is kept here so nested generic types and

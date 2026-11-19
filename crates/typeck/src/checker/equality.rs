@@ -19,6 +19,8 @@ pub(super) enum NotComparable {
     ThinReference,
     /// A trait object erases the concrete type.
     TraitObject,
+    /// A raw pointer compares addresses, not values.
+    RawPointer,
     /// A type parameter has no known representation.
     Parameter,
     /// A field, array element, or slice element of this type is not comparable.
@@ -59,6 +61,7 @@ impl Checker<'_> {
                 TyKind::Dyn { .. } => Err(NotComparable::TraitObject),
                 _ => Err(NotComparable::ThinReference),
             },
+            TyKind::RawPtr { .. } => Err(NotComparable::RawPointer),
             TyKind::Array { element, .. } => self.comparability(element),
             TyKind::Tuple(tuple) => {
                 for element in tcx.tuple_elements(tuple) {
@@ -109,6 +112,9 @@ impl Checker<'_> {
             }
             NotComparable::Parameter => {
                 "a type parameter has no equality; compare a value of a concrete type"
+            }
+            NotComparable::RawPointer => {
+                "a raw pointer compares addresses, not values; compare what it points to"
             }
             NotComparable::Value(culprit) => {
                 let name = self.ty_text(culprit);

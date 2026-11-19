@@ -55,6 +55,56 @@ fn every_primitive_type_is_parsed() {
 }
 
 #[test]
+fn raw_pointers_parse_with_their_own_spelling() {
+    let (_, ast) = parse_clean("func f(a: *raw i32, b: *raw mut u8) {}");
+    let declaration = sole_function(&ast);
+    match &ast.ty(ast.param(declaration.params[0]).ty).kind {
+        TypeKind::RawPointer { pointee, mutable } => {
+            assert!(!mutable);
+            assert!(matches!(
+                ast.ty(*pointee).kind,
+                TypeKind::Primitive(PrimitiveType::I32)
+            ));
+        }
+        other => panic!("expected a raw pointer, got {other:?}"),
+    }
+    match &ast.ty(ast.param(declaration.params[1]).ty).kind {
+        TypeKind::RawPointer { pointee, mutable } => {
+            assert!(mutable);
+            assert!(matches!(
+                ast.ty(*pointee).kind,
+                TypeKind::Primitive(PrimitiveType::U8)
+            ));
+        }
+        other => panic!("expected a mutable raw pointer, got {other:?}"),
+    }
+}
+
+#[test]
+fn raw_pointers_nest_and_stay_distinct_from_references() {
+    let (_, ast) = parse_clean("func f(p: *raw *mut i8) {}");
+    let declaration = sole_function(&ast);
+    match &ast.ty(ast.param(declaration.params[0]).ty).kind {
+        TypeKind::RawPointer {
+            pointee: outer,
+            mutable: false,
+        } => match &ast.ty(*outer).kind {
+            TypeKind::Pointer { mutable: true, .. } => {}
+            other => panic!("expected an exclusive reference, got {other:?}"),
+        },
+        other => panic!("expected a raw pointer, got {other:?}"),
+    }
+}
+
+#[test]
+fn raw_is_still_an_ordinary_identifier() {
+    let (fixture, ast) = parse_clean("func f(raw: i32) {}");
+    let declaration = sole_function(&ast);
+    let param = ast.param(declaration.params[0]);
+    assert_eq!(fixture.symbol(param.name), "raw");
+}
+
+#[test]
 fn pointers_can_nest() {
     let (_, ast) = parse_clean("func f(p: **i8) {}");
     let declaration = sole_function(&ast);
