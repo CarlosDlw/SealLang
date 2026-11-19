@@ -394,8 +394,10 @@ parameters, and bindings. A const/static name may collide with a type name but
 not with another value name (`E2068`). Items are order-independent: a `const`
 may refer to a `static` declared later, subject to cycle detection.
 
-Reading a `static` by value copies it, so the type must be `Copy`; a non-`Copy`
-static can be borrowed or read field by field but not moved (`E3058`). A
+Reading a `static` by value copies it, so the type must be `Copy`; a struct or
+enum with an opt-in implementation follows the same rule. `drop(STATIC)` is a
+no-op for a `Copy` static and `E3058` for a non-`Copy` one. A non-`Copy` static
+can be borrowed or read field by field but not moved. A
 `const`, by contrast, produces a fresh value at every use, so reading a
 non-`Copy` const by value is allowed; `&CONST` borrows one compiler-owned
 constant allocation. The checker records each path as a place rooted at a
@@ -542,8 +544,12 @@ func origin() -> Point {
 
 A struct is a **nominal** aggregate: its name defines a distinct type, field
 order is part of the declaration, and field initializers may appear in any
-order. A struct owns its fields, so it is never `Copy`; assignment, argument
-passing, and return move it. Reading a `Copy` field copies only that field.
+order. A struct owns its fields. It is `Copy` only after an explicit
+`impl Copy for Point {}` that covers the declaration, and only when every field
+is `Copy`; without that implementation, assignment, argument passing, and
+return move it. A `Copy` struct is duplicated bitwise by those operations.
+Reading a `Copy` field copies only that field. The implementation is validated
+once during HIR lowering and is not a layout or ABI change.
 Fields initialize independently: `let mut p: Point; p.x = 1; p.y = 2;` is valid,
 reading `p.x` before assigning it is an error, and a whole assignment initializes
 every field at once. A field access on a reference requires an explicit
@@ -604,12 +610,16 @@ enum (`E2030`). An `impl` block may target an enum, which is how an associated
 constructor such as `Shape::unit()` is declared; methods receive `self`exactly as on a struct, and a trait may be implemented for an enum. A method reads
 the payload with `match` and can construct and return variants.
 
-An enum owns its payload and is never `Copy`, so assignment, argument passing,
-and return move the whole value. It is `Sized` when every field of every variant
-is; an unsized variant field is `E3010`, and a variant field that makes the enum
-recursive by value is `E3016`. Moving a payload variant moves its fields as a
-unit; `match` performs the only partial move out of a variant, by binding one of
-its fields.
+An enum owns its payload. It is `Copy` only after an explicit
+`impl Copy for Shape {}` that covers the declaration, and only when every field
+of every variant is `Copy`; without that implementation, assignment, argument
+passing, and return move the whole value. A `Copy` enum is duplicated bitwise by
+those operations. It is `Sized` when every field of every variant is; an unsized
+variant field is `E3010`, and a variant field that makes the enum recursive by
+value is `E3016`. A raw pointer field breaks the recursion because the pointer
+itself is `Copy`. Moving a payload variant moves its fields as a unit; `match`
+performs the only partial move out of a non-`Copy` variant, by binding one of its
+fields.
 
 ## Patterns and `match`
 
@@ -705,12 +715,15 @@ match needs `_` or a binding. A guard never contributes coverage. A missing
 value is `E3032` and names a witness such as `Mode::Off`; an arm that no value
 can reach is `E3033`.
 
-Matching moves the scrutinee into the temporary. Binding a field of a variant
+Matching a non-`Copy` scrutinee moves it into the temporary. A `Copy` scrutinee
+is read and remains usable in the enclosing scope. Binding a field of a variant
 moves that field when its type is not `Copy`, which is the one way to move part
 of an enum out; the rest of the scrutinee is then unusable. Binding a `Copy`
-field only copies it. Reading a variant field is valid only after the
-discriminant proved that variant active, which is why the projection exists only
-inside an arm.
+field only copies it. `if let` and `while let` follow the same rule: a failed
+match leaves a `Copy` scrutinee available, and a successful `Copy` binding does
+not consume it. Reading a variant field is valid only after the discriminant
+proved that variant active, which is why the projection exists only inside an
+arm.
 
 ### Conditional `if let`
 
@@ -829,8 +842,8 @@ The size is `N × size(T)` and the alignment is `align(T)`. A zero-length array
 occupies no bytes but keeps the element alignment. Nested arrays multiply their
 sizes. A type whose size overflows or exceeds the target address space is
 `E3023`. Arrays derive `Copy`, `Sized`, and `Drop` from their element: an array
-of references is `Copy`, an array of structs is not, and an array of `str` is
-unsized.
+of references is `Copy`, an array of structs without a `Copy` implementation is
+not, and an array of `str` is unsized.
 
 Initialization is tracked per element. `let mut a: [i32; 2]; a[0] = 1; a[1] = 2;`
 initializes the array field by field, reading `a[0]` before its assignment is an
@@ -1396,13 +1409,14 @@ kinds and never unify. The compiler answers three structural queries:
 
 | Query | Rule |
 |-------|------|
-| `Copy` | Scalars, `()`, `!`, and every reference, including `*dyn Trait` and `*mut dyn Trait`, are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. `str`, slices, `dyn Trait`, and every struct or enum are not, even when all their fields are `Copy`. |
+| `Copy` | Scalars, `()`, `!`, every reference, including `*dyn Trait` and `*mut dyn Trait`, and both raw pointer kinds are copied bitwise. An array is `Copy` when its element is; a tuple when every element is. A struct or enum is `Copy` only with an explicit `impl Copy` covering the declaration and every field of every variant; without it, the aggregate is not `Copy`, even when all fields are. `str`, slices, and `dyn Trait` are never `Copy`. |
 | `Sized` | Every type has a compile-time size except `str`, slices, `dyn Trait`, and an unresolved `Infer`. A struct is sized when every field is; an enum when every field of every variant is; an array when its element is; a tuple when every element is. |
 | `needs_drop` | An aggregate with a declared destructor answers `true`; otherwise an array, tuple, struct, and enum derive the answer from their elements or fields. A trait object's vtable points its drop slot at the concrete type's glue, which runs the destructor and then drops the parts that need it. |
 
-`Copy` and a destructor are mutually exclusive, and there is no user-defined
-copy hook. A future opt-in `Copy` for structs derives the property from the
-fields without changing the move path.
+`Copy` and a destructor are mutually exclusive (`E3068`), and there is no
+user-defined copy hook. An opt-in implementation is validated once during HIR
+lowering, recorded in `TyCtxt`, and the query derives the answer from the
+registry plus every field and variant. It does not change layout or ABI.
 
 ## Equality
 
@@ -1510,7 +1524,7 @@ A `for` source is one of:
 | Source | Element bound by the pattern |
 |--------|------------------------------|
 | `start..end`, `start..=end` | the integer counter |
-| `[T; N]` | `T`; the array is moved unless it is `Copy` |
+| `[T; N]` | `T`; the array is moved unless it is `Copy`, in which case each item is copied and the source remains usable |
 | `&[T; N]`, `&mut [T; N]` | `*T`, `*mut T` |
 | `*[T]`, `*mut [T]` | `*T`, `*mut T` |
 | `S: IntoIterator<I, T>` | `T`, after `S::iter` returns `I: Iterator<T>` |

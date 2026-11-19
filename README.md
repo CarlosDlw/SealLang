@@ -9,6 +9,7 @@ Rust.
 |----------|------|
 | Memory safety | Static borrow checking; no garbage collector, reference counting, or tracing |
 | Cost model | No hidden allocation, deep copy, or synchronization |
+| Copy policy | Move by default; structs and enums opt in with `impl Copy`, and every field must be `Copy` |
 | Lifetimes | Inferred from liveness; no lifetime syntax in the source |
 | Artifacts | LLVM object, assembly, or a linked native executable |
 | Diagnostics | Stable error codes with long-form explanations (`sealc explain`) |
@@ -54,7 +55,7 @@ func main() -> i32 {
 
 Every value has one owner. Assignment, argument passing, and return move the
 value unless its type is `Copy`; a struct owns its fields and is moved as a
-whole. An enum is a nominal sum type: every value is exactly one variant, either
+whole unless it has an explicit `impl Copy` and every field is `Copy`. An enum is a nominal sum type: every value is exactly one variant, either
 a unit variant, a positional variant such as `Some(i32)`, or a named variant
 such as `Circle { radius: i32 }`, and the layout carries a discriminant plus the
 active payload. `*T` grants shared access and `*mut T` grants exclusive access, and the
@@ -206,8 +207,8 @@ isolation check on its own.
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
 | Trait objects | `dyn T`, `*dyn T`, `*mut dyn T` | Unsized pointee behind a two-word `{ data, vtable }` reference; dynamic dispatch through the vtable |
-| Aggregates | `struct S { … }` | Nominal, owns its fields, and is not `Copy` |
-| Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is not `Copy` |
+| Aggregates | `struct S { … }` | Nominal, owns its fields, and is `Copy` only with `impl Copy` when every field is `Copy` |
+| Enums | `enum E { … }` | Nominal sum type with unit, positional, or named variants; owns the payload and is `Copy` only with `impl Copy` when every field of every variant is `Copy` |
 | Methods | `impl S { … }` | Inherent methods and associated functions; static calls on concrete types, dynamic calls through trait objects |
 | Traits | `trait T { … }`, `impl T for S { … }` | Methods may declare default bodies, which impls inherit or override; static dispatch on concrete types and bounds, and object-safe traits dispatch dynamically through `*dyn T` |
 | Generics | `func f<T>(…)`, `struct S<T>`, `enum E<T>`, `impl<T> S<T>` | Monomorphized: one concrete body and layout per type argument; bounds are static and closed-world |
@@ -232,6 +233,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
+| [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |
 | [`RELEASES.md`](RELEASES.md) | Release notes and source migration for language changes |
 
@@ -274,7 +276,12 @@ and associated default functions. `examples/037_iteration_protocols.sl` shows a
 custom `IntoIterator` cursor and the direct `Iterator` fallback, and
 `examples/038_index_protocols.sl` shows nested reads plus mutable indexing.
 `examples/043_raw_pointers.sl` exercises an exclusive raw pointer, inbounds
-arithmetic, an overlapping copy, and a null query.
+arithmetic, an overlapping copy, and a null query. Structs and enums may opt
+into bitwise `Copy` with an explicit `impl Copy`; the implementation covers the
+whole declaration and every field of every variant must be `Copy`. `Copy` and
+`Drop` are mutually exclusive, and copying a `Copy` aggregate preserves the
+loans of its reference fields without changing layout or ABI.
+`examples/044_copy_optin.sl` exercises the surface.
 
 Global data is part of the surface: `const` and `static` items may appear at
 file scope or in a block, `const func` may be called from a constant initializer,

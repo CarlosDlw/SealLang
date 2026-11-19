@@ -1482,9 +1482,9 @@ pub const E3020: ErrorCode = ErrorCode {
 is not `Copy` owns its contents and cannot be duplicated bitwise, so repeating
 it would create several owners of the same storage.
 
-Use an explicit literal when each element can be constructed separately. Struct
-values are not `Copy` in Seal, while scalars, references, and arrays of `Copy`
-elements are.",
+Use an explicit literal when each element can be constructed separately. A
+struct or enum is `Copy` only with an explicit implementation and only when every
+field is `Copy`, while scalars, references, and arrays of `Copy` elements are.",
 };
 
 /// An index expression is applied to a type that is not an array.
@@ -2167,8 +2167,9 @@ pub const E3043: ErrorCode = ErrorCode {
     title: "type argument does not satisfy `Copy`",
     explanation: "\
 A parameter declared with `T: Copy` accepts only types that can be duplicated
-bitwise. User-defined aggregates are not `Copy` unless the language provides an
-explicit opt-in.\n\nPass a scalar, reference, array, or tuple of `Copy` values.",
+bitwise. A user-defined aggregate is `Copy` only with an explicit `impl Copy`
+covering the declaration and every field of every variant.\n\nPass a scalar,
+reference, array, tuple, or a `Copy` aggregate.",
 };
 
 /// A generic method call has the wrong number of type arguments.

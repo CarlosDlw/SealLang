@@ -1,6 +1,7 @@
-// Aggregates are nominal and own their fields. A struct is not `Copy`, so
-// assignment and argument passing move it; a `Copy` field can still be read by
-// value. Field access works on places, and a borrow can select one field.
+// Aggregates are nominal and own their fields. This `Point` does not implement
+// `Copy`, so assignment and argument passing move it; a `Copy` field can still
+// be read by value. Field access works on places, and a borrow can select one
+// field.
 
 struct Point {
   x: i32,

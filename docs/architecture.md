@@ -78,6 +78,11 @@ source
 | Monomorphize | `seal-mono` | MIR, `ConstProgram` | `MonoProgram` | `E7xxx` |
 | Code generation | `seal-codegen` | `MonoProgram`, `ConstProgram` | IR and artifacts | `E6xxx` |
 
+HIR lowering validates trait-impl coherence first, then opt-in `Copy`
+implementations, then `Drop` implementations. `Copy` validation registers
+candidates and removes those whose fields fail until the registry reaches a
+fixed point, so declaration order does not change the result.
+
 `seal-mir` elaborates drop sites between MIR lowering and constant evaluation:
 it expands one site into the values its glue visits, removes the sites whose
 value is definitely gone, guards the path-dependent ones with a `bool` flag, and
@@ -148,9 +153,11 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     expected-type boundary and recorded on the expression. `Error` is the only
     type that absorbs another, and it is only built after a diagnostic was
     reported.
-19. **Memory classification is derived.** `Copy`, `Sized`, and `Drop` are
-    queries over the interned type, never flags stored beside it, so they cannot
-    contradict the type or the memory model.
+19. **Memory classification is derived.** `Sized` and `Drop` are queries over
+    the interned type, never flags stored beside it. `Copy` is structural for
+    built-in types and backed by the validated `CopyImpls` registry for nominal
+    ADTs; the registry is derived from the declaration and every field, so the
+    answer cannot contradict the type or the memory model.
 20. **Bindings are immutable unless declared `mut`.** The lexer reserves `mut`,
     the AST records the flag per binding, and no later phase infers mutability
     from how a name is used.
@@ -303,7 +310,8 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     has no field place until `match` proves its variant: the `VariantField`
     projection is valid only after the discriminant test selected it.
 47. **Aggregates own their fields.** A struct or enum value moves as a whole
-    and is never `Copy`; a tuple is `Copy` exactly when every element is. A
+    unless it has an explicit `impl Copy` covering the declaration and every
+    field of every variant; a tuple is `Copy` exactly when every element is. A
     `Copy` field or element still copies when read. Field writes
     require the root binding to be `mut` (`E3004`), because a field write does
     not initialize the binding as a whole. Field-by-field initialization needs
@@ -648,6 +656,14 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     data word only; length and vtable metadata do not participate. Ordering
     operators remain unavailable, and code generation does not imply a value
     comparison for a raw pointer.
+91. **Copy implementations are validated once and queried safely.** HIR
+    lowering validates every `impl Copy` against the declaration: parameters in
+    order, no specialization, one implementation per ADT, no destructor, and
+    every field of every variant. Surviving implementations are recorded in
+    `TyCtxt`; `is_copy_with` combines that registry with the body's `ParamEnv`,
+    walks the fields with a `(AdtId, SubstsId)` guard, and never loops on a
+    recursive declaration. A `Copy` implementation creates no monomorphization
+    or code-generation item.
 
 ## Global data and constant evaluation
 

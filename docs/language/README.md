@@ -10,6 +10,7 @@ unsafe operations.
 
 | Chapter | Covers |
 |---------|--------|
+| [`copy.md`](copy.md) | Opt-in `Copy` for structs and enums, generic bounds, fields and variants, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, `unsafe`, constants, provenance, diagnostics, and patterns |
 
 ## Reading conventions

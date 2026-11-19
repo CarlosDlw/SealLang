@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Opt-in `Copy` for structs and enums
+
+Structs and enums can now opt into bitwise duplication with an explicit
+implementation:
+
+```seal
+struct Point {
+  x: i32,
+  y: i32,
+}
+
+impl Copy for Point {}
+
+func main() -> i32 {
+  let point = Point { x: 40, y: 2 };
+  let copy = point;
+  drop(point); // no-op: `Point` is `Copy`
+  copy.x + point.y
+}
+```
+
+- The implementation covers the whole declaration. It repeats the declaration's
+  parameters in order, cannot specialize an instantiation, and may appear only
+  once for a type. A missing, extra, or reordered parameter is `E3076`.
+- Every field of every variant must be `Copy`. A type parameter needs a `Copy`
+  bound; references and raw pointers do not constrain their pointee. A failed
+  field is `E3077` and names the field or variant.
+- `Copy` and `Drop` are mutually exclusive (`E3068`). A `Copy` type has no drop
+  sites, drop flags, glue, or vtable entry for a destructor.
+- Assignment, arguments, returns, field and element reads, match and `let`
+  bindings, `for` items, repeated arrays, statics, and equality all read a
+  `Copy` value without moving it. `drop(copy)` is a no-op and the value remains
+  usable.
+- Copying an aggregate copies the checked loans of its reference fields; a raw
+  pointer field copies only its address. Layout and ABI are unchanged: MIR
+  chooses `Operand::Copy` instead of a move, and code generation emits no new
+  item.
+
+`examples/044_copy_optin.sl` exercises the surface at `-O0` and `-O2`. The
+complete guide is [`docs/language/copy.md`](docs/language/copy.md).
+
 ### Raw pointers and the unsafe layer
 
 Seal now has nullable raw pointers with provenance, pointer arithmetic, and an

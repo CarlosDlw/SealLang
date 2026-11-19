@@ -108,8 +108,11 @@ The ABI is defined by the language, not by a C header:
   always returns `i32`, using the returned value or zero for unit. A missing or
   invalid entry point is `E6001`.
 - Locals, parameters, and the return place live in `alloca` slots. Reading and
-  writing a place is a load or store; moving is a bitwise transfer because no
-  current type has a destructor.
+  writing a place is a load or store; moving is a bitwise transfer, and a type
+  with a destructor is released by its explicit drop sites.
+- `Copy` is a typing and MIR decision only. It does not change layout or ABI,
+  add a field, or emit a function, global, vtable, or drop glue. Lowering reads
+  a `Copy` place with `Operand::Copy` instead of moving it.
 - Structs and tuples are LLVM structs with fields or elements in declaration
   order, natural alignment, and no reordering. Arrays are LLVM arrays of their
   element type: the element size already includes its trailing padding, so the

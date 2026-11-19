@@ -19,8 +19,9 @@ later phase (name resolution, type checking, borrow checking, MIR, codegen).
 Seal is a **value-semantics language with moves**. Every value has exactly one
 owner. Assignment, argument passing, and return move the value unless its type is
 `Copy`, in which case it is duplicated bitwise. A `struct` is a **nominal**
-aggregate that owns its fields; the aggregate itself is never `Copy` in v0.1,
-which makes every whole-value transfer a visible move. A tuple is a structural
+aggregate that owns its fields; it is `Copy` only after an explicit `impl Copy`
+covering the declaration, and then only when every field is `Copy`. Without that
+implementation every whole-value transfer is a visible move. A tuple is a structural
 aggregate that owns its elements and is `Copy` exactly when every element is, so
 copying a tuple never hides a move of a non-`Copy` element. A `Copy` field or
 element is still copied when it is read. `*T` is a **shared, non-owning,
@@ -41,19 +42,23 @@ Alternatives rejected: implicit deep copy (hidden cost proportional to data
 size), implicit reference (prevents deterministic destruction and zero-cost
 abstraction), copy-on-write (unpredictable aliasing and allocation).
 
-### D2 — `Copy` is a property of the type
+### D2 — `Copy` is opt-in for nominal aggregates
 
 Copied bitwise: all integer and float types, `bool`, `char`, `()`, `!`,
-`*T`/`*mut T`, `*dyn Trait`/`*mut dyn Trait`, an array whose element type is
-`Copy`, and a tuple whose elements are all `Copy`. Not copied: `str`, slices,
-and `dyn Trait` (unsized) and every struct or enum value, even one whose fields
-are all `Copy`. Arrays and tuples gain nothing from
-an explicit opt-in because their elements already decide whether a bitwise copy
-is safe. Keeping structs non-`Copy` means ownership is
-explicit at every aggregate boundary; field reads still copy `Copy` fields
-individually. `Copy` and `Drop` are mutually exclusive, and v0.1 has no
-user-defined copy hooks. A future opt-in `Copy` for structs derives the property
-from the fields without changing the move path model.
+`*T`/`*mut T`, `*raw T`/`*raw mut T`, `*dyn Trait`/`*mut dyn Trait`, an array
+whose element type is `Copy`, and a tuple whose elements are all `Copy`. A
+struct or enum is `Copy` only after an explicit `impl Copy` that covers the
+whole declaration and only when every field of every variant is `Copy`. Not
+copied: `str`, slices, and `dyn Trait` (unsized), and every nominal aggregate
+without that implementation, even one whose fields are all `Copy`.
+
+The property is duplicated bitwise, with no allocation and no user-defined copy
+hook; field reads still copy `Copy` fields individually. `Copy` and `Drop` are
+mutually exclusive. Copying an aggregate duplicates the checked loans of its
+reference fields, so the pointee stays borrowed while the copy is live; a raw
+pointer field is only an address value and creates no checked loan. Arrays and
+tuples need no opt-in because their elements already decide whether a bitwise
+copy is safe.
 
 ### D3 — Ownership and destruction
 
@@ -74,6 +79,8 @@ place too, so `&*reference` borrows the pointee and the reference is held in a
 temporary. Reading a reference value copies the reference, and reading
 `*reference` by value copies a `Copy` pointee; reading any other pointee is
 `E3018`, because moving it would leave the owner's storage without a value.
+Copying an aggregate that contains a reference copies those reference values
+and keeps their checked loans live with the copy.
 
 Raw pointers are a separate type with separate syntax: `*raw T` is nullable,
 copyable, supports arithmetic, and is read-only through `*raw T`; `*raw mut T`
@@ -553,6 +560,24 @@ The marker is checked at every call site, and a destructor or the entry point
 cannot be unsafe. `unsafe` has no runtime representation and no cost; it is a
 static proof obligation recorded at the operation and at the call boundary.
 
+### D23 — `Copy` is opt-in for nominal aggregates
+
+A struct or enum becomes `Copy` only through `impl Copy for Type {}`, or the
+generic form `impl<T: Copy> Copy for Wrapper<T> {}`. The implementation must
+repeat the declaration's parameters in order, may not specialize an
+instantiation, and there may be only one implementation for a declaration.
+Every field of every variant must be `Copy`; a type parameter needs a `Copy`
+bound, while a reference or raw pointer field does not constrain its pointee.
+
+This preserves the move-by-default model: an implementation only permits the
+bitwise duplication that every field already supports, and does not introduce a
+deep copy, allocation, or copy hook. Alternatives rejected: auto-Copy for every
+aggregate (hides duplication and makes adding a non-`Copy` field a semantic
+change), Swift-style default copying (same hidden cost), and an opt-out marker
+(a type would become `Copy` merely by forgetting a declaration). `Copy` and
+`Drop` remain mutually exclusive, and `Copy` never changes layout, ABI, or the
+value's runtime representation.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -575,14 +600,17 @@ static proof obligation recorded at the operation and at the call boundary.
   so `AdtId` identifies a nominal declaration while the definition holds the
   ordered fields, their `DefId`s, names, and types. Tuples live in a separate
   structural arena keyed by their ordered `TyId`s, with no names or `DefId`s.
-- `TyCtxt::is_copy`, `is_sized`, `needs_drop`, and `contains_reference` walk
-  aggregate fields, tuple elements, and array elements with a cycle guard; no
-  query can loop on a malformed declaration. `Str`, `Slice`, and `Dyn` are never
-  `Copy` or `Sized`; a reference to any of them is both. On a declared parameter
-  the structural queries are conservative: `is_copy` is false without a `Copy`
-  bound, `is_sized` is true, `needs_drop` is false, and both reference
-  predicates are true. The environment-aware `is_copy_in` answers from the
-  body's bounds instead.
+- `TyCtxt::is_copy`/`is_copy_with`, `is_sized`, `needs_drop`, and
+  `contains_reference` walk aggregate fields, tuple elements, and array
+  elements with a cycle guard; no query can loop on a malformed declaration.
+  `Copy` combines the built-in structural cases with the validated `CopyImpls`
+  registry for nominal ADTs, so an `Adt` is `Copy` only when its implementation
+  was registered and every field of every variant passes the same query.
+  `Str`, `Slice`, and `Dyn` are never `Copy` or `Sized`; a reference to any of
+  them is both. On a declared parameter the structural queries are
+  conservative: `is_copy` is false without a `Copy` bound, `is_sized` is true,
+  `needs_drop` is false, and both reference predicates are true. The
+  environment-aware `is_copy_with` answers from the body's bounds instead.
 - `SubstsId` is an interned ordered argument list. `substitute(ty, args)`
   rewrites parameters through references, arrays, slices, tuples, and aggregate
   arguments without expanding a recursive definition. `Instance { def, args }`
@@ -591,9 +619,11 @@ static proof obligation recorded at the operation and at the call boundary.
 - `Str` and `Slice` are distinct kinds, not aliases for `*u8`, because they are
   unsized and their references carry a length (D7, D14).
 - `Copy`, `Sized`, and `Drop` are **queries** (`TyCtxt::is_copy`,
-  `is_sized`, `needs_drop`), not flags stored in the type. They are derived from
-  the type's structure, so they cannot disagree with it. Struct values are not
-  `Copy` in v0.1 (D2), so the query returns `false` for `TyKind::Adt`.
+  `is_copy_with`, `is_sized`, `needs_drop`), not flags stored in the type.
+  `Copy` is derived from the built-in type shape and, for an `Adt`, from the
+  validated implementation registry recorded by HIR lowering; `Sized` and
+  `Drop` remain structural. The answer for an `Adt` is field-recursive and
+  cycle-safe, so it cannot disagree with the declaration.
 - `seal_ty::InitPaths` is the shared definite-initialization lattice; type
   checking keys it by `DefId`, and MIR keys it by `LocalId` for borrow checking
   and drop elaboration, so every phase queries the same nearest-entry state over
@@ -665,9 +695,11 @@ static proof obligation recorded at the operation and at the call boundary.
    unknown, missing, and duplicate fields are rejected (`E2006`–`E2009`), and a
    positional variant receives exactly one argument per field in declaration
    order (`E2038`).
-9. A struct or enum value is never `Copy` in v0.1; moving one field out leaves
-   its siblings initialized and usable. A tuple is `Copy` exactly when every
-   element is, and moving one element leaves its siblings initialized.
+9. A struct or enum value is `Copy` only after an explicit implementation that
+   covers the declaration and every field of every variant; moving one field out
+   of a non-`Copy` aggregate leaves its siblings initialized and usable. A tuple
+   is `Copy` exactly when every element is, and moving one element leaves its
+   siblings initialized.
 10. A struct or enum cannot contain itself by value (`E3016`), and every field
     and tuple element is `Sized` (`E3010`). An enum is sized when every field of
     every variant is; a tuple when every element is.
