@@ -2020,6 +2020,22 @@ Implement the trait for the concrete type, or remove the constant that needs the
 missing table. The compiler reports this rather than emitting a null vtable.",
 };
 
+/// Drop glue collection reached its limit.
+pub const E7008: ErrorCode = ErrorCode {
+    code: "E7008",
+    title: "drop glue limit reached",
+    explanation: "\
+Dropping a value runs one glue function per concrete type involved, and a type
+that contains other droppable types nests their glue. A program with very many
+distinct types that need dropping, or with types nested deeper than the glue
+builder follows, can exhaust the drop glue limit before code generation starts.
+
+Reduce the number of distinct types that need a destructor, for example by
+grouping values behind a single aggregate, or split the program so each part
+uses fewer of them. The limit exists so such a program reports an error instead
+of consuming unbounded memory.",
+};
+
 /// The internal compiler error code.
 pub const E9001: ErrorCode = ErrorCode {
     code: "E9001",
@@ -2784,7 +2800,7 @@ pub static ALL: &[ErrorCode] = &[
     E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025,
     E4026, E4027, E4028, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003,
-    E7004, E7005, E7006, E7007, E9001, E9002,
+    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3068,7 +3084,7 @@ mod tests {
         assert_eq!(
             codes,
             [
-                "E7001", "E7002", "E7003", "E7004", "E7005", "E7006", "E7007"
+                "E7001", "E7002", "E7003", "E7004", "E7005", "E7006", "E7007", "E7008"
             ]
         );
     }

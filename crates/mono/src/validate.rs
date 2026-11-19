@@ -50,6 +50,11 @@ pub enum MonoValidationError {
         /// The coercion's span.
         span: Span,
     },
+    /// A drop site or a vtable needs glue the collector did not produce.
+    MissingDropGlue {
+        /// The type that needs a destructor.
+        ty: TyId,
+    },
     /// A coercion does not have a concrete trait-object key.
     MalformedTraitObject {
         /// The instance containing the coercion.
@@ -133,6 +138,9 @@ impl fmt::Display for MonoValidationError {
                 f,
                 "instance {instance:?} coerces to a trait object without a vtable at {span:?}"
             ),
+            Self::MissingDropGlue { ty } => {
+                write!(f, "drop glue for {ty:?} was never collected")
+            }
             Self::MalformedTraitObject { instance, span } => write!(
                 f,
                 "instance {instance:?} has a malformed trait-object coercion at {span:?}"
@@ -201,10 +209,11 @@ impl crate::MonoMir {
                     StatementKind::Assign { rvalue, .. } => {
                         check_rvalue(tcx, instance, program, statement.span, rvalue)?;
                     }
-                    // A drop names a place whose type comes from a local
-                    // declaration, and every declaration was checked above.
-                    StatementKind::Drop { .. } => {}
-                    StatementKind::DropRemaining { from, .. } => {
+                    StatementKind::Drop { place, .. } => {
+                        check_drop_site(hir, body, program, place)?;
+                    }
+                    StatementKind::DropRemaining { place, from } => {
+                        check_drop_site(hir, body, program, place)?;
                         check_operand(tcx, instance, from)?;
                     }
                 }
@@ -215,6 +224,24 @@ impl crate::MonoMir {
         }
         Ok(())
     }
+}
+
+/// Requires a collected glue for a drop site whose type needs one.
+///
+/// A drop of a trivially disposable type has nothing to call and needs no
+/// glue. Skipping those is what lets a specialized body keep the drop site of a
+/// generic parameter that resolved to such a type.
+fn check_drop_site(
+    hir: &Hir,
+    body: &seal_mir::Body,
+    program: &MonoProgram,
+    place: &seal_mir::Place,
+) -> Result<(), MonoValidationError> {
+    let ty = seal_mir::place_ty(hir, body, place);
+    if hir.ty_ctxt().needs_drop(ty) && program.drop_glue_id(ty).is_none() {
+        return Err(MonoValidationError::MissingDropGlue { ty });
+    }
+    Ok(())
 }
 
 fn check_rvalue(
@@ -378,6 +405,11 @@ pub(crate) fn validate_vtable(
     }
     if table.key.trait_ref.self_ty != table.key.concrete {
         return Err(MonoValidationError::VtableSelfMismatch { vtable: id });
+    }
+    if tcx.needs_drop(table.key.concrete) && program.drop_glue_id(table.key.concrete).is_none() {
+        return Err(MonoValidationError::MissingDropGlue {
+            ty: table.key.concrete,
+        });
     }
     for argument in tcx.substs_args(table.key.trait_ref.args) {
         check_vtable_type(tcx, id, argument)?;

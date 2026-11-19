@@ -539,6 +539,8 @@ fn vtable_and_method_limits_are_enforced() {
         depth: 64,
         instances: 4096,
         vtables: 1,
+        glues: 4096,
+        glue_depth: 64,
     });
     vtable_limit.expect("E7006", "vtable limit");
     assert_eq!(program.vtables().len(), 1);
@@ -550,6 +552,8 @@ fn vtable_and_method_limits_are_enforced() {
         depth: 64,
         instances: 1,
         vtables: 64,
+        glues: 4096,
+        glue_depth: 64,
     });
     method_limit.expect("E7004", "instance limit");
     assert_eq!(program.instances().len(), 1);

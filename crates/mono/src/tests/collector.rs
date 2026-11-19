@@ -449,6 +449,8 @@ fn the_instance_limit_is_enforced_before_allocation() {
         depth: 64,
         instances: 2,
         vtables: 4096,
+        glues: 4096,
+        glue_depth: 64,
     });
     fixture.expect("E7004", "instance limit");
     assert_eq!(program.instances().len(), 2);
@@ -766,6 +768,8 @@ fn a_growing_recursive_default_hits_the_existing_limit() {
         depth: 4,
         instances: 4096,
         vtables: 4096,
+        glues: 4096,
+        glue_depth: 64,
     });
     fixture.expect("E7001", "recursion limit");
     assert!(!program.instances().is_empty());

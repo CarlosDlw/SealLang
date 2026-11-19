@@ -13,15 +13,17 @@ fn program_with(mono: MonoMir) -> MonoProgram {
     let instance = mono.instance;
     let mut ids = FxHashMap::default();
     ids.insert(instance, InstanceId::from_usize(0));
-    MonoProgram::new(
-        IndexVec::from_raw(vec![mono]),
+    MonoProgram::new(crate::Collected {
+        instances: IndexVec::from_raw(vec![mono]),
         ids,
-        vec![MonoItem::Function(instance)],
-        Vec::new(),
-        Vec::new(),
-        IndexVec::new(),
-        FxHashMap::default(),
-    )
+        items: vec![MonoItem::Function(instance)],
+        statics: Vec::new(),
+        const_allocations: Vec::new(),
+        vtables: IndexVec::new(),
+        vtable_ids: FxHashMap::default(),
+        drop_glues: IndexVec::new(),
+        drop_glue_ids: FxHashMap::default(),
+    })
 }
 
 fn instance(

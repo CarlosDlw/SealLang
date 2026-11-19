@@ -768,7 +768,7 @@ fn operand_ty(hir: &Hir, body: &Body, operand: &Operand) -> Option<TyId> {
 ///
 /// Drop elaboration walks the same place a statement names, so it resolves the
 /// type through this function instead of duplicating the projection rules.
-pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
+pub fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
     let tcx = hir.ty_ctxt();
     let mut ty = match place.root {
         crate::place::PlaceRoot::Local(local) => body.local(local).ty,

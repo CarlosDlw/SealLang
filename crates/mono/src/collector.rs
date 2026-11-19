@@ -10,17 +10,18 @@ use seal_hir::Hir;
 use seal_index::{Idx, IndexVec};
 use seal_mir::{
     Body, BodyKind, IntrinsicReceiver, Mir, Operand, Place, PlaceRoot, Rvalue, StatementKind,
-    TerminatorKind,
+    TerminatorKind, place_ty,
 };
 use seal_span::Span;
 use seal_symbol::Interner;
-use seal_ty::Instance;
+use seal_ty::{Instance, TyId};
 
+use crate::drop::{self, DropGlueEntry};
 use crate::error::MonoError;
-use crate::id::{InstanceId, VtableId};
+use crate::id::{DropGlueId, InstanceId, VtableId};
 use crate::substitute::{self, BodyEvent};
 use crate::vtable::{self, MonoVTable, VtableKey};
-use crate::{MonoMir, MonoProgram};
+use crate::{Collected, MonoMir, MonoProgram};
 
 /// Maximum call-chain depth while discovering instances.
 pub const MAX_DEPTH: usize = 64;
@@ -30,6 +31,12 @@ pub const MAX_INSTANCES: usize = 4096;
 
 /// Maximum number of distinct vtables one program may collect.
 pub const MAX_VTABLES: usize = 4096;
+
+/// Maximum number of distinct drop glue functions one program may collect.
+pub const MAX_GLUES: usize = 4096;
+
+/// Maximum nesting depth of one drop glue shape.
+pub const MAX_GLUE_DEPTH: usize = 64;
 
 /// Expansion limits.
 ///
@@ -41,6 +48,8 @@ pub(crate) struct Limits {
     pub(crate) depth: usize,
     pub(crate) instances: usize,
     pub(crate) vtables: usize,
+    pub(crate) glues: usize,
+    pub(crate) glue_depth: usize,
 }
 
 impl Limits {
@@ -48,6 +57,8 @@ impl Limits {
         depth: MAX_DEPTH,
         instances: MAX_INSTANCES,
         vtables: MAX_VTABLES,
+        glues: MAX_GLUES,
+        glue_depth: MAX_GLUE_DEPTH,
     };
 }
 
@@ -60,6 +71,8 @@ pub enum MonoItem {
     Static(seal_def::DefId),
     /// One reachable non-static allocation, addressed by a const or promotion.
     ConstAlloc(AllocId),
+    /// One drop glue function for a concrete type.
+    DropGlue(DropGlueId),
 }
 
 /// One discovered instance waiting for its body.
@@ -110,6 +123,8 @@ pub(crate) fn collect_with(
         vtables: IndexVec::new(),
         vtable_ids: FxHashMap::default(),
         rejected_vtables: HashSet::new(),
+        glues: IndexVec::new(),
+        glue_ids: FxHashMap::default(),
     };
     collector.seed_roots();
     while let Some(pending) = collector.queue.pop_front() {
@@ -138,6 +153,8 @@ struct Collector<'a> {
     vtable_ids: FxHashMap<VtableKey, VtableId>,
     /// Keys already reported, so one broken coercion is not reported again.
     rejected_vtables: HashSet<VtableKey>,
+    glues: IndexVec<DropGlueId, DropGlueEntry>,
+    glue_ids: FxHashMap<TyId, DropGlueId>,
 }
 
 impl Collector<'_> {
@@ -240,7 +257,7 @@ impl Collector<'_> {
         let specialized = substitute::instantiate_body(self.hir, body, pending.instance);
         let (body, events) =
             substitute::resolve_body(self.hir, self.dcx, self.interner, specialized);
-        self.scan_body(&body);
+        self.scan_body(&body, &pending.chain);
         self.bodies[pending.id.index() as usize] = Some(MonoMir {
             instance: pending.instance,
             body,
@@ -314,6 +331,7 @@ impl Collector<'_> {
         let id = VtableId::from_usize(self.vtables.len());
         self.vtables.push(table);
         self.vtable_ids.insert(key, id);
+        self.request_glue(key.concrete, 0, chain, span);
         for entry in entries {
             let mut chain = chain.to_vec();
             chain.push((entry, span));
@@ -321,8 +339,69 @@ impl Collector<'_> {
         }
     }
 
-    /// Records every static, const allocation, and vtable a body references.
-    fn scan_body(&mut self, body: &Body) {
+    /// Records the glue for `ty` and schedules its destructor and children.
+    ///
+    /// The entry and its ID exist before any child is visited, so a type that
+    /// reaches the same glue again stops instead of recursing forever. A type
+    /// that needs no destructor gets no entry: its drop sites call nothing.
+    fn request_glue(&mut self, ty: TyId, depth: usize, chain: &[(Instance, Span)], span: Span) {
+        if self.glue_ids.contains_key(&ty) || !self.hir.ty_ctxt().needs_drop(ty) {
+            return;
+        }
+        let Some(glue) = drop::glue_shape(self.hir, ty) else {
+            return;
+        };
+        if depth > self.limits.glue_depth {
+            let message = format!(
+                "the drop glue nesting depth limit of {} was reached while building the glue \
+                 for `{}`",
+                self.limits.glue_depth,
+                self.type_name(ty)
+            );
+            self.report_limit(codes::E7008, span, &message, chain);
+            return;
+        }
+        if self.glues.len() >= self.limits.glues {
+            let message = format!(
+                "the drop glue limit of {} was reached while building the glue for `{}`",
+                self.limits.glues,
+                self.type_name(ty)
+            );
+            self.report_limit(codes::E7008, span, &message, chain);
+            return;
+        }
+        let destructor = glue.destructor;
+        let children = glue.children.clone();
+        let id = DropGlueId::from_usize(self.glues.len());
+        self.glue_ids.insert(ty, id);
+        self.glues.push(DropGlueEntry { ty, glue });
+        self.items.push(MonoItem::DropGlue(id));
+        if let Some(destructor) = destructor {
+            let mut chain = chain.to_vec();
+            chain.push((destructor, span));
+            self.enqueue(destructor, depth + 1, chain, span);
+        }
+        match children {
+            crate::GlueChildren::None => {}
+            crate::GlueChildren::Fields(fields) => {
+                for child in fields {
+                    self.request_glue(child, depth + 1, chain, span);
+                }
+            }
+            crate::GlueChildren::Variants(variants) => {
+                for child in variants.into_iter().flatten() {
+                    self.request_glue(child, depth + 1, chain, span);
+                }
+            }
+            crate::GlueChildren::Elements { element, .. } => {
+                self.request_glue(element, depth + 1, chain, span);
+            }
+        }
+    }
+
+    /// Records every static, const allocation, vtable, and drop glue a body
+    /// references.
+    fn scan_body(&mut self, body: &Body, chain: &[(Instance, Span)]) {
         for block in body.blocks.iter() {
             for statement in &block.statements {
                 let span = statement.span;
@@ -331,10 +410,14 @@ impl Collector<'_> {
                         self.scan_place(place, span);
                         self.scan_rvalue(rvalue, span);
                     }
-                    StatementKind::Drop { place, .. } => self.scan_place(place, span),
+                    StatementKind::Drop { place, .. } => {
+                        self.scan_place(place, span);
+                        self.request_glue(place_ty(self.hir, body, place), 0, chain, span);
+                    }
                     StatementKind::DropRemaining { place, from } => {
                         self.scan_place(place, span);
                         self.scan_operand(from, span);
+                        self.request_glue(place_ty(self.hir, body, place), 0, chain, span);
                     }
                 }
             }
@@ -529,21 +612,25 @@ impl Collector<'_> {
             const_allocations,
             vtables,
             vtable_ids,
+            glues,
+            glue_ids,
             ..
         } = self;
         let instances: Vec<MonoMir> = bodies
             .into_iter()
             .map(|body| body.expect("every discovered instance has a body"))
             .collect();
-        MonoProgram::new(
-            IndexVec::from_raw(instances),
+        MonoProgram::new(Collected {
+            instances: IndexVec::from_raw(instances),
             ids,
             items,
             statics,
             const_allocations,
             vtables,
             vtable_ids,
-        )
+            drop_glues: glues,
+            drop_glue_ids: glue_ids,
+        })
     }
 
     /// Reports a limit diagnostic with one label per path step.
@@ -570,6 +657,13 @@ impl Collector<'_> {
 
     fn instance_name(&self, instance: Instance) -> String {
         crate::hash::instance_name(self.hir, self.interner, instance)
+    }
+
+    fn type_name(&self, ty: TyId) -> String {
+        self.hir
+            .ty_ctxt()
+            .display_with(ty, self.interner)
+            .to_string()
     }
 
     fn def_name(&self, def: seal_def::DefId) -> String {

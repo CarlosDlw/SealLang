@@ -4,11 +4,13 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::Ast;
+use seal_def::{DefId, DefKind};
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_hir::Hir;
 use seal_mir::Mir;
 use seal_span::{FileName, SourceFile, SourceMap};
 use seal_symbol::{Interner, Symbol};
+use seal_ty::AdtId;
 
 use crate::MonoProgram;
 use crate::collector::{Limits, collect_with};
@@ -92,7 +94,7 @@ impl Fixture {
 
     /// Runs the front end and collection with explicit limits.
     pub(crate) fn lower_with(&self, limits: Limits) -> (Hir, Mir, MonoProgram) {
-        let (hir, mir, _constants, program) = self.lower_constants_with(limits);
+        let (hir, mir, _constants, program) = self.collect(limits, &[]);
         (hir, mir, program)
     }
 
@@ -101,16 +103,86 @@ impl Fixture {
         &self,
         limits: Limits,
     ) -> (Hir, Mir, seal_const_eval::ConstProgram, MonoProgram) {
+        self.collect(limits, &[])
+    }
+
+    /// Collects after registering a destructor for each named aggregate.
+    ///
+    /// `impl Drop` is not part of the surface yet, so a test that needs a type
+    /// with a destructor registers one before MIR lowering, which is exactly
+    /// where HIR lowering will record it once the syntax exists. Each pair is
+    /// the aggregate and the function standing in for its destructor.
+    pub(crate) fn lower_with_destructors(
+        &self,
+        destructors: &[(&str, &str)],
+    ) -> (Hir, Mir, MonoProgram) {
+        let (hir, mir, _constants, program) = self.collect(Limits::DEFAULT, destructors);
+        (hir, mir, program)
+    }
+
+    /// Collects with explicit limits after registering destructors.
+    pub(crate) fn lower_with_limits_and_destructors(
+        &self,
+        limits: Limits,
+        destructors: &[(&str, &str)],
+    ) -> (Hir, Mir, MonoProgram) {
+        let (hir, mir, _constants, program) = self.collect(limits, destructors);
+        (hir, mir, program)
+    }
+
+    /// Runs the front end, elaboration, constant evaluation, and collection.
+    fn collect(
+        &self,
+        limits: Limits,
+        destructors: &[(&str, &str)],
+    ) -> (Hir, Mir, seal_const_eval::ConstProgram, MonoProgram) {
         let ast = self.parse();
         let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        for (aggregate, destructor) in destructors {
+            let adt = self.aggregate(&hir, aggregate);
+            let method = self.function(&hir, destructor);
+            assert_eq!(
+                hir.ty_ctxt().set_drop_method(adt, method),
+                None,
+                "`{aggregate}` starts without a destructor"
+            );
+        }
         let typeck = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
         self.assert_clean();
-        let mir = seal_mir::lower(&hir, &typeck);
+        let mut mir = seal_mir::lower(&hir, &typeck);
         mir.validate_with(&hir)
             .expect("MIR lowering maintains its invariants");
+        seal_mir::elaborate_drops(&hir, &mut mir)
+            .unwrap_or_else(|error| panic!("drop elaboration failed: {error}"));
+        mir.validate_with(&hir)
+            .expect("drop elaboration maintains the MIR invariants");
         let constants = seal_const_eval::evaluate(&hir, &mir, &self.dcx, &self.interner, 64);
         let program = collect_with(&hir, &mir, &constants, &self.dcx, &self.interner, limits);
         (hir, mir, constants, program)
+    }
+
+    /// Returns the aggregate declared with `name`.
+    fn aggregate(&self, hir: &Hir, name: &str) -> AdtId {
+        let definition = hir
+            .definitions()
+            .iter_enumerated()
+            .find(|(_, data)| {
+                matches!(data.kind, DefKind::Struct | DefKind::Enum)
+                    && self.symbol(data.name) == *name
+            })
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| panic!("no aggregate named `{name}`"));
+        hir.adt(definition)
+            .unwrap_or_else(|| panic!("`{name}` has no aggregate id"))
+    }
+
+    /// Returns the function declared with `name`.
+    fn function(&self, hir: &Hir, name: &str) -> DefId {
+        hir.definitions()
+            .iter_enumerated()
+            .find(|(_, data)| data.kind == DefKind::Function && self.symbol(data.name) == *name)
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| panic!("no function named `{name}`"))
     }
 
     pub(crate) fn interner(&self) -> &Interner {

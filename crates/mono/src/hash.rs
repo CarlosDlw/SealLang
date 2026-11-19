@@ -24,6 +24,17 @@ pub fn instance_hash(hir: &Hir, instance: Instance) -> Fingerprint {
     hasher.finish()
 }
 
+/// Returns the stable fingerprint of `ty`.
+///
+/// Drop glue symbols are derived from this fingerprint, so it walks the type
+/// structure the same way an instance fingerprint does: two distinct types
+/// never collide, and the same type always produces the same value.
+pub fn type_hash(hir: &Hir, ty: TyId) -> Fingerprint {
+    let mut hasher = StableHasher::new();
+    hash_type(hir.ty_ctxt(), ty, &mut hasher);
+    hasher.finish()
+}
+
 /// Returns a readable name such as `identity<i32>` for diagnostics.
 pub fn instance_name(hir: &Hir, interner: &Interner, instance: Instance) -> String {
     let base = interner.resolve(hir.definitions().name(instance.def));

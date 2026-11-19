@@ -18,3 +18,13 @@ newtype_index! {
     /// IDs follow first-coercion order and are independent from instance IDs.
     pub struct VtableId;
 }
+
+newtype_index! {
+    /// Position of a
+    /// [`DropGlueEntry`](crate::DropGlueEntry) in a
+    /// [`MonoProgram`](crate::MonoProgram).
+    ///
+    /// IDs follow first-request order and are independent from instance and
+    /// vtable IDs.
+    pub struct DropGlueId;
+}

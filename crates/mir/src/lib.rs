@@ -77,3 +77,4 @@ pub use rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, Un
 pub use statement::{DropKind, Statement, StatementKind};
 pub use terminator::{SwitchTarget, Terminator, TerminatorKind};
 pub use validate::ValidationError;
+pub use validate::place_ty;

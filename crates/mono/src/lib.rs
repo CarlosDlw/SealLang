@@ -13,6 +13,12 @@
 //! including supertrait methods that no body calls directly. Vtable IDs are
 //! assigned in first-coercion order and stay independent from instance IDs.
 //!
+//! Drop glue is collected from the same bodies. Every drop site whose place
+//! needs a destructor, and every trait object, requests one [`DropGlue`] per
+//! concrete type. The shape names the destructor instance to call and the
+//! children to drop afterwards, so code generation builds one function per
+//! entry and points the first slot of a vtable at it.
+//!
 //! The result is a [`MonoProgram`]: dense [`InstanceId`]s and [`VtableId`]s in
 //! deterministic discovery order, one [`MonoMir`] per instance with every type
 //! substituted, and no parameter, inference variable, or symbolic call left.
@@ -21,14 +27,16 @@
 //! # Limits
 //!
 //! Expansion is bounded by [`MAX_DEPTH`] along any call chain, by
-//! [`MAX_INSTANCES`] overall, and by [`MAX_VTABLES`] for trait-object tables.
-//! All report a diagnostic with the offending instance or coercion instead of
+//! [`MAX_INSTANCES`] overall, by [`MAX_VTABLES`] for trait-object tables, by
+//! [`MAX_GLUES`] for drop glue items, and by [`MAX_GLUE_DEPTH`] for one glue's
+//! nesting. All report a diagnostic with the offending instance or coercion instead of
 //! consuming unbounded memory; a growing instantiation such as `f<T>` calling
 //! `f<[T; 1]>` therefore fails deterministically.
 
 #![warn(missing_docs)]
 
 mod collector;
+mod drop;
 mod error;
 mod hash;
 mod id;
@@ -44,11 +52,15 @@ use seal_hash::FxHashMap;
 use seal_index::{Idx, IndexVec};
 use seal_mir::Body;
 pub use seal_ty::Instance;
+use seal_ty::TyId;
 
-pub use collector::{MAX_DEPTH, MAX_INSTANCES, MAX_VTABLES, MonoItem, collect};
+pub use collector::{
+    MAX_DEPTH, MAX_GLUE_DEPTH, MAX_GLUES, MAX_INSTANCES, MAX_VTABLES, MonoItem, collect,
+};
+pub use drop::{DropGlue, DropGlueEntry, GlueChildren};
 pub use error::MonoError;
-pub use hash::{instance_hash, instance_name, vtable_hash, vtable_name};
-pub use id::{InstanceId, VtableId};
+pub use hash::{instance_hash, instance_name, type_hash, vtable_hash, vtable_name};
+pub use id::{DropGlueId, InstanceId, VtableId};
 pub use seal_mir::CallTarget;
 pub use validate::MonoValidationError;
 pub use vtable::{MonoVTable, VtableKey};
@@ -76,26 +88,38 @@ pub struct MonoProgram {
     const_allocations: Vec<AllocId>,
     vtables: IndexVec<VtableId, MonoVTable>,
     vtable_ids: FxHashMap<VtableKey, VtableId>,
+    drop_glues: IndexVec<DropGlueId, DropGlueEntry>,
+    drop_glue_ids: FxHashMap<TyId, DropGlueId>,
+}
+
+/// Everything one collection produced.
+///
+/// The collector builds this and hands it to [`MonoProgram::new`], so the
+/// constructor keeps one argument as collection grows new item kinds.
+pub(crate) struct Collected {
+    pub(crate) instances: IndexVec<InstanceId, MonoMir>,
+    pub(crate) ids: FxHashMap<Instance, InstanceId>,
+    pub(crate) items: Vec<MonoItem>,
+    pub(crate) statics: Vec<DefId>,
+    pub(crate) const_allocations: Vec<AllocId>,
+    pub(crate) vtables: IndexVec<VtableId, MonoVTable>,
+    pub(crate) vtable_ids: FxHashMap<VtableKey, VtableId>,
+    pub(crate) drop_glues: IndexVec<DropGlueId, DropGlueEntry>,
+    pub(crate) drop_glue_ids: FxHashMap<TyId, DropGlueId>,
 }
 
 impl MonoProgram {
-    pub(crate) fn new(
-        instances: IndexVec<InstanceId, MonoMir>,
-        ids: FxHashMap<Instance, InstanceId>,
-        items: Vec<MonoItem>,
-        statics: Vec<DefId>,
-        const_allocations: Vec<AllocId>,
-        vtables: IndexVec<VtableId, MonoVTable>,
-        vtable_ids: FxHashMap<VtableKey, VtableId>,
-    ) -> Self {
+    pub(crate) fn new(collected: Collected) -> Self {
         Self {
-            instances,
-            ids,
-            items,
-            statics,
-            const_allocations,
-            vtables,
-            vtable_ids,
+            instances: collected.instances,
+            ids: collected.ids,
+            items: collected.items,
+            statics: collected.statics,
+            const_allocations: collected.const_allocations,
+            vtables: collected.vtables,
+            vtable_ids: collected.vtable_ids,
+            drop_glues: collected.drop_glues,
+            drop_glue_ids: collected.drop_glue_ids,
         }
     }
 
@@ -159,6 +183,28 @@ impl MonoProgram {
     #[inline]
     pub fn vtable_id(&self, key: VtableKey) -> Option<VtableId> {
         self.vtable_ids.get(&key).copied()
+    }
+
+    /// Returns every collected drop glue in first-request order.
+    #[inline]
+    pub fn drop_glues(&self) -> &IndexVec<DropGlueId, DropGlueEntry> {
+        &self.drop_glues
+    }
+
+    /// Returns one glue entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this program.
+    #[inline]
+    pub fn drop_glue(&self, id: DropGlueId) -> &DropGlueEntry {
+        &self.drop_glues[id]
+    }
+
+    /// Returns the ID assigned to the glue of `ty`, if it was collected.
+    #[inline]
+    pub fn drop_glue_id(&self, ty: TyId) -> Option<DropGlueId> {
+        self.drop_glue_ids.get(&ty).copied()
     }
 
     /// Returns `true` when the program contains no instances.
