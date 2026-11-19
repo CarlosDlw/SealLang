@@ -2569,6 +2569,49 @@ Declare the pointer `*raw mut T` when writes are intended, and discard fat
 metadata explicitly with `data()` before pointer arithmetic.",
 };
 
+/// An `impl Copy` is specialized, duplicated by validation, or does not cover
+/// the whole type declaration.
+pub const E3076: ErrorCode = ErrorCode {
+    code: "E3076",
+    title: "invalid Copy implementation",
+    explanation: "\
+`Copy` is an opt-in property of the whole type declaration. An implementation
+must repeat the declaration's parameters in order: `impl<T> Copy for Wrapper<T>`
+is valid for a `Wrapper` with one parameter, but `impl Copy for Wrapper<i32>`
+and `impl<T, U> Copy for Wrapper<U, T>` are not, because different
+instantiations would disagree about whether the type is `Copy`.
+
+Write one `impl Copy for TypeName<...>` that covers the declaration, and remove
+any specialized or duplicate implementation.",
+};
+
+/// A field of a type that opted into `Copy` is not `Copy`.
+pub const E3077: ErrorCode = ErrorCode {
+    code: "E3077",
+    title: "a field of a Copy type is not Copy",
+    explanation: "\
+A `Copy` value is duplicated bitwise, so every field of every variant must be
+`Copy` too. A field whose type is a type parameter needs a `Copy` bound on that
+parameter; a raw pointer is always `Copy` whatever it points to, and arrays and
+tuples are `Copy` when their elements are.
+
+Remove the non-`Copy` field, make its type `Copy`, or drop the `Copy`
+implementation for the aggregate.",
+};
+
+/// `Copy` is used as a supertrait or as a trait object.
+pub const E3078: ErrorCode = ErrorCode {
+    code: "E3078",
+    title: "Copy is a built-in bound, not a trait",
+    explanation: "\
+`Copy` describes a property of sized values and is checked from the type's
+fields. It has no methods and cannot be used as a supertrait or as the trait of
+a trait object, because neither use has behavior to dispatch through a table.
+
+Use `Copy` as a bound such as `T: Copy` instead, or remove it from the
+supertrait list.",
+};
+
 /// A cast between pointer types is not supported.
 pub const E3074: ErrorCode = ErrorCode {
     code: "E3074",
@@ -3008,11 +3051,11 @@ pub static ALL: &[ErrorCode] = &[
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
-    E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013,
-    E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
-    E4027, E4028, E4030, E4031, E4032, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008,
-    E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001,
-    E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3076, E3077, E3078, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010,
+    E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023,
+    E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E5001, E5002, E5003, E5004, E5005,
+    E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002,
+    E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3153,6 +3196,9 @@ mod tests {
             ("E3073", "no Seal caller exists"),
             ("E3074", "explicit `as` cast"),
             ("E3075", "carries a static permission"),
+            ("E3076", "whole type declaration"),
+            ("E3077", "every field of every variant"),
+            ("E3078", "no methods"),
             ("E4001", "fallback that names the item"),
             ("E4002", "dividing by zero"),
             ("E4003", "remainder operation is undefined"),
@@ -3270,7 +3316,7 @@ mod tests {
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
-                "E3074", "E3075",
+                "E3074", "E3075", "E3076", "E3077", "E3078",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

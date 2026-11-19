@@ -35,6 +35,14 @@ impl CopyImpls {
     pub(crate) fn get(&self, adt: AdtId) -> Option<DefId> {
         self.impls.get(&adt).copied()
     }
+
+    /// Removes and returns the `Copy` declaration of `adt`.
+    ///
+    /// Validation uses this when a provisional candidate turns out to have a
+    /// field that is not `Copy`; the final registry must never contain it.
+    pub(crate) fn remove(&mut self, adt: AdtId) -> Option<DefId> {
+        self.impls.remove(&adt)
+    }
 }
 
 #[cfg(test)]
@@ -61,6 +69,16 @@ mod tests {
         assert_eq!(impls.get(adt(0)), Some(def(10)));
         assert_eq!(impls.insert(adt(0), def(11)), Some(def(10)));
         assert_eq!(impls.get(adt(0)), Some(def(11)));
+    }
+
+    #[test]
+    fn removing_a_declaration_returns_it_once() {
+        let mut impls = CopyImpls::default();
+
+        assert_eq!(impls.insert(adt(0), def(10)), None);
+        assert_eq!(impls.remove(adt(0)), Some(def(10)));
+        assert_eq!(impls.remove(adt(0)), None);
+        assert_eq!(impls.get(adt(0)), None);
     }
 
     #[test]

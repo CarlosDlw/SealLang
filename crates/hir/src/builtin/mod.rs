@@ -1,11 +1,13 @@
 //! Compiler-provided traits installed into every HIR.
 //!
 //! The language reserves a handful of trait names for behavior the compiler
-//! itself relies on: the iteration and indexing protocols, and `Drop`.
-//! Installing them before user items are collected means ordinary trait
-//! lookup, implementation validation, method dispatch, and object safety treat
-//! them like any other declaration, without a prelude or a second type system.
+//! itself relies on: the iteration and indexing protocols, `Drop`, and the
+//! `Copy` marker. Installing them before user items are collected means
+//! ordinary trait lookup, implementation validation, method dispatch, and
+//! object safety treat them like any other declaration, without a prelude or a
+//! second type system.
 
+pub(crate) mod copy;
 pub(crate) mod drop;
 pub(crate) mod protocols;
 
@@ -26,13 +28,20 @@ pub(crate) struct BuiltinTraits {
     pub(crate) protocols: protocols::ProtocolDefs,
     /// The `Drop` trait.
     pub(crate) drop: drop::DropDefs,
+    /// The `Copy` marker trait.
+    pub(crate) copy: copy::CopyDefs,
 }
 
 /// Installs every compiler-provided trait into an empty HIR.
 pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> BuiltinTraits {
     let protocols = protocols::install(hir, interner);
     let drop = drop::install(hir, interner);
-    BuiltinTraits { protocols, drop }
+    let copy = copy::install(hir, interner);
+    BuiltinTraits {
+        protocols,
+        drop,
+        copy,
+    }
 }
 
 /// Creates a reserved trait, its implicit `Self`, and its declared parameters.

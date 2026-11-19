@@ -935,6 +935,14 @@ impl TyCtxt {
         self.copy_impls.borrow().get(adt)
     }
 
+    /// Removes and returns the `impl Copy` declaration of `adt`.
+    ///
+    /// Lowering uses this while validating a provisional candidate whose fields
+    /// turn out not to be `Copy`; a query must never observe that candidate.
+    pub fn remove_copy_impl(&self, adt: AdtId) -> Option<DefId> {
+        self.copy_impls.borrow_mut().remove(adt)
+    }
+
     /// Records the destructor the aggregate `adt` declares.
     ///
     /// Lowering calls this once per validated `impl Drop for T`, after checking

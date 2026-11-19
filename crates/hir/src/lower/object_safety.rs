@@ -55,6 +55,16 @@ impl Lowering<'_> {
             let TyKind::Dyn { trait_def, .. } = self.hir.ty_ctxt().kind(usage.ty) else {
                 continue;
             };
+            if self.hir.is_copy_trait(trait_def) {
+                self.error(
+                    codes::E3078,
+                    usage.span,
+                    "the built-in `Copy` marker cannot be used as a trait object",
+                )
+                .help("`Copy` is a marker bound for sized value types, not a trait object")
+                .emit();
+                continue;
+            }
             if self.hir.is_drop_trait(trait_def) {
                 self.error(
                     codes::E3066,

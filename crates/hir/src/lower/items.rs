@@ -172,6 +172,16 @@ impl Lowering<'_> {
             .emit();
             return;
         }
+        if self.hir.definitions().name(self.hir.copy_trait()) == name {
+            self.error(
+                codes::E2066,
+                name_span,
+                "the trait name `Copy` is reserved for a compiler-provided trait",
+            )
+            .help("`Copy` is provided by the compiler; implement it instead of declaring it")
+            .emit();
+            return;
+        }
 
         let definition = self.define(DefData {
             kind: DefKind::Trait,
@@ -751,7 +761,9 @@ impl Lowering<'_> {
                 continue;
             };
             let protocol = self.hir.protocol_of_trait(trait_def);
-            let builtin = protocol.is_some() || self.hir.is_drop_trait(trait_def);
+            let builtin = protocol.is_some()
+                || self.hir.is_drop_trait(trait_def)
+                || self.hir.is_copy_trait(trait_def);
             let order = if builtin {
                 declaration
                     .methods

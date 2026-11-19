@@ -22,6 +22,7 @@ use crate::{Block, Hir, HirBlockId, Protocol};
 mod aggregates;
 mod bodies;
 mod coherence;
+mod copy;
 mod enums;
 mod expr;
 mod generics;
@@ -110,6 +111,8 @@ impl<'a> Lowering<'a> {
         }
         let drop_trait = hir.drop_trait();
         traits.insert(hir.definitions().name(drop_trait), drop_trait);
+        let copy_trait = hir.copy_trait();
+        traits.insert(hir.definitions().name(copy_trait), copy_trait);
         Self {
             ast,
             dcx,
@@ -154,6 +157,7 @@ impl<'a> Lowering<'a> {
         self.validate_supertraits();
         self.validate_coherence();
         self.validate_trait_impls();
+        self.validate_copy_impls();
         self.validate_drop_impls();
         self.lower_value_bodies();
         self.lower_bodies();

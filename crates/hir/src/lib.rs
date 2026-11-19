@@ -319,6 +319,16 @@ impl Hir {
         self.drop_trait() == def
     }
 
+    /// Returns the `Copy` trait declaration installed into every HIR.
+    pub fn copy_trait(&self) -> DefId {
+        self.builtin_traits().copy.trait_def
+    }
+
+    /// Returns `true` when `def` is the `Copy` trait declaration.
+    pub fn is_copy_trait(&self, def: DefId) -> bool {
+        self.copy_trait() == def
+    }
+
     fn builtin_traits(&self) -> &builtin::BuiltinTraits {
         self.builtin
             .as_ref()
@@ -343,7 +353,10 @@ impl Hir {
     /// Returns `true` when `def` is a compiler-provided protocol definition or
     /// one of its generic parameters.
     pub fn is_builtin_def(&self, def: DefId) -> bool {
-        if self.protocol_of_trait(def).is_some() || self.is_drop_trait(def) {
+        if self.protocol_of_trait(def).is_some()
+            || self.is_drop_trait(def)
+            || self.is_copy_trait(def)
+        {
             return true;
         }
         self.definitions

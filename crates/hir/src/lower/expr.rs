@@ -392,6 +392,18 @@ impl Lowering<'_> {
                 )
                 .help("the compiler runs `drop` when the value goes out of scope; remove this call")
                 .emit();
+            } else if self
+                .traits
+                .get(&type_name)
+                .is_some_and(|trait_def| self.hir.is_copy_trait(*trait_def))
+            {
+                self.error(
+                    codes::E2018,
+                    type_span,
+                    "the built-in `Copy` marker declares no associated functions",
+                )
+                .help("use `Copy` as a bound such as `T: Copy` instead of calling it")
+                .emit();
             } else if self.traits.contains_key(&type_name) {
                 self.error(
                     codes::E2027,

@@ -6,6 +6,7 @@
 //! before type checking. Each cycle is reported once, at the trait that closes
 //! it.
 
+use seal_ast::ItemKind;
 use seal_def::DefId;
 use seal_error_codes as codes;
 use seal_hash::FxHashSet;
@@ -13,8 +14,9 @@ use seal_hash::FxHashSet;
 use super::Lowering;
 
 impl Lowering<'_> {
-    /// Rejects cycles in the supertrait graph.
+    /// Rejects cycles in the supertrait graph and `Copy` as a supertrait.
     pub(super) fn validate_supertraits(&mut self) {
+        self.reject_copy_supertraits();
         let roots: Vec<DefId> = self
             .trait_items
             .iter()
@@ -57,6 +59,59 @@ impl Lowering<'_> {
         }
         path.pop();
         finished.insert(current);
+    }
+
+    /// Rejects `trait X: Copy` and removes the requirement from the semantic
+    /// declaration, so a bound on `X` never silently implies `Copy`.
+    fn reject_copy_supertraits(&mut self) {
+        let copy = self.hir.copy_trait();
+        let traits = self.trait_items.clone();
+        for (item_id, trait_def) in traits {
+            let supertraits = match &self.ast.item(item_id).kind {
+                ItemKind::Trait(declaration) => declaration.supertraits.clone(),
+                _ => continue,
+            };
+            let mut reported = false;
+            for path in &supertraits {
+                if self.traits.get(&path.name).copied() != Some(copy) {
+                    continue;
+                }
+                self.error(
+                    codes::E3078,
+                    path.span,
+                    "the built-in `Copy` marker cannot be a supertrait",
+                )
+                .help("remove `Copy` from the supertrait list; use it as a generic bound instead")
+                .emit();
+                reported = true;
+            }
+
+            let Some(mut definition) = self.hir.trait_definition(trait_def) else {
+                continue;
+            };
+            let before = definition.supertraits.len();
+            definition
+                .supertraits
+                .retain(|supertrait| supertrait.trait_def != copy);
+            if definition.supertraits.len() == before {
+                continue;
+            }
+            if !reported {
+                let name = self.hir.definitions().name(trait_def);
+                let span = self.hir.definitions().get(trait_def).name_span;
+                self.error(
+                    codes::E3078,
+                    span,
+                    format!(
+                        "the trait `{}` cannot require `Copy` as a supertrait",
+                        self.interner.resolve(name)
+                    ),
+                )
+                .help("remove `Copy` from the supertrait list; use it as a generic bound instead")
+                .emit();
+            }
+            self.hir.ty_ctxt_mut().insert_trait_def(definition);
+        }
     }
 
     fn report_supertrait_cycle(&mut self, cycle: &[DefId]) {
