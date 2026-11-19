@@ -5,6 +5,7 @@ mod call;
 mod cast;
 mod coerce;
 mod const_context;
+mod drop;
 mod dynamic;
 mod equality;
 mod exhaustive;

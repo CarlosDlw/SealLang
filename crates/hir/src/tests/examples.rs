@@ -155,7 +155,9 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
                 collect_expr(hir, *bound, stmts, exprs);
             }
         }
-        ExprKind::Len { operand } => collect_expr(hir, *operand, stmts, exprs),
+        ExprKind::Len { operand } | ExprKind::Drop { operand } => {
+            collect_expr(hir, *operand, stmts, exprs)
+        }
         ExprKind::Struct { fields, .. } | ExprKind::Variant { fields, .. } => {
             for (_, value) in fields {
                 collect_expr(hir, *value, stmts, exprs);

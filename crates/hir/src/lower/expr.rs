@@ -216,6 +216,28 @@ impl Lowering<'_> {
             AstExprKind::Call { callee, args } => {
                 if let Some(kind) = self.lower_variant_call(callee, &args) {
                     kind
+                } else if self.is_drop_builtin(callee) {
+                    match args.as_slice() {
+                        [operand] => ExprKind::Drop {
+                            operand: self.lower_expr(*operand),
+                        },
+                        _ => {
+                            self.error(
+                                codes::E3008,
+                                span,
+                                format!(
+                                    "`drop` takes exactly one argument, but {} were supplied",
+                                    args.len()
+                                ),
+                            )
+                            .help("pass the value to release, as in `drop(value)`")
+                            .emit();
+                            for arg in &args {
+                                self.lower_expr(*arg);
+                            }
+                            ExprKind::Error
+                        }
+                    }
                 } else if self.is_len_builtin(callee) {
                     match args.as_slice() {
                         [operand] => ExprKind::Len {
@@ -818,6 +840,20 @@ impl Lowering<'_> {
             return false;
         };
         self.interner.resolve(name) == "len"
+            && !self.globals.contains_key(&name)
+            && self.scopes.lookup(name).is_none()
+    }
+
+    /// Returns `true` when `callee` is the built-in `drop` rather than a user
+    /// item.
+    ///
+    /// A user function or binding named `drop` shadows the built-in, exactly as
+    /// with `len`, so the name stays available to programs.
+    fn is_drop_builtin(&self, callee: AstExprId) -> bool {
+        let AstExprKind::Path { name, .. } = self.ast.expr(callee).kind else {
+            return false;
+        };
+        self.interner.resolve(name) == "drop"
             && !self.globals.contains_key(&name)
             && self.scopes.lookup(name).is_none()
     }

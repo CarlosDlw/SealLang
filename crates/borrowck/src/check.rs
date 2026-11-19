@@ -447,6 +447,9 @@ fn check_partial_initialization(place: &Place, span: Span, context: &Context<'_>
 fn check_drop(place: &Place, kind: DropKind, span: Span, context: &Context<'_>) -> bool {
     if matches!(kind, DropKind::Explicit) {
         check_read(place, span, context);
+        // An explicit drop consumes the place like a move, so a field of a
+        // type that implements `Drop` cannot leave it this way either.
+        check_move(place, span, context);
     }
     if matches!(kind, DropKind::Overwrite) {
         report_write_conflicts(place, span, context);

@@ -767,6 +767,20 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(dest, Rvalue::Len { slice }, span);
                 }
             }
+            ExprKind::Drop { operand } => {
+                // The operand is lowered as a place, so a non-`Copy` value is
+                // moved out of it by the statement itself. A value that does
+                // not need a destructor is still evaluated, but there is
+                // nothing to emit.
+                let place = self.place_of_expr(operand);
+                let ty = self.expr_ty(operand);
+                if self.hir.ty_ctxt().needs_drop(ty) {
+                    self.push_statement(Statement::drop(place, DropKind::Explicit, span));
+                }
+                if let Some(dest) = dest {
+                    self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
             ExprKind::Slice { .. }
             | ExprKind::Deref { .. }
             | ExprKind::Field { .. }

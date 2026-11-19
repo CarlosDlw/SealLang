@@ -897,6 +897,13 @@ is not part of the callable interface either: `value.drop()` and
 `Drop::drop(&mut value)` are `E3065`, because the compiler has already decided
 when the value is released.
 
+The built-in `drop(value)` releases a value early. It returns `()` and consumes
+its operand exactly like a move: a non-`Copy` place is moved, so the destructor
+runs at the call and any later use is `E5005`, while a `Copy` value, a
+reference, or a raw pointer is accepted and does nothing. Moving a field out of
+a type that implements `Drop` stays `E5014`. The name is not reserved: a user
+function or binding named `drop` shadows the built-in, as with `len`.
+
 A validated implementation is recorded on the type context. The drop glue of
 the concrete type calls the destructor first and then drops the fields that need
 dropping, in the order the memory model defines. Generic code uses the

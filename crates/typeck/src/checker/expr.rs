@@ -207,6 +207,7 @@ impl Checker<'_> {
                 kind,
             } => self.check_slice_ref(base, start, end, kind, span, flow),
             ExprKind::Len { operand } => self.check_len(operand, span, flow),
+            ExprKind::Drop { operand } => self.check_drop(operand, span, flow),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)

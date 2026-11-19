@@ -226,6 +226,16 @@ pub enum ExprKind {
         /// The `*[T]` or `*mut [T]` value whose length is read.
         operand: HirExprId,
     },
+    /// The built-in `drop(value)`, which releases a value before its scope
+    /// ends.
+    ///
+    /// The operand is consumed exactly like any other move: a non-`Copy` place
+    /// is moved and its destructor runs here, while a `Copy` value is read and
+    /// nothing else happens.
+    Drop {
+        /// The value whose destructor runs now.
+        operand: HirExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.
