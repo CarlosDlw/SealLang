@@ -911,6 +911,13 @@ destructor without naming it: monomorphization instantiates the recorded method
 for each concrete argument list, and code generation calls that instance from
 the glue.
 
+A `static` is initialized before the program starts and is never released, so
+its destructor never runs; only a value a scope owns is dropped. Constant
+evaluation has no scope to leave either, so a constant initializer or a
+`const func` that drops a value whose type declares a destructor is `E4028`.
+Constructing such a value and initializing a `const` or `static` with it, or
+returning it from a `const func`, is allowed.
+
 ## Methods
 
 A method call has the postfix form `.name(arguments)` and resolves from the
