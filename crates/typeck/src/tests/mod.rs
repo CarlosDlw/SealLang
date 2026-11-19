@@ -4,6 +4,7 @@ mod arrays;
 mod borrows;
 mod calls;
 mod casts;
+mod copy_optin;
 mod drop_builtin;
 mod drop_calls;
 mod dyn_types;

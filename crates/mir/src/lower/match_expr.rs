@@ -179,7 +179,7 @@ impl BodyLowering<'_> {
     ) {
         for (definition, place) in bindings {
             let ty = self.expr_or_local_ty(*definition);
-            if self.hir.ty_ctxt().is_copy(ty) {
+            if self.hir.ty_ctxt().is_copy_with(ty, &self.param_env) {
                 self.bind_one(*definition, place.clone(), span);
             }
         }
@@ -200,7 +200,7 @@ impl BodyLowering<'_> {
         self.current = Some(pass);
         for (definition, place) in bindings {
             let ty = self.expr_or_local_ty(*definition);
-            if !self.hir.ty_ctxt().is_copy(ty) {
+            if !self.hir.ty_ctxt().is_copy_with(ty, &self.param_env) {
                 self.bind_one(*definition, place.clone(), span);
             }
         }
