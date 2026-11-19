@@ -282,7 +282,7 @@ impl<'a> Interpreter<'a> {
                     ty: lhs_ty,
                 },
                 ConstValue::Int { bits: rhs_bits, .. },
-            ) => {
+            ) if self.is_integer(*lhs_ty) => {
                 let (bits, signed) = self.integer_info(*lhs_ty, span)?;
                 if matches!(
                     op,
@@ -393,16 +393,17 @@ impl<'a> Interpreter<'a> {
                     TyKind::RawPtr { pointee, .. }
                         if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. })
                 );
-                if unsizes_to_object {
+                let value = if unsizes_to_object {
                     match value {
-                        ConstValue::Ref { .. } => self.make_dyn_value(value, to, span),
-                        other => Ok(other),
+                        ConstValue::Ref { .. } => self.make_dyn_value(value, to, span)?,
+                        other => other,
                     }
                 } else {
-                    Ok(value)
-                }
+                    value
+                };
+                self.convert_to_raw(value, to, span)
             }
-            seal_ty::CastKind::RawToRaw => Ok(value),
+            seal_ty::CastKind::RawToRaw => self.convert_to_raw(value, to, span),
             seal_ty::CastKind::IntToRaw => match value {
                 ConstValue::Int { bits, .. } => Ok(ConstValue::Int { bits, ty: to }),
                 other => self.internal(
@@ -414,6 +415,119 @@ impl<'a> Interpreter<'a> {
                 ConstValue::Int { bits, .. } => Ok(ConstValue::Int { bits, ty: to }),
                 _ => Err(self.error(EvalErrorKind::AddressNotComputable, span)),
             },
+        }
+    }
+
+    /// Converts a reference-shaped value into its raw-pointer representation.
+    ///
+    /// The mutability comes from the destination type, not from the source
+    /// reference: `*raw mut T` and `*raw T` are distinct types even when they
+    /// name the same allocation.
+    fn convert_to_raw(
+        &self,
+        value: ConstValue,
+        to: TyId,
+        span: Span,
+    ) -> Result<ConstValue, EvalError> {
+        let mutable = matches!(
+            self.tcx.kind(to),
+            TyKind::RawPtr {
+                kind: seal_ty::RawPtrKind::Mut,
+                ..
+            }
+        );
+        match value {
+            ConstValue::Ref {
+                target,
+                offset,
+                pointee,
+                ..
+            } => Ok(ConstValue::RawPtr {
+                target,
+                offset,
+                pointee,
+                mutable,
+            }),
+            ConstValue::Slice {
+                target,
+                offset,
+                length,
+                element,
+            } => Ok(ConstValue::RawSlice {
+                target,
+                offset,
+                length,
+                element,
+                mutable,
+            }),
+            ConstValue::Str { value, .. } => Ok(ConstValue::RawStr { value, mutable }),
+            ConstValue::Dyn {
+                data,
+                data_offset,
+                concrete,
+                trait_ref,
+            } => Ok(ConstValue::RawDyn {
+                data,
+                data_offset,
+                concrete,
+                trait_ref,
+                mutable,
+            }),
+            ConstValue::RawPtr {
+                target,
+                offset,
+                pointee,
+                ..
+            } => {
+                let pointee = self
+                    .tcx
+                    .raw_parts(to)
+                    .map(|(_, pointee)| pointee)
+                    .unwrap_or(pointee);
+                Ok(ConstValue::RawPtr {
+                    target,
+                    offset,
+                    pointee,
+                    mutable,
+                })
+            }
+            ConstValue::RawSlice {
+                target,
+                offset,
+                length,
+                element,
+                ..
+            } => Ok(ConstValue::RawSlice {
+                target,
+                offset,
+                length,
+                element,
+                mutable,
+            }),
+            ConstValue::RawStr { value, .. } => Ok(ConstValue::RawStr { value, mutable }),
+            ConstValue::RawStrData { value, offset, .. } => Ok(ConstValue::RawStrData {
+                value,
+                offset,
+                mutable,
+            }),
+            ConstValue::RawDyn {
+                data,
+                data_offset,
+                concrete,
+                trait_ref,
+                ..
+            } => Ok(ConstValue::RawDyn {
+                data,
+                data_offset,
+                concrete,
+                trait_ref,
+                mutable,
+            }),
+            ConstValue::Int { bits, .. } => Ok(ConstValue::Int { bits, ty: to }),
+            other => self.internal(
+                format!("a pointer cast received the non-pointer value {other:?}"),
+                span,
+            ),
         }
     }
 

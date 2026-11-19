@@ -243,6 +243,53 @@ impl<'a> Interpreter<'a> {
                 resolved.slice_len = Some(length);
                 resolved.path = self.locate_path(target, resolved.offset, span)?;
             }
+            ConstValue::RawPtr {
+                target,
+                offset,
+                pointee,
+                ..
+            } => {
+                self.check_raw_extent(target, offset, pointee, span)?;
+                resolved.alloc = target;
+                resolved.offset = offset;
+                resolved.ty = pointee;
+                resolved.slice = None;
+                resolved.path = self.raw_locate_path(target, offset, pointee, span)?;
+            }
+            ConstValue::RawSlice {
+                target,
+                offset,
+                length,
+                element,
+                ..
+            } => {
+                let layout = self.layout.layout_of(element).map_err(|error| {
+                    self.error(EvalErrorKind::Internal(error.to_string()), span)
+                })?;
+                if layout.align() > 1 && offset % layout.align() != 0 {
+                    return Err(self.error(EvalErrorKind::RawPointerAccess, span));
+                }
+                let size = layout.size();
+                let extent = length
+                    .checked_mul(size)
+                    .ok_or_else(|| self.error(EvalErrorKind::RawPointerAccess, span))?;
+                let allocation = &self.memory[target];
+                if offset > allocation.size || extent > allocation.size.saturating_sub(offset) {
+                    return Err(self.error(EvalErrorKind::RawPointerAccess, span));
+                }
+                resolved.alloc = target;
+                resolved.offset = offset;
+                resolved.ty = self.tcx.slice_ty(element);
+                resolved.slice = Some(element);
+                resolved.slice_len = Some(length);
+                resolved.path = self.raw_locate_path(target, offset, element, span)?;
+            }
+            ConstValue::RawStr { .. }
+            | ConstValue::RawStrData { .. }
+            | ConstValue::RawDyn { .. }
+            | ConstValue::Int { .. } => {
+                return Err(self.error(EvalErrorKind::RawPointerAccess, span));
+            }
             other => {
                 return self.internal(
                     format!("dereference of a non-reference value {other:?}"),
@@ -251,6 +298,51 @@ impl<'a> Interpreter<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Rejects a raw pointer whose pointee does not fit in its allocation.
+    fn check_raw_extent(
+        &self,
+        target: AllocId,
+        offset: u64,
+        pointee: TyId,
+        span: Span,
+    ) -> Result<(), EvalError> {
+        let layout = self
+            .layout
+            .layout_of(pointee)
+            .map_err(|error| self.error(EvalErrorKind::Internal(error.to_string()), span))?;
+        if layout.align() > 1 && offset % layout.align() != 0 {
+            return Err(self.error(EvalErrorKind::RawPointerAccess, span));
+        }
+        let size = layout.size();
+        let allocation = &self.memory[target];
+        if offset > allocation.size || size > allocation.size - offset {
+            return Err(self.error(EvalErrorKind::RawPointerAccess, span));
+        }
+        Ok(())
+    }
+
+    /// Locates a raw pointer's pointee without turning an invalid access into an
+    /// internal invariant failure.
+    fn raw_locate_path(
+        &self,
+        alloc: AllocId,
+        offset: u64,
+        pointee: TyId,
+        span: Span,
+    ) -> Result<Vec<PathStep>, EvalError> {
+        let allocation = &self.memory[alloc];
+        let value = allocation
+            .value
+            .as_ref()
+            .ok_or_else(|| self.error(EvalErrorKind::RawPointerAccess, span))?;
+        let path = if offset == 0 && allocation.ty != pointee {
+            place::locate_member(self.tcx, &self.layout, value, allocation.ty, offset)
+        } else {
+            place::locate(self.tcx, &self.layout, value, allocation.ty, offset)
+        };
+        path.ok_or_else(|| self.error(EvalErrorKind::RawPointerAccess, span))
     }
 
     pub(super) fn locate_path(

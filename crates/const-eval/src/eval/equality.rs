@@ -27,6 +27,11 @@ fn shape_of(value: &ConstValue) -> &'static str {
         ConstValue::Ref { .. } => "a reference",
         ConstValue::Slice { .. } => "a slice reference",
         ConstValue::Dyn { .. } => "a trait object",
+        ConstValue::RawPtr { .. } => "a raw pointer",
+        ConstValue::RawSlice { .. } => "a raw slice pointer",
+        ConstValue::RawStr { .. } => "a raw string pointer",
+        ConstValue::RawStrData { .. } => "a raw string data pointer",
+        ConstValue::RawDyn { .. } => "a raw trait object",
     }
 }
 
@@ -109,6 +114,76 @@ impl<'a> Interpreter<'a> {
                 (*rhs_target, *rhs_offset, *rhs_length),
                 span,
             ),
+            (
+                ConstValue::RawPtr {
+                    target: lhs_target,
+                    offset: lhs_offset,
+                    ..
+                },
+                ConstValue::RawPtr {
+                    target: rhs_target,
+                    offset: rhs_offset,
+                    ..
+                },
+            ) => Ok(lhs_target == rhs_target && lhs_offset == rhs_offset),
+            (
+                ConstValue::RawSlice {
+                    target: lhs_target,
+                    offset: lhs_offset,
+                    ..
+                },
+                ConstValue::RawSlice {
+                    target: rhs_target,
+                    offset: rhs_offset,
+                    ..
+                },
+            ) => Ok(lhs_target == rhs_target && lhs_offset == rhs_offset),
+            (ConstValue::RawStr { value: lhs, .. }, ConstValue::RawStr { value: rhs, .. }) => {
+                Ok(lhs == rhs)
+            }
+            (
+                ConstValue::RawStrData {
+                    value: lhs,
+                    offset: lhs_offset,
+                    ..
+                },
+                ConstValue::RawStrData {
+                    value: rhs,
+                    offset: rhs_offset,
+                    ..
+                },
+            ) => Ok(lhs == rhs && lhs_offset == rhs_offset),
+            (
+                ConstValue::RawDyn {
+                    data: lhs_data,
+                    data_offset: lhs_offset,
+                    ..
+                },
+                ConstValue::RawDyn {
+                    data: rhs_data,
+                    data_offset: rhs_offset,
+                    ..
+                },
+            ) => Ok(lhs_data == rhs_data && lhs_offset == rhs_offset),
+            // An integer-built pointer has no allocation provenance. It can
+            // only compare equal to another integer-built pointer, which is
+            // handled by the integer case above.
+            (
+                ConstValue::RawPtr { .. }
+                | ConstValue::RawSlice { .. }
+                | ConstValue::RawStr { .. }
+                | ConstValue::RawStrData { .. }
+                | ConstValue::RawDyn { .. },
+                ConstValue::Int { .. },
+            )
+            | (
+                ConstValue::Int { .. },
+                ConstValue::RawPtr { .. }
+                | ConstValue::RawSlice { .. }
+                | ConstValue::RawStr { .. }
+                | ConstValue::RawStrData { .. }
+                | ConstValue::RawDyn { .. },
+            ) => Ok(false),
             (ConstValue::Ref { .. }, ConstValue::Ref { .. }) => {
                 self.internal("a thin reference has no equality in const evaluation", span)
             }

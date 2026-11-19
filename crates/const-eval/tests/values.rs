@@ -272,12 +272,92 @@ fn raw_pointer_casts_preserve_their_pointer_identity() {
         fixture.value("NULL_ADDRESS"),
         ConstValue::Int { bits: 0, .. }
     ));
-    assert!(matches!(fixture.value("POINTED"), ConstValue::Ref { .. }));
+    assert!(matches!(
+        fixture.value("POINTED"),
+        ConstValue::RawPtr { mutable: false, .. }
+    ));
     assert!(matches!(
         fixture.value("SLICE"),
-        ConstValue::Slice { length: 2, .. }
+        ConstValue::RawSlice { length: 2, .. }
     ));
-    assert!(matches!(fixture.value("TEXT"), ConstValue::Str { .. }));
+    assert!(matches!(
+        fixture.value("TEXT"),
+        ConstValue::RawStr { mutable: false, .. }
+    ));
+}
+
+#[test]
+fn raw_pointer_values_keep_provenance_and_mutability() {
+    let fixture = clean(
+        "static LIMIT: i32 = 7; \
+         const CONST_POINTER: *raw i32 = &LIMIT as *raw i32; \
+         const MUT_POINTER: *raw mut i32 = &LIMIT as *raw i32 as *raw mut i32; \
+         const INTEGER_POINTER: *raw i32 = 1usize as *raw i32; \
+         const RAW_STRING: *raw str = \"seal\" as *raw str; \
+         const STRING_LENGTH: usize = RAW_STRING.len(); \
+         const STRING_FIRST: u8 = unsafe { RAW_STRING.data().read() }; \
+         const STRING_SECOND: u8 = unsafe { RAW_STRING.data().add(1).read() };",
+    );
+    assert!(matches!(
+        fixture.value("CONST_POINTER"),
+        ConstValue::RawPtr { mutable: false, .. }
+    ));
+    assert!(matches!(
+        fixture.value("MUT_POINTER"),
+        ConstValue::RawPtr { mutable: true, .. }
+    ));
+    assert!(matches!(
+        fixture.value("INTEGER_POINTER"),
+        ConstValue::Int { bits: 1, .. }
+    ));
+    assert_eq!(int(&fixture, "STRING_LENGTH"), 4);
+    assert_eq!(int(&fixture, "STRING_FIRST"), u128::from(b's'));
+    assert_eq!(int(&fixture, "STRING_SECOND"), u128::from(b'e'));
+}
+
+#[test]
+fn raw_pointer_equality_compares_allocation_and_offset() {
+    let fixture = clean(
+        "static FIRST: i32 = 1; \
+         static SECOND: i32 = 2; \
+         const FIRST_POINTER: *raw i32 = &FIRST as *raw i32; \
+         const SECOND_POINTER: *raw i32 = &SECOND as *raw i32; \
+         const SAME: bool = FIRST_POINTER == FIRST_POINTER; \
+         const DIFFERENT: bool = FIRST_POINTER == SECOND_POINTER; \
+         const NULL: *raw i32 = 0usize as *raw i32; \
+         const NULL_AGAIN: *raw i32 = 0usize as *raw i32; \
+         const NULLS_SAME: bool = NULL == NULL_AGAIN; \
+         const NULL_DIFFERENT: bool = NULL == FIRST_POINTER;",
+    );
+    assert!(flag(&fixture, "SAME"));
+    assert!(!flag(&fixture, "DIFFERENT"));
+    assert!(flag(&fixture, "NULLS_SAME"));
+    assert!(!flag(&fixture, "NULL_DIFFERENT"));
+}
+
+#[test]
+fn a_const_function_reads_through_a_raw_pointer() {
+    let fixture = clean(
+        "static LIMIT: i32 = 40; \
+         const func read_pointer(pointer: *raw i32) -> i32 { unsafe { *pointer } } \
+         const RESULT: i32 = read_pointer(&LIMIT as *raw i32) + 2;",
+    );
+    assert_eq!(int(&fixture, "RESULT"), 42);
+}
+
+#[test]
+fn a_raw_pointer_can_live_in_a_mutable_static() {
+    let fixture = clean(
+        "static VALUE: i32 = 3; \
+         static mut POINTER: *raw mut i32 = &VALUE as *raw i32 as *raw mut i32;",
+    );
+    let pointer = fixture.definition("POINTER");
+    let data = fixture.program.static_data(pointer).expect("POINTER data");
+    assert!(data.mutable);
+    assert!(matches!(
+        fixture.program.allocation(data.alloc).value,
+        ConstValue::RawPtr { mutable: true, .. }
+    ));
 }
 
 #[test]

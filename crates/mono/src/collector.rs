@@ -588,10 +588,19 @@ impl Collector<'_> {
     /// Scans a constant value for allocation references and trait objects.
     fn scan_value(&mut self, value: &ConstValue, span: Span) {
         match value {
-            ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
+            ConstValue::Ref { target, .. }
+            | ConstValue::Slice { target, .. }
+            | ConstValue::RawPtr { target, .. }
+            | ConstValue::RawSlice { target, .. } => {
                 self.scan_allocation(*target);
             }
             ConstValue::Dyn {
+                data,
+                concrete,
+                trait_ref,
+                ..
+            }
+            | ConstValue::RawDyn {
                 data,
                 concrete,
                 trait_ref,
@@ -624,7 +633,9 @@ impl Collector<'_> {
             | ConstValue::Bool(_)
             | ConstValue::Char(_)
             | ConstValue::Unit
-            | ConstValue::Str { .. } => {}
+            | ConstValue::Str { .. }
+            | ConstValue::RawStr { .. }
+            | ConstValue::RawStrData { .. } => {}
         }
     }
 

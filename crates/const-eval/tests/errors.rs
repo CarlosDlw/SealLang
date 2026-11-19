@@ -48,6 +48,36 @@ fn a_constant_cannot_read_through_an_integer_pointer() {
 }
 
 #[test]
+fn dereferencing_a_null_raw_pointer_is_reported() {
+    let fixture = Fixture::compile(
+        "const POINTER: *raw i32 = 0usize as *raw i32; \
+         const VALUE: i32 = unsafe { *POINTER };",
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
+fn dereferencing_a_misaligned_raw_pointer_is_reported() {
+    let fixture = Fixture::compile(
+        "static BYTES: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7]; \
+         const POINTER: *raw i32 = &BYTES[1] as *raw u8 as *raw i32; \
+         const VALUE: i32 = unsafe { *POINTER };",
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
+fn dereferencing_a_pointer_outside_its_allocation_is_reported() {
+    let fixture = Fixture::compile(
+        "static VALUES: [i32; 2] = [1, 2]; \
+         const POINTER: *raw i32 = &VALUES[1] as *raw i32; \
+         const PAST_END: *raw i32 = unsafe { POINTER.add(1) }; \
+         const VALUE: i32 = unsafe { *PAST_END };",
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
 fn in_bounds_pointer_arithmetic_stops_at_the_allocation() {
     let fixture = Fixture::compile(
         "static VALUES: [i32; 3] = [1, 2, 3]; \

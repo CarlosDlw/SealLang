@@ -1,8 +1,9 @@
 //! Typed constant values and compiler-owned allocations.
 //!
-//! Seal has no unions, raw pointers, or pointer arithmetic, so a constant is a
-//! typed tree rather than a byte blob. The tree keeps every value form explicit,
-//! which validation and LLVM lowering can match exhaustively.
+//! Seal has no unions, so a constant is a typed tree rather than a byte blob.
+//! Raw pointers are explicit values, including allocation provenance and
+//! mutability, and the tree keeps every value form available to validation and
+//! LLVM lowering.
 
 use seal_def::DefId;
 use seal_index::{IndexVec, newtype_index};
@@ -100,6 +101,63 @@ pub enum ConstValue {
         concrete: TyId,
         /// The principal trait reference, which records the vtable.
         trait_ref: TraitRef,
+    },
+    /// A raw pointer with allocation provenance.
+    RawPtr {
+        /// The allocation the pointer names.
+        target: AllocId,
+        /// Byte offset inside the allocation.
+        offset: u64,
+        /// The pointee type.
+        pointee: TyId,
+        /// Whether the pointer type permits writes.
+        mutable: bool,
+    },
+    /// A raw slice fat pointer with allocation provenance.
+    RawSlice {
+        /// The allocation the pointer names.
+        target: AllocId,
+        /// Byte offset of the first element inside the allocation.
+        offset: u64,
+        /// The number of elements.
+        length: u64,
+        /// The element type.
+        element: TyId,
+        /// Whether the pointer type permits writes.
+        mutable: bool,
+    },
+    /// A raw string pointer naming an interned string.
+    RawStr {
+        /// The unescaped contents.
+        value: Symbol,
+        /// Whether the pointer type permits writes.
+        mutable: bool,
+    },
+    /// A thin raw pointer to the bytes of an interned string.
+    ///
+    /// This is the result of `data()` on a raw string pointer. It keeps the
+    /// string as its base because string literals are emitted as dedicated
+    /// globals rather than compiler-owned allocations.
+    RawStrData {
+        /// The unescaped contents.
+        value: Symbol,
+        /// Byte offset from the start of the string.
+        offset: u64,
+        /// Whether the pointer type permits writes.
+        mutable: bool,
+    },
+    /// A raw trait-object fat pointer.
+    RawDyn {
+        /// The allocation holding the concrete value.
+        data: AllocId,
+        /// Byte offset of the concrete value inside its allocation.
+        data_offset: u64,
+        /// The concrete type the trait object erases.
+        concrete: TyId,
+        /// The principal trait reference, which records the vtable.
+        trait_ref: TraitRef,
+        /// Whether the pointer type permits writes.
+        mutable: bool,
     },
 }
 

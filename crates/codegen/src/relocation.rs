@@ -31,8 +31,13 @@ pub(crate) enum PointerTarget {
         /// Byte offset inside the allocation.
         offset: u64,
     },
-    /// The data pointer of an interned string.
-    String(Symbol),
+    /// The data pointer of an interned string, advanced by a byte offset.
+    String {
+        /// The interned string.
+        symbol: Symbol,
+        /// Byte offset inside the string data.
+        offset: u64,
+    },
     /// The vtable of a trait object.
     Vtable {
         /// The concrete erased type.
@@ -80,7 +85,11 @@ impl<'a, 'ctx> Pointers<'a, 'ctx> {
                 let global = self.globals.allocation(id)?;
                 seal_llvm_ffi::const_gep_bytes(self.context, global.as_pointer_value(), offset)
             }
-            PointerTarget::String(symbol) => self.strings.string_pointer(symbol)?.0,
+            PointerTarget::String { symbol, offset } => seal_llvm_ffi::const_gep_bytes(
+                self.context,
+                self.strings.string_pointer(symbol)?.0,
+                offset,
+            ),
             PointerTarget::Vtable {
                 concrete,
                 trait_ref,

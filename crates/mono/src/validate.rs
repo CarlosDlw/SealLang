@@ -667,10 +667,19 @@ fn check_const_value(
     value: &ConstValue,
 ) -> Result<(), MonoValidationError> {
     match value {
-        ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
+        ConstValue::Ref { target, .. }
+        | ConstValue::Slice { target, .. }
+        | ConstValue::RawPtr { target, .. }
+        | ConstValue::RawSlice { target, .. } => {
             check_allocation_reference(program, constants, *target)
         }
         ConstValue::Dyn {
+            data,
+            concrete,
+            trait_ref,
+            ..
+        }
+        | ConstValue::RawDyn {
             data,
             concrete,
             trait_ref,
@@ -707,7 +716,9 @@ fn check_const_value(
         | ConstValue::Bool(_)
         | ConstValue::Char(_)
         | ConstValue::Unit
-        | ConstValue::Str { .. } => Ok(()),
+        | ConstValue::Str { .. }
+        | ConstValue::RawStr { .. }
+        | ConstValue::RawStrData { .. } => Ok(()),
     }
 }
 

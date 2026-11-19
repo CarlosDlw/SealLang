@@ -167,7 +167,10 @@ impl<'a> Interpreter<'a> {
         match value {
             ConstValue::Ref { target, .. }
             | ConstValue::Slice { target, .. }
-            | ConstValue::Dyn { data: target, .. } => {
+            | ConstValue::RawPtr { target, .. }
+            | ConstValue::RawSlice { target, .. }
+            | ConstValue::Dyn { data: target, .. }
+            | ConstValue::RawDyn { data: target, .. } => {
                 if let AllocSource::ConstFnLocal { instance, .. } = self.memory[*target].source {
                     if instance.def == owner {
                         return true;
@@ -186,7 +189,9 @@ impl<'a> Interpreter<'a> {
             | ConstValue::Bool(_)
             | ConstValue::Char(_)
             | ConstValue::Unit
-            | ConstValue::Str { .. } => false,
+            | ConstValue::Str { .. }
+            | ConstValue::RawStr { .. }
+            | ConstValue::RawStrData { .. } => false,
         }
     }
 

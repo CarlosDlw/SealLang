@@ -320,7 +320,13 @@ impl<'a, 'ctx> ConstValues<'a, 'ctx> {
             ConstValue::Str { value: text, .. } => {
                 let pointer_size = self.pointer_size();
                 self.expect_size(ty, pointer_size * 2)?;
-                image.slot(base, PointerTarget::String(*text))?;
+                image.slot(
+                    base,
+                    PointerTarget::String {
+                        symbol: *text,
+                        offset: 0,
+                    },
+                )?;
                 let length = self.interner.resolve(*text).len() as u128;
                 image.write(base + pointer_size, pointer_size, length)?;
             }
@@ -357,6 +363,13 @@ impl<'a, 'ctx> ConstValues<'a, 'ctx> {
                 data_offset,
                 concrete,
                 trait_ref,
+            }
+            | ConstValue::RawDyn {
+                data,
+                data_offset,
+                concrete,
+                trait_ref,
+                ..
             } => {
                 let pointer_size = self.pointer_size();
                 self.expect_size(ty, pointer_size * 2)?;
@@ -372,6 +385,58 @@ impl<'a, 'ctx> ConstValues<'a, 'ctx> {
                     PointerTarget::Vtable {
                         concrete: *concrete,
                         trait_ref: *trait_ref,
+                    },
+                )?;
+            }
+            ConstValue::RawPtr { target, offset, .. } => {
+                let pointer_size = self.pointer_size();
+                self.expect_size(ty, pointer_size)?;
+                image.slot(
+                    base,
+                    PointerTarget::Allocation {
+                        id: *target,
+                        offset: *offset,
+                    },
+                )?;
+            }
+            ConstValue::RawSlice {
+                target,
+                offset,
+                length,
+                ..
+            } => {
+                let pointer_size = self.pointer_size();
+                self.expect_size(ty, pointer_size * 2)?;
+                image.slot(
+                    base,
+                    PointerTarget::Allocation {
+                        id: *target,
+                        offset: *offset,
+                    },
+                )?;
+                image.write(base + pointer_size, pointer_size, u128::from(*length))?;
+            }
+            ConstValue::RawStr { value: text, .. } => {
+                let pointer_size = self.pointer_size();
+                self.expect_size(ty, pointer_size * 2)?;
+                image.slot(
+                    base,
+                    PointerTarget::String {
+                        symbol: *text,
+                        offset: 0,
+                    },
+                )?;
+                let length = self.interner.resolve(*text).len() as u128;
+                image.write(base + pointer_size, pointer_size, length)?;
+            }
+            ConstValue::RawStrData { value, offset, .. } => {
+                let pointer_size = self.pointer_size();
+                self.expect_size(ty, pointer_size)?;
+                image.slot(
+                    base,
+                    PointerTarget::String {
+                        symbol: *value,
+                        offset: *offset,
                     },
                 )?;
             }

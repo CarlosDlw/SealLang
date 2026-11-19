@@ -576,10 +576,13 @@ fn operand_origins(
 /// constant participate in the same overlap rules as a local borrow.
 fn value_origins(program: &ConstProgram, value: &ConstValue) -> OriginSet {
     match value {
-        ConstValue::Ref { target, .. } | ConstValue::Slice { target, .. } => {
-            allocation_origins(program, *target)
+        ConstValue::Ref { target, .. }
+        | ConstValue::Slice { target, .. }
+        | ConstValue::RawPtr { target, .. }
+        | ConstValue::RawSlice { target, .. } => allocation_origins(program, *target),
+        ConstValue::Dyn { data, .. } | ConstValue::RawDyn { data, .. } => {
+            allocation_origins(program, *data)
         }
-        ConstValue::Dyn { data, .. } => allocation_origins(program, *data),
         ConstValue::Tuple(elements) | ConstValue::Array(elements) => {
             let mut origins = OriginSet::default();
             for element in elements {
@@ -599,7 +602,9 @@ fn value_origins(program: &ConstProgram, value: &ConstValue) -> OriginSet {
         | ConstValue::Bool(_)
         | ConstValue::Char(_)
         | ConstValue::Unit
-        | ConstValue::Str { .. } => OriginSet::default(),
+        | ConstValue::Str { .. }
+        | ConstValue::RawStr { .. }
+        | ConstValue::RawStrData { .. } => OriginSet::default(),
     }
 }
 
