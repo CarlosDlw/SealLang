@@ -18,6 +18,9 @@ impl<'a> Interpreter<'a> {
                 to,
             } => {
                 let value = self.read_operand(operand, span)?;
+                let seal_ty::CastKind::Numeric(kind) = *kind else {
+                    return self.raw_cast(*kind, value, *to, span);
+                };
                 let (from_bits, from_signed) = if self.is_integer(*from) {
                     self.integer_info(*from, span)?
                 } else {
@@ -29,7 +32,7 @@ impl<'a> Interpreter<'a> {
                     (self.float_width(*to, span)?, false)
                 };
                 ops::cast(
-                    *kind,
+                    kind,
                     &value,
                     from_bits,
                     from_signed,
@@ -179,44 +182,9 @@ impl<'a> Interpreter<'a> {
                 source_ty,
                 target_ty,
             } => {
-                let (data, data_offset, concrete) = match self.read_operand(source, span)? {
-                    ConstValue::Ref {
-                        target,
-                        offset,
-                        pointee,
-                        ..
-                    } => (target, offset, pointee),
-                    _ => return self.internal("trait object data is not a reference", span),
-                };
                 let _ = source_ty;
-                let dyn_ty = match self.tcx.kind(*target_ty) {
-                    TyKind::Ref { pointee, .. } => pointee,
-                    _ => *target_ty,
-                };
-                let principal = *self.tcx.dyn_trait_refs(dyn_ty).first().ok_or_else(|| {
-                    self.error(
-                        EvalErrorKind::Internal("trait object has no principal trait".into()),
-                        span,
-                    )
-                })?;
-                // The dyn type records its own unsized self type. A vtable key
-                // is always built from the concrete pointee, exactly as a
-                // runtime coercion does, so the constant and the coercion name
-                // the same table.
-                let trait_ref = TraitRef::new(principal.trait_def, concrete, principal.args);
-                let key = TraitObjectKey {
-                    concrete,
-                    trait_ref,
-                };
-                if !self.vtables.contains(&key) {
-                    self.vtables.push(key);
-                }
-                Ok(ConstValue::Dyn {
-                    data,
-                    data_offset,
-                    concrete,
-                    trait_ref,
-                })
+                let value = self.read_operand(source, span)?;
+                self.make_dyn_value(value, *target_ty, span)
             }
             Rvalue::TraitObjectReborrow { source, .. } => self.read_operand(source, span),
             Rvalue::Call { target, args, .. } => self.eval_call(*target, args, span),
@@ -405,5 +373,92 @@ impl<'a> Interpreter<'a> {
 
     pub(super) fn is_integer(&self, ty: TyId) -> bool {
         matches!(self.tcx.kind(ty), TyKind::Int(_) | TyKind::Uint(_))
+    }
+
+    /// Evaluates the pointer conversions that are not numeric.
+    fn raw_cast(
+        &mut self,
+        kind: seal_ty::CastKind,
+        value: ConstValue,
+        to: TyId,
+        span: Span,
+    ) -> Result<ConstValue, EvalError> {
+        match kind {
+            seal_ty::CastKind::Numeric(_) | seal_ty::CastKind::RawToRef => {
+                self.internal("a non-pointer cast reached the raw-pointer evaluator", span)
+            }
+            seal_ty::CastKind::RefToRaw { .. } => {
+                let unsizes_to_object = matches!(
+                    self.tcx.kind(to),
+                    TyKind::RawPtr { pointee, .. }
+                        if matches!(self.tcx.kind(pointee), TyKind::Dyn { .. })
+                );
+                if unsizes_to_object {
+                    match value {
+                        ConstValue::Ref { .. } => self.make_dyn_value(value, to, span),
+                        other => Ok(other),
+                    }
+                } else {
+                    Ok(value)
+                }
+            }
+            seal_ty::CastKind::RawToRaw => Ok(value),
+            seal_ty::CastKind::IntToRaw => match value {
+                ConstValue::Int { bits, .. } => Ok(ConstValue::Int { bits, ty: to }),
+                other => self.internal(
+                    format!("an integer-to-pointer cast received {other:?}"),
+                    span,
+                ),
+            },
+            seal_ty::CastKind::RawToInt => match value {
+                ConstValue::Int { bits, .. } => Ok(ConstValue::Int { bits, ty: to }),
+                _ => Err(self.error(EvalErrorKind::AddressNotComputable, span)),
+            },
+        }
+    }
+
+    /// Builds the fat pointer of a trait object from a thin source reference.
+    fn make_dyn_value(
+        &mut self,
+        value: ConstValue,
+        target_ty: TyId,
+        span: Span,
+    ) -> Result<ConstValue, EvalError> {
+        let (data, data_offset, concrete) = match value {
+            ConstValue::Ref {
+                target,
+                offset,
+                pointee,
+                ..
+            } => (target, offset, pointee),
+            _ => return self.internal("trait object data is not a reference", span),
+        };
+        let object = match self.tcx.kind(target_ty) {
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => pointee,
+            _ => target_ty,
+        };
+        let principal = *self.tcx.dyn_trait_refs(object).first().ok_or_else(|| {
+            self.error(
+                EvalErrorKind::Internal("trait object has no principal trait".into()),
+                span,
+            )
+        })?;
+        // The dyn type records its own unsized self type. A vtable key is always
+        // built from the concrete pointee, exactly as a runtime coercion does,
+        // so the constant and the coercion name the same table.
+        let trait_ref = TraitRef::new(principal.trait_def, concrete, principal.args);
+        let key = TraitObjectKey {
+            concrete,
+            trait_ref,
+        };
+        if !self.vtables.contains(&key) {
+            self.vtables.push(key);
+        }
+        Ok(ConstValue::Dyn {
+            data,
+            data_offset,
+            concrete,
+            trait_ref,
+        })
     }
 }

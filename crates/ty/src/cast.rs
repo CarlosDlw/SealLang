@@ -4,6 +4,7 @@
 //! module owns the single table that decides which conversion a pair of types
 //! performs, so type checking, MIR, and code generation never duplicate it.
 
+use crate::kind::{IntTy, RefKind, UintTy};
 use crate::{TyCtxt, TyId, TyKind};
 
 /// The kind of primitive numeric conversion performed by `as`.
@@ -23,7 +24,132 @@ pub enum NumericCastKind {
     FloatToFloat,
 }
 
+/// The conversion performed by an explicit `as` cast.
+///
+/// Numeric conversions keep their own classification in [`NumericCastKind`].
+/// Pointer conversions name what happens to the pointer representation so MIR
+/// and code generation never re-derive the category from the endpoint types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CastKind {
+    /// An integer or floating-point conversion.
+    Numeric(NumericCastKind),
+    /// A reference becomes a raw pointer with the same pointee.
+    RefToRaw {
+        /// Whether the result is `*raw mut T`.
+        mutable: bool,
+    },
+    /// A raw pointer becomes another raw pointer.
+    RawToRaw,
+    /// A raw pointer becomes `usize` or `isize`.
+    RawToInt,
+    /// `usize` or `isize` becomes a thin raw pointer.
+    IntToRaw,
+    /// Reserved for a future explicit pointer-to-reference conversion.
+    ///
+    /// The surface rejects it: a reference is created with `&*pointer` or
+    /// `&mut *pointer`, which registers a loan instead of bypassing the borrow
+    /// checker through a cast.
+    RawToRef,
+}
+
 impl TyCtxt {
+    /// Classifies an explicit cast, or returns `None` when `as` cannot convert
+    /// `from` to `to`.
+    ///
+    /// The table is structural: it decides pointer categories and metadata
+    /// compatibility, and leaves trait-implementation proofs to type checking.
+    pub fn cast_kind(&self, from: TyId, to: TyId) -> Option<CastKind> {
+        if let Some(numeric) = self.numeric_cast_kind(from, to) {
+            return Some(CastKind::Numeric(numeric));
+        }
+        match (self.kind(from), self.kind(to)) {
+            (
+                TyKind::Ref {
+                    kind: source_kind,
+                    pointee: source_pointee,
+                },
+                TyKind::RawPtr {
+                    kind: raw_kind,
+                    pointee: target_pointee,
+                },
+            ) => {
+                if source_kind == RefKind::Shared && raw_kind.is_mut() {
+                    return None;
+                }
+                let same_pointee = source_pointee == target_pointee;
+                let unsizes_to_object = matches!(self.kind(target_pointee), TyKind::Dyn { .. })
+                    && !matches!(self.kind(source_pointee), TyKind::Dyn { .. });
+                if same_pointee || unsizes_to_object {
+                    return Some(CastKind::RefToRaw {
+                        mutable: raw_kind.is_mut(),
+                    });
+                }
+                None
+            }
+            (
+                TyKind::RawPtr {
+                    pointee: source_pointee,
+                    ..
+                },
+                TyKind::RawPtr {
+                    pointee: target_pointee,
+                    ..
+                },
+            ) => {
+                match (
+                    self.is_fat_pointee(source_pointee),
+                    self.is_fat_pointee(target_pointee),
+                ) {
+                    (false, false) => Some(CastKind::RawToRaw),
+                    (true, true) if self.same_pointer_metadata(source_pointee, target_pointee) => {
+                        Some(CastKind::RawToRaw)
+                    }
+                    _ => None,
+                }
+            }
+            (TyKind::RawPtr { .. }, TyKind::Uint(UintTy::Usize) | TyKind::Int(IntTy::Isize)) => {
+                Some(CastKind::RawToInt)
+            }
+            (
+                TyKind::Uint(UintTy::Usize) | TyKind::Int(IntTy::Isize),
+                TyKind::RawPtr { pointee, .. },
+            ) if !self.is_fat_pointee(pointee) => Some(CastKind::IntToRaw),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` when a pointer's pointee carries metadata, so the pointer
+    /// occupies two words.
+    fn is_fat_pointee(&self, pointee: TyId) -> bool {
+        matches!(
+            self.kind(pointee),
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. }
+        )
+    }
+
+    /// Returns `true` when two fat pointees carry compatible metadata.
+    ///
+    /// Any two slices share the length representation, and a trait object can
+    /// only change to the same principal trait with the same arguments, because
+    /// the vtable is selected by that pair.
+    fn same_pointer_metadata(&self, source: TyId, target: TyId) -> bool {
+        match (self.kind(source), self.kind(target)) {
+            (TyKind::Str, TyKind::Str) => true,
+            (TyKind::Slice { .. }, TyKind::Slice { .. }) => true,
+            (
+                TyKind::Dyn {
+                    trait_def: source_trait,
+                    args: source_args,
+                },
+                TyKind::Dyn {
+                    trait_def: target_trait,
+                    args: target_args,
+                },
+            ) => source_trait == target_trait && source_args == target_args,
+            _ => false,
+        }
+    }
+
     /// Classifies a numeric cast, or returns `None` when either type is not a
     /// concrete integer or float.
     ///

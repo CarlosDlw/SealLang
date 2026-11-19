@@ -5,7 +5,7 @@ use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
-use seal_ty::{GenericParamDef, Instance, NumericCastKind, PathElem, RefKind, TraitRef, TyId};
+use seal_ty::{CastKind, GenericParamDef, Instance, PathElem, RefKind, TraitRef, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -368,7 +368,7 @@ pub struct TypeckResults {
     iterations: FxHashMap<HirExprId, IterationProtocol>,
     instantiations: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
-    casts: FxHashMap<HirExprId, NumericCastKind>,
+    casts: FxHashMap<HirExprId, CastKind>,
 }
 
 impl TypeckResults {
@@ -421,8 +421,8 @@ impl TypeckResults {
         self.coercions.get(&expr).copied()
     }
 
-    /// Returns the numeric conversion selected for a cast expression.
-    pub fn cast_kind(&self, expr: HirExprId) -> Option<NumericCastKind> {
+    /// Returns the conversion selected for a cast expression.
+    pub fn cast_kind(&self, expr: HirExprId) -> Option<CastKind> {
         self.casts.get(&expr).copied()
     }
 
@@ -482,7 +482,7 @@ impl TypeckResults {
         self.coercions.insert(expr, coercion);
     }
 
-    pub(crate) fn record_cast(&mut self, expr: HirExprId, kind: NumericCastKind) {
+    pub(crate) fn record_cast(&mut self, expr: HirExprId, kind: CastKind) {
         self.casts.insert(expr, kind);
     }
 }

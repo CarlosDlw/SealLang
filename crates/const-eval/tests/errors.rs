@@ -20,6 +20,16 @@ fn dividing_the_signed_minimum_by_minus_one_is_reported() {
 }
 
 #[test]
+fn a_pointer_address_is_not_computable_in_a_constant() {
+    let fixture = Fixture::compile(
+        "static LIMIT: i32 = 7; \
+         const POINTER: *raw i32 = &LIMIT as *raw i32; \
+         const ADDRESS: usize = POINTER as usize;",
+    );
+    fixture.expect_code("E4030");
+}
+
+#[test]
 fn a_value_cycle_is_reported_with_both_items() {
     let fixture = Fixture::compile("const A: i32 = B; const B: i32 = A;");
     fixture.expect_code("E4007");

@@ -224,6 +224,33 @@ fn a_trait_object_records_its_vtable_key() {
 }
 
 #[test]
+fn raw_pointer_casts_preserve_their_pointer_identity() {
+    let fixture = clean(
+        "static LIMIT: i32 = 7; \
+         static VALUES: [i32; 2] = [1, 2]; \
+         const NULL: *raw i32 = 0usize as *raw i32; \
+         const POINTED: *raw i32 = &LIMIT as *raw i32; \
+         const SLICE: *raw [i32] = &VALUES[..] as *raw [i32]; \
+         const TEXT: *raw str = \"seal\" as *raw str; \
+         const NULL_ADDRESS: usize = NULL as usize;",
+    );
+    assert!(matches!(
+        fixture.value("NULL"),
+        ConstValue::Int { bits: 0, .. }
+    ));
+    assert!(matches!(
+        fixture.value("NULL_ADDRESS"),
+        ConstValue::Int { bits: 0, .. }
+    ));
+    assert!(matches!(fixture.value("POINTED"), ConstValue::Ref { .. }));
+    assert!(matches!(
+        fixture.value("SLICE"),
+        ConstValue::Slice { length: 2, .. }
+    ));
+    assert!(matches!(fixture.value("TEXT"), ConstValue::Str { .. }));
+}
+
+#[test]
 fn a_static_has_one_allocation_with_program_lifetime() {
     let fixture = clean(
         "struct Point { x: i32, y: i32 } \

@@ -4,7 +4,7 @@ use seal_def::DefId;
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
 use seal_span::Span;
-use seal_ty::{Instance, NumericCastKind, SubstsId, TraitRef, TyId, VariantIdx};
+use seal_ty::{CastKind, Instance, SubstsId, TraitRef, TyId, VariantIdx};
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -186,14 +186,14 @@ pub enum AggregateKind {
 pub enum Rvalue {
     /// Copies or moves an operand.
     Use(Operand),
-    /// Converts a numeric operand with an explicit `as` cast.
+    /// Converts an operand with an explicit `as` cast.
     ///
     /// The conversion is infallible: it never panics, allocates, or invokes
-    /// undefined behavior. `from` and `to` are concrete numeric types and
-    /// `kind` is the classification recorded by the type checker.
+    /// undefined behavior. `from` and `to` are concrete types and `kind` is the
+    /// classification recorded by the type checker.
     Cast {
         /// The conversion family.
-        kind: NumericCastKind,
+        kind: CastKind,
         /// The value being converted, read exactly once.
         operand: Operand,
         /// The operand's type.

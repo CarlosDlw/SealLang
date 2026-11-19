@@ -1614,3 +1614,51 @@ fn raw_pointer_locals_compile_without_runtime_work() {
         "raw-pointer-local",
     );
 }
+
+#[test]
+fn raw_pointer_casts_round_trip_an_address() {
+    let source = "\
+        func main() -> i32 {
+            let mut value: i32 = 41;
+            let pointer: *raw mut i32 = &mut value as *raw mut i32;
+            let shared: *raw i32 = pointer as *raw i32;
+            let address: usize = shared as usize;
+            let again: *raw mut i32 = address as *raw mut i32;
+            if again as usize == address { 42 } else { 0 }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-pointer-cast-round-trip");
+}
+
+#[test]
+fn a_null_raw_pointer_cast_keeps_zero() {
+    assert_exit_at_both_levels(
+        "func main() -> i32 { let pointer = 0usize as *raw i32; if pointer as usize == 0 { 42 } else { 0 } }",
+        42,
+        "raw-pointer-null-cast",
+    );
+}
+
+#[test]
+fn a_fat_raw_pointer_cast_exposes_its_data_address() {
+    let source = "\
+        func main() -> i32 {
+            let values = [1, 2, 3];
+            let slice: *raw [i32] = &values[..] as *raw [i32];
+            if slice as usize != 0 { 42 } else { 0 }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-slice-cast");
+}
+
+#[test]
+fn a_reference_unsizes_into_a_raw_trait_object() {
+    let source = "\
+        trait Shape { func area(self: *Self) -> i32; }
+        struct Square { side: i32 }
+        impl Shape for Square { func area(self: *Square) -> i32 { (*self).side } }
+        func main() -> i32 {
+            let square = Square { side: 42 };
+            let object: *raw dyn Shape = &square as *raw dyn Shape;
+            if object as usize != 0 { 42 } else { 0 }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-dyn-cast");
+}

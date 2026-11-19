@@ -930,16 +930,38 @@ impl<'a> BodyLowering<'a> {
                 });
                 let operand = self.lower_operand(operand);
                 if let Some(dest) = dest {
-                    self.assign_rvalue(
-                        dest,
+                    let tcx = self.hir.ty_ctxt();
+                    let unsizes_to_object = match (tcx.kind(from), tcx.kind(to)) {
+                        (
+                            TyKind::Ref {
+                                pointee: source_pointee,
+                                ..
+                            },
+                            TyKind::RawPtr {
+                                pointee: target_pointee,
+                                ..
+                            },
+                        ) => {
+                            !matches!(tcx.kind(source_pointee), TyKind::Dyn { .. })
+                                && matches!(tcx.kind(target_pointee), TyKind::Dyn { .. })
+                        }
+                        _ => false,
+                    };
+                    let rvalue = if unsizes_to_object {
+                        Rvalue::MakeTraitObject {
+                            source: operand,
+                            source_ty: from,
+                            target_ty: to,
+                        }
+                    } else {
                         Rvalue::Cast {
                             kind,
                             operand,
                             from,
                             to,
-                        },
-                        span,
-                    );
+                        }
+                    };
+                    self.assign_rvalue(dest, rvalue, span);
                 }
             }
             ExprKind::Assign { op, target, value } => {

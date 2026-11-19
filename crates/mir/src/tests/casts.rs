@@ -1,6 +1,6 @@
 //! Numeric cast lowering and structural validation.
 
-use seal_ty::{InferCtxt, NumericCastKind};
+use seal_ty::{CastKind, InferCtxt, NumericCastKind};
 
 use crate::body::Body;
 use crate::operand::Operand;
@@ -34,7 +34,7 @@ fn an_integer_cast_records_its_kind_and_endpoints() {
     else {
         panic!("expected a cast");
     };
-    assert_eq!(*kind, NumericCastKind::IntToInt);
+    assert_eq!(*kind, CastKind::Numeric(NumericCastKind::IntToInt));
     assert_eq!(ty_text(&hir, *from), "i32");
     assert_eq!(ty_text(&hir, *to), "i64");
     assert!(matches!(operand, Operand::Copy(_)));
@@ -47,7 +47,7 @@ fn an_integer_to_float_cast_records_its_kind() {
     let Rvalue::Cast { kind, from, to, .. } = cast_rvalue(body) else {
         panic!("expected a cast");
     };
-    assert_eq!(*kind, NumericCastKind::IntToFloat);
+    assert_eq!(*kind, CastKind::Numeric(NumericCastKind::IntToFloat));
     assert_eq!(ty_text(&hir, *from), "i32");
     assert_eq!(ty_text(&hir, *to), "f64");
 }
@@ -59,7 +59,7 @@ fn a_narrowing_cast_records_its_kind() {
     let Rvalue::Cast { kind, to, .. } = cast_rvalue(body) else {
         panic!("expected a cast");
     };
-    assert_eq!(*kind, NumericCastKind::IntToInt);
+    assert_eq!(*kind, CastKind::Numeric(NumericCastKind::IntToInt));
     assert_eq!(ty_text(&hir, *to), "u8");
 }
 
@@ -79,7 +79,7 @@ fn a_cast_kind_must_match_its_endpoint_types() {
             ..
         } = &mut statement.kind
         {
-            *kind = NumericCastKind::IntToFloat;
+            *kind = CastKind::Numeric(NumericCastKind::IntToFloat);
             found = true;
         }
     }

@@ -16,7 +16,7 @@ use seal_hir::Hir;
 use seal_layout::VtableLayout;
 use seal_span::Span;
 use seal_symbol::Interner;
-use seal_ty::{Instance, TraitRef, TyCtxt, TyId};
+use seal_ty::{Instance, TraitRef, TyCtxt, TyId, TyKind};
 
 use crate::error::MonoError;
 use crate::substitute::resolve_trait_instance;
@@ -42,7 +42,10 @@ impl VtableKey {
     /// trait-object shapes; MIR validation rejects those before lowering.
     pub fn from_coercion(tcx: &TyCtxt, source_ty: TyId, target_ty: TyId) -> Option<Self> {
         let (_, concrete) = tcx.ref_parts(source_ty)?;
-        let (_, object) = tcx.ref_parts(target_ty)?;
+        let object = match tcx.kind(target_ty) {
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => pointee,
+            _ => return None,
+        };
         let (trait_def, args) = tcx.dyn_parts(object)?;
         Some(Self {
             concrete,

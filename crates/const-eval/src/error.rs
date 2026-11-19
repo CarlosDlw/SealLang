@@ -50,6 +50,8 @@ pub enum EvalErrorKind {
     ValueTooLarge,
     /// A reference escapes the frame that owns its storage.
     EscapingReference,
+    /// A constant asks for a pointer's address, which is chosen at link time.
+    AddressNotComputable,
     /// A constant context called a non-`const` function.
     NonConstFunction {
         /// Whether the caller is a `const func` rather than an initializer.
@@ -90,6 +92,7 @@ impl EvalErrorKind {
             Self::ResourceLimit => codes::E4010,
             Self::ValueTooLarge => codes::E4025,
             Self::EscapingReference => codes::E4013,
+            Self::AddressNotComputable => codes::E4030,
             Self::NonConstFunction { const_fn: false } => codes::E4011,
             Self::NonConstFunction { const_fn: true } => codes::E4018,
             Self::DynamicDispatch { const_fn: false } => codes::E4016,
@@ -146,6 +149,9 @@ impl EvalErrorKind {
             }
             Self::EscapingReference => {
                 "a reference to const-fn local or promoted storage escapes evaluation".to_owned()
+            }
+            Self::AddressNotComputable => {
+                "a pointer's numeric address is not available at compile time".to_owned()
             }
             Self::NonConstFunction { .. } => {
                 "a constant context cannot call a non-const function".to_owned()
@@ -238,6 +244,7 @@ mod tests {
             (EvalErrorKind::ResourceLimit, Some("E4010")),
             (EvalErrorKind::ValueTooLarge, Some("E4025")),
             (EvalErrorKind::EscapingReference, Some("E4013")),
+            (EvalErrorKind::AddressNotComputable, Some("E4030")),
             (
                 EvalErrorKind::NonConstFunction { const_fn: false },
                 Some("E4011"),

@@ -3,7 +3,7 @@
 use seal_hash::FxHashMap;
 use seal_index::{Idx, IndexVec};
 use seal_mir::{Body, CallTarget, Rvalue, StatementKind, ValidationError};
-use seal_ty::NumericCastKind;
+use seal_ty::{CastKind, NumericCastKind};
 use seal_ty::{InferTyId, Instance};
 
 use crate::tests::support::collect_clean;
@@ -101,7 +101,7 @@ fn a_cast_survives_monomorphization_with_its_kind() {
     let Rvalue::Cast { kind, from, to, .. } = cast_in(&mono.body) else {
         panic!("the instance contains a cast");
     };
-    assert_eq!(*kind, NumericCastKind::IntToInt);
+    assert_eq!(*kind, CastKind::Numeric(NumericCastKind::IntToInt));
     let text = |ty| {
         hir.ty_ctxt()
             .display_with(ty, fixture.interner())

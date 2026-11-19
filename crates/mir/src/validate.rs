@@ -5,7 +5,7 @@ use std::fmt;
 use seal_def::{DefId, DefKind};
 use seal_hir::Hir;
 use seal_layout::VtableLayout;
-use seal_ty::{NumericCastKind, RefKind, TraitRef, TyId, TyKind};
+use seal_ty::{CastKind, TraitRef, TyId, TyKind};
 
 use crate::body::{Body, BodyKind, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
@@ -614,10 +614,10 @@ fn check_trait_object_conversion(
     if operand_ty(hir, body, source).is_some_and(|ty| ty != source_ty) {
         return Err(ValidationError::RvalueOperandTypeMismatch { block });
     }
-    let Some((target_kind, ..)) = dyn_pointer(tcx, target_ty) else {
+    let Some((target_exclusive, ..)) = dyn_pointer(tcx, target_ty) else {
         return Err(ValidationError::TraitObjectTargetNotObject { block });
     };
-    if source_kind != target_kind {
+    if source_kind.is_exclusive() != target_exclusive {
         return Err(ValidationError::TraitObjectKindMismatch { block });
     }
     Ok(())
@@ -645,10 +645,7 @@ fn check_trait_object_reborrow(
     let Some((to_kind, to_object, to_ref)) = dyn_pointer(tcx, to) else {
         return Err(ValidationError::TraitObjectReborrowMismatch { block });
     };
-    if from_object != to_object
-        || from_ref != to_ref
-        || (from_kind == RefKind::Shared && to_kind == RefKind::Exclusive)
-    {
+    if from_object != to_object || from_ref != to_ref || (!from_kind && to_kind) {
         return Err(ValidationError::TraitObjectReborrowMismatch { block });
     }
     if place_ty(hir, body, place) != to_object {
@@ -743,13 +740,17 @@ fn check_dynamic_call(
     Ok(())
 }
 
-fn dyn_pointer(tcx: &seal_ty::TyCtxt, ty: TyId) -> Option<(RefKind, TyId, TraitRef)> {
-    let (kind, pointee) = tcx.ref_parts(ty)?;
+fn dyn_pointer(tcx: &seal_ty::TyCtxt, ty: TyId) -> Option<(bool, TyId, TraitRef)> {
+    let (exclusive, pointee) = match tcx.kind(ty) {
+        TyKind::Ref { kind, pointee } => (kind.is_exclusive(), pointee),
+        TyKind::RawPtr { kind, pointee } => (kind.is_mut(), pointee),
+        _ => return None,
+    };
     if !matches!(tcx.kind(pointee), TyKind::Dyn { .. }) {
         return None;
     }
     let (trait_def, args) = tcx.dyn_parts(pointee)?;
-    Some((kind, pointee, TraitRef::new(trait_def, pointee, args)))
+    Some((exclusive, pointee, TraitRef::new(trait_def, pointee, args)))
 }
 
 fn operand_ty(hir: &Hir, body: &Body, operand: &Operand) -> Option<TyId> {
@@ -822,7 +823,7 @@ fn constant_ty(operand: &Operand) -> Option<seal_ty::TyId> {
 struct CastCheck<'a> {
     block: BasicBlockId,
     destination: &'a Place,
-    kind: NumericCastKind,
+    kind: CastKind,
     operand: &'a Operand,
     from: TyId,
     to: TyId,
@@ -831,7 +832,11 @@ struct CastCheck<'a> {
 fn check_cast(body: &Body, cast: &CastCheck<'_>, hir: &Hir) -> Result<(), ValidationError> {
     let tcx = hir.ty_ctxt();
     let block = cast.block;
-    if !is_concrete_numeric(tcx, cast.from) || !is_concrete_numeric(tcx, cast.to) {
+    if contains_infer(hir, cast.from)
+        || contains_infer(hir, cast.to)
+        || matches!(tcx.kind(cast.from), TyKind::Param(_) | TyKind::Error)
+        || matches!(tcx.kind(cast.to), TyKind::Param(_) | TyKind::Error)
+    {
         return Err(ValidationError::CastTypeNotConcrete { block });
     }
     if operand_ty(hir, body, cast.operand) != Some(cast.from) {
@@ -840,18 +845,10 @@ fn check_cast(body: &Body, cast: &CastCheck<'_>, hir: &Hir) -> Result<(), Valida
     if place_ty(hir, body, cast.destination) != cast.to {
         return Err(ValidationError::CastDestinationTypeMismatch { block });
     }
-    if tcx.numeric_cast_kind(cast.from, cast.to) != Some(cast.kind) {
+    if tcx.cast_kind(cast.from, cast.to) != Some(cast.kind) {
         return Err(ValidationError::CastKindMismatch { block });
     }
     Ok(())
-}
-
-/// Returns `true` when `ty` is a concrete integer or float type.
-fn is_concrete_numeric(tcx: &seal_ty::TyCtxt, ty: TyId) -> bool {
-    matches!(
-        tcx.kind(ty),
-        TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
-    )
 }
 
 fn check_rvalue(

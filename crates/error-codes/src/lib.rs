@@ -2500,6 +2500,90 @@ Remove `const` from the destructor. If the value also needs a compile-time
 constructor, give it an ordinary `const func` with a different name.",
 };
 
+/// An unsafe operation is performed outside `unsafe`.
+pub const E3070: ErrorCode = ErrorCode {
+    code: "E3070",
+    title: "an unsafe operation requires unsafe",
+    explanation: "\
+Dereferencing a raw pointer, calling an unsafe function, or performing unsafe
+pointer arithmetic assumes a contract the compiler cannot check. The operation
+is only allowed inside an `unsafe { ... }` block, which records that the
+programmer has established that contract.
+
+Move the operation into an `unsafe` block and document why its preconditions
+hold.",
+};
+
+/// `unsafe` is applied to an item that is not a function.
+pub const E3071: ErrorCode = ErrorCode {
+    code: "E3071",
+    title: "unsafe applies only to functions",
+    explanation: "\
+`unsafe` marks a callable contract: the caller must establish a precondition
+before invoking it. A struct, enum, constant, static, field, or type alias has
+no call site where that contract could be checked, so the marker has no meaning
+there.
+
+Remove `unsafe` from the item. Unsafe behavior belongs in a function or method,
+where callers can see the requirement.",
+};
+
+/// A destructor is declared unsafe.
+pub const E3072: ErrorCode = ErrorCode {
+    code: "E3072",
+    title: "a destructor cannot be unsafe",
+    explanation: "\
+A destructor runs automatically when a value goes out of scope, outside any
+`unsafe` block. If `drop` were unsafe, every scope exit would either need an
+`unsafe` block it cannot have or would silently perform an unchecked operation.
+
+Keep the destructor safe and move any unsafe work into an explicit method that
+the destructor's owner calls before the value is dropped.",
+};
+
+/// The entry point is declared unsafe.
+pub const E3073: ErrorCode = ErrorCode {
+    code: "E3073",
+    title: "the entry point cannot be unsafe",
+    explanation: "\
+The C runtime calls the process entry point directly, so no Seal caller exists
+to establish an `unsafe` contract or wrap the call in an `unsafe` block. An
+unsafe entry point would be invoked without anyone satisfying its precondition.
+
+Make `main` safe and keep unsafe work in a function that `main` calls inside an
+`unsafe { ... }` block.",
+};
+
+/// A cast between pointer types is not supported.
+pub const E3074: ErrorCode = ErrorCode {
+    code: "E3074",
+    title: "unsupported cast involving a raw pointer",
+    explanation: "\
+An explicit `as` cast converts only between the pointer shapes the memory model
+supports. A reference becomes a raw pointer with the same pointee and no more
+permission than the reference already had; a raw pointer may change its pointee
+or its mutability only between compatible metadata; and only `usize` and
+`isize` convert to and from a pointer.
+
+Writing through a shared reference, forging a slice or trait-object length,
+and narrowing a wide integer are all rejected. Use `data()` to discard fat
+metadata, and keep the pointer's displacement inside the allocation it came
+from.",
+};
+
+/// A constant asks for a pointer address chosen at link time.
+pub const E4030: ErrorCode = ErrorCode {
+    code: "E4030",
+    title: "a pointer address is not computable at compile time",
+    explanation: "\
+A pointer's numeric address is chosen when the program is linked, so it is not
+available while a constant is evaluated. Converting a pointer to `usize` or
+`isize` in a constant would make the value depend on the linker's layout.
+
+Compare pointers with `==`, inspect nullness with `is_null()`, or move the
+address computation to a runtime function.",
+};
+
 /// Constant evaluation failed.
 pub const E4001: ErrorCode = ErrorCode {
     code: "E4001",
@@ -2878,11 +2962,12 @@ pub static ALL: &[ErrorCode] = &[
     E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035,
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
-    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E4001, E4002, E4003, E4004, E4005, E4006,
-    E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019,
-    E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E5001, E5002, E5003, E5004,
-    E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001,
-    E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E4001,
+    E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014,
+    E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027,
+    E4028, E4030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
+    E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004,
+    E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3017,6 +3102,11 @@ mod tests {
             ("E3067", "at most one destructor"),
             ("E3068", "duplicated by assignment"),
             ("E3069", "no scope to leave"),
+            ("E3070", "records that the programmer"),
+            ("E3071", "no call site where that contract"),
+            ("E3072", "outside any `unsafe` block"),
+            ("E3073", "no Seal caller exists"),
+            ("E3074", "explicit `as` cast"),
             ("E4001", "fallback that names the item"),
             ("E4002", "dividing by zero"),
             ("E4003", "remainder operation is undefined"),
@@ -3045,6 +3135,7 @@ mod tests {
             ("E4026", "does not yet have a defined state"),
             ("E4027", "which of the two cases"),
             ("E4028", "has no destructor is always allowed"),
+            ("E4030", "chosen when the program is linked"),
             ("E5011", "cannot see across the call"),
             ("E5012", "reborrow the static where it is needed"),
             ("E5013", "directly or transitively"),
@@ -3130,7 +3221,8 @@ mod tests {
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
-                "E3065", "E3066", "E3067", "E3068", "E3069",
+                "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
+                "E3074",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

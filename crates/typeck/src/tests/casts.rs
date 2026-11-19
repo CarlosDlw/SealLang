@@ -1,7 +1,7 @@
 //! Explicit numeric casts: accepted families, recorded kinds, diagnostics.
 
 use seal_hir::{ExprKind, HirExprId};
-use seal_ty::{FloatTy, IntTy, NumericCastKind, TyKind, UintTy};
+use seal_ty::{CastKind, FloatTy, IntTy, NumericCastKind, TyKind, UintTy};
 
 use super::support::{check_clean, check_errors, expr_ty, function, tail, ty_text_with};
 
@@ -15,7 +15,7 @@ fn tail_cast(hir: &seal_hir::Hir, body: &seal_hir::Body) -> HirExprId {
     expr
 }
 
-fn expect_kind(results: &crate::TypeckResults, expr: HirExprId, kind: NumericCastKind) {
+fn expect_kind(results: &crate::TypeckResults, expr: HirExprId, kind: CastKind) {
     assert_eq!(
         results.cast_kind(expr),
         Some(kind),
@@ -49,7 +49,7 @@ fn an_integer_to_integer_cast_records_its_kind_and_target_type() {
         let expr = tail_cast(&hir, body);
         let ty = expr_ty(&results, expr);
         assert_eq!(hir.ty_ctxt().kind(ty), TyKind::Uint(UintTy::U8));
-        expect_kind(&results, expr, NumericCastKind::IntToInt);
+        expect_kind(&results, expr, CastKind::Numeric(NumericCastKind::IntToInt));
     }
 }
 
@@ -77,11 +77,11 @@ fn every_numeric_family_is_accepted_with_its_kind() {
          func e(value: f64) -> f32 { value as f32 }",
     );
     let expected = [
-        ("a", NumericCastKind::IntToInt),
-        ("b", NumericCastKind::IntToFloat),
-        ("c", NumericCastKind::FloatToInt),
-        ("d", NumericCastKind::FloatToFloat),
-        ("e", NumericCastKind::FloatToFloat),
+        ("a", CastKind::Numeric(NumericCastKind::IntToInt)),
+        ("b", CastKind::Numeric(NumericCastKind::IntToFloat)),
+        ("c", CastKind::Numeric(NumericCastKind::FloatToInt)),
+        ("d", CastKind::Numeric(NumericCastKind::FloatToFloat)),
+        ("e", CastKind::Numeric(NumericCastKind::FloatToFloat)),
     ];
     for (name, kind) in expected {
         let (_, body) = function(&fixture, &hir, name);
@@ -99,10 +99,14 @@ fn a_same_type_cast_is_a_no_op() {
     let expr = tail_cast(&hir, body);
     let ty = expr_ty(&results, expr);
     assert_eq!(hir.ty_ctxt().kind(ty), TyKind::Int(IntTy::I32));
-    expect_kind(&results, expr, NumericCastKind::IntToInt);
+    expect_kind(&results, expr, CastKind::Numeric(NumericCastKind::IntToInt));
     let (_, body) = function(&fixture, &hir, "b");
     let expr = tail_cast(&hir, body);
-    expect_kind(&results, expr, NumericCastKind::FloatToFloat);
+    expect_kind(
+        &results,
+        expr,
+        CastKind::Numeric(NumericCastKind::FloatToFloat),
+    );
 }
 
 #[test]
@@ -265,7 +269,10 @@ fn a_cast_in_a_local_initializer_records_its_kind() {
     else {
         panic!("expected an initialized local");
     };
-    assert_eq!(results.cast_kind(expr), Some(NumericCastKind::IntToFloat));
+    assert_eq!(
+        results.cast_kind(expr),
+        Some(CastKind::Numeric(NumericCastKind::IntToFloat))
+    );
     assert_eq!(
         hir.ty_ctxt().kind(expr_ty(&results, expr)),
         TyKind::Float(FloatTy::F64)
