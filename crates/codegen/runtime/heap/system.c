@@ -18,6 +18,10 @@ void *seal_system_alloc_zeroed(size_t size) {
     return calloc(1, size);
 }
 
+void *seal_system_realloc(void *pointer, size_t size) {
+    return realloc(pointer, size);
+}
+
 void seal_system_dealloc(void *pointer) {
     free(pointer);
 }

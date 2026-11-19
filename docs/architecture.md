@@ -395,9 +395,11 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     takes no locks and uses no stdio, locale, or `atexit` handlers; writes
     transfer exactly the requested bytes, retrying `EINTR` and partial writes;
     panics never unwind and always terminate with status 101. The heap exposes
-    `seal_alloc`, `seal_alloc_zeroed`, and `seal_dealloc`: it validates
-    alignment, returns `NULL` on failure or layout overflow, treats a zero size
-    as a dangling aligned pointer, and never panics. The archive is
+    `seal_alloc`, `seal_alloc_zeroed`, `seal_realloc`, and `seal_dealloc`: it
+    validates alignment, returns `NULL` on failure or layout overflow, treats a
+    zero size as a dangling aligned pointer, and never panics. Reallocation
+    preserves the prefix, keeps the alignment, and leaves the old block valid
+    when it fails. The archive is
     host-specific and linked only into executables, so object and assembly
     output stay target-independent; unused members, including the heap, are not
     linked. `sealc emit-runtime` exports the embedded archive, and

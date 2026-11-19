@@ -136,6 +136,142 @@ int main(void) {
         check_block(size, align);
     }
 
+    /* Reallocation preserves the prefix and keeps the requested alignment. */
+    unsigned char *grown = (unsigned char *)seal_alloc(16, 8);
+    CHECK(grown != NULL);
+    if (grown != NULL) {
+        fill(grown, 16, 0x31);
+        unsigned char *resized = (unsigned char *)seal_realloc(grown, 16, 8, 64);
+        CHECK(resized != NULL);
+        if (resized != NULL) {
+            CHECK(is_aligned(resized, 8));
+            CHECK(matches(resized, 16, 0x31));
+            fill(resized, 64, 0x31);
+            unsigned char *shrunk = (unsigned char *)seal_realloc(resized, 64, 8, 16);
+            CHECK(shrunk != NULL);
+            if (shrunk != NULL) {
+                CHECK(matches(shrunk, 16, 0x31));
+                seal_dealloc(shrunk, 16, 8);
+            } else {
+                seal_dealloc(resized, 64, 8);
+            }
+        } else {
+            seal_dealloc(grown, 16, 8);
+        }
+    }
+
+    unsigned char *over = (unsigned char *)seal_alloc(64, 4096);
+    CHECK(over != NULL);
+    if (over != NULL) {
+        fill(over, 64, 0x42);
+        unsigned char *over_grown = (unsigned char *)seal_realloc(over, 64, 4096, 256);
+        CHECK(over_grown != NULL);
+        if (over_grown != NULL) {
+            CHECK(is_aligned(over_grown, 4096));
+            CHECK(matches(over_grown, 64, 0x42));
+            fill(over_grown, 256, 0x42);
+            unsigned char *over_shrunk =
+                (unsigned char *)seal_realloc(over_grown, 256, 4096, 16);
+            CHECK(over_shrunk != NULL);
+            if (over_shrunk != NULL) {
+                CHECK(is_aligned(over_shrunk, 4096));
+                CHECK(matches(over_shrunk, 16, 0x42));
+                seal_dealloc(over_shrunk, 16, 4096);
+            } else {
+                seal_dealloc(over_grown, 256, 4096);
+            }
+        } else {
+            seal_dealloc(over, 64, 4096);
+        }
+    }
+
+    unsigned char *from_null = (unsigned char *)seal_realloc(NULL, 0, 8, 32);
+    CHECK(from_null != NULL);
+    if (from_null != NULL) {
+        fill(from_null, 32, 0x24);
+        CHECK(matches(from_null, 32, 0x24));
+        seal_dealloc(from_null, 32, 8);
+    }
+
+    unsigned char *released = (unsigned char *)seal_alloc(32, 8);
+    CHECK(released != NULL);
+    if (released != NULL) {
+        void *dangling = seal_realloc(released, 32, 8, 0);
+        CHECK((uintptr_t)dangling == 8);
+        seal_dealloc(dangling, 0, 8);
+    }
+
+    unsigned char *released_aligned = (unsigned char *)seal_alloc(32, 4096);
+    CHECK(released_aligned != NULL);
+    if (released_aligned != NULL) {
+        void *dangling = seal_realloc(released_aligned, 32, 4096, 0);
+        CHECK((uintptr_t)dangling == 4096);
+        seal_dealloc(dangling, 0, 4096);
+    }
+
+    void *empty_realloc = seal_realloc(NULL, 0, 4096, 0);
+    CHECK((uintptr_t)empty_realloc == 4096);
+
+    unsigned char *failure = (unsigned char *)seal_alloc(64, 4096);
+    CHECK(failure != NULL);
+    if (failure != NULL) {
+        fill(failure, 64, 0x55);
+        void *failed = seal_realloc(failure, 64, 4096, SIZE_MAX - 64);
+        CHECK(failed == NULL);
+        CHECK(is_aligned(failure, 4096));
+        CHECK(matches(failure, 64, 0x55));
+        void *invalid = seal_realloc(failure, 64, 3, 128);
+        CHECK(invalid == NULL);
+        CHECK(matches(failure, 64, 0x55));
+        seal_dealloc(failure, 64, 4096);
+    }
+
+    unsigned char *loop = (unsigned char *)seal_alloc(16, 8);
+    CHECK(loop != NULL);
+    if (loop != NULL) {
+        size_t capacity = 16;
+        fill(loop, capacity, 0x6B);
+        for (int step = 0; step < 1000; step++) {
+            size_t next = (size_t)((step * 37) % 512) + 1;
+            unsigned char *resized =
+                (unsigned char *)seal_realloc(loop, capacity, 8, next);
+            CHECK(resized != NULL);
+            if (resized == NULL) {
+                break;
+            }
+            size_t prefix = capacity < next ? capacity : next;
+            CHECK(matches(resized, prefix, 0x6B));
+            CHECK(is_aligned(resized, 8));
+            fill(resized, next, 0x6B);
+            loop = resized;
+            capacity = next;
+        }
+        seal_dealloc(loop, capacity, 8);
+    }
+
+    unsigned char *aligned_loop = (unsigned char *)seal_alloc(16, 4096);
+    CHECK(aligned_loop != NULL);
+    if (aligned_loop != NULL) {
+        size_t capacity = 16;
+        fill(aligned_loop, capacity, 0x7C);
+        for (int step = 0; step < 200; step++) {
+            size_t next = (size_t)((step * 13) % 128) + 1;
+            unsigned char *resized =
+                (unsigned char *)seal_realloc(aligned_loop, capacity, 4096, next);
+            CHECK(resized != NULL);
+            if (resized == NULL) {
+                break;
+            }
+            size_t prefix = capacity < next ? capacity : next;
+            CHECK(is_aligned(resized, 4096));
+            CHECK(matches(resized, prefix, 0x7C));
+            fill(resized, next, 0x7C);
+            aligned_loop = resized;
+            capacity = next;
+        }
+        seal_dealloc(aligned_loop, capacity, 4096);
+    }
+
     if (failures != 0) {
         fprintf(stderr, "%d heap check(s) failed\n", failures);
         return 1;

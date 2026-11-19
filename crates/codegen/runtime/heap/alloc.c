@@ -5,8 +5,8 @@
  * NULL on failure, and never panics or aborts. Alignments up to
  * `max_align_t` use the host allocator directly. Larger alignments
  * over-allocate, align the user pointer, and store the base pointer in the word
- * immediately before it, which keeps deallocation portable without
- * `posix_memalign`, `aligned_alloc`, or `_aligned_malloc`.
+ * immediately before it, which keeps reallocation and deallocation portable
+ * without `posix_memalign`, `aligned_alloc`, or `_aligned_malloc`.
  */
 
 #include "seal_rt.h"
@@ -48,13 +48,19 @@ static int seal_raw_size(size_t size, size_t align, size_t *raw_size) {
     return 1;
 }
 
-/* Aligns the user pointer and stores the base pointer in its header word. */
-static void *seal_align(void *base, size_t align) {
+/* Computes the aligned user pointer without touching its header word. */
+static void *seal_aligned_pointer(void *base, size_t align) {
     uintptr_t start = (uintptr_t)base + SEAL_HEAP_HEADER;
     uintptr_t mask = (uintptr_t)align - 1;
     uintptr_t aligned = (start + mask) & ~mask;
-    ((void **)aligned)[-1] = base;
     return (void *)aligned;
+}
+
+/* Aligns the user pointer and stores the base pointer in its header word. */
+static void *seal_align(void *base, size_t align) {
+    void *pointer = seal_aligned_pointer(base, align);
+    ((void **)pointer)[-1] = base;
+    return pointer;
 }
 
 SEAL_EXPORT void *seal_alloc(size_t size, size_t align) {
@@ -101,6 +107,40 @@ SEAL_EXPORT void *seal_alloc_zeroed(size_t size, size_t align) {
     void *user = seal_align(base, align);
     memset(user, 0, size);
     return user;
+}
+
+SEAL_EXPORT void *seal_realloc(void *pointer, size_t old_size, size_t align,
+                               size_t new_size) {
+    if (!seal_valid_align(align)) {
+        return NULL;
+    }
+    if (pointer == NULL) {
+        return seal_alloc(new_size, align);
+    }
+    if (new_size == 0) {
+        seal_dealloc(pointer, old_size, align);
+        return seal_dangling(align);
+    }
+    if (!seal_needs_header(align)) {
+        return seal_system_realloc(pointer, new_size);
+    }
+
+    size_t raw_size;
+    if (!seal_raw_size(new_size, align, &raw_size)) {
+        return NULL;
+    }
+    void *base = ((void **)pointer)[-1];
+    size_t old_offset = (size_t)((uintptr_t)pointer - (uintptr_t)base);
+    void *new_base = seal_system_realloc(base, raw_size);
+    if (new_base == NULL) {
+        return NULL;
+    }
+
+    void *new_pointer = seal_aligned_pointer(new_base, align);
+    size_t copied = old_size < new_size ? old_size : new_size;
+    memmove(new_pointer, (unsigned char *)new_base + old_offset, copied);
+    ((void **)new_pointer)[-1] = new_base;
+    return new_pointer;
 }
 
 SEAL_EXPORT void seal_dealloc(void *pointer, size_t size, size_t align) {

@@ -65,6 +65,20 @@ SEAL_EXPORT void *seal_alloc(size_t size, size_t align);
 SEAL_EXPORT void *seal_alloc_zeroed(size_t size, size_t align);
 
 /*
+ * Resizes a block returned by this ABI. `pointer == NULL` behaves like
+ * seal_alloc(new_size, align); a zero `new_size` releases the block and returns
+ * the dangling pointer for `align`. On success the first min(old_size,
+ * new_size) bytes are preserved and a grown tail is uninitialized. On failure
+ * returns NULL and leaves the old block valid.
+ *
+ * `old_size` and `align` must be the layout used to create the current block.
+ * A pointer returned by a zero-size allocation is not a block; use seal_alloc
+ * for the first real allocation.
+ */
+SEAL_EXPORT void *seal_realloc(void *pointer, size_t old_size, size_t align,
+                               size_t new_size);
+
+/*
  * Releases a block returned by this ABI. `pointer == NULL` and `size == 0` are
  * no-ops. `align` must be the alignment passed to seal_alloc or
  * seal_alloc_zeroed for this block.

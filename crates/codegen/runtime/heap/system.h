@@ -20,6 +20,9 @@ void *seal_system_alloc(size_t size);
 /* Allocates `size` zeroed bytes with the host allocator. */
 void *seal_system_alloc_zeroed(size_t size);
 
+/* Resizes a pointer returned by this backend, preserving its contents. */
+void *seal_system_realloc(void *pointer, size_t size);
+
 /* Releases a pointer returned by this backend. */
 void seal_system_dealloc(void *pointer);
 
