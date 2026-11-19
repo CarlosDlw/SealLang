@@ -435,7 +435,16 @@ impl<'a> BodyLowering<'a> {
         }
 
         if let Some(tail) = self.hir.block(block).tail {
+            // The tail is the block's last expression, so the temporaries it
+            // builds live until the block ends. They are dropped here, after the
+            // value the expression produces has been stored.
+            let outer_window = self.temp_window;
+            let outer_detached = std::mem::take(&mut self.detached_temps);
+            self.temp_window = self.locals.len();
             self.lower_expr_into(tail, dest);
+            self.drop_statement_temps(self.hir.expr(tail).span);
+            self.temp_window = outer_window;
+            self.detached_temps = outer_detached;
         } else if let Some(dest) = dest
             && self.current.is_some()
         {

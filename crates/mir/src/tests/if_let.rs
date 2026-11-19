@@ -59,6 +59,29 @@ fn a_slice_pattern_tests_the_runtime_length_in_if_let() {
 }
 
 #[test]
+fn an_if_let_in_tail_position_drops_its_scrutinee() {
+    // The `if let` is the block's tail, so the temporary that holds the
+    // scrutinee ends with the block. A value it still owns must be dropped
+    // there rather than leaked.
+    let source = "struct Token { tag: i32 } \
+        impl Drop for Token { \
+            func drop(self: *mut Token) { unsafe { COUNT = COUNT + 1; } } \
+        } \
+        static mut COUNT: i32 = 0; \
+        enum Slot { Value(Token), Empty } \
+        func release() { if let Slot::Empty = Slot::Value(Token { tag: 1 }) {} }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let body = function(&fixture, &hir, &mir, "release");
+    let drops = body
+        .blocks
+        .iter()
+        .flat_map(|block| block.statements.iter())
+        .filter(|statement| matches!(statement.kind, crate::statement::StatementKind::Drop { .. }))
+        .count();
+    assert!(drops >= 1, "the scrutinee temporary must have a drop site");
+}
+
+#[test]
 fn if_let_without_else_assigns_unit_on_failure() {
     let (fixture, hir, mir) = lower_clean("func main(value: i32) { if let 0 = value { } }");
     let body = function(&fixture, &hir, &mir, "main");
