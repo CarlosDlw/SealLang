@@ -102,6 +102,19 @@ impl Drop for Box<i32> { func drop(self: *mut Box<i32>) {} }";
 }
 
 #[test]
+fn an_implementation_for_a_non_nominal_type_is_rejected() {
+    for source in [
+        "impl Drop for i32 { func drop(self: *mut i32) {} }",
+        "impl Drop for *i32 { func drop(self: *mut *i32) {} }",
+        "impl Drop for (i32, i32) { func drop(self: *mut (i32, i32)) {} }",
+    ] {
+        let fixture = Fixture::new(source);
+        let _ = fixture.lower();
+        fixture.expect("E2015", "");
+    }
+}
+
+#[test]
 fn drop_cannot_be_a_trait_bound() {
     let fixture = Fixture::new("func f<T: Drop>() {}");
     let _ = fixture.lower();

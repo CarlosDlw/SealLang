@@ -875,10 +875,21 @@ impl Lowering<'_> {
                 continue;
             }
             let self_ty = implementation.trait_ref.self_ty;
-            let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(self_ty) else {
-                // `E2015` already rejects an implementation for a type that is
-                // not nominal, so a second diagnostic would only repeat it.
+            let is_nominal = matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Adt { .. });
+            if !is_nominal {
+                let span = self.hir.definitions().get(implementation.def).span;
+                let type_name = self.display_ty(self_ty);
+                self.error(
+                    codes::E2015,
+                    span,
+                    format!("`{type_name}` is not a nominal type, so it cannot implement `Drop`"),
+                )
+                .help("implement `Drop` for a struct or enum declared in this file")
+                .emit();
                 continue;
+            }
+            let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(self_ty) else {
+                unreachable!("a nominal implementation target is an ADT");
             };
             let declaration = self.hir.ty_ctxt().adt(adt).def;
             let arguments = self.hir.ty_ctxt().substs_args(args).to_vec();
