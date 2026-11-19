@@ -18,6 +18,7 @@
 
 mod adt;
 mod cast;
+mod copy;
 mod ctxt;
 mod display;
 mod drop;

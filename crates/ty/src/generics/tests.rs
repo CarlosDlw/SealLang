@@ -282,6 +282,19 @@ fn parameter_queries_are_conservative_without_bounds() {
 }
 
 #[test]
+fn an_adt_is_copy_after_a_manual_registration() {
+    let ctxt = TyCtxt::new();
+    let interner = Interner::new();
+    let (pair, _, _) = pair(&ctxt, &interner);
+    let int = ctxt.int_ty(crate::IntTy::I32);
+    let pair_ty = ctxt.adt_ty_with(pair, ctxt.substs(&[int, ctxt.bool_ty()]));
+
+    assert!(!ctxt.is_copy(pair_ty));
+    let _ = ctxt.set_copy_impl(pair, def(9));
+    assert!(ctxt.is_copy(pair_ty));
+}
+
+#[test]
 fn adt_queries_instantiate_every_field() {
     let ctxt = TyCtxt::new();
     let interner = Interner::new();

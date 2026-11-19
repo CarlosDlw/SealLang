@@ -8,6 +8,7 @@ use seal_index::IndexVec;
 use seal_symbol::Symbol;
 
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
+use crate::copy::CopyImpls;
 use crate::drop::DropImpls;
 use crate::generics::{
     GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
@@ -113,6 +114,12 @@ pub struct TyCtxt {
     trait_impls: RefCell<Vec<TraitImplDef>>,
     trait_impl_index: RefCell<FxHashMap<(DefId, ImplHead), Vec<usize>>>,
     blanket_trait_impls: RefCell<Vec<usize>>,
+    /// The `impl Copy` declaration of every aggregate that opted in.
+    ///
+    /// Lowering fills this after validating the implementation; see
+    /// [`crate::copy`]. A query on a type never observes a half-filled registry,
+    /// because lowering finishes before type checking starts.
+    copy_impls: RefCell<CopyImpls>,
     /// The `impl Drop` destructor of every aggregate that declares one.
     ///
     /// Lowering fills this after validating the implementation; see
@@ -793,16 +800,31 @@ impl TyCtxt {
     /// reports `false`: whether it is `Copy` is not known yet, so a caller that
     /// might move the value must resolve the type first. A declared parameter is
     /// not `Copy` without a `Copy` bound; use [`TyCtxt::is_copy_with`] when a
-    /// parameter environment is available.
+    /// parameter environment is available. A user-defined aggregate is `Copy`
+    /// only after an explicit `impl Copy`; see [`TyCtxt::is_copy_with`].
     pub fn is_copy(&self, ty: TyId) -> bool {
         self.is_copy_with(ty, &ParamEnv::new())
     }
 
     /// Returns `true` if values of `ty` are duplicated bitwise under `env`.
     ///
-    /// Only a parameter's `Copy` classification depends on the environment;
-    /// concrete types use the same structural rules as [`TyCtxt::is_copy`].
+    /// Scalars, references, raw pointers, `()`, and `!` are always `Copy`.
+    /// Arrays and tuples propagate from their elements, and a parameter asks
+    /// `env` for a `Copy` bound. A user-defined aggregate is `Copy` only after
+    /// an explicit `impl Copy` and only when every field of every variant is
+    /// `Copy` under `env`. The query substitutes the aggregate's arguments into
+    /// each field before it recurses, so `Wrapper<NonCopy>` is not `Copy` merely
+    /// because `Wrapper<T>` opted in.
     pub fn is_copy_with(&self, ty: TyId, env: &ParamEnv) -> bool {
+        self.is_copy_inner(ty, env, &mut FxHashSet::default())
+    }
+
+    fn is_copy_inner(
+        &self,
+        ty: TyId,
+        env: &ParamEnv,
+        visiting: &mut FxHashSet<(AdtId, SubstsId)>,
+    ) -> bool {
         match self.kind(ty) {
             TyKind::Bool
             | TyKind::Char
@@ -817,23 +839,42 @@ impl TyCtxt {
             // An array copies exactly when its element copies. Unlike a struct,
             // it gains nothing from an explicit opt-in: its elements already
             // decide whether a bitwise copy is safe.
-            TyKind::Array { element, .. } => self.is_copy_with(element, env),
+            TyKind::Array { element, .. } => self.is_copy_inner(element, env, visiting),
             // A tuple is a structural product of independent values, so it is
             // `Copy` exactly when every element is. This mirrors arrays and is
             // what makes `(i32, bool)` usable in a loop without a move.
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
                 .iter()
-                .all(|element| self.is_copy_with(*element, env)),
+                .all(|element| self.is_copy_inner(*element, env, visiting)),
             TyKind::Param(param) => env.has_copy(param),
-            // A user-defined aggregate owns its fields; it becomes `Copy` only
-            // through an explicit opt-in, which the language does not have yet.
-            // Its fields remain individually copyable.
-            TyKind::Adt { .. }
-            | TyKind::Str
-            | TyKind::Slice { .. }
-            | TyKind::Dyn { .. }
-            | TyKind::Infer(_) => false,
+            TyKind::Adt { adt, args } => {
+                // The opt-in is the first gate: fields alone never make a
+                // nominal aggregate `Copy`.
+                if self.copy_impl(adt).is_none() {
+                    return false;
+                }
+                let key = (adt, args);
+                if !visiting.insert(key) {
+                    // A by-value cycle has no finite value to copy; type
+                    // checking reports it and stops before this query matters.
+                    return false;
+                }
+                let def = self.adt(adt);
+                let mut copy = true;
+                for field in def.all_fields() {
+                    let field_ty = self.substitute(field.ty, args);
+                    if !self.is_copy_inner(field_ty, env, visiting) {
+                        copy = false;
+                        break;
+                    }
+                }
+                // Removing the key lets the same aggregate appear in sibling
+                // fields without reporting a cycle.
+                visiting.remove(&key);
+                copy
+            }
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Infer(_) => false,
         }
     }
 
@@ -877,6 +918,21 @@ impl TyCtxt {
             }
             _ => true,
         }
+    }
+
+    /// Records that the aggregate `adt` opted into `Copy`.
+    ///
+    /// Lowering calls this once per validated `impl Copy for T`. The returned
+    /// declaration is the one previously recorded for the same aggregate, so
+    /// the caller can reject a duplicate instead of replacing it silently.
+    #[must_use]
+    pub fn set_copy_impl(&self, adt: AdtId, implementation: DefId) -> Option<DefId> {
+        self.copy_impls.borrow_mut().insert(adt, implementation)
+    }
+
+    /// Returns the `impl Copy` declaration of `adt`, if the aggregate opted in.
+    pub fn copy_impl(&self, adt: AdtId) -> Option<DefId> {
+        self.copy_impls.borrow().get(adt)
     }
 
     /// Records the destructor the aggregate `adt` declares.
@@ -1111,9 +1167,33 @@ mod tests {
     use seal_symbol::Interner;
 
     use super::TyCtxt;
+    use crate::{Bound, ParamEnv, TyId};
 
     fn def(index: u32) -> DefId {
         DefId::from_u32(index).expect("test definitions are small")
+    }
+
+    /// Builds a struct whose fields are named `first`, `second`, ...
+    fn struct_fields(
+        ctxt: &TyCtxt,
+        interner: &Interner,
+        name: &str,
+        owner: u32,
+        fields: &[TyId],
+    ) -> (crate::AdtId, TyId) {
+        let names = ["first", "second", "third", "fourth"];
+        let adt = ctxt.push_adt(def(owner), interner.intern(name), AdtKind::Struct);
+        let fields = fields
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| FieldDef {
+                def: def(owner + 1 + index as u32),
+                name: Some(interner.intern(names[index])),
+                ty: *ty,
+            })
+            .collect();
+        ctxt.fill_adt(adt, fields);
+        (adt, ctxt.adt_ty(adt))
     }
 
     #[test]
@@ -1411,5 +1491,198 @@ mod tests {
             }],
         );
         assert!(!ctxt.is_sized(ctxt.adt_ty(adt)));
+    }
+
+    #[test]
+    fn an_aggregate_is_copy_only_after_an_explicit_impl() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, ty) = struct_fields(&ctxt, &interner, "Point", 0, &[ctxt.int_ty(IntTy::I32)]);
+
+        assert!(!ctxt.is_copy(ty));
+        assert_eq!(ctxt.copy_impl(adt), None);
+    }
+
+    #[test]
+    fn a_copy_impl_accepts_scalars_references_pointers_arrays_and_tuples() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let int = ctxt.int_ty(IntTy::I32);
+
+        let (scalar_adt, scalar) = struct_fields(&ctxt, &interner, "Scalar", 0, &[int]);
+        let (shared_adt, shared) =
+            struct_fields(&ctxt, &interner, "Shared", 10, &[ctxt.ref_ty(int)]);
+        let (pointer_adt, pointer) =
+            struct_fields(&ctxt, &interner, "Pointer", 20, &[ctxt.raw_ptr_ty(int)]);
+        let (array_adt, array) =
+            struct_fields(&ctxt, &interner, "Array", 30, &[ctxt.array_ty(int, 3)]);
+        let (tuple_adt, tuple) = struct_fields(
+            &ctxt,
+            &interner,
+            "Pair",
+            40,
+            &[ctxt.tuple_ty(&[int, ctxt.bool_ty()])],
+        );
+
+        for (offset, adt) in [scalar_adt, shared_adt, pointer_adt, array_adt, tuple_adt]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(ctxt.set_copy_impl(adt, def(100 + offset as u32)), None);
+        }
+
+        for ty in [scalar, shared, pointer, array, tuple] {
+            assert!(ctxt.is_copy(ty));
+        }
+    }
+
+    #[test]
+    fn a_field_that_is_not_copy_keeps_the_aggregate_moving() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, ty) = struct_fields(&ctxt, &interner, "Bad", 0, &[ctxt.str_ty()]);
+
+        assert_eq!(ctxt.set_copy_impl(adt, def(9)), None);
+        assert!(!ctxt.is_copy(ty));
+    }
+
+    #[test]
+    fn an_enum_is_copy_only_when_every_variant_field_is_copy() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let adt = ctxt.push_adt(def(0), interner.intern("Shape"), AdtKind::Enum);
+        ctxt.fill_variants(
+            adt,
+            vec![
+                VariantDef {
+                    def: def(1),
+                    name: interner.intern("Empty"),
+                    fields: Vec::new(),
+                },
+                VariantDef {
+                    def: def(2),
+                    name: interner.intern("Holds"),
+                    fields: vec![FieldDef {
+                        def: def(3),
+                        name: Some(interner.intern("value")),
+                        ty: int,
+                    }],
+                },
+            ],
+        );
+        let _ = ctxt.set_copy_impl(adt, def(9));
+        assert!(ctxt.is_copy(ctxt.adt_ty(adt)));
+
+        let bad = ctxt.push_adt(def(10), interner.intern("BadShape"), AdtKind::Enum);
+        ctxt.fill_variants(
+            bad,
+            vec![VariantDef {
+                def: def(11),
+                name: interner.intern("Text"),
+                fields: vec![FieldDef {
+                    def: def(12),
+                    name: Some(interner.intern("text")),
+                    ty: ctxt.str_ty(),
+                }],
+            }],
+        );
+        let _ = ctxt.set_copy_impl(bad, def(13));
+        assert!(!ctxt.is_copy(ctxt.adt_ty(bad)));
+    }
+
+    #[test]
+    fn a_generic_aggregate_rechecks_the_fields_with_the_actual_arguments() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let param = ctxt.push_param(def(1), owner, 0, interner.intern("T"));
+        let param_ty = ctxt.param_ty(param);
+        let (wrapper, _) = struct_fields(&ctxt, &interner, "Wrapper", 10, &[param_ty]);
+        ctxt.set_generic_count(wrapper, 1);
+        let _ = ctxt.set_copy_impl(wrapper, def(9));
+
+        let wrapper_t = ctxt.adt_ty_with(wrapper, ctxt.substs(&[param_ty]));
+        assert!(!ctxt.is_copy_with(wrapper_t, &ParamEnv::new()));
+
+        let mut env = ParamEnv::new();
+        env.insert(param, vec![Bound::Copy]);
+        assert!(ctxt.is_copy_with(wrapper_t, &env));
+
+        let (_, non_copy) = struct_fields(&ctxt, &interner, "NonCopy", 20, &[ctxt.str_ty()]);
+        let wrapper_non_copy = ctxt.adt_ty_with(wrapper, ctxt.substs(&[non_copy]));
+        assert!(!ctxt.is_copy_with(wrapper_non_copy, &env));
+    }
+
+    #[test]
+    fn a_raw_pointer_field_is_copy_whatever_it_points_to() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let owner = def(0);
+        let param = ctxt.push_param(def(1), owner, 0, interner.intern("T"));
+        let param_ty = ctxt.param_ty(param);
+        let (wrapper, _) = struct_fields(
+            &ctxt,
+            &interner,
+            "PointerWrapper",
+            10,
+            &[ctxt.raw_ptr_ty(param_ty)],
+        );
+        ctxt.set_generic_count(wrapper, 1);
+        let _ = ctxt.set_copy_impl(wrapper, def(9));
+
+        let ty = ctxt.adt_ty_with(wrapper, ctxt.substs(&[param_ty]));
+        assert!(ctxt.is_copy_with(ty, &ParamEnv::new()));
+    }
+
+    #[test]
+    fn a_recursive_raw_pointer_field_is_copy_and_terminates() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, ty) = struct_fields(&ctxt, &interner, "Node", 0, &[ctxt.int_ty(IntTy::I32)]);
+        ctxt.set_field_ty(adt, 0, ctxt.raw_ptr_ty(ty));
+        let _ = ctxt.set_copy_impl(adt, def(9));
+
+        assert!(ctxt.is_copy(ty));
+    }
+
+    #[test]
+    fn a_by_value_cycle_is_not_copy_and_terminates() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, ty) = struct_fields(&ctxt, &interner, "Loop", 0, &[ctxt.int_ty(IntTy::I32)]);
+        ctxt.set_field_ty(adt, 0, ty);
+        let _ = ctxt.set_copy_impl(adt, def(9));
+
+        assert!(!ctxt.is_copy(ty));
+    }
+
+    #[test]
+    fn the_same_aggregate_may_appear_in_sibling_fields() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (inner_adt, inner) =
+            struct_fields(&ctxt, &interner, "Inner", 0, &[ctxt.int_ty(IntTy::I32)]);
+        let _ = ctxt.set_copy_impl(inner_adt, def(9));
+        let (pair_adt, pair) = struct_fields(&ctxt, &interner, "Pair", 10, &[inner, inner]);
+        let _ = ctxt.set_copy_impl(pair_adt, def(10));
+
+        assert!(ctxt.is_copy(pair));
+        assert_eq!(
+            ctxt.is_copy(pair),
+            ctxt.is_copy_with(pair, &ParamEnv::new())
+        );
+    }
+
+    #[test]
+    fn replacing_a_copy_impl_returns_the_previous_declaration() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let (adt, _) = struct_fields(&ctxt, &interner, "Point", 0, &[ctxt.int_ty(IntTy::I32)]);
+
+        assert_eq!(ctxt.set_copy_impl(adt, def(9)), None);
+        assert_eq!(ctxt.copy_impl(adt), Some(def(9)));
+        assert_eq!(ctxt.set_copy_impl(adt, def(10)), Some(def(9)));
+        assert_eq!(ctxt.copy_impl(adt), Some(def(10)));
     }
 }
