@@ -267,7 +267,7 @@ dependencies = [
  "seal-index",
  "seal-layout",
  "seal-lexer",
- "seal-llvm-debug",
+ "seal-llvm-ffi",
  "seal-methods",
  "seal-mir",
  "seal-mono",
@@ -401,7 +401,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "seal-llvm-debug"
+name = "seal-llvm-ffi"
 version = "0.1.0"
 dependencies = [
  "inkwell",

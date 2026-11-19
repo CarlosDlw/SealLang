@@ -78,7 +78,7 @@ impl<'a, 'ctx> Pointers<'a, 'ctx> {
         Ok(match target {
             PointerTarget::Allocation { id, offset } => {
                 let global = self.globals.allocation(id)?;
-                seal_llvm_debug::const_gep_bytes(self.context, global.as_pointer_value(), offset)
+                seal_llvm_ffi::const_gep_bytes(self.context, global.as_pointer_value(), offset)
             }
             PointerTarget::String(symbol) => self.strings.string_pointer(symbol)?.0,
             PointerTarget::Vtable {

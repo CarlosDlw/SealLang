@@ -57,9 +57,9 @@
 //! The backend may only assume that an exclusive parameter does not alias when
 //! the whole program upholds the grant. [`check`] therefore also returns
 //! [`AliasingFacts`]: a function is included when its body never reaches storage
-//! through a reference of unknown target and every call site proves the
-//! exclusive contract. The facts gate an optimization; they never decide whether
-//! a program is accepted.
+//! through a reference of unknown target or a raw-memory operation, and every
+//! call site proves the exclusive contract. The facts gate an optimization; they
+//! never decide whether a program is accepted.
 //!
 //! # Errors
 //!
@@ -119,7 +119,7 @@ pub fn check(
         let facts = check::check_body(hir, body, program, &effects, dcx, interner, &mut calls);
         bodies.insert(body.owner, facts);
     }
-    aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls, &effects)
+    aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls)
 }
 
 /// Checks one body.

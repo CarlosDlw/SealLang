@@ -7,4 +7,5 @@ mod dyn_types;
 mod generics;
 mod globals;
 mod noalias;
+mod provenance;
 mod support;

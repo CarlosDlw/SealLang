@@ -8,18 +8,24 @@
 //! before the wrapper is constructed, so the only correct operation is to call
 //! the C API and discard the returned record handle.
 //!
-//! Constant relocation expressions need the same treatment: inkwell exposes
-//! `PointerValue::const_gep` only as an unsafe function, and the workspace keeps
-//! `unsafe_code = "forbid"` on every compiler crate. Both calls live here, in
-//! the only crate allowed to use `unsafe`.
+//! Pointer arithmetic has the same shape: inkwell exposes `build_gep` and
+//! `build_in_bounds_gep` only as unsafe functions, and the workspace keeps
+//! `unsafe_code = "forbid"` on every compiler crate. [`gep`] validates the
+//! common preconditions and confines the unsafe call here, in the only crate
+//! allowed to use `unsafe`.
+//!
+//! Constant relocation expressions also need an audited wrapper:
+//! [`const_gep_bytes`] builds the constant `getelementptr i8` used by global
+//! initializers.
 
 #![warn(missing_docs)]
 
 use inkwell::basic_block::BasicBlock;
+use inkwell::builder::{Builder, BuilderError};
 use inkwell::context::Context;
 use inkwell::debug_info::{DIExpression, DILocalVariable, DILocation, DebugInfoBuilder};
-use inkwell::types::AsTypeRef;
-use inkwell::values::{AsValueRef, PointerValue};
+use inkwell::types::{AsTypeRef, BasicType};
+use inkwell::values::{AsValueRef, IntValue, PointerValue};
 use llvm_sys::core::LLVMConstGEP2;
 use llvm_sys::debuginfo::LLVMDIBuilderInsertDeclareRecordAtEnd;
 
@@ -48,6 +54,41 @@ pub fn declare_at_end(
             location.as_mut_ptr(),
             block.as_mut_ptr(),
         );
+    }
+}
+
+/// Builds a `getelementptr` instruction for `base`.
+///
+/// `pointee` is the source element type of `base`; `indices` are interpreted
+/// exactly as LLVM's GEP indices. With `inbounds`, every intermediate address
+/// must stay inside the allocation, which is the contract of ordinary field,
+/// index, and checked pointer arithmetic. Wrapping pointer arithmetic passes
+/// `false`, because it intentionally permits addresses outside the allocation.
+///
+/// # Errors
+///
+/// Returns the builder's error when the builder has no insertion point or LLVM
+/// rejects the combination of type, pointer, and indices.
+pub fn gep<'ctx, T: BasicType<'ctx>>(
+    builder: &Builder<'ctx>,
+    base: PointerValue<'ctx>,
+    pointee: T,
+    indices: &[IntValue<'ctx>],
+    inbounds: bool,
+) -> Result<PointerValue<'ctx>, BuilderError> {
+    // SAFETY: the caller supplies a pointer and a source element type from the
+    // same LLVM context, and indices whose types are valid for that element
+    // type. All handles are borrowed for the duration of the call; LLVM
+    // allocates the resulting instruction in the current block and does not
+    // take ownership of the operands. `inbounds` is forwarded exactly as the
+    // caller requested, so wrapping arithmetic never receives an inbounds
+    // promise.
+    unsafe {
+        if inbounds {
+            builder.build_in_bounds_gep(pointee, base, indices, "gep")
+        } else {
+            builder.build_gep(pointee, base, indices, "gep")
+        }
     }
 }
 

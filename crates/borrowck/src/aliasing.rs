@@ -7,6 +7,9 @@
 //! - The callee must never reach storage through a reference whose target is
 //!   unknown: a pointer loaded out of memory could name the pointee through a
 //!   pointer the analysis cannot order.
+//! - The callee must not reach a raw-memory operation, directly or through a
+//!   callee: the raw-pointer contract is outside the reference model, so the
+//!   grant cannot be transferred to an exclusive reference.
 //! - Every call site must prove that its reference arguments have known storage
 //!   and that no exclusive argument may alias another argument.
 //!
@@ -70,6 +73,8 @@ impl CallSites {
 pub(crate) struct BodyFacts {
     /// The body reached storage through a reference with an unknown target.
     pub(crate) unknown: bool,
+    /// The body reaches raw-memory operations, directly or through a callee.
+    pub(crate) touches_raw: bool,
 }
 
 /// The functions whose exclusive-reference parameters the backend may mark
@@ -97,7 +102,6 @@ pub(crate) fn facts(
     mir: &Mir,
     bodies: &FxHashMap<DefId, BodyFacts>,
     calls: &CallSites,
-    effects: &crate::effects::Effects,
 ) -> AliasingFacts {
     let mut noalias = FxHashSet::default();
     for body in mir.bodies() {
@@ -117,8 +121,9 @@ pub(crate) fn facts(
         // instantiation. Until monomorphization proves the contract for each
         // concrete instance, the grant is withheld rather than assumed.
         let monomorphic = body.args().all(|argument| !tcx.contains_param(argument.ty));
-        let clean = bodies.get(&body.owner).is_some_and(|facts| !facts.unknown)
-            && !effects.touches_raw(body.owner);
+        let clean = bodies
+            .get(&body.owner)
+            .is_some_and(|facts| !facts.unknown && !facts.touches_raw);
         if monomorphic && clean && calls.proven(body.owner) {
             noalias.insert(body.owner);
         }

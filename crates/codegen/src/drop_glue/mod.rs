@@ -20,6 +20,7 @@ use inkwell::module::{Linkage, Module};
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use seal_hash::FxHashMap;
 use seal_hir::Hir;
+use seal_llvm_ffi::gep;
 use seal_mono::{DropGlueEntry, GlueChildren, MonoProgram};
 use seal_ty::{Instance, TyId, TyKind};
 
@@ -175,63 +176,38 @@ impl<'a, 'ctx> GlueBuilder<'a, 'ctx> {
     /// Returns the address `offset` bytes past `pointer`.
     ///
     /// Enum variant fields live at absolute offsets from the enum value, given
-    /// by the language layout. Integer arithmetic computes the same address as a
-    /// GEP on the byte payload without an unsafe call.
+    /// by the language layout, so the GEP stays inside the enum allocation.
     fn offset(
         &self,
         pointer: PointerValue<'ctx>,
         offset: u64,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
-        let usize_type = self.mapper.usize_type()?;
-        let base = self.build(
-            self.builder
-                .build_ptr_to_int(pointer, usize_type, "field base"),
-            "field base address",
-        )?;
-        let address = self.build(
-            self.builder
-                .build_int_add(base, usize_type.const_int(offset, false), "field address"),
-            "field address",
-        )?;
+        let offset = self.mapper.usize_type()?.const_int(offset, false);
         self.build(
-            self.builder
-                .build_int_to_ptr(address, self.mapper.pointer(), "field pointer"),
+            gep(
+                self.builder,
+                pointer,
+                self.context.i8_type(),
+                &[offset],
+                true,
+            ),
             "field pointer",
         )
     }
 
     /// Returns the address of `index` elements into an array.
     ///
-    /// The array has a known layout and MIR checks the index, so multiplying by
-    /// the element size stays inside the allocation.
+    /// The array has a known layout and MIR checks the index, so the GEP is
+    /// inbounds and computes the stride from the element type.
     fn index(
         &self,
         pointer: PointerValue<'ctx>,
         index: IntValue<'ctx>,
         element: TyId,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
-        let usize_type = self.mapper.usize_type()?;
-        let element_size = self.mapper.layout(element)?.size();
-        let base = self.build(
-            self.builder
-                .build_ptr_to_int(pointer, usize_type, "array base"),
-            "array base address",
-        )?;
-        let offset = self.build(
-            self.builder.build_int_mul(
-                index,
-                usize_type.const_int(element_size, false),
-                "array offset",
-            ),
-            "array offset",
-        )?;
-        let address = self.build(
-            self.builder.build_int_add(base, offset, "array address"),
-            "array address",
-        )?;
+        let element_type = self.mapper.basic(element)?;
         self.build(
-            self.builder
-                .build_int_to_ptr(address, self.mapper.pointer(), "array element"),
+            gep(self.builder, pointer, element_type, &[index], true),
             "array element address",
         )
     }

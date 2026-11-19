@@ -25,8 +25,9 @@ assembly output do not require an entry point; executables do.
    lowered.
 2. **Lower.** Each body gets one stack slot per local, one LLVM block per MIR
    block, and explicit loads/stores for places. Struct field and tuple element
-   projections use struct GEPs; array indices use a byte offset after the MIR
-   bounds check; dereferences load the reference and continue from its pointee.
+   projections use struct GEPs; array indices use an inbounds element GEP after
+   the MIR bounds check; dereferences load the reference and continue from its
+   pointee.
    Constant evaluation runs before borrow checking and yields a
    `ConstProgram`. Monomorphization adds the reachable statics and const
    allocations to `MonoProgram` in discovery order, including allocations
@@ -156,11 +157,10 @@ The ABI is defined by the language, not by a C header:
   `SwitchInt` on its boolean result. Falling past the last arm enters an
   `Unreachable` block, which exhaustiveness checking already made impossible.
 - Array indexing evaluates the index once, checks it against the length, and
-  then computes `base + index * sizeof(element)`. Inkwell exposes GEP only as an
-  unsafe operation and every compiler crate except the debug bridge forbids
-  `unsafe`, so the address is formed with `ptrtoint`, integer addition, and
-  `inttoptr` after the bounds check. The result addresses the same element and
-  keeps the workspace's safety policy intact.
+  then emits an inbounds element GEP. The GEP bridge is the audited unsafe
+  exception, so the address keeps its provenance and no integer round trip is
+  involved. Every call site is bounds-checked before the GEP, which is what
+  makes the inbounds promise valid.
 - A slice reference is the fat pointer `{ data, length }`. A range borrow checks
   `start <= end` and `end <= source length` in MIR, then forms the data address
   from the source and stores `end - start` as the length. A full `[..]` range
@@ -252,8 +252,8 @@ The ABI is defined by the language, not by a C header:
   nothing at run time. The backend marks an exclusive-reference parameter
   `noalias` only when borrow checking proved the whole program upholds its
   exclusive grant: the function body never reaches storage through a reference
-  of unknown target or a dynamic call, and every call site proves its reference
-  arguments name disjoint storage. The proof covers every call site in the
+  of unknown target, a raw-memory operation, or a dynamic call, and every call
+  site proves its reference arguments name disjoint storage. The proof covers every call site in the
   compiled program; calling an exported function from foreign code with aliasing
   pointers is outside it. A shared `*T` parameter is `readonly`: the type system
   forbids writing through it, so that promise needs no whole-program proof. A
@@ -295,8 +295,10 @@ initializer, and the fourth resolves the pointers inside it.
   reference is the address of its allocation plus a byte offset, emitted as a
   constant `getelementptr i8`; a `*str` or `*[T]` is that pointer plus its
   length; a `*dyn Trait` is the data pointer plus the vtable global collected by
-  monomorphization. `seal-llvm-debug` exposes the constant GEP because inkwell's
+  monomorphization. `seal-llvm-ffi` exposes the constant GEP because inkwell's
   `PointerValue::const_gep` is `unsafe` and `seal-codegen` forbids unsafe code.
+  Runtime field and index projections use the same audited bridge, so they stay
+  GEPs instead of converting through an integer.
 - Constant data is fully initialized at load time. No `llvm.global_ctors` is
   emitted, and no static becomes `thread_local`; a program can therefore start
   without a constructor and keeps the single-threaded global contract.
@@ -340,11 +342,12 @@ legal recursion.
 
 LLVM 19 replaced debug intrinsics with debug records. The C API that appends a
 declaration returns a record, not an instruction, and inkwell 0.11 mis-wraps
-that return value. `seal-llvm-debug` is a deliberately tiny crate that calls the
-record API directly and discards the returned handle. The same crate wraps the
-constant GEP used by global relocations, because inkwell exposes it only as an
-unsafe function. It is the only crate that permits `unsafe`; every other
-compiler crate keeps `unsafe_code = "forbid"`.
+that return value. `seal-llvm-ffi` is a deliberately tiny crate that calls the
+record API directly and discards the returned handle. The same crate wraps GEP
+construction for global relocations, field and index projections, and pointer
+arithmetic, because inkwell exposes those builders only as unsafe functions. It
+is the only crate that permits `unsafe`; every other compiler crate keeps
+`unsafe_code = "forbid"`.
 
 ## Defined runtime behavior
 

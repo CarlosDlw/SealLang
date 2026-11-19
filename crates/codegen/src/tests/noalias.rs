@@ -4,11 +4,73 @@
 //! gated by borrow checking's facts. These tests inspect the declared LLVM
 //! functions directly instead of running the program.
 
-use super::support::{front_end, module_ir};
+use super::support::{front_end, function_ir, module_ir};
 
 /// Runs the front end and returns the IR of every declared function.
 fn ir_of(source: &str) -> String {
     module_ir(&front_end(source))
+}
+
+fn body_of(source: &str, name: &str) -> String {
+    function_ir(&module_ir(&front_end(source)), &format!("seal.{name}"))
+}
+
+#[test]
+fn a_raw_dereference_withholds_noalias() {
+    let body = body_of(
+        "func read(count: *mut i32, source: *raw i32) -> i32 {\n\
+             unsafe { *count = *source; *count }\n\
+         }\n\n\
+         func main() -> i32 {\n\
+             let mut value = 1;\n\
+             let other = 2;\n\
+             read(&mut value, &other as *raw i32)\n\
+         }",
+        "read",
+    );
+    assert!(
+        !body.contains("noalias"),
+        "a raw dereference may alias the exclusive parameter:\n{body}"
+    );
+}
+
+#[test]
+fn a_raw_intrinsic_on_a_known_target_withholds_noalias() {
+    let body = body_of(
+        "func read(count: *mut i32) -> i32 {\n\
+             let pointer = count as *raw i32;\n\
+             unsafe { pointer.read() }\n\
+         }\n\n\
+         func main() -> i32 {\n\
+             let mut value = 41;\n\
+             read(&mut value)\n\
+         }",
+        "read",
+    );
+    assert!(
+        !body.contains("noalias"),
+        "a raw intrinsic must withhold the exclusive grant even with a known target:\n{body}"
+    );
+}
+
+#[test]
+fn a_call_to_an_unsafe_function_withholds_noalias() {
+    let body = body_of(
+        "unsafe func bump() {}\n\n\
+         func wrapper(count: *mut i32) {\n\
+             unsafe { bump(); }\n\
+         }\n\n\
+         func main() -> i32 {\n\
+             let mut value = 1;\n\
+             wrapper(&mut value);\n\
+             value\n\
+         }",
+        "wrapper",
+    );
+    assert!(
+        !body.contains("noalias"),
+        "an unsafe callee must withhold the exclusive grant:\n{body}"
+    );
 }
 
 #[test]

@@ -213,7 +213,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                 .create_debug_location(self.context, 1, 1, scope, None)
         });
         let expression = self.builder.create_expression(Vec::new());
-        seal_llvm_debug::declare_at_end(
+        seal_llvm_ffi::declare_at_end(
             &self.builder,
             storage,
             variable,

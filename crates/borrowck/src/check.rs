@@ -136,7 +136,10 @@ pub(crate) fn check_body(
         };
         unknown |= check_terminator(index, block, &init, &context);
     }
-    BodyFacts { unknown }
+    BodyFacts {
+        unknown,
+        touches_raw: effects.touches_raw(body.owner),
+    }
 }
 
 /// Returns the loans carried by locals that are live at this point.

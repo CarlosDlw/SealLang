@@ -7,6 +7,7 @@
 //! `data()`, which discards it explicitly.
 
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
+use seal_llvm_ffi::gep;
 use seal_mir::{IntrinsicReceiver, Operand};
 use seal_span::Span;
 use seal_ty::{TyId, TyKind};
@@ -154,6 +155,10 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         )
     }
 
+    /// Returns the pointer's address as an integer.
+    ///
+    /// This is the deliberate value observation behind `addr` and
+    /// `expose_addr`; it is not internal address arithmetic for a projection.
     fn raw_address(&self, pointer: &RawPointer<'ctx>) -> Result<IntValue<'ctx>, CodegenError> {
         let data = self.raw_data_pointer(pointer)?;
         let usize = self.mapper.usize_type()?;
@@ -213,32 +218,25 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             amount
         };
         let data = pointer.value.into_pointer_value();
-        let usize = self.mapper.usize_type()?;
-        let base = self.build(
-            self.builder.build_ptr_to_int(data, usize, "pointer base"),
-            "pointer base",
-        )?;
-        let offset = if bytewise {
-            amount
+        let inbounds = !matches!(
+            intrinsic,
+            IntrinsicOp::PtrWrappingAdd
+                | IntrinsicOp::PtrWrappingSub
+                | IntrinsicOp::PtrWrappingOffset
+        );
+        let result = if bytewise {
+            gep(
+                self.builder,
+                data,
+                self.context.i8_type(),
+                &[amount],
+                inbounds,
+            )
         } else {
-            let size = self.mapper.layout(pointer.pointee)?.size();
-            self.build(
-                self.builder
-                    .build_int_mul(amount, usize.const_int(size, false), "pointer offset"),
-                "pointer offset",
-            )?
+            let element = self.mapper.basic(pointer.pointee)?;
+            gep(self.builder, data, element, &[amount], inbounds)
         };
-        let address = self.build(
-            self.builder.build_int_add(base, offset, "pointer address"),
-            "pointer address",
-        )?;
-        Ok(self
-            .build(
-                self.builder
-                    .build_int_to_ptr(address, self.mapper.pointer(), "pointer result"),
-                "pointer result",
-            )?
-            .into())
+        Ok(self.build(result, "pointer result")?.into())
     }
 
     fn raw_offset_from(

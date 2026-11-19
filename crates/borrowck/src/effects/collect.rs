@@ -2,7 +2,8 @@ use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::Hir;
 use seal_mir::{
-    Body, CallTarget, IntrinsicReceiver, Operand, Rvalue, StatementKind, TerminatorKind,
+    Body, CallTarget, IntrinsicReceiver, Operand, Place, Projection, Rvalue, StatementKind,
+    TerminatorKind,
 };
 
 use super::{BodyEffects, GlobalEffects, GlobalPath};
@@ -20,6 +21,7 @@ pub(super) fn collect(
         for statement in &block.statements {
             match &statement.kind {
                 StatementKind::Assign { place, rvalue } => {
+                    mark_raw_place(place, &mut direct);
                     if let Some(path) = GlobalPath::from_place(hir, place) {
                         direct.write(path);
                     }
@@ -33,6 +35,7 @@ pub(super) fn collect(
                     );
                 }
                 StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+                    mark_raw_place(place, &mut direct);
                     // A destructor is user code that may read or write
                     // `static mut` storage. It runs from drop glue rather than
                     // from a call this analysis can follow, so a drop that can
@@ -82,11 +85,13 @@ pub(super) fn collect_rvalue(
         Rvalue::MakeTraitObject { source, .. } => collect_operand(hir, source, direct),
         Rvalue::TraitObjectReborrow { source, place, .. } => {
             collect_operand(hir, source, direct);
+            mark_raw_place(place, direct);
             if let Some(path) = GlobalPath::from_place(hir, place) {
                 direct.read(path);
             }
         }
         Rvalue::Ref { place, kind } => {
+            mark_raw_place(place, direct);
             if let Some(path) = GlobalPath::from_place(hir, place) {
                 if kind.is_exclusive() {
                     direct.write(path);
@@ -102,6 +107,7 @@ pub(super) fn collect_rvalue(
             kind,
             ..
         } => {
+            mark_raw_place(base, direct);
             if let Some(path) = GlobalPath::from_place(hir, base) {
                 if kind.is_exclusive() {
                     direct.write(path);
@@ -114,6 +120,7 @@ pub(super) fn collect_rvalue(
             }
         }
         Rvalue::Discriminant(place) => {
+            mark_raw_place(place, direct);
             if let Some(path) = GlobalPath::from_place(hir, place) {
                 direct.read(path);
             }
@@ -130,14 +137,18 @@ pub(super) fn collect_rvalue(
             args,
             ..
         } => {
-            if let IntrinsicReceiver::Place(place) = receiver
-                && let Some(path) = GlobalPath::from_place(hir, place)
-            {
-                if method.def().receiver == seal_methods::ReceiverMode::Exclusive {
-                    direct.write(path);
-                } else {
-                    direct.read(path);
+            if let IntrinsicReceiver::Place(place) = receiver {
+                mark_raw_place(place, direct);
+                if let Some(path) = GlobalPath::from_place(hir, place) {
+                    if method.def().receiver == seal_methods::ReceiverMode::Exclusive {
+                        direct.write(path);
+                    } else {
+                        direct.read(path);
+                    }
                 }
+            }
+            if method.def().unsafe_op {
+                direct.touches_raw = true;
             }
             if let IntrinsicReceiver::Value(operand) = receiver {
                 collect_operand(hir, operand, direct);
@@ -203,9 +214,25 @@ pub(super) fn collect_rvalue(
 
 /// Records a static mut read when an operand names one.
 fn collect_operand(hir: &Hir, operand: &Operand, direct: &mut GlobalEffects) {
-    if let Some(place) = operand.place()
-        && let Some(path) = GlobalPath::from_place(hir, &place)
+    if let Some(place) = operand.place() {
+        mark_raw_place(&place, direct);
+        if let Some(path) = GlobalPath::from_place(hir, &place) {
+            direct.read(path);
+        }
+    }
+}
+
+/// Marks a body that reaches storage through a raw-pointer dereference.
+///
+/// Raw dereferences are not ordered by the reference model, so a body that
+/// uses one cannot lend its exclusive parameters the `noalias` guarantee even
+/// when the may-name analysis happens to know the target.
+fn mark_raw_place(place: &Place, direct: &mut GlobalEffects) {
+    if place
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, Projection::RawDeref))
     {
-        direct.read(path);
+        direct.touches_raw = true;
     }
 }

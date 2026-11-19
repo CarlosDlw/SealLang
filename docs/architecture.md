@@ -36,7 +36,7 @@ allowed to depend only on crates below it in the list.
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
 | `seal-mono` | Monomorphization: reachable-instance collection from non-generic function roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods or default bodies, vtable collection from code and constant values, drop glue collection per concrete type (destructor instance and children), reachable static and const-allocation collection, recursion, instance, vtable, and glue limits, stable instance and type fingerprints, and global validation (`E7xxx`). |
 | `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, one internal drop glue function per concrete type (vtable slot 0 points at it), vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
-| `seal-llvm-debug` | Isolated FFI bridge for the LLVM 19+ debug-record API that inkwell 0.11 mis-wraps; the only crate that permits `unsafe`. |
+| `seal-llvm-ffi` | Isolated FFI bridge for GEP construction and the LLVM 19+ debug-record API that inkwell 0.11 exposes unsafely or mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -344,8 +344,8 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     `alloca` slots; reads and writes are loads and stores, and calls use the
     checked signature. Aggregates are built with `insertvalue` in declaration
     order, struct fields and tuple elements are projected with struct GEPs, and
-    arrays and slices with a bounds-checked element offset, so evaluation order
-    and layout agree.
+    arrays and slices with a bounds-checked inbounds element GEP, so evaluation
+    order, layout, and pointer provenance agree.
     A slice range is lowered to explicit checks followed by a fat-pointer
     construction; `len` reads the length member.
 54. **The ABI is compiler-owned and per instance.** A non-generic free function
@@ -411,8 +411,9 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
 62. **`noalias` is a proven fact, not a language guarantee.** Borrow checking
     returns the functions for which every exclusive-reference parameter can be
     marked `noalias`: the body never reaches storage through a reference of
-    unknown target, and every call site proves its reference arguments are
-    known and disjoint. A function outside the set keeps the ordinary ABI and
+    unknown target or a raw-memory operation, and every call site proves its
+    reference arguments are known and disjoint. A function outside the set
+    keeps the ordinary ABI and
     remains correct; the attribute never decides whether a program is accepted.
     A shared `*T` parameter is always `readonly`, because the type system
     forbids writing through it. A function reachable through a vtable is always
@@ -780,6 +781,6 @@ cargo build --workspace
 ```
 
 The workspace forbids `unsafe_code` in every compiler crate and warns on missing
-documentation. `seal-llvm-debug` is the single audited exception: it isolates the
-LLVM 19+ debug-record call that inkwell 0.11 wraps incorrectly. A new public item
-without docs fails the build.
+documentation. `seal-llvm-ffi` is the single audited exception: it isolates GEP
+construction and the LLVM 19+ debug-record call that inkwell 0.11 exposes
+unsafely or wraps incorrectly. A new public item without docs fails the build.
