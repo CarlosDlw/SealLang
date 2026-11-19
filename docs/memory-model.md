@@ -534,7 +534,7 @@ and this summary.
   every field projection, checks object safety when a `dyn Trait` is formed,
   records each implicit trait-object coercion with its source and target types,
   runs definite-initialization analysis over move paths, and inserts drop
-  obligations.
+  obligations for the destructor HIR recorded from a validated `impl Drop`.
 - **Drop elaboration** runs on MIR before constant evaluation and borrow
   checking. One drop site expands into the values the type's glue visits: the
   fields of a struct without a destructor, in declaration order, and one unit for

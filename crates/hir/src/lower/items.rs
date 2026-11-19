@@ -159,6 +159,16 @@ impl Lowering<'_> {
             .emit();
             return;
         }
+        if self.hir.definitions().name(self.hir.drop_trait()) == name {
+            self.error(
+                codes::E2066,
+                name_span,
+                "the trait name `Drop` is reserved for a compiler-provided trait",
+            )
+            .help("`Drop` is provided by the compiler; implement it instead of declaring it")
+            .emit();
+            return;
+        }
 
         let definition = self.define(DefData {
             kind: DefKind::Trait,
@@ -493,7 +503,7 @@ impl Lowering<'_> {
 
         if let Some(trait_ref) = trait_ref
             && let Some(protocol) = self.hir.protocol_of_trait(trait_ref.trait_def)
-            && crate::protocols::is_builtin_sequence(self.hir.ty_ctxt(), self_ty)
+            && crate::builtin::protocols::is_builtin_sequence(self.hir.ty_ctxt(), self_ty)
         {
             let display = self.display_ty(self_ty);
             let ty_span = self.ast.ty(declaration.self_ty).span;
@@ -737,7 +747,8 @@ impl Lowering<'_> {
                 continue;
             };
             let protocol = self.hir.protocol_of_trait(trait_def);
-            let order = if protocol.is_some() {
+            let builtin = protocol.is_some() || self.hir.is_drop_trait(trait_def);
+            let order = if builtin {
                 declaration
                     .methods
                     .iter()
@@ -764,7 +775,7 @@ impl Lowering<'_> {
                 let Some(method) = declaration.method(*name) else {
                     continue;
                 };
-                let has_default = if protocol.is_some() {
+                let has_default = if builtin {
                     false
                 } else {
                     self.trait_methods
@@ -777,6 +788,11 @@ impl Lowering<'_> {
                         let help = if protocol.is_some() {
                             format!(
                                 "add `func {}(...)` to this impl block; compiler-provided protocols have no default body",
+                                self.interner.resolve(*name)
+                            )
+                        } else if self.hir.is_drop_trait(trait_def) {
+                            format!(
+                                "add `func {}(...)` to this impl block; `Drop` has no default body",
                                 self.interner.resolve(*name)
                             )
                         } else {
@@ -797,7 +813,7 @@ impl Lowering<'_> {
                         .emit();
                     }
                     Some(&function) => {
-                        if protocol.is_some() {
+                        if builtin {
                             self.check_protocol_method(
                                 method,
                                 function,
@@ -836,6 +852,130 @@ impl Lowering<'_> {
                 )
                 .help("move it into an inherent `impl` block, or declare it in the trait")
                 .emit();
+            }
+        }
+    }
+
+    /// Validates every `impl Drop` and records its destructor.
+    ///
+    /// `Drop` is narrower than an ordinary trait. A type has at most one
+    /// destructor; the implementation must cover exactly the declaration's
+    /// parameters, so it cannot be specialized; a `Copy` type has no destructor,
+    /// because assignment duplicates it; and the destructor runs at runtime, so
+    /// it cannot be a `const func`. A valid implementation is recorded on the
+    /// type context, which is the only place later phases look for one.
+    pub(super) fn validate_drop_impls(&mut self) {
+        let drop_trait = self.hir.drop_trait();
+        let drop_method = self.hir.drop_method();
+        let method_name = self.hir.definitions().name(drop_method);
+        let implementations = self.hir.trait_impls();
+        let mut registered: FxHashMap<DefId, Span> = FxHashMap::default();
+        for implementation in implementations {
+            if implementation.trait_ref.trait_def != drop_trait {
+                continue;
+            }
+            let self_ty = implementation.trait_ref.self_ty;
+            let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(self_ty) else {
+                // `E2015` already rejects an implementation for a type that is
+                // not nominal, so a second diagnostic would only repeat it.
+                continue;
+            };
+            let declaration = self.hir.ty_ctxt().adt(adt).def;
+            let arguments = self.hir.ty_ctxt().substs_args(args).to_vec();
+            let declared_count = self
+                .hir
+                .generics(declaration)
+                .map(|generics| generics.params.len())
+                .unwrap_or(0);
+            let impl_params = self
+                .hir
+                .generics(implementation.def)
+                .map(|generics| generics.params)
+                .unwrap_or_default();
+            let span = self.hir.definitions().get(implementation.def).span;
+            let type_name = self.display_ty(self_ty);
+            let Some(function) = implementation
+                .methods
+                .iter()
+                .find_map(|(name, function)| (*name == method_name).then_some(*function))
+            else {
+                // The missing method was already reported by
+                // `validate_trait_impls`.
+                continue;
+            };
+
+            let covers = {
+                let tcx = self.hir.ty_ctxt();
+                impl_params.len() == declared_count
+                    && arguments.len() == declared_count
+                    && arguments
+                        .iter()
+                        .zip(&impl_params)
+                        .all(|(argument, parameter)| {
+                            matches!(
+                                tcx.kind(*argument),
+                                TyKind::Param(param) if param == parameter.param
+                            )
+                        })
+            };
+            if !covers {
+                self.error(
+                    codes::E3067,
+                    span,
+                    format!(
+                        "`impl Drop for {type_name}` does not cover the whole type declaration"
+                    ),
+                )
+                .help(format!(
+                    "write `impl Drop for {type_name}` with exactly the declaration's parameters; a destructor cannot be specialized"
+                ))
+                .emit();
+                continue;
+            }
+            if let Some(previous) = registered.insert(declaration, span) {
+                self.error(
+                    codes::E3067,
+                    span,
+                    format!("`{type_name}` implements `Drop` more than once"),
+                )
+                .secondary(previous, "the first implementation is here")
+                .help("a type has exactly one destructor; remove one of the implementations")
+                .emit();
+                continue;
+            }
+
+            let environment = self.hir.param_env(implementation.def);
+            if self.hir.ty_ctxt().is_copy_with(self_ty, &environment) {
+                self.error(
+                    codes::E3068,
+                    span,
+                    format!("`{type_name}` cannot implement `Drop` because it is `Copy`"),
+                )
+                .help(
+                    "assignment duplicates a `Copy` value, so it cannot own a destructor; remove `Copy` from the type",
+                )
+                .emit();
+                continue;
+            }
+
+            // `const func` is a file-scope item today, so an impl method can
+            // never be `const`. The check stays as the guard for the day the
+            // modifier reaches impl blocks: a destructor could never run during
+            // compile-time evaluation, which has no scope to leave.
+            if self.hir.body_of(function).is_some_and(|body| body.is_const) {
+                let name_span = self.hir.definitions().get(function).name_span;
+                self.error(
+                    codes::E3069,
+                    name_span,
+                    "a destructor cannot be a `const func`",
+                )
+                .help("`drop` runs at runtime and may touch mutable state; remove `const`")
+                .emit();
+                continue;
+            }
+
+            if self.hir.ty_ctxt().set_drop_method(adt, function).is_some() {
+                self.dcx.bug("a validated `impl Drop` was recorded twice");
             }
         }
     }

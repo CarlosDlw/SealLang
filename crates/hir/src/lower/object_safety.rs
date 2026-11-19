@@ -55,6 +55,18 @@ impl Lowering<'_> {
             let TyKind::Dyn { trait_def, .. } = self.hir.ty_ctxt().kind(usage.ty) else {
                 continue;
             };
+            if self.hir.is_drop_trait(trait_def) {
+                self.error(
+                    codes::E3066,
+                    usage.span,
+                    "the trait `Drop` cannot be used as a trait object",
+                )
+                .help(
+                    "implement `Drop` for the concrete type; destructors are not dispatched through `dyn`",
+                )
+                .emit();
+                continue;
+            }
             let mut visiting = FxHashSet::default();
             let violations = self.object_safety(trait_def, &mut cache, &mut visiting);
             if violations.is_empty() {

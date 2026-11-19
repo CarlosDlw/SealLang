@@ -108,6 +108,8 @@ impl<'a> Lowering<'a> {
             let definition = hir.protocol_trait(protocol);
             traits.insert(hir.definitions().name(definition), definition);
         }
+        let drop_trait = hir.drop_trait();
+        traits.insert(hir.definitions().name(drop_trait), drop_trait);
         Self {
             ast,
             dcx,
@@ -152,6 +154,7 @@ impl<'a> Lowering<'a> {
         self.validate_supertraits();
         self.validate_coherence();
         self.validate_trait_impls();
+        self.validate_drop_impls();
         self.lower_value_bodies();
         self.lower_bodies();
         self.lower_trait_bodies();

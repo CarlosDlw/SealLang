@@ -27,13 +27,13 @@
 #![warn(missing_docs)]
 
 mod body;
+mod builtin;
 mod expr;
 mod generics;
 mod id;
 mod lower;
 mod pattern;
 mod primitives;
-mod protocols;
 mod res;
 mod traits;
 
@@ -41,12 +41,12 @@ mod traits;
 mod tests;
 
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
+pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
-pub use protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use res::Res;
 pub use traits::TraitMethodLookup;
 
@@ -99,7 +99,7 @@ pub struct Hir {
     adts: FxHashMap<DefId, AdtId>,
     variants: FxHashMap<(DefId, Symbol), VariantIdx>,
     traits: FxHashMap<Symbol, DefId>,
-    protocols: Option<ProtocolDefs>,
+    builtin: Option<builtin::BuiltinTraits>,
     trait_impls: traits::TraitImpls,
     /// Inherent associated functions, in declaration order per type and name.
     ///
@@ -277,8 +277,28 @@ impl Hir {
     /// Panics only if the HIR was constructed without installing its built-in
     /// protocols, which is an internal invariant violation.
     pub fn protocol_defs(&self) -> ProtocolDefs {
-        self.protocols
-            .expect("every HIR installs the built-in protocols")
+        self.builtin_traits().protocols
+    }
+
+    /// Returns the `Drop` trait declaration installed into every HIR.
+    pub fn drop_trait(&self) -> DefId {
+        self.builtin_traits().drop.trait_def
+    }
+
+    /// Returns the `Drop::drop` method declaration installed into every HIR.
+    pub fn drop_method(&self) -> DefId {
+        self.builtin_traits().drop.method
+    }
+
+    /// Returns `true` when `def` is the `Drop` trait declaration.
+    pub fn is_drop_trait(&self, def: DefId) -> bool {
+        self.drop_trait() == def
+    }
+
+    fn builtin_traits(&self) -> &builtin::BuiltinTraits {
+        self.builtin
+            .as_ref()
+            .expect("every HIR installs its built-in traits")
     }
 
     /// Returns the trait definition for `protocol`.
@@ -288,18 +308,18 @@ impl Hir {
 
     /// Returns the protocol owned by the trait definition `def`.
     pub fn protocol_of_trait(&self, def: DefId) -> Option<Protocol> {
-        self.protocols?.protocol_of_trait(def)
+        self.builtin.as_ref()?.protocols.protocol_of_trait(def)
     }
 
     /// Returns the protocol and method named by a method definition.
     pub fn protocol_method_of(&self, def: DefId) -> Option<(Protocol, ProtocolMethod)> {
-        self.protocols?.protocol_method_of(def)
+        self.builtin.as_ref()?.protocols.protocol_method_of(def)
     }
 
     /// Returns `true` when `def` is a compiler-provided protocol definition or
     /// one of its generic parameters.
     pub fn is_builtin_def(&self, def: DefId) -> bool {
-        if self.protocol_of_trait(def).is_some() {
+        if self.protocol_of_trait(def).is_some() || self.is_drop_trait(def) {
             return true;
         }
         self.definitions
@@ -461,14 +481,14 @@ impl Hir {
             adts: FxHashMap::default(),
             variants: FxHashMap::default(),
             traits: FxHashMap::default(),
-            protocols: None,
+            builtin: None,
             trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
             dyn_types: Vec::new(),
         };
-        hir.protocols = Some(protocols::install(&mut hir, interner));
+        hir.builtin = Some(builtin::install(&mut hir, interner));
         hir
     }
 

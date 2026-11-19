@@ -692,7 +692,7 @@ runtime indices make the whole static affected.
   shape. Add parser, HIR, typeck, MIR, borrowck,
   codegen, and end-to-end coverage.
 - **New operator protocol.** Add the compiler-owned trait and its methods in
-  `seal-hir::protocols`, record the selected call in `TypeckResults`, and lower
+  `seal-hir::builtin`, record the selected call in `TypeckResults`, and lower
   it through the existing call/reference/place machinery. Reserve the trait
   name, reject implementations on compiler-owned types, and add static,
   symbolic, dynamic, borrowck, and end-to-end coverage. Do not add a parallel

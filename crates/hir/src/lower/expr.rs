@@ -358,7 +358,19 @@ impl Lowering<'_> {
         }
         let Some(&type_def) = self.types.get(&type_name) else {
             let missing = self.interner.resolve(type_name);
-            if self.traits.contains_key(&type_name) {
+            if self
+                .traits
+                .get(&type_name)
+                .is_some_and(|trait_def| self.hir.is_drop_trait(*trait_def))
+            {
+                self.error(
+                    codes::E3065,
+                    type_span,
+                    "the destructor cannot be called directly",
+                )
+                .help("the compiler runs `drop` when the value goes out of scope; remove this call")
+                .emit();
+            } else if self.traits.contains_key(&type_name) {
                 self.error(
                     codes::E2027,
                     type_span,

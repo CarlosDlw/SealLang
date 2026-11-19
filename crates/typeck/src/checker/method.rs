@@ -594,6 +594,19 @@ impl Checker<'_> {
             span,
             expected,
         } = call;
+        let drop_call = match &target {
+            UserMethod::Concrete { source, .. } => {
+                matches!(source, MethodSource::Trait(trait_def) if self.hir.is_drop_trait(*trait_def))
+            }
+            UserMethod::Bound { method, .. } => method.def == self.hir.drop_method(),
+        };
+        if drop_call {
+            self.report_drop_call(span);
+            for arg in args {
+                self.infer_expr(*arg, None, flow);
+            }
+            return self.error_ty();
+        }
         match target {
             UserMethod::Concrete {
                 function,
@@ -1084,6 +1097,21 @@ impl Checker<'_> {
                 true
             }
         }
+    }
+
+    /// Reports a direct call to `Drop::drop`.
+    ///
+    /// The compiler invokes the destructor when the value's scope ends. Naming
+    /// it would run it while the value is still live, releasing the same
+    /// resource twice, so the call is rejected instead.
+    pub(super) fn report_drop_call(&self, span: Span) {
+        self.error(
+            codes::E3065,
+            span,
+            "the destructor cannot be called directly",
+        )
+        .help("the compiler runs `drop` when the value goes out of scope; remove this call")
+        .emit();
     }
 
     pub(super) fn report_missing_method(&self, receiver_ty: TyId, name: Symbol, span: Span) {

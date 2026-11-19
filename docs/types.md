@@ -873,6 +873,37 @@ Value>` uses the existing vtable dispatch. `IntoIterator` is not dyn-compatible
 because `iter` takes `self` by value, so forming `dyn IntoIterator` is `E2065`
 before monomorphization.
 
+## The `Drop` trait
+
+`Drop` is the compiler-owned trait that decides what happens when a value's
+scope ends. It is installed like the protocols and cannot be redeclared
+(`E2066`):
+
+```text
+Drop { func drop(self: *mut Self); }
+```
+
+The receiver is `*mut Self`, the method takes no other parameter, and the return
+type is `()`; any other shape is `E2024`. An implementation must cover the whole
+declaration: `impl Drop for Pair<T>` is valid, while a specialized
+`impl Drop for Pair<i32>` and a second implementation for the same type are
+`E3067`. A `Copy` type cannot implement `Drop` (`E3068`), because assignment
+would duplicate the value and its destructor, and a `const func drop` is
+`E3069`, because a destructor only runs while the program runs.
+
+The trait is not a requirement a generic function can ask for: a bound or a
+supertrait naming `Drop` is `E3064`, and `*dyn Drop` is `E3066`. The destructor
+is not part of the callable interface either: `value.drop()` and
+`Drop::drop(&mut value)` are `E3065`, because the compiler has already decided
+when the value is released.
+
+A validated implementation is recorded on the type context. The drop glue of
+the concrete type calls the destructor first and then drops the fields that need
+dropping, in the order the memory model defines. Generic code uses the
+destructor without naming it: monomorphization instantiates the recorded method
+for each concrete argument list, and code generation calls that instance from
+the glue.
+
 ## Methods
 
 A method call has the postfix form `.name(arguments)` and resolves from the

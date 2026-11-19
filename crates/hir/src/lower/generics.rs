@@ -248,6 +248,19 @@ impl Lowering<'_> {
 
     fn lower_trait_bound(&mut self, target: TyId, path: &TraitPath) -> Option<Bound> {
         let (trait_def, args) = self.lower_bound_trait_path(path)?;
+        if self.hir.is_drop_trait(trait_def) {
+            let name = self.interner.resolve(path.name);
+            self.error(
+                codes::E3064,
+                path.name_span,
+                format!("`{name}` cannot be used as a trait bound"),
+            )
+            .help(
+                "implement `Drop` for the concrete type instead; the destructor runs automatically when a value goes out of scope",
+            )
+            .emit();
+            return None;
+        }
         Some(Bound::Trait(TraitRef::new(trait_def, target, args)))
     }
 

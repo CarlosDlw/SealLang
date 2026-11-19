@@ -6,14 +6,11 @@
 //! collected, so ordinary trait lookup, impl validation, method dispatch, and
 //! object-safety checks can use them without a prelude or a second type system.
 
-use seal_def::{DefData, DefId, DefKind};
-use seal_span::Span;
-use seal_symbol::{Interner, Symbol};
-use seal_ty::{
-    GenericParamDef, GenericSignature, Generics, RefKind, TraitDef, TraitMethodDef,
-    TraitMethodReceiver, TyCtxt, TyId, TyKind,
-};
+use seal_def::DefId;
+use seal_symbol::Interner;
+use seal_ty::{RefKind, TraitMethodReceiver, TyCtxt, TyId, TyKind};
 
+use super::{build_method, create_trait, install_trait_definition, param_ty};
 use crate::Hir;
 
 /// One compiler-provided protocol.
@@ -201,7 +198,7 @@ struct IndexMutDefs {
 }
 
 fn install_iterator(hir: &mut Hir, interner: &Interner) -> IteratorDefs {
-    let (trait_def, generics) = create_trait(hir, interner, Protocol::Iterator, &["T"]);
+    let (trait_def, generics) = create_trait(hir, interner, Protocol::Iterator.name(), &["T"]);
     let bool_ty = hir.ty_ctxt().bool_ty();
     let (has_next, has_next_def) = build_method(
         hir,
@@ -228,7 +225,7 @@ fn install_iterator(hir: &mut Hir, interner: &Interner) -> IteratorDefs {
     install_trait_definition(
         hir,
         interner,
-        Protocol::Iterator,
+        Protocol::Iterator.name(),
         trait_def,
         generics,
         vec![has_next_def, next_def],
@@ -242,7 +239,8 @@ fn install_iterator(hir: &mut Hir, interner: &Interner) -> IteratorDefs {
 }
 
 fn install_into_iterator(hir: &mut Hir, interner: &Interner) -> IntoIteratorDefs {
-    let (trait_def, generics) = create_trait(hir, interner, Protocol::IntoIterator, &["I", "T"]);
+    let (trait_def, generics) =
+        create_trait(hir, interner, Protocol::IntoIterator.name(), &["I", "T"]);
     let (iter, iter_def) = build_method(
         hir,
         interner,
@@ -255,7 +253,7 @@ fn install_into_iterator(hir: &mut Hir, interner: &Interner) -> IntoIteratorDefs
     install_trait_definition(
         hir,
         interner,
-        Protocol::IntoIterator,
+        Protocol::IntoIterator.name(),
         trait_def,
         generics,
         vec![iter_def],
@@ -265,7 +263,7 @@ fn install_into_iterator(hir: &mut Hir, interner: &Interner) -> IntoIteratorDefs
 }
 
 fn install_index(hir: &mut Hir, interner: &Interner) -> IndexDefs {
-    let (trait_def, generics) = create_trait(hir, interner, Protocol::Index, &["I", "T"]);
+    let (trait_def, generics) = create_trait(hir, interner, Protocol::Index.name(), &["I", "T"]);
     let return_ty = hir
         .ty_ctxt()
         .ref_ty_with(RefKind::Shared, param_ty(hir, trait_def, 2));
@@ -283,7 +281,7 @@ fn install_index(hir: &mut Hir, interner: &Interner) -> IndexDefs {
     install_trait_definition(
         hir,
         interner,
-        Protocol::Index,
+        Protocol::Index.name(),
         trait_def,
         generics,
         vec![index_def],
@@ -293,7 +291,7 @@ fn install_index(hir: &mut Hir, interner: &Interner) -> IndexDefs {
 }
 
 fn install_index_mut(hir: &mut Hir, interner: &Interner) -> IndexMutDefs {
-    let (trait_def, generics) = create_trait(hir, interner, Protocol::IndexMut, &["I", "T"]);
+    let (trait_def, generics) = create_trait(hir, interner, Protocol::IndexMut.name(), &["I", "T"]);
     let return_ty = hir
         .ty_ctxt()
         .ref_ty_with(RefKind::Exclusive, param_ty(hir, trait_def, 2));
@@ -311,7 +309,7 @@ fn install_index_mut(hir: &mut Hir, interner: &Interner) -> IndexMutDefs {
     install_trait_definition(
         hir,
         interner,
-        Protocol::IndexMut,
+        Protocol::IndexMut.name(),
         trait_def,
         generics,
         vec![index_mut_def],
@@ -321,109 +319,4 @@ fn install_index_mut(hir: &mut Hir, interner: &Interner) -> IndexMutDefs {
         trait_def,
         index_mut,
     }
-}
-
-/// Creates a protocol trait, its implicit `Self`, and its declared parameters.
-fn create_trait(
-    hir: &mut Hir,
-    interner: &Interner,
-    protocol: Protocol,
-    arguments: &[&str],
-) -> (DefId, Generics) {
-    let name = interner.intern(protocol.name());
-    let trait_def = hir.define(DefData {
-        kind: DefKind::Trait,
-        name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: None,
-        mutable: false,
-    });
-
-    let mut params = Vec::with_capacity(arguments.len() + 1);
-    params.push(define_param(hir, trait_def, interner.intern("Self"), 0).as_self());
-    for (index, argument) in arguments.iter().enumerate() {
-        params.push(define_param(
-            hir,
-            trait_def,
-            interner.intern(argument),
-            (index + 1) as u32,
-        ));
-    }
-    let generics = Generics::new(trait_def, None, params);
-    hir.ty_ctxt_mut().insert_generics(generics.clone());
-    hir.insert_trait_name(name, trait_def);
-    (trait_def, generics)
-}
-
-/// Creates one trait method definition, including its own empty generics.
-fn build_method(
-    hir: &mut Hir,
-    interner: &Interner,
-    trait_def: DefId,
-    name: &str,
-    receiver: TraitMethodReceiver,
-    params: Vec<TyId>,
-    ret: TyId,
-) -> (DefId, TraitMethodDef) {
-    let name = interner.intern(name);
-    let method_def = hir.define(DefData {
-        kind: DefKind::TraitMethod,
-        name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: Some(trait_def),
-        mutable: false,
-    });
-    let generics = Generics::new(method_def, Some(trait_def), Vec::new());
-    hir.ty_ctxt_mut().insert_generics(generics.clone());
-    let definition = TraitMethodDef::new(
-        method_def,
-        name,
-        GenericSignature::new(params, ret),
-        generics,
-        Some(receiver),
-    )
-    .with_body(false);
-    (method_def, definition)
-}
-
-/// Stores the completed semantic trait declaration.
-fn install_trait_definition(
-    hir: &mut Hir,
-    interner: &Interner,
-    protocol: Protocol,
-    trait_def: DefId,
-    generics: Generics,
-    methods: Vec<TraitMethodDef>,
-) {
-    let name = interner.intern(protocol.name());
-    hir.ty_ctxt_mut().insert_trait_def(TraitDef::new(
-        trait_def,
-        name,
-        generics,
-        Vec::new(),
-        methods,
-    ));
-}
-
-fn define_param(hir: &mut Hir, owner: DefId, name: Symbol, index: u32) -> GenericParamDef {
-    let definition = hir.define(DefData {
-        kind: DefKind::GenericParam,
-        name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: Some(owner),
-        mutable: false,
-    });
-    let param = hir.ty_ctxt_mut().push_param(definition, owner, index, name);
-    GenericParamDef::new(definition, param, name, index)
-}
-
-fn param_ty(hir: &Hir, trait_def: DefId, index: usize) -> TyId {
-    let generics = hir
-        .ty_ctxt()
-        .generics(trait_def)
-        .expect("protocol trait has generics");
-    hir.ty_ctxt().param_ty(generics.params[index].param)
 }

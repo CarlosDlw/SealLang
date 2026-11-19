@@ -2418,6 +2418,88 @@ Wrap the access in `unsafe { ... }`, or use an immutable `static` when the value
 does not need to change.",
 };
 
+/// `Drop` is used as a trait bound or supertrait.
+pub const E3064: ErrorCode = ErrorCode {
+    code: "E3064",
+    title: "Drop cannot be used as a trait bound",
+    explanation: "\
+`Drop` is not a requirement a generic function can ask for. The destructor is
+tied to one concrete declaration and is called automatically when a value of
+that type goes out of scope; a bound would promise the compiler could call it
+for a value whose declaration it does not know yet.
+
+Implement `Drop` for the concrete type. The destructor is then selected by the
+compiler; no bound or generic function can name it.",
+};
+
+/// `Drop::drop` is called like an ordinary method.
+pub const E3065: ErrorCode = ErrorCode {
+    code: "E3065",
+    title: "the destructor cannot be called directly",
+    explanation: "\
+`Drop::drop` is not part of the callable interface of a type. It takes a raw
+mutable pointer to a value the compiler has already decided to release, and
+calling it by hand would run the destructor while the value is still alive,
+leading to a second run when the value actually goes out of scope.
+
+Remove the call and let the end of the value's scope run the destructor at the
+usual time.",
+};
+
+/// `Drop` is used as a trait object.
+pub const E3066: ErrorCode = ErrorCode {
+    code: "E3066",
+    title: "Drop cannot be used as a trait object",
+    explanation: "\
+A destructor is selected from the concrete declaration of the value being
+released, so it cannot be dispatched through a `dyn Drop` table. `Drop` also
+declares a raw-pointer receiver, which is not a dispatchable calling
+convention for a trait object.
+
+Implement `Drop` for the concrete type, or use an ordinary trait for the
+behavior a `dyn` value should expose.",
+};
+
+/// An `impl Drop` is specialized or duplicated.
+pub const E3067: ErrorCode = ErrorCode {
+    code: "E3067",
+    title: "invalid Drop implementation",
+    explanation: "\
+Every aggregate has at most one destructor. The implementation must also cover
+the whole type declaration: `impl Drop for Pair<T>` is valid for a `Pair` with
+one parameter, but `impl Drop for Pair<i32>` and `impl<T> Drop for Pair<T, T>`
+are not, because a destructor cannot be selected per instantiation.
+
+Write one `impl Drop for TypeName<...>` that repeats the declaration's
+parameters in order, and remove any other implementation for the same type.",
+};
+
+/// A `Copy` type implements `Drop`.
+pub const E3068: ErrorCode = ErrorCode {
+    code: "E3068",
+    title: "a Copy type cannot implement Drop",
+    explanation: "\
+A `Copy` value is duplicated by assignment, by passing it to a function, and by
+returning it. Each duplicate would run the same destructor, so the resource the
+destructor releases would be released more than once.
+
+Remove `Copy` from the type and pass references where a copy was used, or keep
+the type `Copy` and release its resource without a destructor.",
+};
+
+/// A destructor is declared as a const function.
+pub const E3069: ErrorCode = ErrorCode {
+    code: "E3069",
+    title: "a destructor cannot be const",
+    explanation: "\
+A destructor runs when a value goes out of scope, which only happens while the
+program is running. Compile-time evaluation has no scope to leave, so a
+`const func drop` could never run at the time it exists for.
+
+Remove `const` from the destructor. If the value also needs a compile-time
+constructor, give it an ordinary `const func` with a different name.",
+};
+
 /// Constant evaluation failed.
 pub const E4001: ErrorCode = ErrorCode {
     code: "E4001",
@@ -2796,11 +2878,11 @@ pub static ALL: &[ErrorCode] = &[
     E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035,
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
-    E3063, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012,
-    E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025,
-    E4026, E4027, E4028, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003,
-    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E4001, E4002, E4003, E4004, E4005, E4006,
+    E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019,
+    E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E5001, E5002, E5003, E5004,
+    E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001,
+    E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2929,6 +3011,12 @@ mod tests {
             ("E3060", "exactly one value for the whole program"),
             ("E3062", "no mutable memory to hand out"),
             ("E3063", "inside an `unsafe { ... }` block"),
+            ("E3064", "not a requirement a generic function can ask for"),
+            ("E3065", "not part of the callable interface"),
+            ("E3066", "selected from the concrete declaration"),
+            ("E3067", "at most one destructor"),
+            ("E3068", "duplicated by assignment"),
+            ("E3069", "no scope to leave"),
             ("E4001", "fallback that names the item"),
             ("E4002", "dividing by zero"),
             ("E4003", "remainder operation is undefined"),
@@ -3041,7 +3129,8 @@ mod tests {
                 "E3028", "E3029", "E3030", "E3031", "E3032", "E3033", "E3034", "E3035", "E3036",
                 "E3037", "E3038", "E3039", "E3040", "E3041", "E3042", "E3043", "E3044", "E3045",
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
-                "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063",
+                "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
+                "E3065", "E3066", "E3067", "E3068", "E3069",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is
