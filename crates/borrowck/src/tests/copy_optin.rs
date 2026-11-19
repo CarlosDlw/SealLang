@@ -25,6 +25,22 @@ fn copying_an_adt_with_a_reference_keeps_its_loan() {
 }
 
 #[test]
+fn copying_an_adt_with_an_exclusive_reference_keeps_its_loan() {
+    let fixture = check_errors(
+        "struct Holder { pointer: *mut i32 } \
+         impl Copy for Holder {} \
+         func main() -> i32 { \
+           let mut value = 1; \
+           let holder = Holder { pointer: &mut value }; \
+           let copy = holder; \
+           value = 2; \
+           *copy.pointer + value \
+         }",
+    );
+    fixture.expect("E5008", "exclusively borrowed");
+}
+
+#[test]
 fn copying_an_adt_with_a_raw_pointer_does_not_keep_a_loan() {
     check_clean(
         "struct Holder { pointer: *raw mut i32 } \

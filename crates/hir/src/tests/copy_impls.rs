@@ -536,3 +536,83 @@ fn an_associated_function_in_a_copy_impl_is_rejected() {
     let _ = fixture.lower();
     fixture.expect("E2023", "does not declare `extra`");
 }
+
+#[test]
+fn a_generic_enum_implementation_requires_a_copy_bound() {
+    let (fixture, hir) =
+        lower_clean("enum Option<T> { Some(T), None } impl<T: Copy> Copy for Option<T> {}");
+    let option = aggregate(&fixture, &hir, "Option");
+    assert!(hir.ty_ctxt().copy_impl(option).is_some());
+
+    let fixture = Fixture::new("enum Option<T> { Some(T), None } impl<T> Copy for Option<T> {}");
+    let hir = fixture.lower();
+    let option = aggregate(&fixture, &hir, "Option");
+    fixture.expect("E3077", "variant `Some`");
+    assert!(hir.ty_ctxt().copy_impl(option).is_none());
+}
+
+#[test]
+fn scalar_and_reference_fields_are_copy_regardless_of_the_pointee() {
+    let (fixture, hir) = lower_clean(
+        "trait Shape {} \
+         struct Mixed { \
+           flag: bool, letter: char, unit: (), \
+           text: *str, numbers: *[i32], shape: *dyn Shape, \
+           text_mut: *mut str, shape_mut: *mut dyn Shape, \
+         } \
+         impl Copy for Mixed {}",
+    );
+    let mixed = aggregate(&fixture, &hir, "Mixed");
+    assert!(hir.ty_ctxt().copy_impl(mixed).is_some());
+}
+
+#[test]
+fn recursion_through_references_is_copy() {
+    for field in ["*Node", "*mut Node"] {
+        let source = format!("struct Node {{ next: {field} }} impl Copy for Node {{}}");
+        let (fixture, hir) = lower_clean(&source);
+        let node = aggregate(&fixture, &hir, "Node");
+        assert!(
+            hir.ty_ctxt().copy_impl(node).is_some(),
+            "field type {field}"
+        );
+    }
+}
+
+#[test]
+fn arrays_and_tuples_of_copy_aggregates_are_copy() {
+    let (fixture, hir) = lower_clean(
+        "struct Inner { value: i32 } \
+         struct Holder { values: [Inner; 2], pair: (Inner, bool) } \
+         impl Copy for Holder {} \
+         impl Copy for Inner {}",
+    );
+    for name in ["Inner", "Holder"] {
+        let adt = aggregate(&fixture, &hir, name);
+        assert!(
+            hir.ty_ctxt().copy_impl(adt).is_some(),
+            "`{name}` must be registered"
+        );
+    }
+}
+
+#[test]
+fn comments_inside_a_copy_impl_have_no_effect() {
+    let (fixture, hir) = lower_clean(
+        "/// A point that may be duplicated.\n\
+         struct Point { x: i32 }\n\
+         /// Nothing to declare: `Copy` is a marker.\n\
+         impl Copy for Point {\n\
+           // The block stays empty.\n\
+         }",
+    );
+    let point = aggregate(&fixture, &hir, "Point");
+    assert!(hir.ty_ctxt().copy_impl(point).is_some());
+}
+
+#[test]
+fn a_copy_impl_without_a_body_is_a_syntax_error() {
+    let fixture = Fixture::new("struct Point { x: i32 } impl Copy for Point;");
+    let _ = fixture.lower();
+    fixture.expect("E1002", "expected `{`");
+}
