@@ -247,6 +247,19 @@ The ABI is defined by the language, not by a C header:
 - `*str` is the fat pointer `{ data, length }`. A literal becomes a private,
   unnamed constant array plus its byte length; no run-time terminator scan is
   needed.
+- A `*raw T` or `*raw mut T` has the same one-word representation as a
+  reference when the pointee is sized, and the same two-word `{ data, metadata }`
+  representation when the pointee is `str`, a slice, or a trait object. The kind
+  is a static permission; copying the value copies the pointer, not the
+  pointee. `addr`, `expose_addr`, `with_addr`, explicit casts, equality, and
+  `offset_from` are the only operations that observe the address numerically.
+- Raw pointer intrinsics are lowered by `raw_intrinsic.rs`. `read` and
+  `write` use loads and stores; the unaligned forms set alignment 1;
+  `add`/`sub`/`offset`/`byte_*` use an inbounds GEP on a thin pointer and
+  `wrapping_*` uses the non-inbounds form; `copy` calls `llvm.memmove` and
+  `copy_nonoverlapping` calls `llvm.memcpy`. A fat pointer is never advanced
+  directly: `data()` extracts the data word first. The raw dereference itself is
+  a `Projection::RawDeref`; writing through it emits no drop of the old value.
 - A `*T` or `*mut T` is one pointer-sized word: both kinds share a
   representation and differ only in the checks they enable, so the kind costs
   nothing at run time. The backend marks an exclusive-reference parameter
@@ -295,7 +308,9 @@ initializer, and the fourth resolves the pointers inside it.
   reference is the address of its allocation plus a byte offset, emitted as a
   constant `getelementptr i8`; a `*str` or `*[T]` is that pointer plus its
   length; a `*dyn Trait` is the data pointer plus the vtable global collected by
-  monomorphization. `seal-llvm-ffi` exposes the constant GEP because inkwell's
+  monomorphization. The same encoding covers `RawPtr`, `RawSlice`, `RawStr`,
+  `RawStrData`, and `RawDyn`; a raw string data pointer with an offset becomes
+  a constant GEP into the interned string image. `seal-llvm-ffi` exposes the constant GEP because inkwell's
   `PointerValue::const_gep` is `unsafe` and `seal-codegen` forbids unsafe code.
   Runtime field and index projections use the same audited bridge, so they stay
   GEPs instead of converting through an integer.
@@ -411,6 +426,9 @@ describe the surrounding statement.
   the elements. The element loop runs over the shorter length, so a differing
   length never reads past either value, and a zero-length view compares equal to
   another zero-length view.
+- A raw pointer compares the data word only. Its length or vtable metadata does
+  not participate, and the pointee is never read. The comparison is an address
+  observation, not a structural comparison.
 - Float fields and elements use ordered comparison, so `NaN` never equals itself
   inside an aggregate either.
 
@@ -418,6 +436,33 @@ The operands are read, not moved: MIR lowers them as `Operand::Copy` even for a
 non-`Copy` aggregate, and code generation loads the value without taking
 ownership. The value's owner still drops it exactly once, and `a == b` leaves
 both operands usable.
+
+## Raw memory operations
+
+Raw pointer code generation keeps the source contract visible in the IR:
+
+- A raw dereference is a `Projection::RawDeref`, not a reference dereference.
+  A read loads the pointee type; a write stores it and deliberately does not
+  emit a drop of the previous value.
+- `read` and `write` use the natural alignment of the pointee. `read_unaligned`
+  and `write_unaligned` set alignment 1 on the instruction, so a misaligned
+  address is not undefined behavior at the LLVM level.
+- `add`, `sub`, `offset`, `byte_add`, and `byte_offset` use inbounds GEPs and
+  are only valid within the allocation. `wrapping_add`, `wrapping_sub`, and
+  `wrapping_offset` use the non-inbounds form; computing the value is safe, but
+  an access through an out-of-range pointer remains the caller's contract.
+- `copy` emits `llvm.memmove` and permits overlap; `copy_nonoverlapping` emits
+  `llvm.memcpy` and requires disjoint regions. Both copy `count * size(T)`
+  bytes and neither drops or initializes language values.
+- `is_null`, `addr`, `expose_addr`, and `with_addr` are ordinary value
+  observations. `addr` and `expose_addr` use `ptrtoint`; `with_addr` uses
+  `inttoptr` and preserves the metadata word of a fat pointer. `data()` extracts
+  the data word and discards metadata. A field, index, or pointer offset never
+  round-trips through an integer; that is what preserves provenance under the
+  optimizer.
+- Raw pointer equality lowers to an address comparison of the data words; the
+  metadata is ignored. `offset_from` subtracts the data addresses and divides by
+  the pointee size, returning zero for a zero-sized pointee.
 
 ## Native runtime
 
@@ -496,7 +541,8 @@ The end-to-end tests compile and run `examples/006_structs.sl`,
 `examples/011_methods.sl`, `examples/012_user_methods.sl`,
 `examples/013_method_borrows.sl`, `examples/014_method_namespaces.sl`,
 `examples/026_tuples.sl`, and `examples/032_trait_objects.sl` through
-`examples/034_trait_objects_generic.sl` in debug and release, check DWARF
+`examples/034_trait_objects_generic.sl` in debug and release, `examples/043_raw_pointers.sl`
+through the codegen raw-pointer suite, check DWARF
 sections and names, exercise object and assembly
 output without `main`, verify entry-point diagnostics, confirm panic messages
 and status 101 for zero divisors, signed overflow in both `/` and `%`, and

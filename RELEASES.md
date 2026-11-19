@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Raw pointers and the unsafe layer
+
+Seal now has nullable raw pointers with provenance, pointer arithmetic, and an
+explicit unsafe boundary:
+
+- `*raw T` is read-only and `*raw mut T` permits writes. Both are `Copy`,
+  `Sized`, have no destructor, never unify with `*T`/`*mut T`, and are one word
+  for a sized pointee or two words for `str`, a slice, or a trait object.
+- `&place as *raw T`, `&mut place as *raw mut T`, and the permission-discarding
+  downgrade are accepted. Raw-to-raw casts may change the pointee or
+  mutability, and only `usize`/`isize` convert to and from a thin pointer.
+  Shared references cannot gain write permission (`E3074`).
+- Raw pointer equality compares the data address. `is_null`, `addr`,
+  `expose_addr`, `with_addr`, `len`, and `data` are safe queries; `data`
+  discards slice/string/trait-object metadata and must be called before
+  arithmetic on a fat pointer.
+- Dereference, writes, copies, non-wrapping arithmetic, `offset_from`, and
+  calls to `unsafe func` require an `unsafe { ... }` block (`E3070`). Writes
+  require `*raw mut T` (`E3075`); `unsafe` does not relax any other check.
+- `read`/`write`, unaligned forms, `copy` (memmove), and
+  `copy_nonoverlapping` (memcpy) lower to the expected memory operations.
+  Inbounds arithmetic uses inbounds GEPs, wrapping arithmetic uses the
+  non-inbounds form, and internal offsets never round-trip through integers.
+- Constants may store raw pointers and read through pointers to compiler-owned
+  allocations. Address observation is `E4030`, writes are `E4031`, and null,
+  misaligned, out-of-bounds, or uninitialized reads are `E4032`.
+- `examples/043_raw_pointers.sl` exercises the full surface at `-O0` and `-O2`.
+
 ### Destructors
 
 A type may now declare `impl Drop` and take ownership of its release. The

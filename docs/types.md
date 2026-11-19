@@ -38,6 +38,10 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Slice pointee | `[T]` | unsized | unsized | no | no | no |
 | Trait-object reference | `*dyn Trait`, `*mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
 | Trait-object pointee | `dyn Trait` | unsized | unsized | no | no | no |
+| Raw pointer | `*raw T`, `*raw mut T` | pointer | pointer | yes | yes | no |
+| Raw string pointer | `*raw str`, `*raw mut str` | 2 × pointer | pointer | yes | yes | no |
+| Raw slice pointer | `*raw [T]`, `*raw mut [T]` | 2 × pointer | pointer | yes | yes | no |
+| Raw trait-object pointer | `*raw dyn Trait`, `*raw mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | Enum | `E` | computed | computed | no | yes, if every variant field is | no |
 | Tuple | `(T, U)`, `(T,)` | computed | computed | yes, if every element is | yes, if every element is | no |
@@ -203,8 +207,14 @@ types `1` as `i32` and then truncates; the literal is not silently a `u8` that
 must fit. A cast that loses information is legal — that is why it must be
 written explicitly.
 
-`bool`, `char`, enums, references, slices, arrays, tuples, structs, trait
-objects, `str`, unit, and the never type are not castable (`E3048`). Use
+Reference, raw-pointer, and pointer-sized integer casts are a separate family
+described under [Raw pointers](#raw-pointers). They are not numeric conversions:
+going through `usize` and back is an explicit round trip, and a raw pointer's
+address is not available in a constant (`E4030`).
+
+`bool`, `char`, enums, slices, arrays, tuples, structs, trait objects, `str`,
+unit, and the never type have no numeric cast (`E3048`); a reference converts
+only to a raw pointer. Use
 `bool.to_i32()` and `char.to_u32()` for those two named conversions. A cast
 whose source or target is a type parameter is rejected (`E3049`), because there
 is no numeric-bound trait from which to select a concrete conversion.
@@ -300,6 +310,60 @@ contract; `readonly` on pointer parameters other than `*str` or `*dyn Trait`
 needs no such proof because the type system already forbids writes through them.
 A trait-object pointer carries the same loan as its concrete source, so passing
 one is an access through every reference argument like any other.
+
+### Raw pointers
+
+Raw pointers are the opt-in unsafe pointer type. They are written `*raw T` and
+`*raw mut T`: `raw` is contextual after `*`, so it remains an ordinary
+identifier elsewhere. The type is nullable and supports arithmetic and casts;
+it is not a reference and never unifies with `*T` or `*mut T`. A raw pointer is
+`Copy`, `Sized`, has no destructor, and carries no borrow-checked loan. Its
+layout is one word for a sized pointee and two words for `str`, a slice, or a
+trait object; the second word is the length or vtable metadata.
+
+```seal
+static VALUE: i32 = 7;
+
+const READ_ONLY: *raw i32 = &VALUE as *raw i32;
+const NULL: *raw i32 = 0usize as *raw i32;
+
+func writable(value: *mut i32) -> *raw mut i32 {
+  value as *raw mut i32
+}
+```
+
+A `const` may hold a read-only pointer into a static; a writable pointer is
+formed at runtime, because constant evaluation cannot contain a mutable
+reference (`E4012`) or write a static (`E4015`).
+
+A reference can become a raw pointer with the same pointee and no more
+permission: `&place as *raw T`, `&mut place as *raw mut T`, and the downgrade
+`&mut place as *raw T` are accepted. A shared reference cannot become a mutable
+raw pointer (`E3074`). Raw-to-raw casts may change the pointee and may discard
+or acquire mutability; they may not turn a thin pointer into a fat pointer or
+the reverse. Only `usize` and `isize` convert to and from a thin raw pointer;
+other integer widths and floats are `E3074`. A raw pointer to `str`, a slice,
+or a trait object is a fat value and cannot be forged from an integer.
+
+Raw pointer equality compares the data address, not the value it points to and
+not the metadata word. `==` and `!=` are available without `unsafe`; ordering
+operators are not. `is_null()`, `addr()`, `expose_addr()`, and `with_addr()` are
+safe queries. `len()` is available on raw slice and string pointers, and
+`data()` discards metadata, producing a thin pointer with the same mutability
+(element type for a slice, `u8` for a string, and `()` for a trait object).
+Pointer arithmetic (`add`, `sub`, `offset`, `byte_add`, `byte_offset`,
+`wrapping_add`, `wrapping_sub`, `wrapping_offset`, and `offset_from`) requires a
+sized pointee; call `data()` first for a fat pointer.
+
+Dereferencing, reading, writing, copying, and non-wrapping arithmetic are unsafe
+operations and require an `unsafe { ... }` block. `*raw T` is read-only for
+writes and `*raw mut T` permits them (`E3075`). `read`, `read_unaligned`,
+`write`, `write_unaligned`, `copy`, and `copy_nonoverlapping` lower to the
+corresponding memory operations; `copy` has `memmove` semantics and
+`copy_nonoverlapping` has `memcpy` semantics. Writing through a raw pointer does
+not run a destructor for the old value.
+
+The full language guide is [`docs/language/raw-pointers.md`](language/raw-pointers.md).
 
 ## Constants, statics, and global data
 

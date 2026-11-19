@@ -26,17 +26,17 @@ allowed to depend only on crates below it in the list.
 | `seal-lexer` | Single-pass tokenizer: tokens, trivia, numeric/string/char literals, lexical diagnostics. |
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
-| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, the shared initialization lattice, and the single classification of numeric cast pairs. |
-| `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, and semantic operations shared by type checking, MIR, and code generation. |
+| `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, references, raw pointers, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, the shared initialization lattice, and the single classification of numeric and pointer cast pairs. |
+| `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, unsafe gates, and semantic operations shared by type checking, MIR, and code generation, including the raw pointer methods. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, trait default method, constant, or static, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
 | `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, default trait method resolution, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, and variant projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric casts, bounds checks, match dispatch, terminators, and structural plus type validation. |
-| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, escaping references, `E5xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, variant, and raw pointer projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric and pointer casts, raw intrinsic calls, bounds checks, match dispatch, terminators, and structural plus type validation. |
+| `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, raw pointer origins, escaping references, global effects including raw accesses, `E5xxx` diagnostics. |
 | `seal-mono` | Monomorphization: reachable-instance collection from non-generic function roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods or default bodies, vtable collection from code and constant values, drop glue collection per concrete type (destructor instance and children), reachable static and const-allocation collection, recursion, instance, vtable, and glue limits, stable instance and type fingerprints, and global validation (`E7xxx`). |
-| `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, one internal drop glue function per concrete type (vtable slot 0 points at it), vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
-| `seal-llvm-ffi` | Isolated FFI bridge for GEP construction and the LLVM 19+ debug-record API that inkwell 0.11 exposes unsafely or mis-wraps; the only crate that permits `unsafe`. |
+| `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, raw pointer loads/stores/arithmetic and copy intrinsics, one internal drop glue function per concrete type (vtable slot 0 points at it), vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
+| `seal-llvm-ffi` | Isolated FFI bridge for GEP construction, `ptrtoint`/`inttoptr` observations, and the LLVM 19+ debug-record API that inkwell 0.11 exposes unsafely or mis-wraps; the only crate that permits `unsafe`. |
 | `seal-version` | `LanguageVersion` and feature gates. |
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
@@ -610,6 +610,44 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     executes user code as a destructor, and a `static` is initialized before the
     program starts and is never released. Only a value a runtime scope owns is
     dropped, and a panic ends the program without unwinding.
+84. **Raw pointers are a type, not a reference.** `*raw T` and `*raw mut T`
+    are distinct interned types with `RawPtrKind`; both are `Copy`, `Sized`,
+    nullable, and never unify with references. A sized pointee is one word; a
+    string, slice, or trait object is the same two-word `{ data, metadata }`
+    shape as its reference counterpart.
+85. **Pointer casts are classified once.** Type checking, MIR, and code
+    generation share `CastKind::{RefToRaw, RawToRaw, RawToInt, IntToRaw}`.
+    Reference casts preserve pointee and may only discard permission,
+    raw-to-raw casts keep compatible metadata, and only pointer-sized integers
+    cross the pointer boundary. The backend maps the pointer cases to identity
+    or `ptrtoint`/`inttoptr`, never to a language-level reinterpretation.
+86. **Unsafe is explicit.** `unsafe { ... }` gates raw dereference and
+    projection, raw writes and copies, non-wrapping raw arithmetic,
+    `offset_from`, mutable-static access, and calls to `unsafe func`; it does
+    not bypass type, initialization, borrow, or effect checking. The unsafe
+    depth is tracked lexically, and an unsafe function body still opens its own
+    block.
+87. **Pointer provenance is preserved.** Field, array, and raw offsets use
+    GEPs; an internal offset never round-trips through an integer. `addr`,
+    `expose_addr`, `with_addr`, explicit address casts, pointer equality, and
+    `offset_from` are the only value observations that may use
+    `ptrtoint`/`inttoptr`. Inbounds operations use inbounds GEPs; `wrapping_*`
+    uses the non-inbounds form.
+88. **Raw access is a first-class MIR operation.** `Projection::RawDeref`, raw
+    pointer intrinsic calls, and `unsafe` call sites are visible to MIR
+    validation and to the effect/alias analysis. A body that touches raw storage
+    withholds `noalias` from every parameter whose exclusive grant could be
+    violated.
+89. **Raw constants are evaluated, not copied from source.** Constant
+    evaluation records `RawPtr`, `RawSlice`, `RawStr`, `RawStrData`, and
+    `RawDyn` values with allocation provenance. A pointer to a static is a
+    relocation; `p as usize`, `addr`, and `expose_addr` are `E4030`; writes are
+    `E4031`; invalid reads are `E4032`. A null or integer-built pointer may
+    still be stored, queried, and compared.
+90. **Raw pointer equality is address equality.** `==` and `!=` compare the
+    data word only; length and vtable metadata do not participate. Ordering
+    operators remain unavailable, and code generation does not imply a value
+    comparison for a raw pointer.
 
 ## Global data and constant evaluation
 
@@ -643,6 +681,38 @@ may read an exclusively borrowed static (`E5011`) or write a borrowed static
 (`E5013`). The analysis unions effects through direct, symbolic, recursive,
 trait-object, and trait-bound calls; disjoint field paths stay separate, while
 runtime indices make the whole static affected.
+
+## Raw pointers and unsafe
+
+Raw pointers are another type kind, not a second memory model. The pipeline
+handles them explicitly at every stage:
+
+- **Parse and HIR.** `*raw T` and `*raw mut T` parse as a distinct type with a
+  contextual `raw` token. A raw dereference is a `RawDeref` projection; a cast
+  is recorded as a `CastKind`; a method call becomes an intrinsic operation.
+- **Type check.** The checker resolves the pointer kind, receiver-by-value
+  rules, pointee sizedness, the `unsafe` gate, and the raw cast matrix. `*raw T`
+  can be read but not written; `*raw mut T` permits writes. A fat pointer must
+  call `data()` before arithmetic or a thin cast.
+- **Const evaluation.** The value model records allocation, offset, metadata,
+  and mutability. `RawPtr`, `RawSlice`, `RawStr`, `RawStrData`, and `RawDyn`
+  are encoded into relocations or string slots by code generation. Constant
+  reads validate nullness, alignment, bounds, and initialization; writes and
+  address observations are rejected (`E4030`–`E4032`).
+- **Borrow check and effects.** A raw pointer has an origin set but no checked
+  loan. The body facts record that it may touch memory, and the effect analysis
+  propagates that fact through calls. A function whose body may touch raw
+  storage, call an `unsafe func`, or perform a dynamic call is excluded from
+  `noalias`; safe shared parameters remain `readonly`.
+- **MIR and codegen.** A raw dereference is `Projection::RawDeref`; raw
+  intrinsics are `Rvalue::Intrinsic` operations. The backend uses loads and
+  stores, inbounds GEPs for checked arithmetic, non-inbounds GEPs for wrapping
+  arithmetic, `memmove`/`memcpy` for copies, and alignment 1 for the unaligned
+  forms. Only `addr`/`expose_addr`/`with_addr`, casts, equality, and
+  `offset_from` observe addresses numerically.
+- **LLVM boundary.** `seal-llvm-ffi` is still the only crate allowed to use
+  `unsafe`; it exposes GEPs and the LLVM debug-record API. No other phase
+  performs unchecked pointer construction.
 
 ## Extension points
 

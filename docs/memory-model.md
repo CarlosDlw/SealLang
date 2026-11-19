@@ -73,13 +73,13 @@ read-write, and the two never unify. A dereference of a reference value denotes 
 place too, so `&*reference` borrows the pointee and the reference is held in a
 temporary. Reading a reference value copies the reference, and reading
 `*reference` by value copies a `Copy` pointee; reading any other pointee is
-`E3018`, because moving it would leave the owner's storage without a value. Raw
-pointers (nullable, arithmetic, provenance-erasing) are a separate type with a
-separate syntax and require `unsafe`.
+`E3018`, because moving it would leave the owner's storage without a value.
 
-This keeps the published `*T` syntax and makes the default safe: the common case
-does not need `unsafe`, and the unsafe layer can be added without changing
-existing programs.
+Raw pointers are a separate type with separate syntax: `*raw T` is nullable,
+copyable, supports arithmetic, and is read-only through `*raw T`; `*raw mut T`
+permits writes. A raw pointer carries provenance rather than a checked loan, so
+using one is an unsafe contract (D21, D22). References remain the safe default
+and never unify with raw pointers.
 
 ### D5 — Regions are inferred
 
@@ -132,11 +132,12 @@ optimization can never turn safe code into undefined behavior. A method
 reachable through a vtable has call sites the static proof never sees, so it is
 excluded from `noalias` until a future proof covers indirect calls.
 
-For the future `unsafe` layer, the runtime aliasing model is **Tree Borrows**
-with pointer provenance (RFC 3559): every pointer carries the allocation and the
-permission it was derived from, and accesses outside that permission are
-undefined behavior. Tree Borrows accepts more real-world patterns than Stacked
-Borrows and is the model Miri uses for new work.
+The runtime aliasing model for unsafe code is **Tree Borrows** with pointer
+provenance (RFC 3559): every pointer carries the allocation and the permission
+it was derived from, and accesses outside that permission are undefined
+behavior. Tree Borrows accepts more real-world patterns than Stacked Borrows and
+is the model Miri uses for new work. Safe references are checked statically;
+raw pointers opt into this runtime contract inside `unsafe`.
 
 ### D7 — Allocation is explicit; no GC
 
@@ -201,11 +202,14 @@ itself by value is `E3016`.
 
 ### D11 — No address-dependent semantics in safe code
 
-Equality compares values, not addresses. Padding bytes are not observable. There
-is no guarantee that a local is zero-initialized. Two equal values are
-interchangeable in safe code, which is what allows moves and copies to be
-reordered. `==` and `!=` read their operands without moving them, and a thin
-reference has no equality at all, because only its address could differ.
+Equality compares values, not addresses in safe code. Padding bytes are not
+observable. There is no guarantee that a local is zero-initialized. Two equal
+values are interchangeable in safe code, which is what allows moves and copies
+to be reordered. `==` and `!=` read their operands without moving them, and a
+thin reference has no equality at all, because only its address could differ.
+A raw pointer is the explicit exception: its equality compares the data address,
+not the pointee or the metadata word, and it is only one of the operations that
+requires the programmer to accept the unsafe contract (D21, D22).
 
 ### D12 — No implicit numeric conversions
 
@@ -503,14 +507,60 @@ that would have run during a stack unwind do not run. The decision keeps the
 release order purely lexical and makes every drop site statically visible to the
 borrow checker.
 
+### D21 — Raw pointers carry provenance, not a checked loan
+
+`*raw T` and `*raw mut T` are nullable, `Copy`, `Sized` values with an explicit
+provenance. A pointer formed from `&place` or `&mut place` names the same
+allocation as the reference and records a byte offset and, for `str`, a slice,
+or a trait object, its metadata word. `usize`/`isize` may be cast to and from a
+thin pointer, but an integer-built pointer has no known allocation: it is valid
+for nullness and equality, and any access through it is outside the language
+contract. `with_addr` replaces the address while preserving metadata;
+`expose_addr` is the deliberate address observation.
+
+Non-wrapping arithmetic (`add`, `sub`, `offset`, `byte_add`, `byte_offset`) is
+an inbounds operation: the result must stay within the allocation or at its
+one-past end, and the evaluator/code generator may use an inbounds GEP. The
+`wrapping_*` family may leave the allocation and is safe to compute, but an
+access through a pointer that no longer names valid storage is still undefined.
+`offset_from` requires both pointers to belong to the same allocation; a zero
+sized pointee has distance zero. `copy` permits overlap and has `memmove`
+semantics; `copy_nonoverlapping` requires disjoint regions and has `memcpy`
+semantics. Writing through a raw pointer does not drop the old value.
+
+Raw pointer equality compares the data address only. A null pointer is written
+`0usize as *raw T`, and `is_null` inspects the data word. The metadata of a fat
+pointer is never part of equality and cannot be forged through a thin cast.
+
+Constant evaluation follows the same model over compiler-owned allocations.
+`p as usize`, `addr`, and `expose_addr` are not deterministic before linking and
+are `E4030`; writes are `E4031`; a null, misaligned, out-of-allocation, or
+uninitialized read is `E4032`. Reading a static through a raw pointer in a
+constant is allowed because its allocation and bytes are known at compile time.
+
+### D22 — `unsafe` is a narrow, explicit contract
+
+`unsafe { ... }` unlocks exactly the operations whose precondition the compiler
+cannot prove: raw dereference and projection, raw writes and copies,
+non-wrapping raw arithmetic and `offset_from`, mutable-static access, and calls
+to `unsafe func`. It does not relax type checking, initialization, move rules,
+borrow checking, or the global effect analysis. A type error inside `unsafe` is
+still a type error, and a live exclusive loan still conflicts.
+
+An `unsafe func` declaration is a caller contract, not an implicit unsafe body:
+the body must open its own `unsafe { ... }` around the unchecked operations.
+The marker is checked at every call site, and a destructor or the entry point
+cannot be unsafe. `unsafe` has no runtime representation and no cost; it is a
+static proof obligation recorded at the operation and at the call boundary.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
 
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
-  `Float`, `Ref { kind: RefKind, pointee }`, `Array { element, length }`,
-  `Adt { adt, args }`, `Dyn { trait_def, args }`, `Tuple(TupleId)`,
-  `Param(ParamTyId)`, `Unit`, `Never`, `Error`, and `Infer`.
+  `Float`, `Ref { kind: RefKind, pointee }`, `RawPtr { kind: RawPtrKind, pointee }`,
+  `Array { element, length }`, `Adt { adt, args }`, `Dyn { trait_def, args }`,
+  `Tuple(TupleId)`, `Param(ParamTyId)`, `Unit`, `Never`, `Error`, and `Infer`.
   `AdtId` always names the declaration and `args` is the interned, structural
   list of type arguments; `Param` is a rigid parameter of one generic body.
   `Dyn` names one trait declaration plus its fully substituted arguments and is
@@ -518,8 +568,9 @@ borrow checker.
   Tuple IDs come from a structural interner, so equal element lists share one
   `TupleId`. `RefKind` is `Shared`
   (`*T`) or `Exclusive` (`*mut T`); the kind is part of the type, so the two
-  never unify. There is no nullable reference kind, because nullability is not a
-  type.
+  never unify. `RawPtrKind` is `Const` (`*raw T`) or `Mut` (`*raw mut T`), and
+  its kind is also part of the type. There is no nullable reference kind,
+  because nullability is not a reference; nullability belongs to raw pointers.
 - Struct declarations live in a `TyCtxt` arena as `AdtDef`/`FieldDef` records,
   so `AdtId` identifies a nominal declaration while the definition holds the
   ordered fields, their `DefId`s, names, and types. Tuples live in a separate
@@ -673,6 +724,31 @@ borrow checker.
     step counting, and diagnostics do not depend on hash iteration. A value
     dependency cycle is reported (`E4007`), while an address-only cycle is
     accepted because every static allocation exists before evaluation.
+28. A raw pointer is `Copy`, `Sized`, and destructor-free. `*raw T` and
+    `*raw mut T` are distinct types, and neither unifies with a reference.
+    A sized pointee gives one word; `str`, a slice, or a trait object gives a
+    two-word `{ data, metadata }` value.
+29. A cast from a reference may only preserve or discard permission; it may not
+    add mutability. Raw-to-raw casts preserve or change metadata compatibly, and
+    only `usize`/`isize` cross the pointer/integer boundary. A fat pointer is
+    never forged from a thin pointer or an integer.
+30. Raw dereference, writes, copies, non-wrapping arithmetic, `offset_from`,
+    mutable-static access, and calls to `unsafe func` require an `unsafe` block;
+    safe queries do not. `unsafe` does not disable any other check.
+31. A raw access carries allocation provenance. Internal field, index, and
+    pointer offsets use GEP; `ptrtoint`/`inttoptr` appear only for the explicit
+    `addr`, `expose_addr`, `with_addr`, address casts, equality, and
+    `offset_from` observations. The metadata word of a fat pointer is preserved
+    by `with_addr` and compatible raw-to-raw casts, and discarded only by
+    `data()`.
+32. Constant evaluation accepts raw pointers over compiler-owned allocations.
+    It rejects an unknown address (`E4030`), a write (`E4031`), and an invalid
+    read (`E4032`); a null or integer-built pointer can still be queried,
+    compared, and stored.
+33. A function whose body may reach storage through a raw pointer, an unsafe
+    call, a dynamic call, or an unknown pointer is excluded from `noalias`.
+    The attribute remains a proven optimization, never a promise that unsafe
+    code must uphold.
 
 ## Reserved syntax
 
@@ -687,8 +763,6 @@ above and only waits for the surrounding features.
 - User-defined implementations, trait implementations, and intrinsic methods
   share the static lookup and receiver-borrow model that generics parameterize;
   trait objects add the dynamic path in D16 without changing that model.
-- Raw pointer type — nullable, arithmetic, provenance rules from RFC 3559, only
-  usable inside `unsafe`.
 - Owned heap buffer and allocator API — D7's owning type.
 
 ## References

@@ -60,7 +60,9 @@ such as `Circle { radius: i32 }`, and the layout carries a discriminant plus the
 active payload. `*T` grants shared access and `*mut T` grants exclusive access, and the
 two never unify. Exclusive arguments are checked at every call site (`E5009`,
 `E5010`), which is what allows the backend to emit `noalias` without turning
-safe code into undefined behavior.
+safe code into undefined behavior. `*raw T` and `*raw mut T` are the nullable,
+arithmetic, provenance-carrying pointers used inside `unsafe`; they never unify
+with references, and every dereference or write states its contract explicitly.
 
 A type may declare `impl Drop` and own the release of what it holds. The
 destructor runs when the value leaves its scope, when a function returns early,
@@ -199,6 +201,7 @@ isolation check on its own.
 | Floating point | `f32`, `f64` | IEEE 754 binary32 and binary64 |
 | Text | `bool`, `char`, `str`, `*str` | `char` is a Unicode scalar value; `str` is unsized and only usable behind a reference |
 | References | `*T`, `*mut T` | Non-null, non-owning, and `Copy`; shared or exclusive |
+| Raw pointers | `*raw T`, `*raw mut T` | Nullable, arithmetic, provenance-carrying, and `Copy`; one word, or two for `str`/slices/trait objects |
 | Tuples | `(T, U)`, `(T,)`, `()` | Structural product types; fields are `.0`, `.1`, …; `Copy` when every element is |
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
@@ -229,6 +232,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
+| [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |
 | [`RELEASES.md`](RELEASES.md) | Release notes and source migration for language changes |
 
 ## Status
@@ -258,10 +262,9 @@ Coercing `*S` or `*mut S` to a trait-object pointer preserves the reference kind
 and requires an implemented, object-safe trait. Generic functions, structs, enums, inherent impls, associated functions,
 traits, trait methods, and trait impls accept type parameters with inline or
 `where` bounds; every reachable instance is monomorphized, so a generic call is
-still one direct call with no dictionary or runtime type search. The type table
-and the trait-object section of `docs/types.md` define the surface; owning
-`Box<dyn Trait>`, upcasting between trait objects, and an `unsafe` layer are not
-part of it yet. The trait-object examples in
+still one direct call with no dictionary or runtime type search. The type table, the raw-pointer section of `docs/types.md`, and the
+raw-pointer guide in `docs/language/raw-pointers.md` define the surface; owning
+`Box<dyn Trait>` and upcasting between trait objects are not part of it yet. The trait-object examples in
 `examples/032_trait_objects.sl` through
 `examples/034_trait_objects_generic.sl` show dispatch end to end,
 `examples/035_numeric_casts.sl` shows every cast family and its boundary, and
@@ -270,6 +273,8 @@ overrides, symbolic dispatch, supertraits, generic defaults, dynamic dispatch,
 and associated default functions. `examples/037_iteration_protocols.sl` shows a
 custom `IntoIterator` cursor and the direct `Iterator` fallback, and
 `examples/038_index_protocols.sl` shows nested reads plus mutable indexing.
+`examples/043_raw_pointers.sl` exercises an exclusive raw pointer, inbounds
+arithmetic, an overlapping copy, and a null query.
 
 Global data is part of the surface: `const` and `static` items may appear at
 file scope or in a block, `const func` may be called from a constant initializer,
