@@ -228,6 +228,18 @@ fn a_for_loop_drops_the_item_and_the_remaining_elements_once() {
 }
 
 #[test]
+fn a_complete_for_loop_drops_each_item_once() {
+    let source = format!(
+        "{TOKEN} \
+         func release() {{ \
+            for item in [Token {{ tag: 1 }}, Token {{ tag: 2 }}] {{ }} \
+         }} \
+         func main() -> i32 {{ release(); unsafe {{ COUNT }} }}"
+    );
+    assert_returns(&source, 12);
+}
+
+#[test]
 fn a_destructor_may_write_its_own_field() {
     let source = format!(
         "{TOKEN} \
