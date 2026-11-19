@@ -71,6 +71,7 @@ mod operand;
 mod options;
 mod panic;
 mod place;
+mod raw_intrinsic;
 mod relocation;
 mod runtime;
 mod rvalue;

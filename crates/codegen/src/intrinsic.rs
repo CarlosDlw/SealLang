@@ -39,6 +39,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             MethodOwner::Array | MethodOwner::Slice => {
                 self.sequence_intrinsic(definition.intrinsic, receiver, args, span)
             }
+            MethodOwner::RawPtr => {
+                self.raw_pointer_intrinsic(definition.intrinsic, receiver, args, span)
+            }
             _ => {
                 self.scalar_intrinsic(definition.owner, definition.intrinsic, receiver, args, span)
             }
@@ -321,8 +324,29 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             | IntrinsicOp::IsEmpty
             | IntrinsicOp::Swap
             | IntrinsicOp::Reverse
-            | IntrinsicOp::Fill => Err(CodegenError::internal(
-                "a sequence intrinsic reached scalar code generation",
+            | IntrinsicOp::Fill
+            | IntrinsicOp::PtrAdd
+            | IntrinsicOp::PtrSub
+            | IntrinsicOp::PtrOffset
+            | IntrinsicOp::PtrByteAdd
+            | IntrinsicOp::PtrByteOffset
+            | IntrinsicOp::PtrOffsetFrom
+            | IntrinsicOp::PtrWrappingAdd
+            | IntrinsicOp::PtrWrappingSub
+            | IntrinsicOp::PtrWrappingOffset
+            | IntrinsicOp::PtrIsNull
+            | IntrinsicOp::PtrAddr
+            | IntrinsicOp::PtrExposeAddr
+            | IntrinsicOp::PtrWithAddr
+            | IntrinsicOp::PtrLen
+            | IntrinsicOp::PtrData
+            | IntrinsicOp::PtrRead
+            | IntrinsicOp::PtrWrite
+            | IntrinsicOp::PtrReadUnaligned
+            | IntrinsicOp::PtrWriteUnaligned
+            | IntrinsicOp::PtrCopy
+            | IntrinsicOp::PtrCopyNonOverlapping => Err(CodegenError::internal(
+                "a raw or sequence intrinsic reached scalar code generation",
             )),
         }
     }
@@ -1226,7 +1250,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         }
     }
 
-    fn intrinsic_function(
+    pub(crate) fn intrinsic_function(
         &self,
         name: &str,
         parameters: &[BasicMetadataTypeEnum<'ctx>],
@@ -1236,6 +1260,18 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             return Ok(function);
         }
         let function_type = returns.fn_type(parameters, false);
+        Ok(self.module.add_function(name, function_type, None))
+    }
+
+    pub(crate) fn void_intrinsic_function(
+        &self,
+        name: &str,
+        parameters: &[BasicMetadataTypeEnum<'ctx>],
+    ) -> Result<FunctionValue<'ctx>, CodegenError> {
+        if let Some(function) = self.module.get_function(name) {
+            return Ok(function);
+        }
+        let function_type = self.context.void_type().fn_type(parameters, false);
         Ok(self.module.add_function(name, function_type, None))
     }
 
@@ -1263,7 +1299,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             .into_int_type())
     }
 
-    fn unit_value(&self) -> BasicValueEnum<'ctx> {
+    pub(crate) fn unit_value(&self) -> BasicValueEnum<'ctx> {
         self.mapper.empty_type().const_zero().into()
     }
 

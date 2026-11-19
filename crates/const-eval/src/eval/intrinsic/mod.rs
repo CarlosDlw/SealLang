@@ -12,6 +12,7 @@ use super::*;
 
 mod float;
 mod integer;
+mod raw_pointer;
 mod sequence;
 
 impl<'a> Interpreter<'a> {
@@ -27,6 +28,9 @@ impl<'a> Interpreter<'a> {
         match definition.owner {
             MethodOwner::Array | MethodOwner::Slice => {
                 self.sequence_intrinsic(definition.intrinsic, receiver, args, result_ty, span)
+            }
+            MethodOwner::RawPtr => {
+                self.raw_pointer_intrinsic(definition.intrinsic, receiver, args, result_ty, span)
             }
             _ => self.scalar_intrinsic(
                 definition.owner,
@@ -178,7 +182,28 @@ impl<'a> Interpreter<'a> {
             | IntrinsicOp::IsEmpty
             | IntrinsicOp::Swap
             | IntrinsicOp::Reverse
-            | IntrinsicOp::Fill => Err(self.error(
+            | IntrinsicOp::Fill
+            | IntrinsicOp::PtrAdd
+            | IntrinsicOp::PtrSub
+            | IntrinsicOp::PtrOffset
+            | IntrinsicOp::PtrByteAdd
+            | IntrinsicOp::PtrByteOffset
+            | IntrinsicOp::PtrOffsetFrom
+            | IntrinsicOp::PtrWrappingAdd
+            | IntrinsicOp::PtrWrappingSub
+            | IntrinsicOp::PtrWrappingOffset
+            | IntrinsicOp::PtrIsNull
+            | IntrinsicOp::PtrAddr
+            | IntrinsicOp::PtrExposeAddr
+            | IntrinsicOp::PtrWithAddr
+            | IntrinsicOp::PtrLen
+            | IntrinsicOp::PtrData
+            | IntrinsicOp::PtrRead
+            | IntrinsicOp::PtrWrite
+            | IntrinsicOp::PtrReadUnaligned
+            | IntrinsicOp::PtrWriteUnaligned
+            | IntrinsicOp::PtrCopy
+            | IntrinsicOp::PtrCopyNonOverlapping => Err(self.error(
                 EvalErrorKind::Internal(format!(
                     "intrinsic `{intrinsic:?}` reached the wrong path"
                 )),

@@ -2598,6 +2598,36 @@ Compare pointers with `==`, inspect nullness with `is_null()`, or move the
 address computation to a runtime function.",
 };
 
+/// A constant writes through a raw pointer.
+pub const E4031: ErrorCode = ErrorCode {
+    code: "E4031",
+    title: "a constant cannot write through a raw pointer",
+    explanation: "\
+Constant evaluation produces an immutable value tree, and every use of a
+constant must observe the same result. A write through a raw pointer would make
+the result depend on evaluation order and mutate storage shared with other
+uses, so it is rejected.
+
+Build the value in the initializer instead, or perform the write in a runtime
+function. Reading through a constant pointer remains available when the pointer
+names allocation storage known at compile time.",
+};
+
+/// A constant reads through a pointer that names no constant allocation.
+pub const E4032: ErrorCode = ErrorCode {
+    code: "E4032",
+    title: "raw pointer access is invalid in a constant",
+    explanation: "\
+A constant can read through a raw pointer only when the pointer names an
+allocation whose bytes are known at compile time. A null pointer, an address
+built from an arbitrary integer, a pointer whose pointee is unsized, or an
+address outside its allocation has no value the evaluator can read.
+
+Keep the access at run time, or read a value that the initializer already
+contains. A constant may still inspect `is_null()`, `len()`, and `data()`
+without dereferencing.",
+};
+
 /// Constant evaluation failed.
 pub const E4001: ErrorCode = ErrorCode {
     code: "E4001",
@@ -2979,9 +3009,9 @@ pub static ALL: &[ErrorCode] = &[
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
     E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013,
     E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
-    E4027, E4028, E4030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003,
-    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E4027, E4028, E4030, E4031, E4032, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008,
+    E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001,
+    E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3151,6 +3181,8 @@ mod tests {
             ("E4027", "which of the two cases"),
             ("E4028", "has no destructor is always allowed"),
             ("E4030", "chosen when the program is linked"),
+            ("E4031", "immutable value tree"),
+            ("E4032", "names an allocation whose bytes are known"),
             ("E5011", "cannot see across the call"),
             ("E5012", "reborrow the static where it is needed"),
             ("E5013", "directly or transitively"),

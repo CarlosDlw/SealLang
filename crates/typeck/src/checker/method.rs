@@ -9,7 +9,9 @@ use seal_def::DefId;
 use seal_error_codes as codes;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::{HirExprId, ReceiverKind};
-use seal_methods::{MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind};
+use seal_methods::{
+    IntrinsicOp, MethodDef, MethodId, MethodOwner, ParamKind, ReceiverMode, ReturnKind,
+};
 use seal_span::Span;
 use seal_symbol::Symbol;
 use seal_ty::{RefKind, TyId, TyKind};
@@ -985,6 +987,7 @@ impl Checker<'_> {
                 TyKind::Bool => break (MethodOwner::Bool, ty, ReceiverForm::Place),
                 TyKind::Char => break (MethodOwner::Char, ty, ReceiverForm::Place),
                 TyKind::Array { .. } => break (MethodOwner::Array, ty, ReceiverForm::Place),
+                TyKind::RawPtr { .. } => break (MethodOwner::RawPtr, ty, ReceiverForm::Value),
                 TyKind::Error => return None,
                 _ => {
                     self.report_missing_method(original_ty, name, name_span);
@@ -1019,8 +1022,67 @@ impl Checker<'_> {
         let element_ty = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Array { element, .. } => element,
             TyKind::Slice { element } => element,
+            TyKind::RawPtr { pointee, .. } => pointee,
             _ => base_ty,
         };
+        if def.owner == MethodOwner::RawPtr {
+            if def.unsafe_op && self.unsafe_depth == 0 {
+                self.error(
+                    codes::E3070,
+                    span_for_method(self.hir, receiver),
+                    format!(
+                        "calling `{}` on a raw pointer requires an `unsafe` block",
+                        def.name
+                    ),
+                )
+                .help("wrap the call in `unsafe { ... }`")
+                .emit();
+            }
+            if raw_pointer_requires_mut(def.intrinsic)
+                && matches!(
+                    self.hir.ty_ctxt().kind(base_ty),
+                    TyKind::RawPtr {
+                        kind: seal_ty::RawPtrKind::Const,
+                        ..
+                    }
+                )
+            {
+                self.error(
+                    codes::E3075,
+                    span_for_method(self.hir, receiver),
+                    format!("`{}` writes through a `*raw T` pointer", def.name),
+                )
+                .help("declare the pointer as `*raw mut T` to allow writes")
+                .emit();
+            }
+            if raw_pointer_requires_sized(def.intrinsic) && !self.is_sized(element_ty) {
+                self.error(
+                    codes::E3075,
+                    span_for_method(self.hir, receiver),
+                    format!(
+                        "`{}` requires a sized pointee, but `{}` is unsized",
+                        def.name,
+                        self.ty_text(element_ty)
+                    ),
+                )
+                .help("call `data()` first to discard the metadata")
+                .emit();
+            }
+            if def.intrinsic == IntrinsicOp::PtrLen
+                && !matches!(
+                    self.hir.ty_ctxt().kind(element_ty),
+                    TyKind::Slice { .. } | TyKind::Str
+                )
+            {
+                self.error(
+                    codes::E3075,
+                    span_for_method(self.hir, receiver),
+                    "`len` requires a raw pointer to a slice or `str`",
+                )
+                .help("a thin raw pointer has no length metadata")
+                .emit();
+            }
+        }
         if def.receiver == ReceiverMode::Exclusive && slice_ref_kind == Some(RefKind::Shared) {
             self.error(
                 codes::E3029,
@@ -1135,6 +1197,28 @@ impl Checker<'_> {
             ParamKind::Usize => self.usize_ty(),
             ParamKind::I32 => self.i32_ty(),
             ParamKind::U32 => self.u32_ty(),
+            ParamKind::Isize => self.isize_ty(),
+            ParamKind::Pointer => {
+                let tcx = self.hir.ty_ctxt();
+                match tcx.kind(resolution.receiver_ty) {
+                    TyKind::RawPtr { kind, pointee } => {
+                        // `copy` reads its source, so it accepts a read-only
+                        // pointer to the same pointee. `offset_from` compares
+                        // pointers of one type and keeps the receiver's kind.
+                        let kind = if matches!(
+                            resolution.def.intrinsic,
+                            IntrinsicOp::PtrCopy | IntrinsicOp::PtrCopyNonOverlapping
+                        ) {
+                            seal_ty::RawPtrKind::Const
+                        } else {
+                            kind
+                        };
+                        tcx.raw_ptr_ty_with(kind, pointee)
+                    }
+                    _ => resolution.receiver_ty,
+                }
+            }
+            ParamKind::Bool => self.bool_ty(),
         }
     }
 
@@ -1145,9 +1229,73 @@ impl Checker<'_> {
             ReturnKind::Usize => self.usize_ty(),
             ReturnKind::I32 => self.i32_ty(),
             ReturnKind::U32 => self.u32_ty(),
+            ReturnKind::Isize => self.isize_ty(),
             ReturnKind::Unit => self.unit(),
+            ReturnKind::Pointer if resolution.def.intrinsic == IntrinsicOp::PtrData => {
+                self.data_pointer_ty(resolution.receiver_ty)
+            }
+            ReturnKind::Pointer => resolution.receiver_ty,
         }
     }
+
+    /// Returns the thin pointer type produced by `data()`.
+    ///
+    /// A slice keeps its element type, a string yields `u8`, and a trait object
+    /// yields `()`: the erased representation has no useful pointee type, and
+    /// the address is only an opaque handle for byte-level work.
+    fn data_pointer_ty(&self, receiver_ty: TyId) -> TyId {
+        let tcx = self.hir.ty_ctxt();
+        let TyKind::RawPtr { kind, pointee } = tcx.kind(receiver_ty) else {
+            return receiver_ty;
+        };
+        let thin = match tcx.kind(pointee) {
+            TyKind::Slice { element } => element,
+            TyKind::Str => self.u8_ty(),
+            TyKind::Dyn { .. } => self.unit(),
+            _ => pointee,
+        };
+        tcx.raw_ptr_ty_with(kind, thin)
+    }
+}
+
+/// Returns whether an intrinsic reads or writes whole `T` values and therefore
+/// requires a sized pointee.
+fn raw_pointer_requires_sized(intrinsic: IntrinsicOp) -> bool {
+    matches!(
+        intrinsic,
+        IntrinsicOp::PtrAdd
+            | IntrinsicOp::PtrSub
+            | IntrinsicOp::PtrOffset
+            | IntrinsicOp::PtrByteAdd
+            | IntrinsicOp::PtrByteOffset
+            | IntrinsicOp::PtrOffsetFrom
+            | IntrinsicOp::PtrWrappingAdd
+            | IntrinsicOp::PtrWrappingSub
+            | IntrinsicOp::PtrWrappingOffset
+            | IntrinsicOp::PtrRead
+            | IntrinsicOp::PtrWrite
+            | IntrinsicOp::PtrReadUnaligned
+            | IntrinsicOp::PtrWriteUnaligned
+            | IntrinsicOp::PtrCopy
+            | IntrinsicOp::PtrCopyNonOverlapping
+    )
+}
+
+/// Returns whether an intrinsic writes through its receiver and therefore
+/// requires a `*raw mut T`.
+fn raw_pointer_requires_mut(intrinsic: IntrinsicOp) -> bool {
+    matches!(
+        intrinsic,
+        IntrinsicOp::PtrWrite
+            | IntrinsicOp::PtrWriteUnaligned
+            | IntrinsicOp::PtrCopy
+            | IntrinsicOp::PtrCopyNonOverlapping
+    )
+}
+
+/// Returns the receiver's source span.
+fn span_for_method(hir: &seal_hir::Hir, receiver: HirExprId) -> Span {
+    hir.expr(receiver).span
 }
 
 /// One trait impl that could provide the called method.

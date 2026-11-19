@@ -3,7 +3,7 @@
 use super::support::{function, lower_clean};
 use crate::operand::Operand;
 use crate::place::{Place, Projection};
-use crate::rvalue::Rvalue;
+use crate::rvalue::{IntrinsicReceiver, Rvalue};
 use crate::statement::StatementKind;
 
 fn has_raw_deref(place: &Place) -> bool {
@@ -44,6 +44,28 @@ fn a_write_through_a_raw_pointer_targets_the_raw_place_without_dropping() {
         }
     }
     assert!(wrote, "the assignment targets the raw dereference");
+}
+
+#[test]
+fn a_raw_pointer_method_receives_the_pointer_by_value() {
+    let (fixture, hir, mir) =
+        lower_clean("func main(pointer: *raw i32) -> bool { pointer.is_null() }");
+    let body = function(&fixture, &hir, &mir, "main");
+    let mut found = false;
+    for statement in body.blocks.iter().flat_map(|block| block.statements.iter()) {
+        if let StatementKind::Assign {
+            rvalue:
+                Rvalue::Intrinsic {
+                    receiver: IntrinsicReceiver::Value(_),
+                    ..
+                },
+            ..
+        } = &statement.kind
+        {
+            found = true;
+        }
+    }
+    assert!(found, "the pointer method receives a value, not a place");
 }
 
 #[test]

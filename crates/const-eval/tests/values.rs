@@ -85,6 +85,36 @@ fn float_values_keep_signed_zero_and_nan_payloads() {
 }
 
 #[test]
+fn raw_pointer_queries_and_reads_are_evaluated() {
+    let fixture = clean(
+        "static VALUE: i32 = 41; \
+         static VALUES: [i32; 3] = [10, 20, 30]; \
+         const NULL: *raw i32 = 0usize as *raw i32; \
+         const IS_NULL: bool = NULL.is_null(); \
+         const NULL_AFTER_ADDRESS: bool = NULL.with_addr(0usize).is_null(); \
+         const POINTER: *raw i32 = &VALUE as *raw i32; \
+         const NOT_NULL: bool = POINTER.is_null(); \
+         const READ: i32 = unsafe { POINTER.read() }; \
+         const WRAPPED: *raw i32 = POINTER.wrapping_add(0); \
+         const WRAPPED_READ: i32 = unsafe { WRAPPED.read() }; \
+         const SLICE: *raw [i32] = &VALUES[..] as *raw [i32]; \
+         const LENGTH: usize = SLICE.len(); \
+         const FIRST: i32 = unsafe { SLICE.data().read() }; \
+         const SECOND: i32 = unsafe { SLICE.data().add(1).read() }; \
+         const DISTANCE: isize = unsafe { POINTER.offset_from(POINTER) };",
+    );
+    assert!(flag(&fixture, "IS_NULL"));
+    assert!(flag(&fixture, "NULL_AFTER_ADDRESS"));
+    assert!(!flag(&fixture, "NOT_NULL"));
+    assert_eq!(int(&fixture, "READ"), 41);
+    assert_eq!(int(&fixture, "WRAPPED_READ"), 41);
+    assert_eq!(int(&fixture, "LENGTH"), 3);
+    assert_eq!(int(&fixture, "FIRST"), 10);
+    assert_eq!(int(&fixture, "SECOND"), 20);
+    assert_eq!(int(&fixture, "DISTANCE"), 0);
+}
+
+#[test]
 fn casts_follow_runtime_saturation_and_truncation() {
     let fixture = clean(
         "const TRUNCATE: u8 = 260 as u8; \

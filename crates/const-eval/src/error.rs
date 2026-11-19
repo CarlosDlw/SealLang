@@ -52,6 +52,10 @@ pub enum EvalErrorKind {
     EscapingReference,
     /// A constant asks for a pointer's address, which is chosen at link time.
     AddressNotComputable,
+    /// A constant writes through a raw pointer.
+    RawPointerWrite,
+    /// A constant reads through a pointer with no constant allocation.
+    RawPointerAccess,
     /// A constant context called a non-`const` function.
     NonConstFunction {
         /// Whether the caller is a `const func` rather than an initializer.
@@ -93,6 +97,8 @@ impl EvalErrorKind {
             Self::ValueTooLarge => codes::E4025,
             Self::EscapingReference => codes::E4013,
             Self::AddressNotComputable => codes::E4030,
+            Self::RawPointerWrite => codes::E4031,
+            Self::RawPointerAccess => codes::E4032,
             Self::NonConstFunction { const_fn: false } => codes::E4011,
             Self::NonConstFunction { const_fn: true } => codes::E4018,
             Self::DynamicDispatch { const_fn: false } => codes::E4016,
@@ -153,6 +159,8 @@ impl EvalErrorKind {
             Self::AddressNotComputable => {
                 "a pointer's numeric address is not available at compile time".to_owned()
             }
+            Self::RawPointerWrite => "a constant cannot write through a raw pointer".to_owned(),
+            Self::RawPointerAccess => "a constant cannot read through this raw pointer".to_owned(),
             Self::NonConstFunction { .. } => {
                 "a constant context cannot call a non-const function".to_owned()
             }
@@ -245,6 +253,8 @@ mod tests {
             (EvalErrorKind::ValueTooLarge, Some("E4025")),
             (EvalErrorKind::EscapingReference, Some("E4013")),
             (EvalErrorKind::AddressNotComputable, Some("E4030")),
+            (EvalErrorKind::RawPointerWrite, Some("E4031")),
+            (EvalErrorKind::RawPointerAccess, Some("E4032")),
             (
                 EvalErrorKind::NonConstFunction { const_fn: false },
                 Some("E4011"),

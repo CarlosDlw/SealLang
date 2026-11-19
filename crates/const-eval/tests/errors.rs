@@ -30,6 +30,46 @@ fn a_pointer_address_is_not_computable_in_a_constant() {
 }
 
 #[test]
+fn a_constant_cannot_write_through_a_raw_pointer() {
+    let fixture = Fixture::compile(
+        "const POINTER: *raw mut i32 = 0usize as *raw mut i32; \
+         const VALUE: i32 = unsafe { POINTER.write(1); 0 };",
+    );
+    fixture.expect_code("E4031");
+}
+
+#[test]
+fn a_constant_cannot_read_through_an_integer_pointer() {
+    let fixture = Fixture::compile(
+        "const POINTER: *raw i32 = 0usize as *raw i32; \
+         const VALUE: i32 = unsafe { POINTER.read() };",
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
+fn in_bounds_pointer_arithmetic_stops_at_the_allocation() {
+    let fixture = Fixture::compile(
+        "static VALUES: [i32; 3] = [1, 2, 3]; \
+         const POINTER: *raw i32 = &VALUES[2] as *raw i32; \
+         const PAST_END: *raw i32 = unsafe { POINTER.add(1) }; \
+         const BEYOND: *raw i32 = unsafe { POINTER.add(2) }; \
+         const VALUE: i32 = unsafe { PAST_END.read() };",
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
+fn a_constant_cannot_inspect_a_raw_pointer_address() {
+    let fixture = Fixture::compile(
+        "static VALUE: i32 = 7; \
+         const POINTER: *raw i32 = &VALUE as *raw i32; \
+         const ADDRESS: usize = POINTER.addr();",
+    );
+    fixture.expect_code("E4030");
+}
+
+#[test]
 fn a_value_cycle_is_reported_with_both_items() {
     let fixture = Fixture::compile("const A: i32 = B; const B: i32 = A;");
     fixture.expect_code("E4007");

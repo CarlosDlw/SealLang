@@ -1712,6 +1712,165 @@ fn a_fat_raw_pointer_cast_exposes_its_data_address() {
 }
 
 #[test]
+fn raw_pointer_arithmetic_reaches_the_expected_elements() {
+    let source = "\
+        func main() -> i32 {
+            let values = [10, 20, 30, 40];
+            let base = &values[0] as *raw i32;
+            unsafe {
+                if base.add(1).read() != 20 { return 1; }
+                if base.sub(0).read() != 10 { return 2; }
+                if base.offset(2).read() != 30 { return 3; }
+                if base.byte_add(4).read() != 20 { return 4; }
+                if base.byte_offset(8).read() != 30 { return 5; }
+                if base.wrapping_add(3).read() != 40 { return 6; }
+                if base.wrapping_sub(1).addr() + 4 != base.addr() { return 7; }
+                if base.wrapping_offset(-1).addr() + 4 != base.addr() { return 8; }
+                if base.add(2).offset_from(base) != 2isize { return 9; }
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-pointer-arithmetic");
+}
+
+#[test]
+fn raw_pointer_queries_preserve_the_address() {
+    let source = "\
+        func main() -> i32 {
+            let value = 41;
+            let pointer = &value as *raw i32;
+            if pointer.is_null() { return 1; }
+            let address = pointer.addr();
+            if address == 0 { return 2; }
+            if pointer.expose_addr() != address { return 3; }
+            let same = pointer.with_addr(address);
+            unsafe { if same.read() != 41 { return 4; } }
+            let null = 0usize as *raw i32;
+            if !null.is_null() { return 5; }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-pointer-queries");
+}
+
+#[test]
+fn raw_fat_pointer_metadata_is_read_and_discarded() {
+    let source = "\
+        func main() -> i32 {
+            let values = [41, 42, 43];
+            let slice = &values[..] as *raw [i32];
+            if slice.len() != 3 { return 1; }
+            if unsafe { slice.data().read() } != 41 { return 2; }
+            if unsafe { slice.data().add(1).read() } != 42 { return 3; }
+            let text = \"abc\";
+            let message = text as *raw str;
+            if message.len() != 3 { return 4; }
+            if unsafe { message.data().read() } != 97u8 { return 5; }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-fat-metadata");
+}
+
+#[test]
+fn raw_pointer_read_write_and_copy_reach_memory() {
+    let source = "\
+        struct Payload { value: i32 }
+        func main() -> i32 {
+            let mut value = 1;
+            let pointer = &mut value as *raw mut i32;
+            unsafe {
+                pointer.write(41);
+                if pointer.read() != 41 { return 1; }
+                pointer.write_unaligned(42);
+                if pointer.read_unaligned() != 42 { return 2; }
+            }
+            let source = [1, 2, 3];
+            let mut target = [0, 0, 0];
+            let src = &source[0] as *raw i32;
+            let dst = &mut target[0] as *raw mut i32;
+            unsafe { dst.copy(src, 3); }
+            if target[0] + target[1] + target[2] != 6 { return 3; }
+            let mut other = [0, 0, 0];
+            let other_dst = &mut other[0] as *raw mut i32;
+            unsafe { other_dst.copy_nonoverlapping(src, 3); }
+            if other[0] + other[1] + other[2] != 6 { return 4; }
+            let payload = Payload { value: 41 };
+            let payload_pointer = &payload as *raw Payload;
+            let moved = unsafe { payload_pointer.read() };
+            moved.value + 1
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-read-write-copy");
+}
+
+#[test]
+fn raw_pointer_zst_arithmetic_preserves_the_address() {
+    let source = "\
+        func main() -> i32 {
+            let unit = ();
+            let pointer = &unit as *raw ();
+            unsafe {
+                if pointer.add(1).addr() != pointer.addr() { return 1; }
+                if pointer.offset_from(pointer.add(1)) != 0isize { return 2; }
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-zst-arithmetic");
+}
+
+#[test]
+fn raw_pointer_copies_emit_memmove_and_memcpy() {
+    let source = "\
+        func copy_elements(destination: *raw mut i32, source: *raw i32, count: usize) {
+            unsafe { destination.copy(source, count); }
+        }
+        func copy_new_elements(destination: *raw mut i32, source: *raw i32, count: usize) {
+            unsafe { destination.copy_nonoverlapping(source, count); }
+        }
+        func main() -> i32 {
+            let source = [1; 100];
+            let mut first = [0; 100];
+            let mut second = [0; 100];
+            let src = &source[0] as *raw i32;
+            let first_dst = &mut first[0] as *raw mut i32;
+            let second_dst = &mut second[0] as *raw mut i32;
+            copy_elements(first_dst, src, 100usize);
+            copy_new_elements(second_dst, src, 100usize);
+            first[0] + second[0]
+        }";
+    let output = TempOutput::new("raw-copy-ir");
+    compile(source, output.path(), Emit::Assembly, OptLevel::O0, false)
+        .expect("raw pointer copies compile");
+    let assembly = std::fs::read(output.path()).expect("assembly is readable");
+    let text = String::from_utf8_lossy(&assembly);
+    let calls: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("mem") || line.contains("call"))
+        .collect();
+    assert!(
+        contains(&assembly, b"memmove"),
+        "a raw copy emits memmove semantics; calls: {calls:?}"
+    );
+    assert!(
+        contains(&assembly, b"memcpy"),
+        "a non-overlapping raw copy emits memcpy semantics; calls: {calls:?}"
+    );
+}
+
+#[test]
+fn overlapping_raw_copy_uses_move_semantics() {
+    let source = "\
+        func main() -> i32 {
+            let mut values = [1, 2, 3, 4];
+            let base = &mut values[0] as *raw mut i32;
+            unsafe { base.add(1).copy(base as *raw i32, 3); }
+            if values[0] != 1 || values[1] != 1 || values[2] != 2 || values[3] != 3 {
+                return 1;
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-overlapping-copy");
+}
+
+#[test]
 fn a_reference_unsizes_into_a_raw_trait_object() {
     let source = "\
         trait Shape { func area(self: *Self) -> i32; }

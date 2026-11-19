@@ -24,6 +24,7 @@ mod methods;
 mod operators;
 mod raw_casts;
 mod raw_deref;
+mod raw_methods;
 mod raw_pointers;
 mod reference_patterns;
 mod sized;

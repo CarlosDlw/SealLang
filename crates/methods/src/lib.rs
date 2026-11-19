@@ -59,6 +59,8 @@ pub enum MethodOwner {
     Array,
     /// Slice pointees `[T]`, reached through `*[T]` or `*mut [T]`.
     Slice,
+    /// Raw pointers `*raw T` and `*raw mut T`.
+    RawPtr,
 }
 
 impl MethodOwner {
@@ -72,6 +74,7 @@ impl MethodOwner {
             Self::Char => "char",
             Self::Array => "array",
             Self::Slice => "slice",
+            Self::RawPtr => "raw pointer",
         }
     }
 }
@@ -102,6 +105,13 @@ pub enum ParamKind {
     I32,
     /// `u32`.
     U32,
+    /// `isize`.
+    Isize,
+    /// A read-only raw pointer to the receiver's pointee, used by `offset_from`
+    /// and `copy`.
+    Pointer,
+    /// `bool`.
+    Bool,
 }
 
 /// The result type of a method.
@@ -117,8 +127,12 @@ pub enum ReturnKind {
     I32,
     /// `u32`.
     U32,
+    /// `isize`.
+    Isize,
     /// The unit type.
     Unit,
+    /// The receiver's pointer type.
+    Pointer,
 }
 
 /// A compiler operation behind a method.
@@ -221,6 +235,48 @@ pub enum IntrinsicOp {
     Reverse,
     /// Copy one value into every element; the type checker requires `Copy`.
     Fill,
+    /// Advance a raw pointer by `count` elements.
+    PtrAdd,
+    /// Move a raw pointer back by `count` elements.
+    PtrSub,
+    /// Move a raw pointer by a signed element count.
+    PtrOffset,
+    /// Advance a raw pointer by `count` bytes.
+    PtrByteAdd,
+    /// Move a raw pointer by a signed byte count.
+    PtrByteOffset,
+    /// Distance between two pointers in elements.
+    PtrOffsetFrom,
+    /// Wrapping element advance.
+    PtrWrappingAdd,
+    /// Wrapping element retreat.
+    PtrWrappingSub,
+    /// Wrapping signed element offset.
+    PtrWrappingOffset,
+    /// Whether the data address is zero.
+    PtrIsNull,
+    /// The data address without exposing provenance.
+    PtrAddr,
+    /// The data address, exposing provenance for reconstruction.
+    PtrExposeAddr,
+    /// Replace the address while preserving provenance and metadata.
+    PtrWithAddr,
+    /// Metadata length of a raw slice or string pointer.
+    PtrLen,
+    /// Thin data pointer, discarding metadata.
+    PtrData,
+    /// Read a value through a raw pointer.
+    PtrRead,
+    /// Write a value through a raw pointer.
+    PtrWrite,
+    /// Read a potentially unaligned value.
+    PtrReadUnaligned,
+    /// Write a potentially unaligned value.
+    PtrWriteUnaligned,
+    /// Copy elements, allowing overlap.
+    PtrCopy,
+    /// Copy elements that do not overlap.
+    PtrCopyNonOverlapping,
 }
 
 /// One compiler-provided method.
@@ -240,6 +296,8 @@ pub struct MethodDef {
     pub intrinsic: IntrinsicOp,
     /// Whether `fill` requires `Copy` on the element type.
     pub requires_copy_element: bool,
+    /// Whether calling the method requires an `unsafe` block.
+    pub unsafe_op: bool,
 }
 
 const NONE: &[ParamKind] = &[];
@@ -248,6 +306,9 @@ const SELF_TWO: &[ParamKind] = &[ParamKind::SelfValue, ParamKind::SelfValue];
 const USIZE_TWO: &[ParamKind] = &[ParamKind::Usize, ParamKind::Usize];
 const U32_ONE: &[ParamKind] = &[ParamKind::U32];
 const ELEMENT_ONE: &[ParamKind] = &[ParamKind::Element];
+const ISIZE_ONE: &[ParamKind] = &[ParamKind::Isize];
+const POINTER_ONE: &[ParamKind] = &[ParamKind::Pointer];
+const POINTER_USIZE: &[ParamKind] = &[ParamKind::Pointer, ParamKind::Usize];
 
 const fn method(
     owner: MethodOwner,
@@ -265,6 +326,27 @@ const fn method(
         ret,
         intrinsic,
         requires_copy_element: false,
+        unsafe_op: false,
+    }
+}
+
+const fn unsafe_method(
+    owner: MethodOwner,
+    name: &'static str,
+    receiver: ReceiverMode,
+    params: &'static [ParamKind],
+    ret: ReturnKind,
+    intrinsic: IntrinsicOp,
+) -> MethodDef {
+    MethodDef {
+        owner,
+        name,
+        receiver,
+        params,
+        ret,
+        intrinsic,
+        requires_copy_element: false,
+        unsafe_op: true,
     }
 }
 
@@ -277,6 +359,7 @@ const fn fill(owner: MethodOwner) -> MethodDef {
         ret: ReturnKind::Unit,
         intrinsic: IntrinsicOp::Fill,
         requires_copy_element: true,
+        unsafe_op: false,
     }
 }
 
@@ -804,6 +887,174 @@ pub const METHODS: &[MethodDef] = &[
         IntrinsicOp::Reverse,
     ),
     fill(MethodOwner::Slice),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "add",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrAdd,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "sub",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrSub,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "offset",
+        ReceiverMode::Value,
+        ISIZE_ONE,
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrOffset,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "byte_add",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrByteAdd,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "byte_offset",
+        ReceiverMode::Value,
+        ISIZE_ONE,
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrByteOffset,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "offset_from",
+        ReceiverMode::Value,
+        POINTER_ONE,
+        ReturnKind::Isize,
+        IntrinsicOp::PtrOffsetFrom,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "wrapping_add",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrWrappingAdd,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "wrapping_sub",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrWrappingSub,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "wrapping_offset",
+        ReceiverMode::Value,
+        ISIZE_ONE,
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrWrappingOffset,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "is_null",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Bool,
+        IntrinsicOp::PtrIsNull,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "addr",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Usize,
+        IntrinsicOp::PtrAddr,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "expose_addr",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Usize,
+        IntrinsicOp::PtrExposeAddr,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "with_addr",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrWithAddr,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "len",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Usize,
+        IntrinsicOp::PtrLen,
+    ),
+    method(
+        MethodOwner::RawPtr,
+        "data",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Pointer,
+        IntrinsicOp::PtrData,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "read",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Same,
+        IntrinsicOp::PtrRead,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "write",
+        ReceiverMode::Value,
+        &[ParamKind::SelfValue],
+        ReturnKind::Unit,
+        IntrinsicOp::PtrWrite,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "read_unaligned",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::Same,
+        IntrinsicOp::PtrReadUnaligned,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "write_unaligned",
+        ReceiverMode::Value,
+        &[ParamKind::SelfValue],
+        ReturnKind::Unit,
+        IntrinsicOp::PtrWriteUnaligned,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "copy",
+        ReceiverMode::Value,
+        POINTER_USIZE,
+        ReturnKind::Unit,
+        IntrinsicOp::PtrCopy,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "copy_nonoverlapping",
+        ReceiverMode::Value,
+        POINTER_USIZE,
+        ReturnKind::Unit,
+        IntrinsicOp::PtrCopyNonOverlapping,
+    ),
 ];
 
 /// Looks up a method by owner and name.
@@ -839,6 +1090,7 @@ mod tests {
             MethodOwner::Char,
             MethodOwner::Array,
             MethodOwner::Slice,
+            MethodOwner::RawPtr,
         ] {
             let mut names = BTreeSet::new();
             for (_, method) in methods_of(owner) {
