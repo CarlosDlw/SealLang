@@ -273,3 +273,34 @@ func main() -> i32 {
         42,
     );
 }
+
+#[test]
+fn raw_pointers_compare_data_addresses_only() {
+    assert_program(
+        "\
+func main() -> i32 {
+  let first = 1;
+  let second = 2;
+  let p = &first as *raw i32;
+  let q = &first as *raw i32;
+  let r = &second as *raw i32;
+  if p != q { return 1; }
+  if !(p == q) { return 2; }
+  if p == r { return 3; }
+
+  let values = [1, 2, 3];
+  let whole: *raw [i32] = &values[..] as *raw [i32];
+  let prefix: *raw [i32] = &values[0..1] as *raw [i32];
+  let tail: *raw [i32] = &values[1..2] as *raw [i32];
+  if whole != prefix { return 4; }
+  if whole == tail { return 5; }
+
+  let null: *raw i32 = 0usize as *raw i32;
+  let other_null: *raw i32 = 0usize as *raw i32;
+  if null != other_null { return 6; }
+  42
+}
+",
+        42,
+    );
+}

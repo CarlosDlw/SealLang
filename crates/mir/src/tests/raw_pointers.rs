@@ -87,3 +87,24 @@ fn a_non_copy_value_moves_out_of_a_raw_pointer() {
     }
     assert!(moved, "a non-Copy pointee is moved, not copied");
 }
+
+#[test]
+fn a_write_through_a_raw_pointer_does_not_drop_a_destructor_value() {
+    let (fixture, hir, mir) = lower_clean(
+        "struct Guard { value: i32 } \
+         impl Drop for Guard { func drop(self: *mut Guard) { } } \
+         func main(pointer: *raw mut Guard) { unsafe { *pointer = Guard { value: 1 }; } }",
+    );
+    let body = function(&fixture, &hir, &mir, "main");
+    let mut wrote = false;
+    for statement in body.blocks.iter().flat_map(|block| block.statements.iter()) {
+        match &statement.kind {
+            StatementKind::Assign { place, .. } if has_raw_deref(place) => wrote = true,
+            StatementKind::Drop { place, .. } if has_raw_deref(place) => {
+                panic!("a raw write must not drop the old value")
+            }
+            _ => {}
+        }
+    }
+    assert!(wrote, "the assignment targets the raw dereference");
+}

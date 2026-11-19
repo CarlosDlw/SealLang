@@ -1802,6 +1802,74 @@ fn raw_pointer_read_write_and_copy_reach_memory() {
 }
 
 #[test]
+fn unaligned_raw_access_reaches_a_misaligned_address() {
+    let source = "\
+        func main() -> i32 {
+            let mut words = [0u32; 2];
+            let aligned = &mut words[0] as *raw mut u32;
+            let base = aligned as *raw mut u8;
+            unsafe {
+                let unaligned = base.add(1) as *raw mut u32;
+                if unaligned.addr() % 4 != 1 { return 1; }
+                unaligned.write_unaligned(42u32);
+                if unaligned.read_unaligned() != 42u32 { return 2; }
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-unaligned");
+}
+
+#[test]
+fn zero_length_raw_copy_is_a_no_op() {
+    let source = "\
+        func main() -> i32 {
+            let mut words = [1, 2];
+            let base = &mut words[0] as *raw mut i32;
+            unsafe {
+                base.copy(base as *raw i32, 0);
+                base.copy_nonoverlapping(base as *raw i32, 0);
+                if base.read() != 1 || base.add(1).read() != 2 { return 1; }
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-zero-copy");
+}
+
+#[test]
+fn raw_pointer_zst_read_and_write() {
+    let source = "\
+        func main() -> i32 {
+            let mut unit = ();
+            let pointer = &mut unit as *raw mut ();
+            unsafe {
+                pointer.write(());
+                let read = pointer.read();
+                let _ = read;
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-zst-access");
+}
+
+#[test]
+fn raw_pointer_generics_instantiate_per_pointee() {
+    let source = "\
+        func identity<T>(value: *raw T) -> *raw T { value }
+        func main() -> i32 {
+            let number = 41;
+            let flag = true;
+            let number_pointer = &number as *raw i32;
+            let flag_pointer = &flag as *raw bool;
+            unsafe {
+                if *identity::<i32>(number_pointer) + 1 != 42 { return 1; }
+                if !(*identity::<bool>(flag_pointer)) { return 2; }
+            }
+            42
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-generic-mono");
+}
+
+#[test]
 fn an_unsafe_function_call_runs_inside_an_unsafe_block() {
     let source = "\
         unsafe func bump(pointer: *raw mut i32) {

@@ -135,6 +135,21 @@ fn offset_from_keeps_the_receiver_pointer_kind() {
 }
 
 #[test]
+fn data_discards_dyn_metadata() {
+    let (fixture, hir, results) = check_clean(
+        "trait Shape { func area(self: *Self) -> i32; } \
+         struct Square { side: i32 } \
+         impl Shape for Square { func area(self: *Square) -> i32 { (*self).side } } \
+         func object(pointer: *raw dyn Shape) -> *raw () { pointer.data() }",
+    );
+    let (_, body) = function(&fixture, &hir, "object");
+    assert_eq!(
+        ty_text(&hir, expr_ty(&results, tail(&hir, body))),
+        "*raw ()"
+    );
+}
+
+#[test]
 fn copy_accepts_a_read_only_source() {
     check_clean(
         "func f(destination: *raw mut i32, source: *raw i32, count: usize) { unsafe { destination.copy(source, count); } }",

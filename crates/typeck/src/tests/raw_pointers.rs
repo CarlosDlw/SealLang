@@ -79,6 +79,25 @@ fn raw_pointers_are_accepted_in_fields_and_generics() {
 }
 
 #[test]
+fn raw_pointers_nest_and_appear_in_recursive_fields() {
+    let (fixture, _, _) = check_clean(
+        "struct Node { next: *raw Node, value: i32 }\n\
+         struct Slot { pointer: *raw mut i32 }\n\
+         func nested(pointer: *raw *raw i32) -> *raw *raw i32 { pointer }",
+    );
+    let _ = fixture;
+}
+
+#[test]
+fn raw_pointers_are_accepted_in_patterns() {
+    let (fixture, _, _) = check_clean(
+        "func binding(pointer: *raw i32) -> *raw i32 { match pointer { value => value } }\n\
+         func wildcard(pointer: *raw i32) -> i32 { match pointer { _ => 0 } }",
+    );
+    let _ = fixture;
+}
+
+#[test]
 fn raw_remains_an_ordinary_identifier() {
     let (fixture, hir, results) = check_clean("func f(raw: i32) -> i32 { raw }");
     let (_, body) = function(&fixture, &hir, "f");
