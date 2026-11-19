@@ -62,6 +62,8 @@ pub enum EvalErrorKind {
     },
     /// An intrinsic is outside the const whitelist.
     IntrinsicNotWhitelisted,
+    /// A value whose type declares a destructor was dropped at compile time.
+    DestructorInConstant,
     /// A compile-time call kept a symbolic type argument.
     NonConcreteArguments,
     /// A constant panicked, or a compile-time call had an invalid body.
@@ -93,9 +95,23 @@ impl EvalErrorKind {
             Self::DynamicDispatch { const_fn: false } => codes::E4016,
             Self::DynamicDispatch { const_fn: true } => codes::E4021,
             Self::IntrinsicNotWhitelisted => codes::E4022,
+            Self::DestructorInConstant => codes::E4028,
             Self::NonConcreteArguments | Self::Panic(_) => codes::E4027,
             Self::Internal(_) => return None,
         })
+    }
+
+    /// Returns a suggestion for what the program should change instead.
+    ///
+    /// Most failures point at a single operation; only the few with an
+    /// alternative spell a help line.
+    pub fn help(&self) -> Option<&'static str> {
+        match self {
+            Self::DestructorInConstant => {
+                Some("move the value out of the constant, or avoid a type that needs `Drop` in one")
+            }
+            _ => None,
+        }
     }
 
     /// Returns the human-readable failure.
@@ -137,6 +153,7 @@ impl EvalErrorKind {
             Self::DynamicDispatch { .. } => {
                 "a constant context cannot use dynamic dispatch or a trait-bound call".to_owned()
             }
+            Self::DestructorInConstant => "a destructor cannot run at compile time".to_owned(),
             Self::IntrinsicNotWhitelisted => {
                 "this intrinsic is outside the const-evaluation whitelist".to_owned()
             }
@@ -238,6 +255,7 @@ mod tests {
                 Some("E4021"),
             ),
             (EvalErrorKind::IntrinsicNotWhitelisted, Some("E4022")),
+            (EvalErrorKind::DestructorInConstant, Some("E4028")),
             (EvalErrorKind::NonConcreteArguments, Some("E4027")),
             (EvalErrorKind::Panic("boom".to_owned()), Some("E4027")),
             (EvalErrorKind::Internal("bug".to_owned()), None),

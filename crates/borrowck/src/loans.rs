@@ -23,7 +23,9 @@ pub(crate) fn collect(hir: &Hir, body: &Body) -> (Vec<Loan>, Vec<Vec<Option<Loan
     for block in body.blocks.iter() {
         let mut row = vec![None; block.statements.len()];
         for (position, statement) in block.statements.iter().enumerate() {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                continue;
+            };
             let (place, kind) = match rvalue {
                 Rvalue::Ref { place, kind } => (place.clone(), *kind),
                 Rvalue::SliceRef { base, kind, .. } => {
@@ -86,7 +88,9 @@ pub(crate) fn resolve(
             let Some(id) = loan_at[block_index][position] else {
                 continue;
             };
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                continue;
+            };
             if !matches!(
                 rvalue,
                 Rvalue::Ref { .. } | Rvalue::SliceRef { .. } | Rvalue::TraitObjectReborrow { .. }

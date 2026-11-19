@@ -139,7 +139,18 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 .position_at_end(self.blocks[id.index() as usize]);
             for statement in &block.statements {
                 self.set_span(statement.span);
-                let StatementKind::Assign { place, rvalue } = &statement.kind;
+                let (place, rvalue) = match &statement.kind {
+                    StatementKind::Assign { place, rvalue } => (place, rvalue),
+                    // Drop glue is emitted per type, and lowering does not emit
+                    // drop sites yet, so reaching one here means the pipeline
+                    // handed code generation a statement its shape cannot
+                    // represent.
+                    StatementKind::Drop { .. } | StatementKind::DropRemaining { .. } => {
+                        return Err(CodegenError::internal(
+                            "drop statements require drop glue, which is not emitted yet",
+                        ));
+                    }
+                };
                 let value = self.emit_rvalue(rvalue)?;
                 let destination = self.place_ptr(place)?;
                 self.build(self.builder.build_store(destination, value), "assignment")?;

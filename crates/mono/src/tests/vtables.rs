@@ -47,7 +47,9 @@ fn rvalue(body: &seal_mir::Body, predicate: impl Fn(&Rvalue) -> bool) -> &Rvalue
         .iter()
         .flat_map(|block| &block.statements)
         .find_map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                return None;
+            };
             predicate(rvalue).then_some(rvalue)
         })
         .expect("the body contains the expected rvalue")

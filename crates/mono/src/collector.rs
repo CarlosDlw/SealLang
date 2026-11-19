@@ -326,9 +326,17 @@ impl Collector<'_> {
         for block in body.blocks.iter() {
             for statement in &block.statements {
                 let span = statement.span;
-                let StatementKind::Assign { place, rvalue } = &statement.kind;
-                self.scan_place(place, span);
-                self.scan_rvalue(rvalue, span);
+                match &statement.kind {
+                    StatementKind::Assign { place, rvalue } => {
+                        self.scan_place(place, span);
+                        self.scan_rvalue(rvalue, span);
+                    }
+                    StatementKind::Drop { place, .. } => self.scan_place(place, span),
+                    StatementKind::DropRemaining { place, from } => {
+                        self.scan_place(place, span);
+                        self.scan_operand(from, span);
+                    }
+                }
             }
             if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
                 self.scan_operand(discriminant, block.terminator.span);

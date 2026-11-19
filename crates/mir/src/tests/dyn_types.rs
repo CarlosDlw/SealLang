@@ -25,7 +25,9 @@ fn first_rvalue(body: &Body, predicate: impl Fn(&Rvalue) -> bool) -> &Rvalue {
         .iter()
         .flat_map(|block| block.statements.iter())
         .map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                panic!("expected an assignment, found {:?}", statement.kind);
+            };
             rvalue
         })
         .find(|rvalue| predicate(rvalue))
@@ -115,7 +117,9 @@ fn reborrow_does_not_create_a_new_vtable() {
         .iter()
         .flat_map(|block| block.statements.iter())
         .map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                panic!("expected an assignment, found {:?}", statement.kind);
+            };
             rvalue
         })
         .collect();

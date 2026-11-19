@@ -110,7 +110,9 @@ fn places_must_name_an_existing_local() {
         .flat_map(|block| block.statements.iter_mut())
         .next()
         .expect("the body has one assignment");
-    let StatementKind::Assign { place, .. } = &mut statement.kind;
+    let StatementKind::Assign { place, .. } = &mut statement.kind else {
+        panic!("expected an assignment, found {:?}", statement.kind);
+    };
     *place = Place::local(LocalId::from_u32(99).expect("99 is representable"));
 
     assert!(matches!(

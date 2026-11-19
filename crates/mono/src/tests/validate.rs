@@ -248,7 +248,9 @@ fn a_mismatched_argument_list_is_rejected() {
 fn first_call_target(mono: &mut MonoMir) -> &mut CallTarget {
     for block in &mut mono.body.blocks {
         for statement in &mut block.statements {
-            let StatementKind::Assign { rvalue, .. } = &mut statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &mut statement.kind else {
+                continue;
+            };
             if let Rvalue::Call { target, .. } = rvalue {
                 return target;
             }

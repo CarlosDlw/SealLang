@@ -39,7 +39,9 @@ pub(crate) fn const_locals(body: &Body) -> ConstLocals {
     let mut shadowed = FxHashSet::default();
     for block in body.blocks.iter() {
         for statement in &block.statements {
-            let StatementKind::Assign { place, rvalue } = &statement.kind;
+            let StatementKind::Assign { place, rvalue } = &statement.kind else {
+                continue;
+            };
             let PlaceRoot::Local(local) = place.root else {
                 continue;
             };
@@ -375,7 +377,15 @@ fn transfer(
     statement: &Statement,
     state: &mut OriginState,
 ) {
-    let StatementKind::Assign { place, rvalue } = &statement.kind;
+    let (place, rvalue) = match &statement.kind {
+        StatementKind::Assign { place, rvalue } => (place, rvalue),
+        // A dropped place no longer reaches any storage, so the origins it
+        // carried are gone.
+        StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+            state.clear(place);
+            return;
+        }
+    };
     if place.is_deref() {
         return;
     }

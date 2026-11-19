@@ -197,8 +197,17 @@ impl crate::MonoMir {
         }
         for block in &body.blocks {
             for statement in &block.statements {
-                let StatementKind::Assign { rvalue, .. } = &statement.kind;
-                check_rvalue(tcx, instance, program, statement.span, rvalue)?;
+                match &statement.kind {
+                    StatementKind::Assign { rvalue, .. } => {
+                        check_rvalue(tcx, instance, program, statement.span, rvalue)?;
+                    }
+                    // A drop names a place whose type comes from a local
+                    // declaration, and every declaration was checked above.
+                    StatementKind::Drop { .. } => {}
+                    StatementKind::DropRemaining { from, .. } => {
+                        check_operand(tcx, instance, from)?;
+                    }
+                }
             }
             if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
                 check_operand(tcx, instance, discriminant)?;
@@ -455,9 +464,19 @@ fn check_body_globals(
 ) -> Result<(), MonoValidationError> {
     for block in body.blocks.iter() {
         for statement in &block.statements {
-            let StatementKind::Assign { place, rvalue } = &statement.kind;
-            check_place_global(program, constants, place)?;
-            check_rvalue_globals(program, constants, rvalue)?;
+            match &statement.kind {
+                StatementKind::Assign { place, rvalue } => {
+                    check_place_global(program, constants, place)?;
+                    check_rvalue_globals(program, constants, rvalue)?;
+                }
+                StatementKind::Drop { place, .. } => {
+                    check_place_global(program, constants, place)?;
+                }
+                StatementKind::DropRemaining { place, from } => {
+                    check_place_global(program, constants, place)?;
+                    check_operand_global(program, constants, from)?;
+                }
+            }
         }
         if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
             check_operand_global(program, constants, discriminant)?;

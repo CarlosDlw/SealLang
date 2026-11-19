@@ -12,13 +12,29 @@ pub(crate) type LocalSet = FxHashSet<LocalId>;
 /// place reads it: both need the base local to be initialized even though no
 /// value is moved. Writing a field does not read the base local as a value.
 pub(crate) fn statement_uses(statement: &Statement, uses: &mut LocalSet) {
-    let StatementKind::Assign { place, rvalue } = &statement.kind;
-    if place.is_deref()
-        && let Some(local) = place.local_id()
-    {
-        uses.insert(local);
+    match &statement.kind {
+        StatementKind::Assign { place, rvalue } => {
+            if place.is_deref()
+                && let Some(local) = place.local_id()
+            {
+                uses.insert(local);
+            }
+            rvalue_uses(rvalue, uses);
+        }
+        // Dropping reads the storage the destructor runs on, so the base local
+        // is live at the drop site even though no value is copied out of it.
+        StatementKind::Drop { place, .. } => {
+            if let Some(local) = place.local_id() {
+                uses.insert(local);
+            }
+        }
+        StatementKind::DropRemaining { place, from } => {
+            if let Some(local) = place.local_id() {
+                uses.insert(local);
+            }
+            operand_uses(from, uses);
+        }
     }
-    rvalue_uses(rvalue, uses);
 }
 
 /// Returns the local a statement assigns, when it defines the whole local.
@@ -26,7 +42,9 @@ pub(crate) fn statement_uses(statement: &Statement, uses: &mut LocalSet) {
 /// A field write leaves the other fields and the local itself live, so it is
 /// not a definition for liveness.
 pub(crate) fn statement_def(statement: &Statement) -> Option<LocalId> {
-    let StatementKind::Assign { place, .. } = &statement.kind;
+    let StatementKind::Assign { place, .. } = &statement.kind else {
+        return None;
+    };
     if place.is_deref() || !place.is_whole() {
         return None;
     }

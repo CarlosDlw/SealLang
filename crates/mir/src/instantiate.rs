@@ -23,8 +23,12 @@ pub fn instantiate_body(hir: &seal_hir::Hir, body: &Body, instance: Instance) ->
     }
     for block in &mut specialized.blocks {
         for statement in &mut block.statements {
-            let StatementKind::Assign { rvalue, .. } = &mut statement.kind;
-            substitute_rvalue(tcx, substs, rvalue);
+            match &mut statement.kind {
+                StatementKind::Assign { rvalue, .. } => substitute_rvalue(tcx, substs, rvalue),
+                // A place names storage, never a type: only operands carry types.
+                StatementKind::Drop { .. } => {}
+                StatementKind::DropRemaining { from, .. } => substitute_operand(tcx, substs, from),
+            }
         }
         if let TerminatorKind::SwitchInt { discriminant, .. } = &mut block.terminator.kind {
             substitute_operand(tcx, substs, discriminant);

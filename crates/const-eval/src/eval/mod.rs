@@ -211,6 +211,9 @@ impl<'a> Interpreter<'a> {
         if let Some(code) = error.kind.code() {
             builder = builder.code(code.diag_code());
         }
+        if let Some(help) = error.kind.help() {
+            builder = builder.help(help);
+        }
         if !error.call_chain.is_empty() {
             let chain: Vec<String> = error
                 .call_chain

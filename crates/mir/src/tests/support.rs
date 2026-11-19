@@ -128,6 +128,20 @@ pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir, Mir) {
     (fixture, hir, mir)
 }
 
+/// Returns the definition of the `kind` item named `name`.
+pub(crate) fn definition(
+    fixture: &Fixture,
+    hir: &Hir,
+    kind: seal_def::DefKind,
+    name: &str,
+) -> seal_def::DefId {
+    hir.definitions()
+        .iter_enumerated()
+        .find(|(_, data)| data.kind == kind && fixture.symbol(data.name) == name)
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no {kind:?} named `{name}`"))
+}
+
 /// Returns the lowered body of the function named `name`.
 pub(crate) fn function<'a>(fixture: &Fixture, hir: &Hir, mir: &'a Mir, name: &str) -> &'a Body {
     let owner = hir
@@ -154,9 +168,16 @@ pub(crate) fn local_named(fixture: &Fixture, body: &Body, name: &str) -> LocalId
 }
 
 /// Returns the place and rvalue of an assignment statement.
+///
+/// # Panics
+///
+/// Panics when the statement is not an assignment, so a structural test fails
+/// with the statement it actually found instead of silently checking nothing.
 pub(crate) fn assignment(statement: &Statement) -> (&Place, &Rvalue) {
-    let crate::statement::StatementKind::Assign { place, rvalue } = &statement.kind;
-    (place, rvalue)
+    match &statement.kind {
+        crate::statement::StatementKind::Assign { place, rvalue } => (place, rvalue),
+        other => panic!("expected an assignment, found {other:?}"),
+    }
 }
 
 /// Returns the display form of a type.

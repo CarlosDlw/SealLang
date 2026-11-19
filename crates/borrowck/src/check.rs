@@ -3,8 +3,10 @@
 use seal_diagnostics::DiagCtxt;
 use seal_hir::Hir;
 use seal_mir::{
-    BasicBlock, Body, LocalId, Operand, Place, Rvalue, Statement, StatementKind, TerminatorKind,
+    BasicBlock, Body, DropKind, LocalId, Operand, Place, Rvalue, Statement, StatementKind,
+    TerminatorKind,
 };
+use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::{InitPaths, RefKind, TyKind};
 
@@ -88,7 +90,7 @@ pub(crate) fn check_body(
     let origins = origins::analyze(hir, body, program, &const_locals);
     loans::resolve(body, &mut loans, &loan_at, &origins, &holds, &const_locals);
     record_last_uses(body, &liveness, &holds, &mut loans);
-    let init = init::analyze(body);
+    let init = init::analyze(hir, body);
     let reporter = Reporter::new(hir, dcx, body, interner);
 
     let mut unknown = false;
@@ -179,7 +181,15 @@ fn record_last_uses(
 /// Returns whether the statement reached storage through a reference whose
 /// target the may-name analysis does not model.
 fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut CallSites) -> bool {
-    let StatementKind::Assign { place, rvalue } = &statement.kind;
+    let (place, rvalue) = match &statement.kind {
+        StatementKind::Assign { place, rvalue } => (place, rvalue),
+        StatementKind::Drop { place, kind } => {
+            return check_drop(place, *kind, statement.span, context);
+        }
+        StatementKind::DropRemaining { place, from } => {
+            return check_drop_remaining(place, from, statement, context);
+        }
+    };
     let mut unknown = context.keys_of(place).is_unknown();
 
     match rvalue {
@@ -364,21 +374,77 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         }
     }
 
-    if !place_is_reported(context, place) {
-        for id in overlapping(context, place) {
-            let loan = context.loan(id);
-            if loan.kind.is_exclusive() {
-                context
-                    .reporter
-                    .write_while_exclusively_borrowed(place, statement.span, loan);
-            } else {
-                context
-                    .reporter
-                    .assign_while_borrowed(place, statement.span, loan);
-            }
+    report_write_conflicts(place, statement.span, context);
+    unknown
+}
+
+/// Checks a drop statement's access to its place.
+///
+/// A lexical or explicit drop consumes the value, so it conflicts with every
+/// live loan of the place exactly like a move does. An overwrite only takes
+/// exclusive access: the value stored there is being replaced, so neither its
+/// initialization nor its contents are observed.
+fn check_drop(place: &Place, kind: DropKind, span: Span, context: &Context<'_>) -> bool {
+    if matches!(kind, DropKind::Explicit) {
+        check_read(place, span, context);
+    }
+    if matches!(kind, DropKind::Overwrite) {
+        report_write_conflicts(place, span, context);
+    } else {
+        report_move_conflicts(place, span, context);
+    }
+    context.keys_of(place).is_unknown()
+}
+
+/// Checks the statement that drops the elements a by-value loop did not move.
+///
+/// The array is consumed, so the drop conflicts with every live loan of it. It
+/// reads no element value: the elements below `from` were moved out, which is
+/// why the statement exists, and the initialization analysis cannot express
+/// "the range after this position" for a runtime index.
+fn check_drop_remaining(
+    place: &Place,
+    from: &Operand,
+    statement: &Statement,
+    context: &Context<'_>,
+) -> bool {
+    check_operand(statement, from, context);
+    report_move_conflicts(place, statement.span, context);
+    context.keys_of(place).is_unknown() || operand_unknown(from, context)
+}
+
+/// Reports a write that overlaps a live loan of `place`.
+fn report_write_conflicts(place: &Place, span: Span, context: &Context<'_>) {
+    if place_is_reported(context, place) {
+        return;
+    }
+    for id in overlapping(context, place) {
+        let loan = context.loan(id);
+        if loan.kind.is_exclusive() {
+            context
+                .reporter
+                .write_while_exclusively_borrowed(place, span, loan);
+        } else {
+            context.reporter.assign_while_borrowed(place, span, loan);
         }
     }
-    unknown
+}
+
+/// Reports a move that overlaps a live loan of `place`.
+fn report_move_conflicts(place: &Place, span: Span, context: &Context<'_>) {
+    if place.is_deref() || place_is_reported(context, place) {
+        return;
+    }
+    for id in overlapping(context, place) {
+        let loan = context.loan(id);
+        if loan.kind.is_exclusive() {
+            context
+                .reporter
+                .move_while_exclusively_borrowed(place, span, loan);
+        } else {
+            context.reporter.move_while_borrowed(place, span, loan);
+        }
+    }
 }
 
 /// Returns whether reading `operand` reaches storage through an unknown target.
@@ -395,20 +461,8 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
     };
     check_read(&read, statement.span, context);
 
-    if matches!(operand, Operand::Move(_)) && !read.is_deref() && !place_is_reported(context, &read)
-    {
-        for id in overlapping(context, &read) {
-            let loan = context.loan(id);
-            if loan.kind.is_exclusive() {
-                context
-                    .reporter
-                    .move_while_exclusively_borrowed(&read, statement.span, loan);
-            } else {
-                context
-                    .reporter
-                    .move_while_borrowed(&read, statement.span, loan);
-            }
-        }
+    if matches!(operand, Operand::Move(_)) {
+        report_move_conflicts(&read, statement.span, context);
     }
 }
 

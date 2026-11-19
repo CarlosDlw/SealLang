@@ -77,10 +77,26 @@ impl<'a> Interpreter<'a> {
                         statement.span,
                     ));
                 }
-                let StatementKind::Assign { place, rvalue } = &statement.kind;
-                let destination = self.resolve_place(place, statement.span)?;
-                let value = self.eval_rvalue(rvalue, statement.span, destination.ty)?;
-                self.write_place(&destination, value, statement.span)?;
+                match &statement.kind {
+                    StatementKind::Assign { place, rvalue } => {
+                        let destination = self.resolve_place(place, statement.span)?;
+                        let value = self.eval_rvalue(rvalue, statement.span, destination.ty)?;
+                        self.write_place(&destination, value, statement.span)?;
+                    }
+                    StatementKind::Drop { place, .. }
+                    | StatementKind::DropRemaining { place, .. } => {
+                        // A destructor is user code, and compile time may only
+                        // run the fixed set of operations constant evaluation
+                        // models. A type without a destructor drops to nothing,
+                        // so those drops are simply skipped.
+                        let dropped = self.resolve_place(place, statement.span)?;
+                        if self.tcx.needs_drop(dropped.ty) {
+                            return Err(
+                                self.error(EvalErrorKind::DestructorInConstant, statement.span)
+                            );
+                        }
+                    }
+                }
             }
             self.steps = self.steps.saturating_add(1);
             if self.steps > self.limits.steps {

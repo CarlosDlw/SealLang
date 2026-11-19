@@ -2,8 +2,11 @@
 
 use std::collections::VecDeque;
 
-use seal_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, Statement, StatementKind};
-use seal_ty::{InitPaths, InitState, PathElem, TyCtxt, TyId};
+use seal_hir::Hir;
+use seal_mir::{
+    Body, DropKind, LocalId, LocalKind, Operand, Place, Rvalue, Statement, StatementKind,
+};
+use seal_ty::{InitPaths, InitState, ParamEnv, PathElem, TyCtxt, TyId, place_type};
 
 /// The initialization state of a place, as message selection needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,7 +34,12 @@ pub(crate) struct InitInfo {
 /// The lattice joins with "initialized on every path". Parameters start
 /// initialized, every other local starts uninitialized, and an unreachable
 /// block starts at the top element so dead code never reports a false error.
-pub(crate) fn analyze(body: &Body) -> InitInfo {
+pub(crate) fn analyze(hir: &Hir, body: &Body) -> InitInfo {
+    let context = Context {
+        tcx: hir.ty_ctxt(),
+        body,
+        param_env: hir.param_env(body.owner),
+    };
     let mut entry = InitPaths::new();
     for (local, declaration) in body.locals.iter_enumerated() {
         if declaration.kind == LocalKind::Arg {
@@ -52,7 +60,7 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
             .clone()
             .expect("a queued block has an incoming state");
         for statement in &body.block(block).statements {
-            transfer(statement, &mut state);
+            transfer(&context, statement, &mut state);
         }
 
         for successor in body.block(block).terminator.kind.successors() {
@@ -83,7 +91,7 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
         let mut row = Vec::with_capacity(block.statements.len());
         for statement in &block.statements {
             row.push(state.clone());
-            transfer(statement, &mut state);
+            transfer(&context, statement, &mut state);
         }
         before.push(row);
         exit.push(state);
@@ -92,10 +100,31 @@ pub(crate) fn analyze(body: &Body) -> InitInfo {
     InitInfo { before, exit }
 }
 
+/// The type information the initialization analysis needs.
+struct Context<'a> {
+    tcx: &'a TyCtxt,
+    body: &'a Body,
+    /// Resolves type parameters, which decides whether a drop consumes a value.
+    param_env: ParamEnv,
+}
+
 /// Applies one statement: moves happen during evaluation, then the destination
 /// is initialized.
-fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
-    let StatementKind::Assign { place, rvalue } = &statement.kind;
+fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<LocalId>) {
+    let (place, rvalue) = match &statement.kind {
+        StatementKind::Assign { place, rvalue } => (place, rvalue),
+        StatementKind::Drop { place, kind } => {
+            if *kind != DropKind::Overwrite {
+                drop_place(context, place, state);
+            }
+            return;
+        }
+        StatementKind::DropRemaining { place, from } => {
+            move_operand(from, state);
+            drop_place(context, place, state);
+            return;
+        }
+    };
     match rvalue {
         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => move_operand(operand, state),
         Rvalue::Binary { lhs, rhs, .. } => {
@@ -140,6 +169,24 @@ fn transfer(statement: &Statement, state: &mut InitPaths<LocalId>) {
     }
     if let Some((local, fields)) = path_of(place) {
         state.assign(local, &fields);
+    }
+}
+
+/// Marks a dropped place as moved.
+///
+/// A drop consumes the value, so the place is dead afterwards. A `Copy` value is
+/// not moved out by a drop, exactly like any other use, and a place reached
+/// through a reference says nothing about this frame's storage.
+fn drop_place(context: &Context<'_>, place: &Place, state: &mut InitPaths<LocalId>) {
+    let Some((local, fields)) = path_of(place) else {
+        return;
+    };
+    let root = context.body.local(local).ty;
+    let Some(ty) = place_type(context.tcx, root, &fields) else {
+        return;
+    };
+    if !context.tcx.is_copy_with(ty, &context.param_env) {
+        state.move_out(local, &fields);
     }
 }
 

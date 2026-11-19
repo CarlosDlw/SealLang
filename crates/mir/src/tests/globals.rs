@@ -1,18 +1,9 @@
 //! MIR lowering for constants, statics, and their bodies.
 
 use crate::{BodyKind, Operand, PlaceRoot, Rvalue, Statement, StatementKind};
-use seal_def::{DefId, DefKind};
-use seal_hir::Hir;
+use seal_def::DefKind;
 
-use super::support::{Fixture, function, lower_clean};
-
-fn definition(fixture: &Fixture, hir: &Hir, kind: DefKind, name: &str) -> DefId {
-    hir.definitions()
-        .iter_enumerated()
-        .find(|(_, data)| data.kind == kind && fixture.symbol(data.name) == name)
-        .map(|(id, _)| id)
-        .unwrap_or_else(|| panic!("no {kind:?} named `{name}`"))
-}
+use super::support::{definition, function, lower_clean};
 
 fn statements(body: &crate::Body) -> Vec<&Statement> {
     body.blocks
@@ -35,6 +26,7 @@ fn places(body: &crate::Body) -> Vec<PlaceRoot> {
                 });
                 roots
             }
+            other => panic!("expected an assignment, found {other:?}"),
         })
         .collect()
 }
@@ -74,7 +66,9 @@ fn a_static_write_target_keeps_the_static_root() {
     let destinations: Vec<PlaceRoot> = statements(body)
         .into_iter()
         .map(|statement| {
-            let StatementKind::Assign { place, .. } = &statement.kind;
+            let StatementKind::Assign { place, .. } = &statement.kind else {
+                panic!("expected an assignment, found {:?}", statement.kind);
+            };
             place.root
         })
         .collect();
@@ -90,7 +84,9 @@ fn a_static_field_projection_stays_on_the_static() {
     let config = definition(&fixture, &hir, DefKind::Static, "CONFIG");
     let body = function(&fixture, &hir, &mir, "main");
     let projected = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(
             rvalue,
             Rvalue::Use(Operand::Copy(place) | Operand::Move(place))
@@ -109,7 +105,9 @@ fn borrowing_a_static_keeps_the_static_root() {
     let config = definition(&fixture, &hir, DefKind::Static, "CONFIG");
     let body = function(&fixture, &hir, &mir, "main");
     let borrowed = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(
             rvalue,
             Rvalue::Ref { place, .. } if place.root == PlaceRoot::Static(config)
@@ -126,7 +124,9 @@ fn slicing_a_static_keeps_the_static_root() {
     let values = definition(&fixture, &hir, DefKind::Static, "VALUES");
     let body = function(&fixture, &hir, &mir, "main");
     let sliced = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(
             rvalue,
             Rvalue::SliceRef { base, .. } if base.root == PlaceRoot::Static(values)
@@ -145,7 +145,9 @@ fn a_static_argument_is_passed_from_the_static() {
     let body = function(&fixture, &hir, &mir, "main");
     let mut static_temp = None;
     for statement in statements(body) {
-        let StatementKind::Assign { place, rvalue } = &statement.kind;
+        let StatementKind::Assign { place, rvalue } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         if let Rvalue::Use(Operand::Copy(source)) = rvalue
             && source.root == PlaceRoot::Static(limit)
         {
@@ -154,7 +156,9 @@ fn a_static_argument_is_passed_from_the_static() {
     }
     let static_temp = static_temp.expect("the static is read into a temporary");
     let passed = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(
             rvalue,
             Rvalue::Call { args, .. }
@@ -174,7 +178,9 @@ fn a_const_read_is_a_const_operand() {
     let answer = definition(&fixture, &hir, DefKind::Const, "ANSWER");
     let body = function(&fixture, &hir, &mir, "main");
     let read = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(rvalue, Rvalue::Use(Operand::Const(def)) if *def == answer)
     });
     assert!(read, "a const path becomes a const operand");
@@ -191,7 +197,9 @@ fn a_const_field_is_materialized_into_a_temporary() {
 
     let mut materialized = None;
     for statement in statements(body) {
-        let StatementKind::Assign { place, rvalue } = &statement.kind;
+        let StatementKind::Assign { place, rvalue } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         if let Rvalue::Use(Operand::Const(def)) = rvalue
             && *def == origin
         {
@@ -216,11 +224,15 @@ fn borrowing_a_const_materializes_it_first() {
     let answer = definition(&fixture, &hir, DefKind::Const, "ANSWER");
     let body = function(&fixture, &hir, &mir, "main");
     let has_operand = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(rvalue, Rvalue::Use(Operand::Const(def)) if *def == answer)
     });
     let borrowed_local = statements(body).into_iter().any(|statement| {
-        let StatementKind::Assign { rvalue, .. } = &statement.kind;
+        let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+            panic!("expected an assignment, found {:?}", statement.kind);
+        };
         matches!(rvalue, Rvalue::Ref { place, .. } if place.root != PlaceRoot::Const(answer))
     });
     assert!(
@@ -272,7 +284,9 @@ fn a_place_root_of_the_wrong_kind_fails_validation() {
         .statements
         .first_mut()
         .expect("the body assigns its argument");
-    let StatementKind::Assign { place, .. } = &mut statement.kind;
+    let StatementKind::Assign { place, .. } = &mut statement.kind else {
+        panic!("expected an assignment, found {:?}", statement.kind);
+    };
     place.root = PlaceRoot::Static(identity);
     assert!(matches!(
         body.validate_with(&hir),

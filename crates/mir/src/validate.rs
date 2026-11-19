@@ -60,6 +60,22 @@ pub enum ValidationError {
     },
     /// A constant or static body is marked as a `const func`.
     ConstFlagOnValueBody,
+    /// A drop statement names a global.
+    ///
+    /// Only frame storage can be dropped: a `static` lives for the whole
+    /// program and a constant is not storage at all.
+    DropOfGlobal {
+        /// The block containing the drop.
+        block: BasicBlockId,
+        /// The static or constant the drop names.
+        def: DefId,
+    },
+    /// A statement drops the remaining elements of something that is not an
+    /// array.
+    DropRemainingOnNonArray {
+        /// The block containing the statement.
+        block: BasicBlockId,
+    },
     /// A place root names a definition of the wrong kind.
     PlaceRootKindMismatch {
         /// The block containing the place.
@@ -261,6 +277,16 @@ impl fmt::Display for ValidationError {
             Self::ConstFlagOnValueBody => {
                 f.write_str("a constant or static body is marked as a const function")
             }
+            Self::DropOfGlobal { block, def } => write!(
+                f,
+                "a drop statement in block {} names global {def:?}",
+                block.index()
+            ),
+            Self::DropRemainingOnNonArray { block } => write!(
+                f,
+                "a drop-remaining statement in block {} names a non-array place",
+                block.index()
+            ),
             Self::PlaceRootKindMismatch { block, def } => write!(
                 f,
                 "block {block:?} roots a place at {def:?}, which has the wrong kind"
@@ -434,9 +460,24 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
 
     for (block, data) in body.blocks.iter_enumerated() {
         for statement in &data.statements {
-            let StatementKind::Assign { place, rvalue } = &statement.kind;
-            check_place(hir, body, block, place.clone())?;
-            check_rvalue(body, block, place, rvalue, hir)?;
+            match &statement.kind {
+                StatementKind::Assign { place, rvalue } => {
+                    check_place(hir, body, block, place.clone())?;
+                    check_rvalue(body, block, place, rvalue, hir)?;
+                }
+                StatementKind::Drop { place, .. } => check_drop(hir, body, block, place)?,
+                StatementKind::DropRemaining { place, from } => {
+                    check_place(hir, body, block, place.clone())?;
+                    check_droppable_root(block, place)?;
+                    if let Some(hir) = hir {
+                        let ty = place_ty(hir, body, place);
+                        if !matches!(hir.ty_ctxt().kind(ty), TyKind::Array { .. }) {
+                            return Err(ValidationError::DropRemainingOnNonArray { block });
+                        }
+                    }
+                    check_operand(body, block, from, hir)?;
+                }
+            }
         }
         match &data.terminator.kind {
             TerminatorKind::Goto(target) => check_target(body, block, *target)?,
@@ -497,6 +538,37 @@ fn check_place(
         }
     }
     Ok(())
+}
+
+/// Checks a drop statement's place.
+///
+/// Whether the type needs a destructor is deliberately not checked: which
+/// values get a drop site is lowering's policy, and repeating `needs_drop` here
+/// would let the two disagree. A drop through a reference names the pointee;
+/// whether that pointee may be consumed is a type-checking question (`E3018`),
+/// not a structural one, because the place itself is well formed either way.
+fn check_drop(
+    hir: Option<&Hir>,
+    body: &Body,
+    block: BasicBlockId,
+    place: &Place,
+) -> Result<(), ValidationError> {
+    check_place(hir, body, block, place.clone())?;
+    check_droppable_root(block, place)
+}
+
+/// Requires a dropped place to name frame storage.
+///
+/// A `static` lives for the whole program, so a drop site for it would run a
+/// destructor on memory the frame does not own; a constant is not storage at
+/// all, because lowering materializes its value into a temporary.
+fn check_droppable_root(block: BasicBlockId, place: &Place) -> Result<(), ValidationError> {
+    match place.root {
+        crate::place::PlaceRoot::Local(_) => Ok(()),
+        crate::place::PlaceRoot::Static(def) | crate::place::PlaceRoot::Const(def) => {
+            Err(ValidationError::DropOfGlobal { block, def })
+        }
+    }
 }
 
 fn check_operand(

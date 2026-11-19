@@ -2709,6 +2709,21 @@ Make the type arguments concrete, or avoid the failing operation in the
 compile-time path. The message states which of the two cases applied.",
 };
 
+/// Dropping a value whose type declares a destructor during constant evaluation.
+pub const E4028: ErrorCode = ErrorCode {
+    code: "E4028",
+    title: "a destructor cannot run at compile time",
+    explanation: "\
+Constant evaluation only runs the fixed set of operations the compiler models.
+Dropping a value whose type declares a destructor would run user code, which is
+outside that set, so a compile-time path that needs to drop such a value is
+rejected.
+
+Avoid owning values with destructors in constants: build the value at run time
+instead. Dropping a value whose type has no destructor is always allowed,
+because it does nothing at run time either.",
+};
+
 /// Every registered code, in allocation order.
 pub static ALL: &[ErrorCode] = &[
     E0001, E0002, E0003, E0004, E0005, E0006, E0007, E0008, E0009, E0010, E0011, E0012, E0013,
@@ -2725,9 +2740,9 @@ pub static ALL: &[ErrorCode] = &[
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012,
     E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025,
-    E4026, E4027, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
-    E5012, E5013, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007,
-    E9001, E9002,
+    E4026, E4027, E4028, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E5011, E5012, E5013, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006,
+    E7007, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -2883,6 +2898,7 @@ mod tests {
             ("E4025", "maximum representable size"),
             ("E4026", "does not yet have a defined state"),
             ("E4027", "which of the two cases"),
+            ("E4028", "has no destructor is always allowed"),
             ("E5011", "cannot see across the call"),
             ("E5012", "reborrow the static where it is needed"),
             ("E5013", "directly or transitively"),

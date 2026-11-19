@@ -45,6 +45,22 @@ impl Fixture {
     }
 
     pub(crate) fn compile_with(source: &str, limits: EvalLimits) -> Self {
+        Self::compile_edited_with(source, limits, |_, _| {})
+    }
+
+    /// Compiles `source`, lets `edit` rewrite the MIR, then evaluates it.
+    ///
+    /// Evaluation runs after the edit, so a test can build a body shape that
+    /// no source program produces yet.
+    pub(crate) fn compile_edited(source: &str, edit: impl FnOnce(&Hir, &mut Mir)) -> Self {
+        Self::compile_edited_with(source, EvalLimits::default(), edit)
+    }
+
+    pub(crate) fn compile_edited_with(
+        source: &str,
+        limits: EvalLimits,
+        edit: impl FnOnce(&Hir, &mut Mir),
+    ) -> Self {
         let map = Arc::new(SourceMap::new());
         let id = map
             .add_file(FileName::virtual_name("test.sl"), source.to_owned())
@@ -57,7 +73,8 @@ impl Fixture {
         let ast = seal_parser::parse(&lexed, &dcx, &interner);
         let hir = seal_hir::lower(&ast, &dcx, &interner);
         let typeck = seal_typeck::check(&hir, &dcx, &interner, 64);
-        let mir = seal_mir::lower(&hir, &typeck);
+        let mut mir = seal_mir::lower(&hir, &typeck);
+        edit(&hir, &mut mir);
         let program = evaluate_with_limits(&hir, &mir, &dcx, &interner, 64, limits);
         Self {
             map,

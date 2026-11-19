@@ -216,7 +216,15 @@ fn transfer(
     state: &mut HoldState,
     all_loans: &LoanSet,
 ) {
-    let StatementKind::Assign { place, rvalue } = &statement.kind;
+    let (place, rvalue) = match &statement.kind {
+        StatementKind::Assign { place, rvalue } => (place, rvalue),
+        // Dropping a place ends every loan its value carried: the storage no
+        // longer holds that reference.
+        StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+            state.clear(place);
+            return;
+        }
+    };
     if place.is_deref() {
         // Shared references are read-only; a write through one was rejected by
         // type checking and never reaches MIR.

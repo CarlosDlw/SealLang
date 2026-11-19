@@ -18,18 +18,35 @@ pub(super) fn collect(
     let mut calls = Vec::new();
     for block in body.blocks.iter() {
         for statement in &block.statements {
-            let StatementKind::Assign { place, rvalue } = &statement.kind;
-            if let Some(path) = GlobalPath::from_place(hir, place) {
-                direct.write(path);
+            match &statement.kind {
+                StatementKind::Assign { place, rvalue } => {
+                    if let Some(path) = GlobalPath::from_place(hir, place) {
+                        direct.write(path);
+                    }
+                    collect_rvalue(
+                        hir,
+                        rvalue,
+                        trait_candidates,
+                        dynamic_candidates,
+                        &mut direct,
+                        &mut calls,
+                    );
+                }
+                StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+                    // A destructor is user code that may read or write
+                    // `static mut` storage. It runs from drop glue rather than
+                    // from a call this analysis can follow, so a drop that can
+                    // reach a destructor makes this body's effect summary
+                    // unknown. A body that only drops `Copy`-like values keeps
+                    // its precise summary.
+                    if hir
+                        .ty_ctxt()
+                        .needs_drop(crate::origins::place_ty(hir, body, place))
+                    {
+                        direct.unknown = true;
+                    }
+                }
             }
-            collect_rvalue(
-                hir,
-                rvalue,
-                trait_candidates,
-                dynamic_candidates,
-                &mut direct,
-                &mut calls,
-            );
         }
         match &block.terminator.kind {
             TerminatorKind::SwitchInt { discriminant, .. } => {

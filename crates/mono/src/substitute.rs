@@ -51,7 +51,11 @@ pub(crate) fn resolve_body(
     for block in &mut body.blocks {
         for statement in &mut block.statements {
             let span = statement.span;
-            let StatementKind::Assign { rvalue, .. } = &mut statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &mut statement.kind else {
+                // A drop discovers no call: drop glue is built per type by code
+                // generation, and an array drop only names a range operand.
+                continue;
+            };
             match rvalue {
                 Rvalue::Call { target, .. } => match *target {
                     CallTarget::Direct { instance, .. } => {

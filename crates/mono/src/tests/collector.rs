@@ -40,7 +40,9 @@ fn call_targets(body: &seal_mir::Body) -> Vec<CallTarget> {
         .iter()
         .flat_map(|block| &block.statements)
         .filter_map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                return None;
+            };
             match rvalue {
                 Rvalue::Call { target, .. } => Some(*target),
                 _ => None,
@@ -152,7 +154,9 @@ fn generic_enum_types_are_substituted_in_signatures_and_variants() {
         .iter()
         .flat_map(|block| &block.statements)
         .find_map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                return None;
+            };
             let Rvalue::Aggregate {
                 kind: seal_mir::AggregateKind::Variant { args, .. },
                 ..
@@ -213,7 +217,9 @@ fn aggregate_kinds_carry_the_instance_arguments() {
         .iter()
         .flat_map(|block| &block.statements)
         .find_map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                return None;
+            };
             let Rvalue::Aggregate {
                 kind: seal_mir::AggregateKind::Struct { args, .. },
                 ..

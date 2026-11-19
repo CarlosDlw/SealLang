@@ -16,6 +16,7 @@ fn rvalues(body: &Body) -> Vec<&Rvalue> {
         .flat_map(|block| block.statements.iter())
         .map(|statement| match &statement.kind {
             StatementKind::Assign { rvalue, .. } => rvalue,
+            other => panic!("expected an assignment, found {other:?}"),
         })
         .collect()
 }

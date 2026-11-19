@@ -40,7 +40,9 @@ fn call_targets(body: &seal_mir::Body) -> Vec<CallTarget> {
         .iter()
         .flat_map(|block| &block.statements)
         .filter_map(|statement| {
-            let StatementKind::Assign { rvalue, .. } = &statement.kind;
+            let StatementKind::Assign { rvalue, .. } = &statement.kind else {
+                return None;
+            };
             match rvalue {
                 Rvalue::Call { target, .. } => Some(*target),
                 _ => None,
