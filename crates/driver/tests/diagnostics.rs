@@ -459,6 +459,75 @@ func main() -> i32 {
 }
 
 #[test]
+fn a_non_copy_field_reports_e3077_with_its_span_and_help() {
+    let output = reject(
+        "copy-field",
+        r#"struct Token {
+  value: i32,
+}
+
+struct Box {
+  value: Token,
+}
+
+impl Copy for Box {}
+"#,
+        "E3077",
+        "field `value` of `Box` has type `Token`",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--> "),
+        "missing a source location: {stderr}"
+    );
+    assert!(
+        stderr.contains("impl Copy for Box {}") && stderr.contains('^'),
+        "missing the implementation span: {stderr}"
+    );
+    assert!(
+        stderr.contains("help:") && stderr.contains("make its type `Copy`"),
+        "missing the field help: {stderr}"
+    );
+}
+
+#[test]
+fn copy_and_drop_report_e3068_with_a_secondary_span() {
+    let output = reject(
+        "copy-drop-conflict",
+        r#"struct Point {
+  x: i32,
+}
+
+impl Copy for Point {}
+
+impl Drop for Point {
+  func drop(self: *mut Point) {}
+}
+"#,
+        "E3068",
+        "cannot implement `Copy`",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--> "),
+        "missing a source location: {stderr}"
+    );
+    assert!(
+        stderr.contains("impl Copy for Point {}") && stderr.contains('^'),
+        "missing the Copy implementation span: {stderr}"
+    );
+    assert!(
+        stderr.contains("the destructor is declared here")
+            && stderr.contains("impl Drop for Point"),
+        "missing the Drop secondary span: {stderr}"
+    );
+    assert!(
+        stderr.contains("help:") && stderr.contains("cannot own a destructor"),
+        "missing the conflict help: {stderr}"
+    );
+}
+
+#[test]
 fn two_shared_arguments_may_alias() {
     let file = SourceFile::new(
         "alias-shared-arguments",

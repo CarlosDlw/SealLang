@@ -239,6 +239,18 @@ fn a_conditional_wrapper_is_copy_inside_a_generic_body() {
 }
 
 #[test]
+fn copy_cannot_be_used_as_a_type() {
+    let (fixture, _, _) = check_errors("func take(value: Copy) {}");
+    fixture.expect("E2027", "is a trait, not a type");
+}
+
+#[test]
+fn copy_has_no_associated_items_to_call() {
+    let (fixture, _, _) = check_errors("func main() { Copy::algo(); }");
+    fixture.expect("E2018", "Copy");
+}
+
+#[test]
 fn a_generic_match_guard_can_read_a_copy_binding() {
     let source = "\
         struct Wrapper<T> { value: T } \
