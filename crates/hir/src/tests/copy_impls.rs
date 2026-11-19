@@ -245,6 +245,13 @@ fn copy_and_drop_are_mutually_exclusive_in_both_orders() {
 }
 
 #[test]
+fn the_name_copy_is_not_a_value() {
+    let fixture = Fixture::new("func main() { let copy = Copy; }");
+    let _ = fixture.lower();
+    fixture.expect("E2027", "is a trait, not a value");
+}
+
+#[test]
 fn the_name_copy_is_reserved() {
     let fixture = Fixture::new("trait Copy {}");
     let _ = fixture.lower();
