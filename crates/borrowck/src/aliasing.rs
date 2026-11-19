@@ -97,6 +97,7 @@ pub(crate) fn facts(
     mir: &Mir,
     bodies: &FxHashMap<DefId, BodyFacts>,
     calls: &CallSites,
+    effects: &crate::effects::Effects,
 ) -> AliasingFacts {
     let mut noalias = FxHashSet::default();
     for body in mir.bodies() {
@@ -116,7 +117,8 @@ pub(crate) fn facts(
         // instantiation. Until monomorphization proves the contract for each
         // concrete instance, the grant is withheld rather than assumed.
         let monomorphic = body.args().all(|argument| !tcx.contains_param(argument.ty));
-        let clean = bodies.get(&body.owner).is_some_and(|facts| !facts.unknown);
+        let clean = bodies.get(&body.owner).is_some_and(|facts| !facts.unknown)
+            && !effects.touches_raw(body.owner);
         if monomorphic && clean && calls.proven(body.owner) {
             noalias.insert(body.owner);
         }

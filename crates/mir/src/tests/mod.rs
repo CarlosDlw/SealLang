@@ -26,5 +26,6 @@ mod slices;
 mod straight_line;
 mod support;
 mod tuples;
+mod unsafe_functions;
 mod validation;
 mod while_let;

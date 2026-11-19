@@ -8,6 +8,13 @@ use seal_ty::TyId;
 use super::Lowering;
 use crate::body::{Body, BodyKind, ParamData};
 
+/// The two signature markers that are copied onto a lowered body.
+#[derive(Clone, Copy)]
+struct BodyFlags {
+    is_const: bool,
+    is_unsafe: bool,
+}
+
 impl Lowering<'_> {
     pub(super) fn lower_bodies(&mut self) {
         let items = self.function_items.clone();
@@ -15,7 +22,7 @@ impl Lowering<'_> {
             let Some(&function) = self.function_defs.get(&item_id) else {
                 continue;
             };
-            let (ret, params, body, is_const) = {
+            let (ret, params, body, is_const, is_unsafe) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::Func(declaration) = &item.kind else {
                     continue;
@@ -25,11 +32,22 @@ impl Lowering<'_> {
                     declaration.params.clone(),
                     declaration.body,
                     declaration.is_const,
+                    declaration.is_unsafe,
                 )
             };
 
             let self_ty = self.impl_self_ty_of_function.get(&function).copied();
-            self.lower_body(function, ret, &params, body, self_ty, is_const);
+            self.lower_body(
+                function,
+                ret,
+                &params,
+                body,
+                self_ty,
+                BodyFlags {
+                    is_const,
+                    is_unsafe,
+                },
+            );
         }
         self.function = None;
     }
@@ -42,7 +60,7 @@ impl Lowering<'_> {
     pub(super) fn lower_trait_bodies(&mut self) {
         let items = self.trait_method_items.clone();
         for (item_id, method) in items {
-            let (ret, params, body) = {
+            let (ret, params, body, is_unsafe) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::TraitMethod(declaration) = &item.kind else {
                     continue;
@@ -50,10 +68,25 @@ impl Lowering<'_> {
                 let Some(body) = declaration.body else {
                     continue;
                 };
-                (declaration.ret, declaration.params.clone(), body)
+                (
+                    declaration.ret,
+                    declaration.params.clone(),
+                    body,
+                    declaration.is_unsafe,
+                )
             };
 
-            self.lower_body(method, ret, &params, body, None, false);
+            self.lower_body(
+                method,
+                ret,
+                &params,
+                body,
+                None,
+                BodyFlags {
+                    is_const: false,
+                    is_unsafe,
+                },
+            );
         }
         self.function = None;
     }
@@ -69,7 +102,7 @@ impl Lowering<'_> {
         params: &[ParamId],
         body: AstBlockId,
         self_ty: Option<TyId>,
-        is_const: bool,
+        flags: BodyFlags,
     ) {
         self.function = Some(owner);
         self.loop_depth = 0;
@@ -91,7 +124,8 @@ impl Lowering<'_> {
             owner,
             kind: BodyKind::Function,
             ret,
-            is_const,
+            is_const: flags.is_const,
+            is_unsafe: flags.is_unsafe,
             params,
             root,
         });

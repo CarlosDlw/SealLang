@@ -65,6 +65,14 @@ impl Checker<'_> {
             return self.error_ty();
         };
 
+        if self.hir.definitions().kind(function) != DefKind::TraitMethod {
+            let is_unsafe = self
+                .results
+                .signature(function)
+                .is_some_and(|signature| signature.is_unsafe);
+            self.require_unsafe_call(span, is_unsafe, self.hir.definitions().name(function));
+        }
+
         let explicit = self
             .hir
             .expr_args(callee)
@@ -164,6 +172,7 @@ impl Checker<'_> {
         else {
             return self.error_ty();
         };
+        self.require_unsafe_call(span, method.is_unsafe, method.name);
         let Some(trait_ref) = supplied_trait_ref.or_else(|| self.visible_trait_ref(trait_def))
         else {
             for arg in args {

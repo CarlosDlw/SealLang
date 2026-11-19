@@ -92,6 +92,96 @@ fn const_function_carries_the_flag_and_the_prefix_span() {
 }
 
 #[test]
+fn unsafe_functions_carry_the_marker_and_the_prefix_span() {
+    let source = "\
+        unsafe func danger(value: i32) -> i32 { unsafe { value } }\n\
+        const unsafe func compute(value: i32) -> i32 { value }\n\
+        unsafe const func other() {}\n\
+        func plain() {}";
+    let (fixture, ast) = parse_clean(source);
+
+    let ItemKind::Func(danger) = &item(&ast, 0).kind else {
+        panic!("first item is not a function: {:?}", item(&ast, 0).kind);
+    };
+    assert!(danger.is_unsafe);
+    assert!(!danger.is_const);
+    assert_eq!(
+        fixture.text(item(&ast, 0).span),
+        "unsafe func danger(value: i32) -> i32 { unsafe { value } }"
+    );
+
+    let ItemKind::Func(compute) = &item(&ast, 1).kind else {
+        panic!("second item is not a function: {:?}", item(&ast, 1).kind);
+    };
+    assert!(compute.is_unsafe && compute.is_const);
+
+    let ItemKind::Func(other) = &item(&ast, 2).kind else {
+        panic!("third item is not a function: {:?}", item(&ast, 2).kind);
+    };
+    assert!(other.is_unsafe && other.is_const);
+
+    let ItemKind::Func(plain) = &item(&ast, 3).kind else {
+        panic!("fourth item is not a function: {:?}", item(&ast, 3).kind);
+    };
+    assert!(!plain.is_unsafe);
+}
+
+#[test]
+fn unsafe_methods_parse_in_impls_and_traits() {
+    let source = "\
+        struct Token { value: i32 }\n\
+        trait Access {\n\
+            unsafe func read(self: *Self) -> i32;\n\
+            unsafe func fallback(self: *Self) -> i32 { unsafe { 1 } }\n\
+        }\n\
+        impl Token { unsafe func bump(self: *mut Token) { unsafe { } } }\n\
+        impl Access for Token { unsafe func read(self: *Self) -> i32 { unsafe { 0 } } }";
+    let (_, ast) = parse_clean(source);
+
+    let ItemKind::Trait(trait_decl) = &item(&ast, 1).kind else {
+        panic!("second item is not a trait: {:?}", item(&ast, 1).kind);
+    };
+    let methods: Vec<&seal_ast::TraitMethodDecl> = trait_decl
+        .methods
+        .iter()
+        .map(|method| {
+            let seal_ast::ItemKind::TraitMethod(declaration) = &ast.item(*method).kind else {
+                panic!("trait member is not a method");
+            };
+            declaration
+        })
+        .collect();
+    assert!(methods.iter().all(|method| method.is_unsafe));
+
+    let ItemKind::Impl(inherent) = &item(&ast, 2).kind else {
+        panic!("third item is not an impl: {:?}", item(&ast, 2).kind);
+    };
+    let ItemKind::Func(bump) = &ast.item(inherent.functions[0]).kind else {
+        panic!("the inherent impl member is not a function");
+    };
+    assert!(bump.is_unsafe);
+
+    let ItemKind::Impl(implemented) = &item(&ast, 3).kind else {
+        panic!("fourth item is not an impl: {:?}", item(&ast, 3).kind);
+    };
+    let ItemKind::Func(read) = &ast.item(implemented.functions[0]).kind else {
+        panic!("the trait impl member is not a function");
+    };
+    assert!(read.is_unsafe);
+}
+
+#[test]
+fn unsafe_on_a_non_function_is_reported_and_the_item_survives() {
+    let fixture = Fixture::new("unsafe struct Token { value: i32 }");
+    let ast = fixture.parse();
+    fixture.expect("E3071", "applies only to functions");
+    let ItemKind::Struct(declaration) = &ast.item(ast.program().items()[0]).kind else {
+        panic!("the struct must survive the misplaced marker");
+    };
+    assert_eq!(fixture.symbol(declaration.name), "Token");
+}
+
+#[test]
 fn block_scope_declarations_are_statements() {
     let source = "func example() -> i32 {\n\
                   const SCALE: i32 = 3;\n\

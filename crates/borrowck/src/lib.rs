@@ -119,7 +119,7 @@ pub fn check(
         let facts = check::check_body(hir, body, program, &effects, dcx, interner, &mut calls);
         bodies.insert(body.owner, facts);
     }
-    aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls)
+    aliasing::facts(hir.ty_ctxt(), mir, &bodies, &calls, &effects)
 }
 
 /// Checks one body.

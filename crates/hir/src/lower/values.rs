@@ -170,6 +170,7 @@ impl Lowering<'_> {
             kind,
             ret: Some(ret),
             is_const: false,
+            is_unsafe: false,
             params: Vec::new(),
             root,
         });

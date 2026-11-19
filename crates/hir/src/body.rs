@@ -34,6 +34,11 @@ pub struct Body {
     /// Only a [`BodyKind::Function`] may be const; value initializers and
     /// trait default bodies are always `false`.
     pub is_const: bool,
+    /// Whether this is the body of an `unsafe func`.
+    ///
+    /// The flag belongs to the signature. It does not make the body an unsafe
+    /// context: every unsafe operation inside still needs an `unsafe` block.
+    pub is_unsafe: bool,
     /// Parameters in source order.
     pub params: Vec<ParamData>,
     /// The root block.

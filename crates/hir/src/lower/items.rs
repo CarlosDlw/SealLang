@@ -25,6 +25,8 @@ pub(super) struct TraitMethodSig {
     pub(super) def: DefId,
     pub(super) name: Symbol,
     pub(super) name_span: Span,
+    /// Whether the declaration is `unsafe func`.
+    pub(super) is_unsafe: bool,
     pub(super) receiver: Option<ReceiverKind>,
     /// Whether the declaration had a `self` parameter, even if it was invalid.
     pub(super) has_self_parameter: bool,
@@ -49,6 +51,7 @@ pub(super) struct PendingTraitImpl {
 struct ImplSignature {
     name: Symbol,
     name_span: Span,
+    is_unsafe: bool,
     params: Vec<TyId>,
     ret: TyId,
 }
@@ -278,6 +281,7 @@ impl Lowering<'_> {
                 def: definition,
                 name,
                 name_span,
+                is_unsafe: declaration.is_unsafe,
                 receiver,
                 has_self_parameter,
                 params: parameters,
@@ -985,6 +989,26 @@ impl Lowering<'_> {
                 continue;
             }
 
+            let is_unsafe = self.function_item_of.get(&function).is_some_and(|item| {
+                matches!(
+                    &self.ast.item(*item).kind,
+                    ItemKind::Func(declaration) if declaration.is_unsafe
+                )
+            });
+            if is_unsafe {
+                let name_span = self.hir.definitions().get(function).name_span;
+                self.error(
+                    codes::E3072,
+                    name_span,
+                    "a destructor cannot be an `unsafe func`",
+                )
+                .help(
+                    "keep `drop` safe and move unsafe work into an explicit method that the owner calls",
+                )
+                .emit();
+                continue;
+            }
+
             if self.hir.ty_ctxt().set_drop_method(adt, function).is_some() {
                 self.dcx.bug("a validated `impl Drop` was recorded twice");
             }
@@ -995,7 +1019,7 @@ impl Lowering<'_> {
     /// impl's `Self` substituted.
     fn lowered_impl_signature(&mut self, function: DefId, self_ty: TyId) -> Option<ImplSignature> {
         let item_id = *self.function_item_of.get(&function)?;
-        let (name, params, ret, name_span) = {
+        let (name, params, ret, name_span, is_unsafe) = {
             let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
                 return None;
             };
@@ -1004,6 +1028,7 @@ impl Lowering<'_> {
                 declaration.params.clone(),
                 declaration.ret,
                 declaration.name_span,
+                declaration.is_unsafe,
             )
         };
 
@@ -1027,6 +1052,7 @@ impl Lowering<'_> {
         Some(ImplSignature {
             name,
             name_span,
+            is_unsafe,
             params: implemented,
             ret: found_ret,
         })
@@ -1047,7 +1073,9 @@ impl Lowering<'_> {
         };
 
         let receiver = self.hir.receiver(function);
-        let mut difference = if raw.receiver != receiver {
+        let mut difference = if implemented.is_unsafe != declared.is_unsafe {
+            Some("the `unsafe` marker does not match the trait declaration".to_owned())
+        } else if raw.receiver != receiver {
             Some("the receiver does not match the trait declaration".to_owned())
         } else if declared.signature.params.len() != implemented.params.len() {
             Some(format!(
@@ -1099,9 +1127,16 @@ impl Lowering<'_> {
         let Some(implemented) = self.lowered_impl_signature(function, trait_ref.self_ty) else {
             return;
         };
+        if self.hir.is_drop_trait(trait_ref.trait_def) && implemented.is_unsafe != method.is_unsafe
+        {
+            // `validate_drop_impls` reports the dedicated E3072 diagnostic.
+            return;
+        }
         let receiver = self.hir.receiver(function);
         let expected_receiver = protocol_receiver(method);
-        let mut difference = if expected_receiver != receiver {
+        let mut difference = if implemented.is_unsafe != method.is_unsafe {
+            Some("the `unsafe` marker does not match the compiler-provided declaration".to_owned())
+        } else if expected_receiver != receiver {
             Some("the receiver does not match the compiler-provided declaration".to_owned())
         } else if method.signature.params.len() != implemented.params.len() {
             Some(format!(

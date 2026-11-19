@@ -712,12 +712,13 @@ pub const E2024: ErrorCode = ErrorCode {
     title: "trait method does not match its declaration",
     explanation: "\
 An implementation must reproduce every method signature exactly: the same
-receiver kind, the same parameter types in the same order, and the same return
-type. Seal has no overloading and no implicit conversions between method
-parameter types, so a mismatch would make the trait's guarantee untrue for one
-implementor.\n\nIn the trait, write the implementing type as `Self`; in the impl, write the
-concrete struct name. Adjust the receiver or the parameter and return types to
-match the declaration.",
+receiver kind, the same parameter types in the same order, the same return type,
+and the same `unsafe` marker. Seal has no overloading and no implicit
+conversions between method parameter types, so a mismatch would make the trait's
+guarantee untrue for one implementor. An implementation cannot silently make a
+safe trait method unsafe, nor call an unsafe method through a safe signature.\n\nIn the trait, write the implementing type as `Self`; in the impl, write the
+concrete struct name. Adjust the receiver, parameters, return type, and `unsafe`
+marker to match the declaration.",
 };
 
 /// `Self` appears outside a trait method signature.

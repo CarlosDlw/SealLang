@@ -51,7 +51,7 @@ pub use res::Res;
 pub use traits::TraitMethodLookup;
 
 use seal_ast::Ast;
-use seal_def::{DefData, DefId, Definitions};
+use seal_def::{DefData, DefId, DefKind, Definitions};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
 use seal_index::IndexVec;
@@ -153,6 +153,30 @@ impl Hir {
     /// Returns the body owned by `owner`, if it has one.
     pub fn body_of(&self, owner: DefId) -> Option<&Body> {
         self.body_id_of(owner).map(|id| &self.bodies[id])
+    }
+
+    /// Returns whether calling `function` requires an `unsafe` block.
+    ///
+    /// A function with a body carries the marker on that body. A trait method
+    /// without a body has no body of its own, so its declaration supplies the
+    /// marker instead.
+    pub fn is_unsafe_function(&self, function: DefId) -> bool {
+        if let Some(body) = self.body_of(function) {
+            return body.is_unsafe;
+        }
+        let definition = self.definitions.get(function);
+        if definition.kind != DefKind::TraitMethod {
+            return false;
+        }
+        let Some(parent) = definition.parent else {
+            return false;
+        };
+        self.trait_definition(parent).is_some_and(|declaration| {
+            declaration
+                .methods
+                .iter()
+                .any(|method| method.def == function && method.is_unsafe)
+        })
     }
 
     /// Returns a block.

@@ -73,7 +73,11 @@ impl<'a> Parser<'a> {
             let before = self.index;
             if self.at(TokenKind::Func) {
                 let start = self.current_span();
-                let item = self.parse_function(false, start);
+                let item = self.parse_function(false, false, start);
+                self.items.push(item);
+            } else if self.at(TokenKind::Unsafe) {
+                let start = self.current_span();
+                let item = self.parse_unsafe_item(start);
                 self.items.push(item);
             } else if self.at(TokenKind::Const) {
                 let item = self.parse_const_item();
@@ -108,6 +112,7 @@ impl<'a> Parser<'a> {
                 .emit();
                 while !self.is_eof()
                     && !self.at(TokenKind::Func)
+                    && !self.at(TokenKind::Unsafe)
                     && !self.at(TokenKind::Const)
                     && !self.at(TokenKind::Static)
                     && !self.at(TokenKind::Struct)
@@ -128,18 +133,91 @@ impl<'a> Parser<'a> {
         self.builder.finish(items)
     }
 
+    /// Parses an item introduced by `unsafe`.
+    ///
+    /// `unsafe` is only meaningful on a function. A value or aggregate that
+    /// follows it receives `E3071` and is still parsed, so one misplaced marker
+    /// does not hide the rest of the file. Both `unsafe const func` and
+    /// `const unsafe func` are accepted.
+    fn parse_unsafe_item(&mut self, start: Span) -> ItemId {
+        let keyword = self.bump();
+        if self.at(TokenKind::Func) {
+            return self.parse_function(false, true, start);
+        }
+        if self.at(TokenKind::Const) {
+            self.bump();
+            if self.at(TokenKind::Func) {
+                return self.parse_function(true, true, start);
+            }
+            self.error(
+                codes::E3071,
+                keyword.span,
+                "`unsafe` applies only to functions",
+            )
+            .help("remove `unsafe` from the constant declaration")
+            .emit();
+            return self.parse_const_after(start);
+        }
+
+        self.error(
+            codes::E3071,
+            keyword.span,
+            "`unsafe` applies only to functions",
+        )
+        .help("remove `unsafe`; unsafe behavior belongs in an `unsafe func`")
+        .emit();
+        if self.at(TokenKind::Struct) {
+            self.parse_struct()
+        } else if self.at(TokenKind::Enum) {
+            self.parse_enum()
+        } else if self.at(TokenKind::Impl) {
+            self.parse_impl()
+        } else if self.at(TokenKind::Trait) {
+            self.parse_trait()
+        } else if self.at(TokenKind::Static) {
+            self.parse_static_item()
+        } else {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1001,
+                start,
+                format!("expected an item after `unsafe`, found {found}"),
+            )
+            .help("write `unsafe func name(...) { ... }`")
+            .emit();
+            self.skip_declaration();
+            let span = start.cover(self.previous_span());
+            self.builder.push_item(ItemKind::Error, span)
+        }
+    }
+
     /// Parses a `const` item, including `const func`.
     ///
     /// The token after `const` decides the form: `func` starts a constant
     /// function, and anything else starts a constant declaration.
     fn parse_const_item(&mut self) -> ItemId {
         let keyword = self.bump();
+        // `const unsafe func` uses `unsafe` as a marker. `const unsafe: T = v`
+        // instead has a reserved keyword where the name belongs; leave that to
+        // the value-declaration parser so it reports E1005 with its usual help.
+        if self.at(TokenKind::Unsafe) && self.peek_kind() == Some(TokenKind::Func) {
+            self.bump();
+            return self.parse_function(true, true, keyword.span);
+        }
+        self.parse_const_after(keyword.span)
+    }
+
+    /// Parses the part of a `const` declaration after the keyword.
+    ///
+    /// `start` includes any preceding `unsafe` token so the item span covers
+    /// the complete declaration.
+    fn parse_const_after(&mut self, start: Span) -> ItemId {
         if self.at(TokenKind::Func) {
-            return self.parse_function(true, keyword.span);
+            return self.parse_function(true, false, start);
         }
         self.reject_const_mut();
         let declaration = self.parse_value_decl("const");
-        let span = keyword.span.cover(self.previous_span());
+        let span = start.cover(self.previous_span());
         self.builder.push_const_item(
             span,
             ConstDecl {
@@ -162,7 +240,7 @@ impl<'a> Parser<'a> {
             )
             .help("write `const func` for a function that may run at compile time")
             .emit();
-            return self.parse_function(false, keyword.span);
+            return self.parse_function(false, false, keyword.span);
         }
         let mutable = self.eat(TokenKind::Mut);
         self.reject_extra_mut();
@@ -314,10 +392,11 @@ impl<'a> Parser<'a> {
 
     /// Parses a function declaration.
     ///
-    /// `start` is the first token of the declaration, which is `const` for a
-    /// `const func`; the item span covers it so the whole declaration has one
-    /// exact source range.
-    fn parse_function(&mut self, is_const: bool, start: Span) -> ItemId {
+    /// `start` is the first token of the declaration: `const` for a `const
+    /// func`, `unsafe` for an `unsafe func`, and either marker for a function
+    /// that carries both. The item span covers it so the whole declaration has
+    /// one exact source range.
+    fn parse_function(&mut self, is_const: bool, is_unsafe: bool, start: Span) -> ItemId {
         let _keyword = self.bump();
         let (name, name_span, generics, params, ret) = self.parse_signature();
         let where_clause = self.parse_where_clause();
@@ -342,6 +421,7 @@ impl<'a> Parser<'a> {
                 name,
                 name_span,
                 is_const,
+                is_unsafe,
                 generics,
                 params,
                 ret,
@@ -442,7 +522,22 @@ impl<'a> Parser<'a> {
             let before = self.index;
             if self.at(TokenKind::Func) {
                 let start = self.current_span();
-                functions.push(self.parse_function(false, start));
+                functions.push(self.parse_function(false, false, start));
+            } else if self.at(TokenKind::Unsafe) {
+                let start = self.current_span();
+                let marker = self.bump();
+                if self.at(TokenKind::Func) {
+                    functions.push(self.parse_function(false, true, start));
+                } else {
+                    self.error(
+                        codes::E3071,
+                        marker.span,
+                        "`unsafe` applies only to functions",
+                    )
+                    .help("write `unsafe func name(...) { ... }`")
+                    .emit();
+                    self.skip_declaration();
+                }
             } else {
                 let found = self.describe(self.current_kind());
                 self.error(
@@ -498,7 +593,22 @@ impl<'a> Parser<'a> {
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
             if self.at(TokenKind::Func) {
-                methods.push(self.parse_trait_method());
+                methods.push(self.parse_trait_method(false, self.current_span()));
+            } else if self.at(TokenKind::Unsafe) {
+                let start = self.current_span();
+                let marker = self.bump();
+                if self.at(TokenKind::Func) {
+                    methods.push(self.parse_trait_method(true, start));
+                } else {
+                    self.error(
+                        codes::E3071,
+                        marker.span,
+                        "`unsafe` applies only to functions",
+                    )
+                    .help("write `unsafe func name(...)` in the trait")
+                    .emit();
+                    self.skip_declaration();
+                }
             } else {
                 let found = self.describe(self.current_kind());
                 self.error(
@@ -508,7 +618,11 @@ impl<'a> Parser<'a> {
                 )
                 .help("a trait only contains method declarations")
                 .emit();
-                while !self.is_eof() && !self.at(TokenKind::Func) && !self.at(TokenKind::RBrace) {
+                while !self.is_eof()
+                    && !self.at(TokenKind::Func)
+                    && !self.at(TokenKind::Unsafe)
+                    && !self.at(TokenKind::RBrace)
+                {
                     // A stray block owns its closing brace. Skipping it as a
                     // unit keeps that brace from closing the trait early and
                     // losing the next method.
@@ -542,8 +656,8 @@ impl<'a> Parser<'a> {
     /// The declaration is `func name(...) -> Type;` when each implementation
     /// supplies the body, or the same signature followed by a block when the
     /// trait provides a default.
-    fn parse_trait_method(&mut self) -> ItemId {
-        let keyword = self.bump();
+    fn parse_trait_method(&mut self, is_unsafe: bool, start: Span) -> ItemId {
+        let _keyword = self.bump();
         let (name, name_span, generics, params, ret) = self.parse_signature();
         let where_clause = self.parse_where_clause();
 
@@ -565,11 +679,12 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let span = keyword.span.cover(self.previous_span());
+        let span = start.cover(self.previous_span());
         self.builder.push_item(
             ItemKind::TraitMethod(TraitMethodDecl {
                 name,
                 name_span,
+                is_unsafe,
                 generics,
                 params,
                 ret,

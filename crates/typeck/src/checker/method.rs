@@ -609,6 +609,14 @@ impl Checker<'_> {
             }
             return self.error_ty();
         }
+        let is_unsafe = match &target {
+            UserMethod::Concrete { function, .. } => self
+                .results
+                .signature(*function)
+                .is_some_and(|signature| signature.is_unsafe),
+            UserMethod::Bound { method, .. } => method.is_unsafe,
+        };
+        self.require_unsafe_call(span, is_unsafe, name);
         match target {
             UserMethod::Concrete {
                 function,

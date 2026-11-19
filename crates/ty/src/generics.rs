@@ -229,6 +229,8 @@ pub struct TraitMethodDef {
     pub receiver: Option<TraitMethodReceiver>,
     /// Whether the trait declaration supplies a default body.
     pub has_body: bool,
+    /// Whether the method is declared `unsafe func`.
+    pub is_unsafe: bool,
 }
 
 /// The receiver declared by a trait method.
@@ -254,12 +256,19 @@ impl TraitMethodDef {
             generics,
             receiver,
             has_body: false,
+            is_unsafe: false,
         }
     }
 
     /// Records whether the declaration has a default body.
     pub fn with_body(mut self, has_body: bool) -> Self {
         self.has_body = has_body;
+        self
+    }
+
+    /// Records whether the declaration is `unsafe func`.
+    pub fn with_unsafe(mut self, is_unsafe: bool) -> Self {
+        self.is_unsafe = is_unsafe;
         self
     }
 }

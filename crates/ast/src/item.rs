@@ -183,6 +183,8 @@ pub struct TraitMethodDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Whether the method is declared `unsafe func`.
+    pub is_unsafe: bool,
     /// Declared method type parameters.
     pub generics: GenericParams,
     /// Parameters in source order, including the receiver when present.
@@ -204,6 +206,8 @@ pub struct FnDecl {
     pub name_span: Span,
     /// Whether the declaration is a `const func`.
     pub is_const: bool,
+    /// Whether the declaration is an `unsafe func`.
+    pub is_unsafe: bool,
     /// Declared function type parameters.
     pub generics: GenericParams,
     /// Parameters in source order.

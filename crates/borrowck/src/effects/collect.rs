@@ -44,6 +44,7 @@ pub(super) fn collect(
                         .needs_drop(crate::origins::place_ty(hir, body, place))
                     {
                         direct.unknown = true;
+                        direct.touches_raw = true;
                     }
                 }
             }
@@ -155,11 +156,21 @@ pub(super) fn collect_rvalue(
             for arg in args {
                 collect_operand(hir, arg, direct);
             }
+            if hir.is_unsafe_function(*method) {
+                direct.touches_raw = true;
+            }
             calls.push(dynamic_candidates.get(method).cloned().unwrap_or_default());
         }
         Rvalue::Call { target, args, .. } => {
             for arg in args {
                 collect_operand(hir, arg, direct);
+            }
+            match target {
+                CallTarget::Direct { instance, .. } | CallTarget::TraitMethod { instance, .. } => {
+                    if hir.is_unsafe_function(instance.def) {
+                        direct.touches_raw = true;
+                    }
+                }
             }
             let candidates = match target {
                 CallTarget::Direct { instance, .. } => {

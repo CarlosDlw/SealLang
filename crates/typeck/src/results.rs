@@ -361,6 +361,8 @@ pub struct Signature {
     pub params: Vec<TyId>,
     /// The return type.
     pub ret: TyId,
+    /// Whether calling the function requires an `unsafe` block.
+    pub is_unsafe: bool,
     /// Every generic parameter visible in the signature, outermost first.
     pub generics: Vec<GenericParamDef>,
 }

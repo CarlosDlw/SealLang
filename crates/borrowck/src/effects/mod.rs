@@ -107,6 +107,12 @@ pub(crate) struct GlobalEffects {
     /// The body may call code with no visible body, so any static may be
     /// touched. This is defensive: safe Seal has no bodyless function.
     pub(crate) unknown: bool,
+    /// The body reaches an `unsafe func`, directly or through a callee.
+    ///
+    /// An unsafe callee can exercise a raw-memory contract that the safe
+    /// caller cannot audit, so the fact is propagated to every caller and used
+    /// to withhold `noalias` from exclusive-reference parameters.
+    pub(crate) touches_raw: bool,
 }
 
 impl GlobalEffects {
@@ -120,6 +126,10 @@ impl GlobalEffects {
         }
         if other.unknown && !self.unknown {
             self.unknown = true;
+            changed = true;
+        }
+        if other.touches_raw && !self.touches_raw {
+            self.touches_raw = true;
             changed = true;
         }
         changed
@@ -163,6 +173,13 @@ impl Effects {
         self.candidates(&self.dynamic_candidates, method)
     }
 
+    /// Returns whether `function` may reach an unsafe call.
+    pub(crate) fn touches_raw(&self, function: DefId) -> bool {
+        self.summaries
+            .get(&function)
+            .is_none_or(|summary| summary.touches_raw)
+    }
+
     fn candidates(&self, table: &FxHashMap<DefId, Vec<DefId>>, method: DefId) -> GlobalEffects {
         let candidates = table.get(&method);
         let mut effects = GlobalEffects::default();
@@ -188,6 +205,7 @@ impl GlobalEffects {
             reads: BTreeSet::new(),
             writes: BTreeSet::new(),
             unknown: true,
+            touches_raw: true,
         }
     }
 }

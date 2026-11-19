@@ -1802,6 +1802,29 @@ fn raw_pointer_read_write_and_copy_reach_memory() {
 }
 
 #[test]
+fn an_unsafe_function_call_runs_inside_an_unsafe_block() {
+    let source = "\
+        unsafe func bump(pointer: *raw mut i32) {
+            unsafe { *pointer = *pointer + 1; }
+        }
+        func main() -> i32 {
+            let mut value = 41;
+            unsafe { bump(&mut value as *raw mut i32); }
+            value
+        }";
+    assert_exit_at_both_levels(source, 42, "unsafe-function");
+}
+
+#[test]
+fn a_const_unsafe_function_runs_during_const_evaluation() {
+    let source = "\
+        const unsafe func twice(value: i32) -> i32 { value * 2 }
+        const VALUE: i32 = unsafe { twice(2) };
+        func main() -> i32 { VALUE }";
+    assert_exit_at_both_levels(source, 4, "const-unsafe-function");
+}
+
+#[test]
 fn raw_pointer_zst_arithmetic_preserves_the_address() {
     let source = "\
         func main() -> i32 {

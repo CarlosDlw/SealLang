@@ -151,6 +151,29 @@ fn a_callee_that_follows_an_unknown_pointer_is_not_marked_noalias() {
 }
 
 #[test]
+fn a_body_that_calls_an_unsafe_function_withholds_noalias() {
+    let fixture = Fixture::new(
+        "unsafe func bump(count: *mut i32) {\n  unsafe { *count = *count + 1; }\n}\n\n\
+         func wrapper(count: *mut i32) {\n  unsafe { bump(count); }\n}\n\n\
+         func main() -> i32 {\n  let mut value = 1;\n  wrapper(&mut value);\n  value\n}\n",
+    );
+    let (hir, mir, facts) = fixture.check_facts();
+    let owner = mir
+        .bodies()
+        .iter()
+        .find(|body| {
+            hir.definitions().kind(body.owner) == seal_def::DefKind::Function
+                && fixture.symbol(hir.definitions().name(body.owner)) == "wrapper"
+        })
+        .expect("the wrapper body is present")
+        .owner;
+    assert!(
+        !facts.noalias_functions().contains(&owner),
+        "an unsafe callee may break the exclusive-reference grant"
+    );
+}
+
+#[test]
 fn a_call_that_cannot_prove_its_argument_withholds_noalias() {
     let fixture = Fixture::new(
         "struct Node {\n  next: *mut i32,\n}\n\n\

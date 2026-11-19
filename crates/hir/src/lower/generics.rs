@@ -353,7 +353,8 @@ impl Lowering<'_> {
                         method_generics,
                         receiver,
                     )
-                    .with_body(raw.body.is_some()),
+                    .with_body(raw.body.is_some())
+                    .with_unsafe(raw.is_unsafe),
                 );
             }
 

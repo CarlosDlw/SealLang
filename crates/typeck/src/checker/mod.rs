@@ -33,7 +33,7 @@ use seal_error_codes::ErrorCode;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::{Body, BodyKind, Hir, HirBlockId};
 use seal_span::Span;
-use seal_symbol::Interner;
+use seal_symbol::{Interner, Symbol};
 use seal_ty::{InferCtxt, ParamEnv, TraitRef, TyId, TyKind};
 
 use crate::results::{Signature, TypeckResults};
@@ -181,9 +181,27 @@ impl<'a> Checker<'a> {
                 Signature {
                     params,
                     ret,
+                    is_unsafe: body.is_unsafe,
                     generics: self.hir.flattened_generics(body.owner),
                 },
             );
+            if body.is_unsafe
+                && matches!(body.kind, BodyKind::Function)
+                && self.hir.definitions().get(body.owner).parent.is_none()
+                && self
+                    .interner
+                    .resolve(self.hir.definitions().name(body.owner))
+                    == "main"
+            {
+                let definition = self.hir.definitions().get(body.owner);
+                self.error(
+                    codes::E3073,
+                    definition.name_span,
+                    "the entry point `main` cannot be `unsafe`",
+                )
+                .help("make `main` safe and call an `unsafe func` inside an `unsafe { ... }` block")
+                .emit();
+            }
         }
     }
 
@@ -214,6 +232,27 @@ impl<'a> Checker<'a> {
             flow.assign(param.def, &[]);
         }
         let _outcome = self.check_block(body.root, Some(self.ret), flow);
+    }
+
+    /// Reports a call that needs an enclosing `unsafe` block.
+    ///
+    /// The unsafe marker is part of the callee's signature, not of its body.
+    /// Receiving the flag from the resolved call keeps every dispatch path
+    /// (direct, inherent, trait, and dynamic) on the same rule.
+    pub(super) fn require_unsafe_call(&mut self, span: Span, is_unsafe: bool, name: Symbol) {
+        if !is_unsafe || self.unsafe_depth > 0 {
+            return;
+        }
+        self.error(
+            codes::E3070,
+            span,
+            format!(
+                "calling `{}` requires an `unsafe` block",
+                self.interner.resolve(name)
+            ),
+        )
+        .help("wrap the call in `unsafe { ... }` and establish its preconditions")
+        .emit();
     }
 
     pub(super) fn error(

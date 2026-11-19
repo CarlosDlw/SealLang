@@ -25,4 +25,5 @@ mod traits;
 mod tuple_variants;
 mod tuples;
 mod types;
+mod unsafe_functions;
 mod while_let;

@@ -117,6 +117,7 @@ impl Checker<'_> {
             self.infer_arguments(args, flow);
             return self.error_ty();
         };
+        self.require_unsafe_call(span, method.is_unsafe, method.name);
         let Some(declared_receiver) = method.receiver else {
             self.report_associated_as_method(receiver.object, name, name_span);
             self.infer_arguments(args, flow);
