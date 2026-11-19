@@ -5,6 +5,7 @@ mod borrows;
 mod calls;
 mod casts;
 mod control_flow;
+mod drop_elaboration;
 mod drop_statements;
 mod drops;
 mod dyn_types;

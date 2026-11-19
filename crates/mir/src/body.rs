@@ -39,6 +39,13 @@ pub enum LocalKind {
     Binding,
     /// A compiler-generated temporary.
     Temp,
+    /// A drop flag: a `bool` recording whether a place still holds a value.
+    ///
+    /// Drop elaboration guards a conditional drop site with one flag per place,
+    /// so the generated code drops a value exactly when the program's control
+    /// flow left one there. A flag is not source-level storage, so debug
+    /// information never declares it.
+    DropFlag,
 }
 
 /// A local slot in a body.

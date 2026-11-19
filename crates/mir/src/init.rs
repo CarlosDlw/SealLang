@@ -1,16 +1,27 @@
 //! Forward initialization analysis over move paths.
+//!
+//! Drop elaboration and borrow checking both need to know whether a place
+//! definitely holds a value at a program point. The facts live in MIR rather
+//! than in the checker because they are derived from the lowered statements:
+//! drop elaboration decides between an unconditional drop and a guarded one
+//! with the same analysis the checker uses for move diagnostics, so the two
+//! passes cannot disagree about what is initialized.
 
 use std::collections::VecDeque;
 
 use seal_hir::Hir;
-use seal_mir::{
-    Body, DropKind, LocalId, LocalKind, Operand, Place, Rvalue, Statement, StatementKind,
-};
 use seal_ty::{InitPaths, InitState, ParamEnv, PathElem, TyCtxt, TyId, place_type};
+
+use crate::body::{Body, LocalKind};
+use crate::id::LocalId;
+use crate::operand::Operand;
+use crate::place::{Place, PlaceRoot, Projection};
+use crate::rvalue::{IntrinsicReceiver, Rvalue};
+use crate::statement::{DropKind, Statement, StatementKind};
 
 /// The initialization state of a place, as message selection needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Init {
+pub enum Init {
     /// No value is present.
     Uninitialized,
     /// A value is present.
@@ -22,11 +33,11 @@ pub(crate) enum Init {
 }
 
 /// The state before each statement and after each block.
-pub(crate) struct InitInfo {
+pub struct InitInfo {
     /// `before[block][statement]` is the state before that statement.
-    pub(crate) before: Vec<Vec<InitPaths<LocalId>>>,
+    pub before: Vec<Vec<InitPaths<LocalId>>>,
     /// `exit[block]` is the state after the block's last statement.
-    pub(crate) exit: Vec<InitPaths<LocalId>>,
+    pub exit: Vec<InitPaths<LocalId>>,
 }
 
 /// Computes definite initialization.
@@ -34,7 +45,7 @@ pub(crate) struct InitInfo {
 /// The lattice joins with "initialized on every path". Parameters start
 /// initialized, every other local starts uninitialized, and an unreachable
 /// block starts at the top element so dead code never reports a false error.
-pub(crate) fn analyze(hir: &Hir, body: &Body) -> InitInfo {
+pub fn analyze(hir: &Hir, body: &Body) -> InitInfo {
     let context = Context {
         tcx: hir.ty_ctxt(),
         body,
@@ -138,7 +149,7 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
             }
         }
         Rvalue::Intrinsic { receiver, args, .. } => {
-            if let seal_mir::IntrinsicReceiver::Value(operand) = receiver {
+            if let IntrinsicReceiver::Value(operand) = receiver {
                 move_operand(operand, state);
             }
             for arg in args {
@@ -200,55 +211,36 @@ fn move_operand(operand: &Operand, state: &mut InitPaths<LocalId>) {
 
 /// Splits a place into its root local and its field path, if it stays in this
 /// frame; reads through a reference say nothing about initialization here.
-fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
+///
+/// Drop elaboration uses the same split for flag keys and for the maintenance
+/// of their values, so both passes name a place the same way.
+pub fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
     let mut path = Vec::new();
     for projection in &place.projections {
         match projection {
-            seal_mir::Projection::Deref => return None,
-            seal_mir::Projection::Field(field)
-            | seal_mir::Projection::VariantField { field, .. } => {
+            Projection::Deref => return None,
+            Projection::Field(field) | Projection::VariantField { field, .. } => {
                 path.push(PathElem::Field(*field))
             }
-            seal_mir::Projection::TupleField(index) => path.push(PathElem::TupleField(*index)),
-            seal_mir::Projection::Index {
+            Projection::TupleField(index) => path.push(PathElem::TupleField(*index)),
+            Projection::Index {
                 constant: Some(index),
                 ..
             } => path.push(PathElem::Index(*index)),
-            seal_mir::Projection::Index { constant: None, .. } => break,
+            Projection::Index { constant: None, .. } => break,
         }
     }
     Some((place.local_id()?, path))
 }
 
 /// Returns the state of a place for message selection.
-pub(crate) fn state_of(
-    init: &InitPaths<LocalId>,
-    place: &Place,
-    tcx: &TyCtxt,
-    root_ty: TyId,
-) -> Init {
+pub fn state_of(init: &InitPaths<LocalId>, place: &Place, tcx: &TyCtxt, root_ty: TyId) -> Init {
     // A static lives for the whole program and a const is materialized before
     // use, so neither can be uninitialized or moved from.
-    if place.is_deref() || !matches!(place.root, seal_mir::PlaceRoot::Local(_)) {
+    if place.is_deref() || !matches!(place.root, PlaceRoot::Local(_)) {
         return Init::Initialized;
     }
-    let mut path = Vec::new();
-    for projection in &place.projections {
-        match projection {
-            seal_mir::Projection::Deref => return Init::Initialized,
-            seal_mir::Projection::Field(field)
-            | seal_mir::Projection::VariantField { field, .. } => {
-                path.push(PathElem::Field(*field))
-            }
-            seal_mir::Projection::TupleField(index) => path.push(PathElem::TupleField(*index)),
-            seal_mir::Projection::Index {
-                constant: Some(index),
-                ..
-            } => path.push(PathElem::Index(*index)),
-            seal_mir::Projection::Index { constant: None, .. } => break,
-        }
-    }
-    let Some(local) = place.local_id() else {
+    let Some((local, path)) = path_of(place) else {
         return Init::Initialized;
     };
     match init.state(local, &path, tcx, root_ty) {

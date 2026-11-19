@@ -113,9 +113,12 @@ pub(crate) fn compile_for_target_with_runtime(
     );
     assert!(!session.diag().has_errors(), "type checking failed");
 
-    let mir = seal_mir::lower(&hir, &typeck);
+    let mut mir = seal_mir::lower(&hir, &typeck);
     mir.validate()
         .expect("MIR lowering preserves its invariants");
+    seal_mir::elaborate_drops(&hir, &mut mir).expect("drop elaboration preserves its invariants");
+    mir.validate_with(&hir)
+        .expect("drop elaboration preserves the MIR invariants");
     let constants = seal_const_eval::evaluate(
         &hir,
         &mir,

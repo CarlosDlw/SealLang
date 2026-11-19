@@ -67,14 +67,59 @@ impl Fixture {
 
     /// Runs lexing through MIR lowering, requiring a clean front end.
     pub(crate) fn lower(&self) -> (Hir, Mir) {
+        self.lower_with_destructors(&[])
+    }
+
+    /// Lowers `source`, registering a destructor for each named aggregate.
+    ///
+    /// `impl Drop` is not part of the surface yet, so a test that needs a type
+    /// with a destructor registers one before MIR lowering. The method points at
+    /// the first function of the source, because these tests only need the
+    /// registry to answer that the type implements `Drop`.
+    pub(crate) fn lower_with_destructors(&self, names: &[&str]) -> (Hir, Mir) {
         let ast = self.parse();
         let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        for name in names {
+            let definition = hir
+                .definitions()
+                .iter_enumerated()
+                .find(|(_, data)| {
+                    matches!(
+                        data.kind,
+                        seal_def::DefKind::Struct | seal_def::DefKind::Enum
+                    ) && self.symbol(data.name) == *name
+                })
+                .map(|(id, _)| id)
+                .unwrap_or_else(|| panic!("no aggregate named `{name}`"));
+            let adt = hir
+                .adt(definition)
+                .expect("an aggregate definition has an aggregate id");
+            let method = hir
+                .definitions()
+                .iter_enumerated()
+                .find(|(_, data)| data.kind == seal_def::DefKind::Function)
+                .map(|(id, _)| id)
+                .expect("the source declares a function to stand in for the destructor");
+            assert_eq!(
+                hir.ty_ctxt().set_drop_method(adt, method),
+                None,
+                "the aggregate starts without a destructor"
+            );
+        }
         let typeck = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
         self.assert_clean();
         let mir = seal_mir::lower(&hir, &typeck);
         mir.validate_with(&hir)
             .expect("MIR lowering maintains its invariants");
         (hir, mir)
+    }
+
+    /// Runs the pipeline through borrow checking, with the named aggregates
+    /// implementing `Drop`.
+    pub(crate) fn check_with_destructors(&self, names: &[&str]) {
+        let (hir, mir) = self.lower_with_destructors(names);
+        let program = seal_const_eval::evaluate(&hir, &mir, &self.dcx, &self.interner, 64);
+        crate::check(&hir, &mir, Some(&program), &self.dcx, &self.interner);
     }
 
     pub(crate) fn symbol(&self, symbol: Symbol) -> String {

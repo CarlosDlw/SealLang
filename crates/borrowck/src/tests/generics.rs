@@ -46,10 +46,24 @@ fn a_generic_aggregate_tracks_partial_moves_per_field() {
 }
 
 #[test]
-fn a_generic_tuple_and_array_keep_siblings_usable() {
+fn a_generic_tuple_keeps_siblings_usable() {
     check_clean(
-        "func tuple_first<T>(left: T, right: T) -> T {\n  let items = (left, right);\n  items.0\n}\n\n\
-         func array_first<T>(left: T, right: T) -> T {\n  let items = [left, right];\n  items[0]\n}\n",
+        "func tuple_first<T>(left: T, right: T) -> T {\n  let items = (left, right);\n  items.0\n}\n",
+    );
+}
+
+#[test]
+fn a_generic_array_element_move_needs_copy() {
+    let fixture = check_errors(
+        "func array_first<T>(left: T, right: T) -> T {\n  let items = [left, right];\n  items[0]\n}\n",
+    );
+    fixture.expect("E5015", "element");
+}
+
+#[test]
+fn a_copy_array_element_move_is_allowed() {
+    check_clean(
+        "func array_first<T: Copy>(left: T, right: T) -> T {\n  let items = [left, right];\n  items[0]\n}\n",
     );
 }
 

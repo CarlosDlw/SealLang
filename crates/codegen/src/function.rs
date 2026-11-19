@@ -200,7 +200,11 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         }
         if let (Some(debug), Some(scope)) = (self.debug, self.scope) {
             for (id, local) in self.body.locals.iter_enumerated() {
-                if local.name.is_none() || matches!(local.kind, LocalKind::Temp | LocalKind::Return)
+                if local.name.is_none()
+                    || matches!(
+                        local.kind,
+                        LocalKind::Temp | LocalKind::Return | LocalKind::DropFlag
+                    )
                 {
                     continue;
                 }

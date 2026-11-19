@@ -511,9 +511,9 @@ and this summary.
   the type's structure, so they cannot disagree with it. Struct values are not
   `Copy` in v0.1 (D2), so the query returns `false` for `TyKind::Adt`.
 - `seal_ty::InitPaths` is the shared definite-initialization lattice; type
-  checking keys it by `DefId`, borrow checking by MIR `LocalId`, and both query
-  the same nearest-entry state over paths of struct fields, tuple elements, and
-  constant array indices.
+  checking keys it by `DefId`, and MIR keys it by `LocalId` for borrow checking
+  and drop elaboration, so every phase queries the same nearest-entry state over
+  paths of struct fields, tuple elements, and constant array indices.
 - Types are interned: two types are equal exactly when their `TyId`s are equal.
   During inference, equality is not enough, so `InferCtxt::unify` is the only
   comparison that decides assignability; `==` on IDs is for canonical types.
@@ -534,6 +534,15 @@ and this summary.
   records each implicit trait-object coercion with its source and target types,
   runs definite-initialization analysis over move paths, and inserts drop
   obligations.
+- **Drop elaboration** runs on MIR before constant evaluation and borrow
+  checking. One drop site expands into the values the type's glue visits: the
+  fields of a struct without a destructor, in declaration order, and one unit for
+  an enum, an array, or a type with a declared destructor. A site whose value is
+  definitely gone is removed instead of guarded, which is what keeps a constant
+  from reporting a destructor it never runs. A site that depends on the path is
+  guarded by a `bool` flag that an assignment sets and a move or a drop clears,
+  and an assignment to an initialized place whose type needs a destructor drops
+  the old value first (`DropKind::Overwrite`).
 - **Borrow checking** runs on MIR, where every move, borrow, and drop is an
   explicit statement in a control-flow graph; regions are inferred from the
   liveness of those statements, and place conflicts compare path prefixes so
@@ -560,7 +569,11 @@ and this summary.
 1. No implicit deep copy and no implicit allocation.
 2. Every live `*T` is non-null and points to initialized, still-live memory.
 3. A moved-from place is never read, reassigned as a read, or dropped.
-4. Every initialized owner is dropped exactly once on every exit path.
+4. Every initialized owner is dropped exactly once on every exit path. A drop
+   site whose value is definitely gone is removed instead of guarded, a
+   conditional site tests a `bool` flag that assignments set and moves and drops
+   clear, and an assignment to an initialized place whose type needs a
+   destructor drops the old value first.
 5. `Copy` and `Drop` never hold for the same type.
 6. A `Sized` value never contains an unsized value directly.
 7. Type layout and addresses never affect the meaning of safe programs.

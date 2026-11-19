@@ -2,6 +2,7 @@
 
 use seal_diagnostics::DiagCtxt;
 use seal_hir::Hir;
+use seal_mir::init::{self, Init, InitInfo};
 use seal_mir::{
     BasicBlock, Body, DropKind, LocalId, Operand, Place, Rvalue, Statement, StatementKind,
     TerminatorKind,
@@ -15,7 +16,6 @@ use crate::calls;
 use crate::effects::{self, Effects};
 use crate::holds::{self, HoldState, LoanSet};
 use crate::id::LoanId;
-use crate::init::{self, Init, InitInfo};
 use crate::liveness::{self, LocalSet};
 use crate::loan::Loan;
 use crate::loans;
@@ -374,8 +374,68 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         }
     }
 
+    check_partial_initialization(place, statement.span, context);
     report_write_conflicts(place, statement.span, context);
     unknown
+}
+
+/// Rejects a move that leaves a value its type cannot give up.
+///
+/// A type with a declared destructor drops as a whole, so one field cannot leave
+/// it without breaking the destructor's view of the value. An array owns a fixed
+/// sequence of elements, so moving one element out would leave a hole the array
+/// cannot describe. The by-value `for` loop moves elements through its own
+/// statement and never reaches this check.
+fn check_move(place: &Place, span: Span, context: &Context<'_>) {
+    let tcx = context.hir.ty_ctxt();
+    let mut prefix = Place::with_root(place.root, Vec::new());
+    for projection in &place.projections {
+        let current = origins::place_ty(context.hir, context.body, &prefix);
+        match projection {
+            seal_mir::Projection::Deref => return,
+            seal_mir::Projection::Field(_) | seal_mir::Projection::VariantField { .. } => {
+                if let TyKind::Adt { adt, .. } = tcx.kind(current)
+                    && tcx.drop_method(adt).is_some()
+                {
+                    context.reporter.move_out_of_drop_type(current, span);
+                    return;
+                }
+            }
+            seal_mir::Projection::Index { .. } => {
+                if let TyKind::Array { element, .. } = tcx.kind(current)
+                    && !tcx.is_copy_with(element, &context.hir.param_env(context.body.owner))
+                {
+                    context.reporter.move_out_of_array(place, span);
+                    return;
+                }
+            }
+            seal_mir::Projection::TupleField(_) => {}
+        }
+        prefix.projections.push(*projection);
+    }
+}
+
+/// Rejects initializing one field of a value that needs a destructor.
+///
+/// Such a value must be whole before it can be dropped: its glue runs the
+/// destructor and then visits every field. Writing one field at a time would let
+/// the destructor observe a half-built value, and a path that stops halfway
+/// would leave a partially drop-able value behind.
+fn check_partial_initialization(place: &Place, span: Span, context: &Context<'_>) {
+    if place.is_whole() || place.is_deref() {
+        return;
+    }
+    let Some(local) = place.local_id() else {
+        return;
+    };
+    let root = context.body.local(local).ty;
+    if !context.hir.ty_ctxt().needs_drop(root) {
+        return;
+    }
+    let root_place = Place::local(local);
+    if init::state_of(context.init, &root_place, context.hir.ty_ctxt(), root) != Init::Initialized {
+        context.reporter.initialize_field_of_drop_type(place, span);
+    }
 }
 
 /// Checks a drop statement's access to its place.
@@ -462,6 +522,7 @@ fn check_operand(statement: &Statement, operand: &Operand, context: &Context<'_>
     check_read(&read, statement.span, context);
 
     if matches!(operand, Operand::Move(_)) {
+        check_move(&read, statement.span, context);
         report_move_conflicts(&read, statement.span, context);
     }
 }

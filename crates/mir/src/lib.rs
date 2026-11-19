@@ -49,7 +49,9 @@
 #![warn(missing_docs)]
 
 mod body;
+mod drop_elaboration;
 mod id;
+pub mod init;
 mod instantiate;
 mod lower;
 mod mir;
@@ -62,6 +64,7 @@ mod terminator;
 mod tests;
 mod validate;
 
+pub use drop_elaboration::{ElaborationError, elaborate_drops};
 pub use instantiate::instantiate_body;
 
 pub use body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};

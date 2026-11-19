@@ -252,13 +252,30 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
 
-    let mir = session
+    let mut mir = session
         .profiler()
         .time("mir", || seal_mir::lower(&hir, &typeck));
     if let Err(error) = mir.validate_with(&hir) {
         session
             .diag()
             .bug(format!("MIR lowering produced an invalid body: {error}"));
+    }
+    // Drop elaboration runs before constant evaluation: it removes the sites
+    // whose value is already gone, so a constant is not rejected for a
+    // destructor it never runs. Borrow checking then sees the guards and the
+    // replacement drops the program actually executes.
+    let elaborated = session.profiler().time("elaborate-drops", || {
+        seal_mir::elaborate_drops(&hir, &mut mir)
+    });
+    if let Err(error) = elaborated {
+        session
+            .diag()
+            .bug(format!("drop elaboration failed: {error}"));
+    }
+    if let Err(error) = mir.validate_with(&hir) {
+        session.diag().bug(format!(
+            "drop elaboration produced an invalid body: {error}"
+        ));
     }
     // Constant evaluation runs before borrow checking: a constant that cannot
     // be evaluated is an error in the initializer, not an ownership question.

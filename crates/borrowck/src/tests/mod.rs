@@ -5,6 +5,7 @@ mod borrows;
 mod calls;
 mod casts;
 mod constructed;
+mod drop_rules;
 mod drops;
 mod dyn_types;
 mod examples;

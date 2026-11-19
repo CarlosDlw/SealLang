@@ -1821,6 +1821,48 @@ End the loan before the call, or restructure the code so the caller does not hol
 a reference to the global across it.",
 };
 
+/// A field is moved out of a value whose type implements `Drop`.
+pub const E5014: ErrorCode = ErrorCode {
+    code: "E5014",
+    title: "cannot move out of a type that implements `Drop`",
+    explanation: "\
+A value with a declared destructor is dropped as a whole: its destructor runs,
+and then the glue drops the fields that are still there. Moving one field out
+would leave the destructor looking at storage that no longer owns a value, and
+the field would be dropped twice if the destructor still assumes it is present.
+
+Borrow the field (`&value.field`), move the whole value, or drop it explicitly
+with `drop(value)`.",
+};
+
+/// An array element is moved out through an index.
+pub const E5015: ErrorCode = ErrorCode {
+    code: "E5015",
+    title: "cannot move an element out of an array",
+    explanation: "\
+An array owns a fixed sequence of values. Indexing selects one element, and
+moving it out would leave a hole the array cannot describe: the array still
+exists, but one of its positions holds no value.
+
+Copy the element when its type is `Copy`, borrow it (`&values[i]`), or iterate
+over the array by value with `for value in values`, which moves each element in
+turn and drops the rest.",
+};
+
+/// A field is initialized on a value that needs a destructor.
+pub const E5016: ErrorCode = ErrorCode {
+    code: "E5016",
+    title: "cannot initialize one field of a value that needs `Drop`",
+    explanation: "\
+A value that needs a destructor must be whole before it is dropped, because its
+glue runs the destructor and then visits every field. Writing one field at a
+time would produce a value the destructor can observe in a half-built state,
+and a path that stops halfway would leave a partially drop-able value behind.
+
+Build the whole value in one expression, such as `point = Point { x, y }`, or
+store the fields in separate variables.",
+};
+
 /// The program has no usable entry point.
 pub const E6001: ErrorCode = ErrorCode {
     code: "E6001",
@@ -2741,8 +2783,8 @@ pub static ALL: &[ErrorCode] = &[
     E3063, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012,
     E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025,
     E4026, E4027, E4028, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E5011, E5012, E5013, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006,
-    E7007, E9001, E9002,
+    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003,
+    E7004, E7005, E7006, E7007, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3001,7 +3043,7 @@ mod tests {
             codes,
             [
                 "E5001", "E5002", "E5003", "E5004", "E5005", "E5006", "E5007", "E5008", "E5009",
-                "E5010", "E5011", "E5012", "E5013"
+                "E5010", "E5011", "E5012", "E5013", "E5014", "E5015", "E5016"
             ]
         );
     }

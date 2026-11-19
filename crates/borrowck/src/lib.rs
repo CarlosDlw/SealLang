@@ -75,7 +75,6 @@ mod check;
 mod effects;
 mod holds;
 mod id;
-mod init;
 mod liveness;
 mod loan;
 mod loans;

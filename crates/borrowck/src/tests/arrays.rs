@@ -20,11 +20,19 @@ fn element_storage_aliases_conservatively() {
 }
 
 #[test]
-fn moving_an_element_then_reading_a_sibling_is_allowed() {
-    check_clean(
+fn moving_an_element_out_of_an_array_is_rejected() {
+    let fixture = check_errors(
         "struct Point { x: i32 } \
          func f() -> i32 { let a = [Point { x: 1 }, Point { x: 2 }]; \
-         let first = a[0]; let second = a[1]; first.x + second.x }",
+         let first = a[0]; first.x }",
+    );
+    fixture.expect("E5015", "element");
+}
+
+#[test]
+fn copying_an_element_then_reading_a_sibling_is_allowed() {
+    check_clean(
+        "func f() -> i32 { let a = [1, 2]; let first = a[0]; let second = a[1]; first + second }",
     );
 }
 

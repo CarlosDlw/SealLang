@@ -73,8 +73,44 @@ impl Fixture {
     }
 
     fn lower(&self) -> (Hir, Mir) {
+        self.lower_with_destructors(&[])
+    }
+
+    /// Lowers `source`, registering a destructor for each named aggregate.
+    ///
+    /// `impl Drop` is not part of the surface yet, so a test that needs a type
+    /// with a destructor registers one before MIR lowering, which is exactly
+    /// where HIR lowering will record it once the syntax exists. Every
+    /// destructor points at the first function of the source; these tests only
+    /// need the registry to answer that the type is droppable.
+    pub(crate) fn lower_with_destructors(&self, names: &[&str]) -> (Hir, Mir) {
         let ast = self.parse();
         let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        for name in names {
+            let definition = hir
+                .definitions()
+                .iter_enumerated()
+                .find(|(_, data)| {
+                    matches!(data.kind, DefKind::Struct | DefKind::Enum)
+                        && self.symbol(data.name) == *name
+                })
+                .map(|(id, _)| id)
+                .unwrap_or_else(|| panic!("no aggregate named `{name}`"));
+            let adt = hir
+                .adt(definition)
+                .expect("an aggregate definition has an aggregate id");
+            let method = hir
+                .definitions()
+                .iter_enumerated()
+                .find(|(_, data)| data.kind == DefKind::Function)
+                .map(|(id, _)| id)
+                .expect("the source declares a function to stand in for the destructor");
+            assert_eq!(
+                hir.ty_ctxt().set_drop_method(adt, method),
+                None,
+                "the aggregate starts without a destructor"
+            );
+        }
         let results = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
         let mir = crate::lower(&hir, &results);
         (hir, mir)

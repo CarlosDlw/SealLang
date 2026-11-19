@@ -11,6 +11,25 @@ mod support;
 use support::{SourceFile, reject};
 
 #[test]
+fn moving_an_array_element_reports_e5015() {
+    reject(
+        "move-array-element",
+        r#"struct Token {
+  value: i32,
+}
+
+func main() -> i32 {
+  let items = [Token { value: 21 }, Token { value: 7 }];
+  let first = items[0];
+  first.value + items[1].value
+}
+"#,
+        "E5015",
+        "cannot move an element out of an array",
+    );
+}
+
+#[test]
 fn assigning_while_borrowed_reports_e5001() {
     reject(
         "assign-borrowed",

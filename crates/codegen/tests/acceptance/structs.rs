@@ -300,7 +300,8 @@ struct Pair<T, U> { first: T, second: U }
 
 func second<T: Copy, U: Copy>(values: [Pair<T, U>; 2]) -> U {
   let first = values[0].first;
-  match values[1] { Pair { second, .. } => second }
+  let last = Pair { first: values[1].first, second: values[1].second };
+  match last { Pair { second, .. } => second }
 }
 
 func main() -> i32 {

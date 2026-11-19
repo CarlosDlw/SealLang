@@ -203,6 +203,45 @@ impl<'a> Reporter<'a> {
             .emit();
     }
 
+    /// A move takes a field out of a value whose type implements `Drop`.
+    pub(crate) fn move_out_of_drop_type(&self, ty: seal_ty::TyId, span: Span) {
+        let ty = self
+            .hir
+            .ty_ctxt()
+            .display_with(ty, self.interner)
+            .to_string();
+        self.dcx
+            .error(format!(
+                "cannot move out of `{ty}`, which implements `Drop`"
+            ))
+            .code(codes::E5014.diag_code())
+            .primary(span, "")
+            .help("borrow the field (`&value`), move the whole value, or drop it")
+            .emit();
+    }
+
+    /// A move takes one element out of an array.
+    pub(crate) fn move_out_of_array(&self, place: &Place, span: Span) {
+        let name = self.place_text(place);
+        self.dcx
+            .error("cannot move an element out of an array")
+            .code(codes::E5015.diag_code())
+            .primary(span, format!("`{name}` would be moved out"))
+            .help("borrow the element (`&values[i]`) or iterate by reference")
+            .emit();
+    }
+
+    /// An assignment initializes one field of a value that needs `Drop`.
+    pub(crate) fn initialize_field_of_drop_type(&self, place: &Place, span: Span) {
+        let name = self.place_text(place);
+        self.dcx
+            .error("cannot initialize one field of a value that needs `Drop`")
+            .code(codes::E5016.diag_code())
+            .primary(span, format!("`{name}` is assigned here"))
+            .help("build the whole value in one expression")
+            .emit();
+    }
+
     /// A read reaches a place before every path initializes it.
     pub(crate) fn use_of_uninitialized(&self, place: &Place, span: Span) {
         let name = self.place_text(place);

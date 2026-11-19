@@ -58,6 +58,7 @@ source
   -> lower        resolved HIR
   -> typeck       checked HIR and TypeckResults
   -> lower        MIR bodies
+  -> elaborate    drop sites expanded, guarded, and pruned
   -> const-eval   ConstProgram: values, allocations, relocations
   -> borrowck     loans, origins, and global effects
   -> mono         MonoProgram
@@ -71,10 +72,18 @@ source
 | Lower | `seal-hir` | AST | resolved HIR and bodies | `E2xxx` |
 | Type check | `seal-typeck` | HIR | types, coercions, checked places | `E3xxx` |
 | Lower MIR | `seal-mir` | checked HIR | control-flow bodies | internal validation |
+| Drop elaboration | `seal-mir` | MIR | guarded and pruned drop sites | internal validation |
 | Const evaluation | `seal-const-eval` | MIR | `ConstProgram` | `E4xxx` |
 | Borrow check | `seal-borrowck` | MIR and `ConstProgram` | loans, origins, effects | `E5xxx` |
 | Monomorphize | `seal-mono` | MIR, `ConstProgram` | `MonoProgram` | `E7xxx` |
 | Code generation | `seal-codegen` | `MonoProgram`, `ConstProgram` | IR and artifacts | `E6xxx` |
+
+`seal-mir` elaborates drop sites between MIR lowering and constant evaluation:
+it expands one site into the values its glue visits, removes the sites whose
+value is definitely gone, guards the path-dependent ones with a `bool` flag, and
+drops the value an assignment replaces. The order matters. A constant evaluated
+with a dead drop site would be rejected for a destructor it never runs
+(`E4028`), so the dead sites are gone before evaluation starts.
 
 `seal-const-eval` is introduced together with the global-data feature and sits
 between MIR lowering and borrow checking, so later phases consume evaluated

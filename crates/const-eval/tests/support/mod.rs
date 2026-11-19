@@ -74,6 +74,11 @@ impl Fixture {
         let hir = seal_hir::lower(&ast, &dcx, &interner);
         let typeck = seal_typeck::check(&hir, &dcx, &interner, 64);
         let mut mir = seal_mir::lower(&hir, &typeck);
+        // The driver elaborates before evaluating, and so does this fixture:
+        // a dead drop site inside an initializer must be gone before constant
+        // evaluation can reject it.
+        seal_mir::elaborate_drops(&hir, &mut mir)
+            .expect("drop elaboration preserves its invariants");
         edit(&hir, &mut mir);
         let program = evaluate_with_limits(&hir, &mir, &dcx, &interner, 64, limits);
         Self {
