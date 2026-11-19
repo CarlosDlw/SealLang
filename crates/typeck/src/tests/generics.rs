@@ -41,6 +41,53 @@ fn a_generic_function_infers_its_argument_from_the_parameter() {
 }
 
 #[test]
+fn a_generic_raw_pointer_parameter_infers_its_pointee() {
+    let source = "func identity<T>(value: *raw T) -> *raw T { value } \
+                  func main() -> *raw i32 { \
+                      let number = 41; \
+                      let pointer = &number as *raw i32; \
+                      identity(pointer) \
+                  }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    assert_eq!(
+        ty_text_with(&fixture, &hir, expr_ty(&results, call)),
+        "*raw i32"
+    );
+    let args = instantiation_args(&hir, &results, call);
+    assert_eq!(args.len(), 1);
+    assert_eq!(
+        args[0],
+        hir.ty_ctxt()
+            .lookup(seal_ty::TyKind::Int(seal_ty::IntTy::I32))
+            .expect("i32 is interned")
+    );
+}
+
+#[test]
+fn the_expected_raw_pointer_return_type_infers_the_pointee() {
+    let source = "func make<T>() -> *raw T { make::<T>() } \
+                  func caller() -> *raw bool { make() } \
+                  func main() -> i32 { 0 }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "caller");
+    let call = tail(&hir, body);
+    assert_eq!(
+        ty_text_with(&fixture, &hir, expr_ty(&results, call)),
+        "*raw bool"
+    );
+    let args = instantiation_args(&hir, &results, call);
+    assert_eq!(args.len(), 1);
+    assert_eq!(
+        args[0],
+        hir.ty_ctxt()
+            .lookup(seal_ty::TyKind::Bool)
+            .expect("bool is interned")
+    );
+}
+
+#[test]
 fn the_expected_return_type_guides_argument_inference() {
     let source = "func identity<T>(value: T) -> T { value } \
                   func main() -> i64 { identity(1) }";

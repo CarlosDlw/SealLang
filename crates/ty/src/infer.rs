@@ -96,6 +96,16 @@ impl InferCtxt {
                 },
             ) if expected_kind == found_kind => self.unify(ctxt, expected, found),
             (
+                TyKind::RawPtr {
+                    kind: expected_kind,
+                    pointee: expected,
+                },
+                TyKind::RawPtr {
+                    kind: found_kind,
+                    pointee: found,
+                },
+            ) if expected_kind == found_kind => self.unify(ctxt, expected, found),
+            (
                 TyKind::Array {
                     element: expected_element,
                     length: expected_length,
@@ -195,6 +205,12 @@ impl InferCtxt {
                     return ctxt.ref_ty_with(kind, resolved);
                 }
             }
+            TyKind::RawPtr { kind, pointee } => {
+                let resolved = self.resolve_deep(ctxt, pointee);
+                if resolved != pointee {
+                    return ctxt.raw_ptr_ty_with(kind, resolved);
+                }
+            }
             TyKind::Array { element, length } => {
                 let resolved = self.resolve_deep(ctxt, element);
                 if resolved != element {
@@ -286,7 +302,9 @@ impl InferCtxt {
         let ty = self.resolve_shallow(ctxt, ty);
         match ctxt.kind(ty) {
             TyKind::Infer(other) => other == var,
-            TyKind::Ref { pointee, .. } => self.occurs(ctxt, var, pointee),
+            TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
+                self.occurs(ctxt, var, pointee)
+            }
             TyKind::Array { element, .. } | TyKind::Slice { element } => {
                 self.occurs(ctxt, var, element)
             }
@@ -590,6 +608,60 @@ mod tests {
             infer.resolve_deep(&ctxt, tuple),
             ctxt.tuple_ty(&[int, ctxt.bool_ty()])
         );
+    }
+
+    #[test]
+    fn raw_pointers_unify_their_pointees() {
+        let ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&ctxt);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer
+            .unify(&ctxt, ctxt.raw_ptr_ty(var), ctxt.raw_ptr_ty(int))
+            .expect("read-only pointees unify");
+        assert_eq!(infer.resolve_shallow(&ctxt, var), int);
+
+        let var = infer.fresh_ty_var(&ctxt);
+        let flag = ctxt.bool_ty();
+        infer
+            .unify(&ctxt, ctxt.raw_mut_ptr_ty(var), ctxt.raw_mut_ptr_ty(flag))
+            .expect("mutable pointees unify");
+        assert_eq!(infer.resolve_shallow(&ctxt, var), flag);
+    }
+
+    #[test]
+    fn raw_pointer_kinds_do_not_unify() {
+        let ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        assert!(matches!(
+            infer.unify(&ctxt, ctxt.raw_ptr_ty(int), ctxt.raw_mut_ptr_ty(int)),
+            Err(UnifyError::Mismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn the_occurs_check_looks_through_raw_pointers() {
+        let ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&ctxt);
+        let pointer = ctxt.raw_ptr_ty(var);
+        assert!(matches!(
+            infer.unify(&ctxt, var, pointer),
+            Err(UnifyError::Occurs { .. })
+        ));
+        assert_eq!(infer.resolve_shallow(&ctxt, var), var);
+    }
+
+    #[test]
+    fn deep_resolution_rebuilds_raw_pointer_types() {
+        let ctxt = TyCtxt::new();
+        let mut infer = InferCtxt::new();
+        let var = infer.fresh_ty_var(&ctxt);
+        let pointer = ctxt.raw_mut_ptr_ty(var);
+        let int = ctxt.int_ty(IntTy::I32);
+        infer.unify(&ctxt, var, int).expect("variable binds");
+        assert_eq!(infer.resolve_deep(&ctxt, pointer), ctxt.raw_mut_ptr_ty(int));
     }
 
     #[test]

@@ -1861,8 +1861,8 @@ fn raw_pointer_generics_instantiate_per_pointee() {
             let number_pointer = &number as *raw i32;
             let flag_pointer = &flag as *raw bool;
             unsafe {
-                if *identity::<i32>(number_pointer) + 1 != 42 { return 1; }
-                if !(*identity::<bool>(flag_pointer)) { return 2; }
+                if *identity(number_pointer) + 1 != 42 { return 1; }
+                if !(*identity(flag_pointer)) { return 2; }
             }
             42
         }";
