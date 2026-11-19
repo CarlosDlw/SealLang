@@ -56,6 +56,7 @@ mod const_image;
 mod const_value;
 mod constant;
 mod debug;
+mod drop;
 mod entry;
 mod equality;
 mod error;

@@ -10,7 +10,7 @@ use crate::operand::Operand;
 use crate::rvalue::{BinOp, CallTarget, Rvalue};
 use crate::terminator::TerminatorKind;
 
-use super::support::{assignment, function, lower_clean};
+use super::support::{assignment, assignments, function, lower_clean};
 
 const CHAIN: &str = "\
 struct Source { value: i32 } \
@@ -28,11 +28,7 @@ impl IntoIterator<Cursor, i32> for Source { \
 }";
 
 fn values(body: &Body) -> Vec<(&crate::place::Place, &Rvalue)> {
-    body.blocks
-        .iter()
-        .flat_map(|block| &block.statements)
-        .map(assignment)
-        .collect()
+    assignments(body)
 }
 
 fn call_name(

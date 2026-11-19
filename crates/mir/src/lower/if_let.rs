@@ -29,7 +29,9 @@ impl BodyLowering<'_> {
 
         let join = self.new_block();
         let failure = self.new_block();
-        self.declare_pattern_bindings(pattern);
+        // The bindings belong to the then block: that block owns them and drops
+        // them when it ends, after the locals it declares itself.
+        let owned = self.declare_pattern_bindings(pattern);
 
         let mut alternatives = self.expand_pattern(pattern);
         if alternatives.is_empty() {
@@ -50,7 +52,7 @@ impl BodyLowering<'_> {
                 self.current = Some(entry);
                 self.lower_flat_pattern(&alternative, subject.clone(), ty, fail, &mut bindings);
                 self.bind_all(&bindings, span);
-                self.lower_block(then_branch, dest.clone());
+                self.lower_block_with(then_branch, dest.clone(), owned.clone());
                 if self.current.is_some() {
                     self.terminate_goto(join, span);
                 }

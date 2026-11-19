@@ -141,14 +141,18 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 self.set_span(statement.span);
                 let (place, rvalue) = match &statement.kind {
                     StatementKind::Assign { place, rvalue } => (place, rvalue),
-                    // Drop glue is emitted per type, and lowering does not emit
-                    // drop sites yet, so reaching one here means the pipeline
-                    // handed code generation a statement its shape cannot
-                    // represent.
-                    StatementKind::Drop { .. } | StatementKind::DropRemaining { .. } => {
-                        return Err(CodegenError::internal(
-                            "drop statements require drop glue, which is not emitted yet",
-                        ));
+                    // Drop glue is shared until destructors exist: the call keeps
+                    // the statement's shape in the IR, and the phase that adds
+                    // destructors fills the glue in.
+                    StatementKind::Drop { place, .. }
+                    | StatementKind::DropRemaining { place, .. } => {
+                        let glue = crate::drop::noop_drop(self.context, self.module)?;
+                        let address = self.place_ptr(place)?;
+                        self.build(
+                            self.builder.build_call(glue, &[address.into()], "drop"),
+                            "drop glue call",
+                        )?;
+                        continue;
                     }
                 };
                 let value = self.emit_rvalue(rvalue)?;

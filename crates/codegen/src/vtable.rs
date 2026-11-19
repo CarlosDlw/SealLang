@@ -53,7 +53,9 @@ impl<'ctx> Vtables<'ctx> {
             });
         }
 
-        let drop = declare_drop(context, module)?;
+        // The header's drop slot shares the one glue entry every drop statement
+        // calls, so the vtable shape stays stable once destructors exist.
+        let drop = crate::drop::noop_drop(context, module)?;
         let mut globals = FxHashMap::default();
         let mut ids = FxHashMap::default();
 
@@ -102,30 +104,6 @@ impl<'ctx> Vtables<'ctx> {
             CodegenError::internal(format!("vtable {id:?} was collected but never emitted"))
         })
     }
-}
-
-/// Defines the single no-op drop function used by every vtable header.
-///
-/// Seal has no destructors yet, so the slot must exist for a stable vtable
-/// shape but must not do anything. The function is internal and takes the
-/// erased data pointer, matching the documented slot signature.
-fn declare_drop<'ctx>(
-    context: &'ctx Context,
-    module: &Module<'ctx>,
-) -> Result<FunctionValue<'ctx>, CodegenError> {
-    if let Some(function) = module.get_function(names::DROP) {
-        return Ok(function);
-    }
-    let pointer = context.ptr_type(inkwell::AddressSpace::default());
-    let function_type = context.void_type().fn_type(&[pointer.into()], false);
-    let function = module.add_function(names::DROP, function_type, Some(Linkage::Internal));
-    let entry = context.append_basic_block(function, "entry");
-    let builder = context.create_builder();
-    builder.position_at_end(entry);
-    builder.build_return(None).map_err(|error| {
-        CodegenError::internal(format!("cannot build the vtable drop function: {error:?}"))
-    })?;
-    Ok(function)
 }
 
 /// Emits one private constant vtable global.

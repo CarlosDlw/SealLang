@@ -7,9 +7,9 @@ mod while_let;
 
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::{DefId, DefKind};
-use seal_hash::FxHashMap;
+use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId, Res, StmtKind};
-use seal_index::IndexVec;
+use seal_index::{Idx, IndexVec};
 use seal_span::Span;
 use seal_ty::{Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
@@ -23,7 +23,7 @@ use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
 use crate::place::{Place, PlaceRoot, Projection};
 use crate::rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
-use crate::statement::Statement;
+use crate::statement::{DropKind, Statement};
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
 
 /// Converts a HIR body kind into its MIR form.
@@ -58,6 +58,9 @@ struct BlockBuilder {
 struct LoopTargets {
     break_to: BasicBlockId,
     continue_to: BasicBlockId,
+    /// The scope index of the loop body: leaving the loop drops that scope and
+    /// everything inside it, and nothing declared before the loop.
+    depth: usize,
 }
 
 /// The optional bounds of a slice range.
@@ -92,6 +95,23 @@ struct BodyLowering<'a> {
     loops: Vec<LoopTargets>,
     arg_count: usize,
     param_env: ParamEnv,
+    /// The scopes enclosing the code being lowered, outermost first.
+    ///
+    /// Each entry owns the locals it declares, in declaration order. A scope's
+    /// drops are emitted once per path that reaches the end of the scope: the
+    /// fallthrough path emits them where the scope ends, and a path that leaves
+    /// early — `return`, `break`, `continue` — emits them where it leaves.
+    /// Which is why a scope is never marked: two paths through one scope are
+    /// two different drop sites, not a duplicate.
+    scopes: Vec<Vec<LocalId>>,
+    /// The number of locals that existed when the current statement started.
+    temp_window: usize,
+    /// Temporaries the current statement must not drop itself.
+    ///
+    /// A temporary whose address outlives the statement joins the enclosing
+    /// block instead, and a by-value loop owns its array, dropping only the
+    /// elements the body left behind.
+    detached_temps: FxHashSet<LocalId>,
 }
 
 impl<'a> BodyLowering<'a> {
@@ -119,6 +139,9 @@ impl<'a> BodyLowering<'a> {
             loops: Vec::new(),
             arg_count: body.params.len(),
             param_env,
+            scopes: Vec::new(),
+            temp_window: 0,
+            detached_temps: FxHashSet::default(),
         };
 
         let return_local = lowering.push_local(LocalDecl {
@@ -133,6 +156,7 @@ impl<'a> BodyLowering<'a> {
         lowering.entry = entry;
         lowering.current = Some(entry);
 
+        let mut parameters = Vec::with_capacity(body.params.len());
         for (param, ty) in body.params.iter().zip(&param_types) {
             let definition = hir.definitions().get(param.def);
             let local = lowering.push_local(LocalDecl {
@@ -142,7 +166,11 @@ impl<'a> BodyLowering<'a> {
                 span: definition.span,
             });
             lowering.local_of.insert(param.def, local);
+            parameters.push(local);
         }
+        // Parameters are owned by the function itself: their drops run after the
+        // body's own scopes, when the value is about to leave the frame.
+        lowering.push_scope(parameters);
 
         lowering
     }
@@ -159,6 +187,9 @@ impl<'a> BodyLowering<'a> {
         self.lower_block(body.root, Some(self.return_place()));
         if self.current.is_some() {
             let span = return_span.unwrap_or_else(|| self.hir.block(body.root).span);
+            // The body's own scope ended with its block; the parameters are the
+            // last values this frame owns.
+            self.drop_scopes_down_to(0, span);
             self.terminate(TerminatorKind::Return, span);
         }
         self.finish()
@@ -247,6 +278,132 @@ impl<'a> BodyLowering<'a> {
         self.blocks[block].statements.push(statement);
     }
 
+    /// Starts a scope that owns `locals`.
+    fn push_scope(&mut self, locals: Vec<LocalId>) {
+        self.scopes.push(locals);
+    }
+
+    /// Adds a local to the innermost scope, so it is dropped when that ends.
+    fn register_local(&mut self, local: LocalId) {
+        let scope = self
+            .scopes
+            .last_mut()
+            .expect("a local is declared inside the body's first scope");
+        scope.push(local);
+    }
+
+    /// Ends the innermost scope, dropping the values it still owns.
+    ///
+    /// A block whose path already ended in a terminator has no `current` block
+    /// and emits nothing here: that path dropped these locals where it left.
+    fn pop_scope(&mut self, span: Span) {
+        let locals = self
+            .scopes
+            .pop()
+            .expect("every scope is popped by the block that pushed it");
+        self.drop_locals(&locals, span);
+    }
+
+    /// Drops every scope from `depth` inwards, innermost first.
+    ///
+    /// A path that leaves early (`return`, `break`, `continue`) unwinds the
+    /// scopes it skips this way. The scopes stay on the stack, because the
+    /// blocks that pushed them still end on their own fallthrough paths, which
+    /// need the same drops at their own end.
+    fn drop_scopes_down_to(&mut self, depth: usize, span: Span) {
+        for index in (depth..self.scopes.len()).rev() {
+            let locals = self.scopes[index].clone();
+            self.drop_locals(&locals, span);
+        }
+    }
+
+    /// Emits a scope drop for every local that needs a destructor.
+    ///
+    /// A `Copy` value has no destructor of its own, and neither does an
+    /// aggregate whose fields are all trivial, so `needs_drop` decides whether a
+    /// site exists at all.
+    fn drop_locals(&mut self, locals: &[LocalId], span: Span) {
+        if self.current.is_none() {
+            // There is no block left to write to. A path only reaches here after
+            // it left through a terminator, which already dropped the scopes it
+            // unwound.
+            return;
+        }
+        for local in locals.iter().rev() {
+            if self.hir.ty_ctxt().needs_drop(self.locals[*local].ty) {
+                self.push_statement(Statement::drop(Place::local(*local), DropKind::Scope, span));
+            }
+        }
+    }
+
+    /// Drops the temporaries the current statement created.
+    ///
+    /// A temporary lives only as long as the statement that built it, unless it
+    /// was detached: an escaping address hands it to the enclosing block, and a
+    /// by-value loop owns its array until its exit.
+    fn drop_statement_temps(&mut self, span: Span) {
+        if self.current.is_none() {
+            return;
+        }
+        for index in (self.temp_window..self.locals.len()).rev() {
+            let local = LocalId::from_usize(index);
+            if self.detached_temps.contains(&local)
+                || self.locals[local].kind != LocalKind::Temp
+                || !self.hir.ty_ctxt().needs_drop(self.locals[local].ty)
+            {
+                continue;
+            }
+            self.push_statement(Statement::drop(Place::local(local), DropKind::Scope, span));
+        }
+    }
+
+    /// Returns whether `local` was created by the current statement.
+    fn is_statement_temp(&self, local: LocalId) -> bool {
+        local.index() as usize >= self.temp_window && self.locals[local].kind == LocalKind::Temp
+    }
+
+    /// Returns whether `place` is a whole temporary of the current statement.
+    fn is_statement_temp_place(&self, place: &Place) -> bool {
+        place.projections.is_empty()
+            && place
+                .local_id()
+                .is_some_and(|local| self.is_statement_temp(local))
+    }
+
+    /// Hands a temporary to the enclosing block.
+    ///
+    /// The temporary is registered as a block local, so it is dropped with the
+    /// block, after the locals declared inside it.
+    fn promote_temp(&mut self, local: LocalId) {
+        if self.detached_temps.insert(local) {
+            self.register_local(local);
+        }
+    }
+
+    /// Leaves a temporary to be dropped by something other than its statement.
+    ///
+    /// A by-value loop owns its array: it drops the elements the body did not
+    /// take when it exits, so the statement that built the array must not drop
+    /// it as well.
+    fn hand_over_temp(&mut self, local: LocalId) {
+        self.detached_temps.insert(local);
+    }
+
+    /// Keeps the storage a borrow reads alive for as long as the borrow is.
+    ///
+    /// A statement drops its own temporaries when it ends. When the borrow is
+    /// stored somewhere that outlives the statement, the storage would die with
+    /// it, so the temporary joins the enclosing block instead — exactly like a
+    /// binding, and dropped after the block's own locals.
+    fn promote_borrowed_temp(&mut self, place: &Place, dest: &Place) {
+        let Some(local) = place.local_id() else {
+            return;
+        };
+        if self.is_statement_temp(local) && !self.is_statement_temp_place(dest) {
+            self.promote_temp(local);
+        }
+    }
+
     fn assign_constant(&mut self, place: Place, constant: Constant, span: Span) {
         self.assign_rvalue(place, Rvalue::Use(Operand::Constant(constant)), span);
     }
@@ -260,6 +417,17 @@ impl<'a> BodyLowering<'a> {
     }
 
     fn lower_block(&mut self, block: HirBlockId, dest: Option<Place>) {
+        self.lower_block_with(block, dest, Vec::new());
+    }
+
+    /// Lowers a block whose scope already owns `bindings`.
+    ///
+    /// A pattern binding is assigned before its body runs, so it is handed to
+    /// the body's scope: it must be dropped when that block ends, after the
+    /// locals the block declares itself. `if let`, `while let`, `match`, and
+    /// `for` pass their bindings here.
+    fn lower_block_with(&mut self, block: HirBlockId, dest: Option<Place>, bindings: Vec<LocalId>) {
+        self.push_scope(bindings);
         let statement_count = self.hir.block(block).statements.len();
         for index in 0..statement_count {
             let statement = self.hir.block(block).statements[index];
@@ -274,14 +442,28 @@ impl<'a> BodyLowering<'a> {
             let span = self.hir.block(block).span;
             self.assign_constant(dest, Constant::Unit, span);
         }
+        self.pop_scope(self.hir.block(block).span);
     }
 
+    /// Lowers one statement and drops the temporaries it created.
     fn lower_stmt(&mut self, statement: HirStmtId) {
         let (span, kind) = {
             let statement = self.hir.stmt(statement);
             (statement.span, statement.kind.clone())
         };
 
+        // A statement owns the temporaries it builds. Nested statements open
+        // their own window, so the enclosing one is restored afterwards.
+        let outer_window = self.temp_window;
+        let outer_detached = std::mem::take(&mut self.detached_temps);
+        self.temp_window = self.locals.len();
+        self.lower_stmt_kind(span, kind);
+        self.drop_statement_temps(span);
+        self.temp_window = outer_window;
+        self.detached_temps = outer_detached;
+    }
+
+    fn lower_stmt_kind(&mut self, span: Span, kind: StmtKind) {
         match kind {
             StmtKind::Let { local, init, .. } => {
                 let ty = self.expr_or_local_ty(local);
@@ -296,6 +478,9 @@ impl<'a> BodyLowering<'a> {
                 if let Some(init) = init {
                     self.lower_expr_into(init, Some(Place::local(mir_local)));
                 }
+                // Registered after the initializer, so its temporaries are
+                // dropped before the binding they fed.
+                self.register_local(mir_local);
             }
             StmtKind::Return(value) => {
                 let dest = self.return_place();
@@ -304,6 +489,10 @@ impl<'a> BodyLowering<'a> {
                     Some(value) => self.lower_expr_into(value, Some(dest)),
                     None => self.assign_constant(dest, Constant::Unit, span),
                 }
+                // The return value is already in place. Operands' temporaries
+                // die first, then every scope from the innermost outwards.
+                self.drop_statement_temps(span);
+                self.drop_scopes_down_to(0, span);
                 self.terminate(TerminatorKind::Return, return_span);
             }
             StmtKind::While { condition, body } => self.lower_while(condition, body, span),
@@ -318,20 +507,24 @@ impl<'a> BodyLowering<'a> {
                 body,
             } => self.lower_for(pattern, source, body, span),
             StmtKind::Break => {
-                let target = self
+                let targets = *self
                     .loops
                     .last()
-                    .expect("type checking rejects `break` outside a loop")
-                    .break_to;
-                self.terminate_goto(target, span);
+                    .expect("type checking rejects `break` outside a loop");
+                // Leaving the loop drops its body's scopes and nothing before
+                // them: the loop may still be in use by the code around it.
+                self.drop_statement_temps(span);
+                self.drop_scopes_down_to(targets.depth, span);
+                self.terminate_goto(targets.break_to, span);
             }
             StmtKind::Continue => {
-                let target = self
+                let targets = *self
                     .loops
                     .last()
-                    .expect("type checking rejects `continue` outside a loop")
-                    .continue_to;
-                self.terminate_goto(target, span);
+                    .expect("type checking rejects `continue` outside a loop");
+                self.drop_statement_temps(span);
+                self.drop_scopes_down_to(targets.depth, span);
+                self.terminate_goto(targets.continue_to, span);
             }
             StmtKind::Const { .. } | StmtKind::Static { .. } => {
                 // The initializer is its own body; the statement only scopes the
@@ -364,9 +557,11 @@ impl<'a> BodyLowering<'a> {
         );
 
         self.current = Some(body_block);
+        let depth = self.scopes.len();
         self.loops.push(LoopTargets {
             break_to: exit_block,
             continue_to: condition_block,
+            depth,
         });
         self.lower_block(body, None);
         self.loops.pop();
@@ -401,11 +596,15 @@ impl<'a> BodyLowering<'a> {
             Coercion::TraitObject { source, target } => {
                 let source_place = self.new_temp(source, span);
                 self.lower_expr_into_uncoerced(expr, Some(source_place.clone()));
+                // The object takes the source value, so an owned source is moved
+                // out of the temporary rather than duplicated: otherwise the
+                // temporary and the object would each drop the same value.
+                let source_operand = self.place_operand(source_place, source);
                 let target_place = dest.unwrap_or_else(|| self.new_temp(target, span));
                 self.assign_rvalue(
                     target_place,
                     Rvalue::MakeTraitObject {
-                        source: Operand::Copy(source_place),
+                        source: source_operand,
                         source_ty: source,
                         target_ty: target,
                     },
@@ -529,6 +728,9 @@ impl<'a> BodyLowering<'a> {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(operand);
                     let ty = self.expr_ty(expr);
+                    // A borrow stored beyond this statement keeps its storage
+                    // alive; one consumed by the statement does not.
+                    self.promote_borrowed_temp(&place, &dest);
                     let is_slice = matches!(
                         self.hir.ty_ctxt().kind(ty),
                         TyKind::Ref { pointee, .. }
@@ -1770,6 +1972,9 @@ impl<'a> BodyLowering<'a> {
             _ => ty,
         };
         let base_place = self.place_of_expr(base);
+        if let Some(dest) = &dest {
+            self.promote_borrowed_temp(&base_place, dest);
+        }
         let base_ty = self.expr_ty(base);
         let length = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Array { length, .. } => self.constant_length(length),

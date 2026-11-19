@@ -19,7 +19,7 @@ use seal_ty::{AdtId, TyId, TyKind, VariantIdx};
 
 use super::BodyLowering;
 use crate::body::{LocalDecl, LocalKind};
-use crate::id::BasicBlockId;
+use crate::id::{BasicBlockId, LocalId};
 use crate::operand::{Constant, Operand};
 use crate::place::Place;
 use crate::rvalue::{BinOp, Rvalue};
@@ -97,7 +97,7 @@ impl BodyLowering<'_> {
         for (index, arm) in arms.iter().enumerate() {
             let last = index + 1 == arms.len();
             let next_arm = if last { dead } else { self.new_block() };
-            self.declare_pattern_bindings(arm.pattern);
+            let owned = self.declare_pattern_bindings(arm.pattern);
 
             let mut alternatives = self.expand_pattern(arm.pattern);
             if alternatives.is_empty() {
@@ -116,6 +116,9 @@ impl BodyLowering<'_> {
                 let fail = fails.get(position).copied().unwrap_or(next_arm);
                 let mut bindings = Vec::new();
                 self.current = Some(alternative_entry);
+                // The bindings live as long as the arm: they are dropped when it
+                // ends, after the locals its body declared.
+                self.push_scope(owned.clone());
                 self.lower_flat_pattern(&alternative, subject.clone(), ty, fail, &mut bindings);
 
                 if let Some(guard) = arm.guard {
@@ -124,6 +127,7 @@ impl BodyLowering<'_> {
                     self.bind_all(&bindings, arm.span);
                 }
                 self.lower_arm_body(arm.body, dest.clone(), join, arm.span);
+                self.pop_scope(arm.span);
 
                 alternative_entry = fail;
             }
@@ -202,11 +206,17 @@ impl BodyLowering<'_> {
         }
     }
 
-    pub(super) fn declare_pattern_bindings(&mut self, pattern: HirPatternId) {
+    /// Declares a MIR local per pattern binding and returns them in order.
+    ///
+    /// The caller hands the returned locals to the scope that owns them: a
+    /// pattern binding is dropped when the block or arm that bound it ends.
+    pub(super) fn declare_pattern_bindings(&mut self, pattern: HirPatternId) -> Vec<LocalId> {
         let mut definitions = Vec::new();
         self.collect_binding_defs(pattern, &mut definitions);
+        let mut locals = Vec::with_capacity(definitions.len());
         for definition in definitions {
-            if self.local_of.contains_key(&definition) {
+            if let Some(local) = self.local_of.get(&definition) {
+                locals.push(*local);
                 continue;
             }
             let data = self.hir.definitions().get(definition);
@@ -218,7 +228,9 @@ impl BodyLowering<'_> {
                 span: data.span,
             });
             self.local_of.insert(definition, local);
+            locals.push(local);
         }
+        locals
     }
 
     fn collect_binding_defs(&self, pattern: HirPatternId, out: &mut Vec<DefId>) {
@@ -781,9 +793,13 @@ impl BodyLowering<'_> {
         }
     }
 
-    /// Declares the binding locals of a `for` pattern once, before the loop.
-    pub(super) fn declare_for_pattern(&mut self, pattern: HirPatternId) {
-        self.declare_pattern_bindings(pattern);
+    /// Declares a `for` pattern's bindings once, before the loop, and returns
+    /// their locals.
+    ///
+    /// The loop body owns them: every iteration binds them again and leaving the
+    /// body drops the previous iteration's values.
+    pub(super) fn declare_for_pattern(&mut self, pattern: HirPatternId) -> Vec<LocalId> {
+        self.declare_pattern_bindings(pattern)
     }
 
     /// Lowers one iteration's pattern, jumping to `success` when it matches and

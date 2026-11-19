@@ -29,7 +29,9 @@ impl BodyLowering<'_> {
         let ty = self.expr_ty(scrutinee);
         let subject = self.new_temp(ty, span);
         self.lower_expr_into(scrutinee, Some(subject.clone()));
-        self.declare_pattern_bindings(pattern);
+        // Every iteration binds the names again, so the body block owns them:
+        // leaving the body drops the values the iteration produced.
+        let owned = self.declare_pattern_bindings(pattern);
 
         let mut alternatives = self.expand_pattern(pattern);
         if alternatives.is_empty() {
@@ -51,11 +53,13 @@ impl BodyLowering<'_> {
                 self.lower_flat_pattern(&alternative, subject.clone(), ty, fail, &mut bindings);
                 self.bind_all(&bindings, span);
 
+                let depth = self.scopes.len();
                 self.loops.push(super::LoopTargets {
                     break_to: exit,
                     continue_to: condition,
+                    depth,
                 });
-                self.lower_block(body, None);
+                self.lower_block_with(body, None, owned.clone());
                 self.loops.pop();
                 if self.current.is_some() {
                     self.terminate_goto(condition, span);

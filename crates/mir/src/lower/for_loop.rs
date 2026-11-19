@@ -1,22 +1,28 @@
 //! Lowering `for` loops.
 //!
 //! Built-in ranges and sequences lower to one counted loop: a condition block,
-//! a block that matches the pattern and binds its names, the body, and an
-//! increment block. `continue` targets the increment, so a skipped iteration
-//! still advances the source; `break` targets the exit.
+//! a block that matches the pattern and binds its names, the body, and the
+//! advance of the counter. A range advances after the body; a sequence advances
+//! at the start of the body, so its index always names the first element that
+//! was *not* taken and the exit can drop exactly the elements left behind.
+//! `break` targets the exit and `continue` targets the condition, so neither
+//! skips an element.
 //!
 //! The iterable is evaluated once before the loop. An array is moved into a
 //! temporary and indexed through an exclusive borrow of that temporary, so a
-//! non-`Copy` element can be moved out without the initialization analysis
-//! treating the whole array as moved on every iteration. A reference to an
-//! array or a slice is kept in a temporary and each element is reborrowed with
-//! the same shared or exclusive kind as the source.
+//! non-`Copy` element can be read without the initialization analysis treating
+//! the whole array as moved on every iteration. The loop owns that temporary:
+//! the elements it did not take are dropped by `DropRemaining` on the exit, and
+//! no scope drop would run for the array. A reference to an array or a slice is
+//! kept in a temporary and each element is reborrowed with the same shared or
+//! exclusive kind as the source, which leaves every element to its owner.
 //!
 //! A custom source records protocol calls during type checking. Its loop has a
 //! condition, a bind block that calls `next`, the body, and an exit, with no
 //! increment: `continue` returns to the condition so only `has_next` decides
 //! whether another item is produced.
 
+use crate::id::LocalId;
 use seal_hir::{ForSource, HirBlockId, HirExprId, HirPatternId};
 use seal_span::Span;
 use seal_ty::{RefKind, TyId, TyKind};
@@ -26,6 +32,7 @@ use super::BodyLowering;
 use crate::operand::{Constant, Operand};
 use crate::place::Place;
 use crate::rvalue::{BinOp, Rvalue};
+use crate::statement::Statement;
 use crate::terminator::{SwitchTarget, TerminatorKind};
 
 /// How a sequence source exposes its elements.
@@ -40,6 +47,18 @@ struct SequenceSource {
     length: Operand,
 }
 
+/// The parts every `for` lowering shares.
+struct ForParts<'a> {
+    /// The pattern matched against each item.
+    pattern: HirPatternId,
+    /// The loop body.
+    body: HirBlockId,
+    /// The span of the whole statement.
+    span: Span,
+    /// The locals the pattern binds, owned by the body block.
+    bindings: &'a [LocalId],
+}
+
 impl BodyLowering<'_> {
     /// Lowers one `for` statement.
     pub(super) fn lower_for(
@@ -49,18 +68,24 @@ impl BodyLowering<'_> {
         body: HirBlockId,
         span: Span,
     ) {
-        self.declare_for_pattern(pattern);
+        let bindings = self.declare_for_pattern(pattern);
+        let parts = ForParts {
+            pattern,
+            body,
+            span,
+            bindings: &bindings,
+        };
         match source {
             ForSource::Range {
                 start,
                 end,
                 inclusive,
-            } => self.lower_for_range(pattern, start, end, inclusive, body, span),
+            } => self.lower_for_range(start, end, inclusive, &parts),
             ForSource::Expr(iterable) => {
                 if let Some(protocol) = self.typeck.iteration(iterable).cloned() {
-                    self.lower_for_protocol(pattern, iterable, protocol, body, span);
+                    self.lower_for_protocol(iterable, protocol, &parts);
                 } else {
-                    self.lower_for_sequence(pattern, iterable, body, span);
+                    self.lower_for_sequence(iterable, &parts);
                 }
             }
         }
@@ -75,12 +100,11 @@ impl BodyLowering<'_> {
     /// item without calling `next` twice.
     fn lower_for_protocol(
         &mut self,
-        pattern: HirPatternId,
         iterable: HirExprId,
         protocol: IterationProtocol,
-        body: HirBlockId,
-        span: Span,
+        parts: &ForParts<'_>,
     ) {
+        let span = parts.span;
         let source_ty = self.expr_ty(iterable);
         let source = self.new_temp(source_ty, span);
         self.lower_expr_into(iterable, Some(source.clone()));
@@ -152,14 +176,23 @@ impl BodyLowering<'_> {
             Some(item.clone()),
             span,
         );
-        self.lower_for_pattern(pattern, item, protocol.item_ty, condition, body_block, span);
+        self.lower_for_pattern(
+            parts.pattern,
+            item,
+            protocol.item_ty,
+            condition,
+            body_block,
+            span,
+        );
 
         self.current = Some(body_block);
+        let depth = self.scopes.len();
         self.loops.push(super::LoopTargets {
             break_to: exit,
             continue_to: condition,
+            depth,
         });
-        self.lower_block(body, None);
+        self.lower_block_with(parts.body, None, parts.bindings.to_vec());
         self.loops.pop();
         if self.current.is_some() {
             self.terminate_goto(condition, span);
@@ -171,13 +204,12 @@ impl BodyLowering<'_> {
     /// Lowers `for pattern in start..end` and `start..=end`.
     fn lower_for_range(
         &mut self,
-        pattern: HirPatternId,
         start: HirExprId,
         end: HirExprId,
         inclusive: bool,
-        body: HirBlockId,
-        span: Span,
+        parts: &ForParts<'_>,
     ) {
+        let span = parts.span;
         let ty = self.expr_ty(start);
         let current = self.new_temp(ty, span);
         self.lower_expr_into(start, Some(current.clone()));
@@ -212,14 +244,23 @@ impl BodyLowering<'_> {
         );
 
         self.current = Some(bind);
-        self.lower_for_pattern(pattern, current.clone(), ty, increment, body_block, span);
+        self.lower_for_pattern(
+            parts.pattern,
+            current.clone(),
+            ty,
+            increment,
+            body_block,
+            span,
+        );
 
         self.current = Some(body_block);
+        let depth = self.scopes.len();
         self.loops.push(super::LoopTargets {
             break_to: exit,
             continue_to: increment,
+            depth,
         });
-        self.lower_block(body, None);
+        self.lower_block_with(parts.body, None, parts.bindings.to_vec());
         self.loops.pop();
         if self.current.is_some() {
             self.terminate_goto(increment, span);
@@ -268,16 +309,17 @@ impl BodyLowering<'_> {
 
     /// Lowers `for pattern in array`, `&array`, `&mut array`, or a slice
     /// reference.
-    fn lower_for_sequence(
-        &mut self,
-        pattern: HirPatternId,
-        iterable: HirExprId,
-        body: HirBlockId,
-        span: Span,
-    ) {
+    fn lower_for_sequence(&mut self, iterable: HirExprId, parts: &ForParts<'_>) {
+        let span = parts.span;
         let collection_ty = self.expr_ty(iterable);
         let collection = self.new_temp(collection_ty, span);
         self.lower_expr_into(iterable, Some(collection.clone()));
+        // A by-value loop owns its array: it drops the elements the body did not
+        // take when it exits, so the statement must not drop the array itself.
+        let owned = matches!(self.hir.ty_ctxt().kind(collection_ty), TyKind::Array { .. });
+        if owned && let Some(local) = collection.local_id() {
+            self.hand_over_temp(local);
+        }
         let source = self.sequence_source(collection_ty, collection.clone(), span);
 
         let index_ty = self.usize_ty();
@@ -294,7 +336,6 @@ impl BodyLowering<'_> {
         let condition = self.new_block();
         let bind = self.new_block();
         let body_block = self.new_block();
-        let increment = self.new_block();
         let exit = self.new_block();
 
         self.terminate_goto(condition, span);
@@ -336,40 +377,50 @@ impl BodyLowering<'_> {
             None => element_place,
         };
         self.lower_for_pattern(
-            pattern,
+            parts.pattern,
             subject,
             source.subject,
-            increment,
+            condition,
             body_block,
             span,
         );
 
         self.current = Some(body_block);
-        self.loops.push(super::LoopTargets {
-            break_to: exit,
-            continue_to: increment,
-        });
-        self.lower_block(body, None);
-        self.loops.pop();
-        if self.current.is_some() {
-            self.terminate_goto(increment, span);
-        }
-
-        self.current = Some(increment);
+        // The pattern read the element with the index it was given, and the
+        // index advances here, before the body runs. It therefore always names
+        // the first element that was *not* taken, so leaving the body from
+        // anywhere — `break` included — still drops exactly the unconsumed tail.
         let one = Operand::Constant(self.constant_one(index_ty));
         self.assign_rvalue(
             index.clone(),
             Rvalue::Binary {
                 op: BinOp::Add,
-                lhs: Operand::Copy(index),
+                lhs: Operand::Copy(index.clone()),
                 rhs: one,
                 span,
             },
             span,
         );
-        self.terminate_goto(condition, span);
+        let depth = self.scopes.len();
+        self.loops.push(super::LoopTargets {
+            break_to: exit,
+            continue_to: condition,
+            depth,
+        });
+        self.lower_block_with(parts.body, None, parts.bindings.to_vec());
+        self.loops.pop();
+        if self.current.is_some() {
+            self.terminate_goto(condition, span);
+        }
 
         self.current = Some(exit);
+        if owned && self.hir.ty_ctxt().needs_drop(collection_ty) {
+            self.push_statement(Statement::drop_remaining(
+                collection,
+                Operand::Copy(index),
+                span,
+            ));
+        }
     }
 
     /// Classifies an array or reference and produces its length operand.

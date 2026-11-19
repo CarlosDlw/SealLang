@@ -6,6 +6,7 @@ mod calls;
 mod casts;
 mod control_flow;
 mod drop_statements;
+mod drops;
 mod dyn_types;
 mod enums;
 mod examples;

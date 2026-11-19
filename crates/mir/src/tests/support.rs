@@ -167,6 +167,21 @@ pub(crate) fn local_named(fixture: &Fixture, body: &Body, name: &str) -> LocalId
         .unwrap_or_else(|| panic!("no local named `{name}`"))
 }
 
+/// Returns every assignment of `body` as a place and rvalue pair.
+///
+/// A body also holds drop statements, which carry no rvalue, so scanning for a
+/// value must skip them instead of assuming every statement assigns.
+pub(crate) fn assignments(body: &Body) -> Vec<(&Place, &Rvalue)> {
+    body.blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .filter_map(|statement| match &statement.kind {
+            crate::statement::StatementKind::Assign { place, rvalue } => Some((place, rvalue)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Returns the place and rvalue of an assignment statement.
 ///
 /// # Panics
