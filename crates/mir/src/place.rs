@@ -10,6 +10,11 @@ use crate::id::LocalId;
 pub enum Projection {
     /// Reads through a shared reference.
     Deref,
+    /// Reads through a raw pointer.
+    ///
+    /// The pointee is not tracked by initialization or drop analysis: its
+    /// storage belongs to the unsafe contract, not to this frame.
+    RawDeref,
     /// Selects a struct field by its definition.
     Field(DefId),
     /// Selects a tuple element by its zero-based position.
@@ -130,6 +135,13 @@ impl Place {
         self
     }
 
+    /// Returns the place reached by one raw-pointer dereference.
+    #[inline]
+    pub fn raw_deref(mut self) -> Self {
+        self.projections.push(Projection::RawDeref);
+        self
+    }
+
     /// Returns the place reached by selecting a field.
     #[inline]
     pub fn field(mut self, field: DefId) -> Self {
@@ -178,7 +190,7 @@ impl Place {
     pub fn derefs(&self) -> usize {
         self.projections
             .iter()
-            .filter(|projection| **projection == Projection::Deref)
+            .filter(|projection| matches!(projection, Projection::Deref | Projection::RawDeref))
             .count()
     }
 
@@ -188,7 +200,15 @@ impl Place {
     /// ownership of its pointee.
     #[inline]
     pub fn is_deref(&self) -> bool {
-        self.projections.contains(&Projection::Deref)
+        self.projections
+            .iter()
+            .any(|projection| matches!(projection, Projection::Deref | Projection::RawDeref))
+    }
+
+    /// Returns `true` if the place is reached through a raw pointer.
+    #[inline]
+    pub fn is_raw_deref(&self) -> bool {
+        self.projections.contains(&Projection::RawDeref)
     }
 
     /// Returns `true` if the place names a whole local.

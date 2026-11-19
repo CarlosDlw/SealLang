@@ -36,6 +36,25 @@ impl Checker<'_> {
         };
         let plain = op == AssignOp::Assign;
 
+        // A write through a raw pointer needs `*raw mut T`; the last raw
+        // dereference is the one that reaches the destination.
+        if let Some(kind) = self.raw_deref_kind(target) {
+            if !kind.is_mut() {
+                self.error(
+                    codes::E3075,
+                    target_span,
+                    "cannot write through a `*raw T` pointer",
+                )
+                .help("declare the pointer as `*raw mut T` to write through it")
+                .emit();
+            }
+            if !plain {
+                self.check_assign_op(op, ty, span);
+            }
+            self.check_expr(value, ty, flow);
+            return self.unit();
+        }
+
         // A write through a reference needs `*mut T`: the last dereference is
         // the one that reaches the destination. `*T` is read-only (D4).
         if let Some(kind) = self.deref_kind(target) {
@@ -120,6 +139,20 @@ impl Checker<'_> {
         let Some(root) = resolved.as_ref().map(|place| place.root) else {
             return self.unit();
         };
+
+        if let Some(kind) = self.raw_deref_kind(target) {
+            if !kind.is_mut() {
+                self.error(
+                    codes::E3075,
+                    target_span,
+                    "cannot write through a `*raw T` pointer",
+                )
+                .help("declare the pointer as `*raw mut T` to write through it")
+                .emit();
+            }
+            self.check_update_numeric(op, ty, span);
+            return self.unit();
+        }
 
         if let Some(kind) = self.deref_kind(target) {
             if !kind.is_exclusive() {
@@ -221,7 +254,7 @@ impl Checker<'_> {
                 }
                 PlaceProjection::Index { constant: None, .. }
                 | PlaceProjection::CustomIndex { .. } => text.push_str("[..]"),
-                PlaceProjection::Deref => {}
+                PlaceProjection::Deref | PlaceProjection::RawDeref => {}
             }
         }
         text

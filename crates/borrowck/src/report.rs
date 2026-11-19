@@ -395,7 +395,7 @@ impl<'a> Reporter<'a> {
         };
         for projection in &place.projections {
             match projection {
-                Projection::Deref => {
+                Projection::Deref | Projection::RawDeref => {
                     text = format!("(*{text})");
                 }
                 Projection::Field(field) | Projection::VariantField { field, .. } => {

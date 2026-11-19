@@ -392,7 +392,7 @@ fn check_move(place: &Place, span: Span, context: &Context<'_>) {
     for projection in &place.projections {
         let current = origins::place_ty(context.hir, context.body, &prefix);
         match projection {
-            seal_mir::Projection::Deref => return,
+            seal_mir::Projection::Deref | seal_mir::Projection::RawDeref => return,
             seal_mir::Projection::Field(_) | seal_mir::Projection::VariantField { .. } => {
                 if let TyKind::Adt { adt, .. } = tcx.kind(current)
                     && tcx.drop_method(adt).is_some()

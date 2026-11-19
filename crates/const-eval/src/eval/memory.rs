@@ -52,7 +52,9 @@ impl<'a> Interpreter<'a> {
                     };
                     self.project_index(&mut resolved, index, span)?;
                 }
-                Projection::Deref => self.project_deref(&mut resolved, span)?,
+                Projection::Deref | Projection::RawDeref => {
+                    self.project_deref(&mut resolved, span)?
+                }
             }
         }
         Ok(resolved)

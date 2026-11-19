@@ -2554,6 +2554,20 @@ Make `main` safe and keep unsafe work in a function that `main` calls inside an
 `unsafe { ... }` block.",
 };
 
+/// An operation is invalid for a raw pointer or the place it selects.
+pub const E3075: ErrorCode = ErrorCode {
+    code: "E3075",
+    title: "invalid raw pointer operation",
+    explanation: "\
+A raw pointer carries a static permission in its type: `*raw T` is read-only
+and `*raw mut T` permits writes. Writing through `*raw T`, borrowing it as
+mutable, or doing arithmetic on a fat pointer without first calling `data()`
+would claim a capability the type does not grant.
+
+Declare the pointer `*raw mut T` when writes are intended, and discard fat
+metadata explicitly with `data()` before pointer arithmetic.",
+};
+
 /// A cast between pointer types is not supported.
 pub const E3074: ErrorCode = ErrorCode {
     code: "E3074",
@@ -2962,12 +2976,12 @@ pub static ALL: &[ErrorCode] = &[
     E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035,
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
-    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E4001,
-    E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014,
-    E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027,
-    E4028, E4030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
-    E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003, E7004,
-    E7005, E7006, E7007, E7008, E9001, E9002,
+    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
+    E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013,
+    E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
+    E4027, E4028, E4030, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E7001, E7002, E7003,
+    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3107,6 +3121,7 @@ mod tests {
             ("E3072", "outside any `unsafe` block"),
             ("E3073", "no Seal caller exists"),
             ("E3074", "explicit `as` cast"),
+            ("E3075", "carries a static permission"),
             ("E4001", "fallback that names the item"),
             ("E4002", "dividing by zero"),
             ("E4003", "remainder operation is undefined"),
@@ -3222,7 +3237,7 @@ mod tests {
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
-                "E3074",
+                "E3074", "E3075",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

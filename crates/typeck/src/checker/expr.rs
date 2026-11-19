@@ -119,14 +119,26 @@ impl Checker<'_> {
             }
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
+                let raw = self
+                    .results
+                    .expr_ty(operand)
+                    .and_then(|pointer| self.hir.ty_ctxt().raw_parts(pointer))
+                    .map(|(kind, _)| kind);
                 let deref = self.reference_kind(operand);
                 if let Some(mut place) = self.results.place(operand).cloned() {
-                    place.projections.push(PlaceProjection::Deref);
+                    place.projections.push(match raw {
+                        Some(_) => PlaceProjection::RawDeref,
+                        None => PlaceProjection::Deref,
+                    });
                     place.ty = ty;
-                    place.deref = deref;
+                    place.deref = if raw.is_some() { None } else { deref };
+                    place.raw_deref = raw;
                     self.results.record_place(expr, place);
                 }
-                if mode == PlaceMode::Read
+                // A raw pointer dereference moves a non-`Copy` value; only a
+                // reference dereference is a read that cannot give up ownership.
+                if raw.is_none()
+                    && mode == PlaceMode::Read
                     && !self.checking_place_base
                     && !self.is_error(ty)
                     && !self.is_copy(ty)
@@ -377,6 +389,7 @@ impl Checker<'_> {
                         projections: Vec::new(),
                         ty,
                         deref: None,
+                        raw_deref: None,
                     },
                 );
                 if !self.checking_place_base && mode.requires_initialized() && !self.is_error(ty) {
@@ -450,6 +463,7 @@ impl Checker<'_> {
                         projections: Vec::new(),
                         ty,
                         deref: None,
+                        raw_deref: None,
                     },
                 );
                 ty

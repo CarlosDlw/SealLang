@@ -251,6 +251,16 @@ fn raw_pointer_casts_preserve_their_pointer_identity() {
 }
 
 #[test]
+fn a_constant_reads_through_a_raw_pointer() {
+    let fixture = clean(
+        "static LIMIT: i32 = 7; \
+         const POINTER: *raw i32 = &LIMIT as *raw i32; \
+         const VALUE: i32 = unsafe { *POINTER };",
+    );
+    assert_eq!(int(&fixture, "VALUE"), 7);
+}
+
+#[test]
 fn a_static_has_one_allocation_with_program_lifetime() {
     let fixture = clean(
         "struct Point { x: i32, y: i32 } \

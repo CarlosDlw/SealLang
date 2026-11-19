@@ -1616,6 +1616,68 @@ fn raw_pointer_locals_compile_without_runtime_work() {
 }
 
 #[test]
+fn a_raw_pointer_read_and_write_use_the_pointee() {
+    let source = "\
+        func main() -> i32 {
+            let mut value = 41;
+            let pointer: *raw mut i32 = &mut value as *raw mut i32;
+            unsafe { *pointer = 42; }
+            unsafe { *pointer }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-deref-write");
+}
+
+#[test]
+fn a_reborrow_of_a_raw_pointer_reads_the_pointee() {
+    let source = "\
+        func main() -> i32 {
+            let value = 41;
+            let pointer = &value as *raw i32;
+            unsafe { let borrowed = &*pointer; *borrowed + 1 }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-reborrow");
+}
+
+#[test]
+fn raw_pointer_field_and_slice_projections_reach_the_pointee() {
+    let source = "\
+        struct Point { x: i32, y: i32 }
+        func main() -> i32 {
+            let point = Point { x: 40, y: 1 };
+            let object = &point as *raw Point;
+            let values = [40, 41, 42];
+            let slice = &values[..] as *raw [i32];
+            unsafe { (*object).y + (*slice)[1] }
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-projections");
+}
+
+#[test]
+fn a_mutable_reborrow_writes_through_a_raw_pointer() {
+    let source = "\
+        func main() -> i32 {
+            let mut value = 41;
+            let pointer = &mut value as *raw mut i32;
+            unsafe { let borrowed = &mut *pointer; *borrowed = 42; }
+            value
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-mutable-reborrow");
+}
+
+#[test]
+fn a_non_copy_value_moves_through_a_raw_pointer() {
+    let source = "\
+        struct Payload { value: i32 }
+        func main() -> i32 {
+            let payload = Payload { value: 41 };
+            let pointer = &payload as *raw Payload;
+            let moved = unsafe { *pointer };
+            moved.value + 1
+        }";
+    assert_exit_at_both_levels(source, 42, "raw-move");
+}
+
+#[test]
 fn raw_pointer_casts_round_trip_an_address() {
     let source = "\
         func main() -> i32 {

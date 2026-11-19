@@ -74,7 +74,9 @@ impl GlobalPath {
                 // A runtime index names every element, and a dereference names
                 // whatever the pointer targets: stop at the statically known
                 // prefix and treat it as the whole remaining storage.
-                Projection::Index { constant: None, .. } | Projection::Deref => break,
+                Projection::Index { constant: None, .. }
+                | Projection::Deref
+                | Projection::RawDeref => break,
             }
         }
         Some(Self { def, steps })

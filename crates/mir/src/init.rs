@@ -218,7 +218,7 @@ pub fn path_of(place: &Place) -> Option<(LocalId, Vec<PathElem>)> {
     let mut path = Vec::new();
     for projection in &place.projections {
         match projection {
-            Projection::Deref => return None,
+            Projection::Deref | Projection::RawDeref => return None,
             Projection::Field(field) | Projection::VariantField { field, .. } => {
                 path.push(PathElem::Field(*field))
             }

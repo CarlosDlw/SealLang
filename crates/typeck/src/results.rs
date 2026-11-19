@@ -5,13 +5,15 @@ use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
-use seal_ty::{CastKind, GenericParamDef, Instance, PathElem, RefKind, TraitRef, TyId};
+use seal_ty::{CastKind, GenericParamDef, Instance, PathElem, RawPtrKind, RefKind, TraitRef, TyId};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlaceProjection {
     /// Reads through a shared reference.
     Deref,
+    /// Reads through a raw pointer.
+    RawDeref,
     /// Selects a struct field by its definition.
     Field(DefId),
     /// Selects a tuple element by its zero-based position.
@@ -85,6 +87,11 @@ pub struct ResolvedPlace {
     /// [`RefKind::Exclusive`]; the last dereference decides, because it is the
     /// reference that reaches the selected storage.
     pub deref: Option<RefKind>,
+    /// The kind of the last raw-pointer dereference, or `None` when the last
+    /// dereference reads through a reference.
+    ///
+    /// Writing through `*raw mut T` is allowed; `*raw T` is read-only.
+    pub raw_deref: Option<RawPtrKind>,
 }
 
 impl ResolvedPlace {
@@ -101,9 +108,16 @@ impl ResolvedPlace {
         self.projections.iter().any(|projection| {
             matches!(
                 projection,
-                PlaceProjection::Deref | PlaceProjection::CustomIndex { .. }
+                PlaceProjection::Deref
+                    | PlaceProjection::RawDeref
+                    | PlaceProjection::CustomIndex { .. }
             )
         })
+    }
+
+    /// Returns `true` if any projection reads through a raw pointer.
+    pub fn contains_raw_deref(&self) -> bool {
+        self.projections.contains(&PlaceProjection::RawDeref)
     }
 
     /// Returns `true` if the place crosses a custom indexing protocol.
@@ -128,7 +142,7 @@ impl ResolvedPlace {
         let mut path = Vec::new();
         for projection in &self.projections {
             match projection {
-                PlaceProjection::Deref => break,
+                PlaceProjection::Deref | PlaceProjection::RawDeref => break,
                 PlaceProjection::Field(field) => path.push(PathElem::Field(*field)),
                 PlaceProjection::TupleField(index) => path.push(PathElem::TupleField(*index)),
                 PlaceProjection::Index {

@@ -1824,8 +1824,12 @@ impl<'a> BodyLowering<'a> {
 
     fn place_operand(&self, place: Place, ty: TyId) -> Operand {
         // Reading through a shared reference never transfers ownership: the
-        // pointee outlives the read and is still owned by whoever lent it.
-        if place.is_deref() || self.hir.ty_ctxt().is_copy_with(ty, &self.param_env) {
+        // pointee outlives the read and is still owned by whoever lent it. A
+        // raw dereference is the unsafe layer's move: the programmer owns the
+        // state of that storage.
+        if (place.is_deref() && !place.is_raw_deref())
+            || self.hir.ty_ctxt().is_copy_with(ty, &self.param_env)
+        {
             Operand::Copy(place)
         } else {
             Operand::Move(place)
@@ -1858,9 +1862,14 @@ impl<'a> BodyLowering<'a> {
         let span = self.hir.expr(expr).span;
         if let ExprKind::Deref { operand } = kind {
             let reference_ty = self.expr_ty(operand);
+            let raw = matches!(self.hir.ty_ctxt().kind(reference_ty), TyKind::RawPtr { .. });
             let reference = self.new_temp(reference_ty, span);
             self.lower_expr_into(operand, Some(reference.clone()));
-            return reference.deref();
+            return if raw {
+                reference.raw_deref()
+            } else {
+                reference.deref()
+            };
         }
 
         let ty = self.expr_ty(expr);
@@ -1905,9 +1914,9 @@ impl<'a> BodyLowering<'a> {
                     ty = element_ty;
                     slice_reference = None;
                 }
-                PlaceProjection::Deref => {
+                PlaceProjection::Deref | PlaceProjection::RawDeref => {
                     let pointee = match self.hir.ty_ctxt().kind(ty) {
-                        TyKind::Ref { pointee, .. } => pointee,
+                        TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => pointee,
                         _ => ty,
                     };
                     if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. }) {
@@ -1915,7 +1924,10 @@ impl<'a> BodyLowering<'a> {
                     } else {
                         slice_reference = None;
                     }
-                    projections.push(Projection::Deref);
+                    projections.push(match projection {
+                        PlaceProjection::RawDeref => Projection::RawDeref,
+                        _ => Projection::Deref,
+                    });
                     ty = pointee;
                 }
                 PlaceProjection::Field(field) => {

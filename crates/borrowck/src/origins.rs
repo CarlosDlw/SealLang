@@ -437,7 +437,22 @@ fn transfer(
                 state.clear(place);
             }
         }
-        Rvalue::Len { .. } | Rvalue::Discriminant(_) | Rvalue::Cast { .. } => state.clear(place),
+        Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
+        Rvalue::Cast { operand, .. } => {
+            // A pointer cast keeps the pointee it came from: `&value as *raw T`
+            // still names `value`, so a loan through it conflicts with writes to
+            // the same storage. Numeric casts carry no origins.
+            let carries_pointer = place.local_id().is_some_and(|local| {
+                let ty = body.local(local).ty;
+                hir.ty_ctxt().contains_reference(ty) || hir.ty_ctxt().contains_raw_pointer(ty)
+            });
+            if carries_pointer {
+                let origins = operand_origins(hir, body, program, state, operand);
+                state.assign(place, origins);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Use(operand) => {
             let origins = operand_origins(hir, body, program, state, operand);
             if let Some(source) = operand.place()
@@ -616,10 +631,16 @@ fn allocation_origins(program: &ConstProgram, target: AllocId) -> OriginSet {
 /// key that reference may name. A second dereference inside a pointee is not
 /// modeled: the checker does not read the contents of borrowed storage.
 pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLocals) -> OriginSet {
-    let Some(index) = place
-        .projections
-        .iter()
-        .position(|projection| *projection == Projection::Deref)
+    let Some((index, raw)) =
+        place
+            .projections
+            .iter()
+            .enumerate()
+            .find_map(|(index, projection)| match projection {
+                Projection::Deref => Some((index, false)),
+                Projection::RawDeref => Some((index, true)),
+                _ => None,
+            })
     else {
         return match place.root {
             PlaceRoot::Local(local) => match const_locals.get(&local) {
@@ -646,7 +667,24 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLo
     let reference = Place::with_projections(base, place.projections[..index].to_vec());
     let rest = &place.projections[index + 1..];
     let origins = state.at(&reference);
-    if origins.is_unknown() || origins.is_empty() {
+    if origins.is_unknown() {
+        return OriginSet::unknown();
+    }
+    if origins.is_empty() {
+        // A raw pointer with no known target (a parameter, or one built from an
+        // integer) still names one external pointee per pointer local. Keying it
+        // separately keeps a loan through it from colliding with every frame
+        // local, while accesses through the same pointer stay conservative.
+        if raw
+            && !rest
+                .iter()
+                .any(|projection| matches!(projection, Projection::Deref | Projection::RawDeref))
+        {
+            return OriginSet::global(StorageKey::Pointee {
+                local: base,
+                fields: field_path(rest),
+            });
+        }
         return OriginSet::unknown();
     }
 
@@ -666,7 +704,9 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLo
                 resolved.extend(&keys_of(state, &storage, const_locals));
             }
             StorageKey::Pointee { local, fields } => {
-                if rest.contains(&Projection::Deref) {
+                if rest.iter().any(|projection| {
+                    matches!(projection, Projection::Deref | Projection::RawDeref)
+                }) {
                     resolved.insert_unknown();
                 } else {
                     let mut fields = fields.clone();
@@ -678,7 +718,9 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLo
                 }
             }
             StorageKey::Static { def, fields } => {
-                if rest.contains(&Projection::Deref) {
+                if rest.iter().any(|projection| {
+                    matches!(projection, Projection::Deref | Projection::RawDeref)
+                }) {
                     resolved.insert_unknown();
                 } else {
                     let mut fields = fields.clone();
@@ -687,7 +729,9 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLo
                 }
             }
             StorageKey::Const { def, fields } => {
-                if rest.contains(&Projection::Deref) {
+                if rest.iter().any(|projection| {
+                    matches!(projection, Projection::Deref | Projection::RawDeref)
+                }) {
                     resolved.insert_unknown();
                 } else {
                     let mut fields = fields.clone();
@@ -790,7 +834,7 @@ fn field_path(projections: &[Projection]) -> Vec<StorageField> {
             // Array indices are intentionally absent from storage keys: any
             // element may alias any other when only the runtime value is known,
             // so treating the whole array as one storage key is conservative.
-            Projection::Deref | Projection::Index { .. } => None,
+            Projection::Deref | Projection::RawDeref | Projection::Index { .. } => None,
         })
         .collect()
 }
@@ -808,6 +852,10 @@ pub(crate) fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
         ty = match projection {
             Projection::Deref => match hir.ty_ctxt().kind(ty) {
                 TyKind::Ref { pointee, .. } => pointee,
+                _ => ty,
+            },
+            Projection::RawDeref => match hir.ty_ctxt().kind(ty) {
+                TyKind::RawPtr { pointee, .. } => pointee,
                 _ => ty,
             },
             Projection::Field(field) => match hir.ty_ctxt().kind(ty) {

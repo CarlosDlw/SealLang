@@ -784,6 +784,10 @@ pub fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
                 TyKind::Ref { pointee, .. } => pointee,
                 _ => ty,
             },
+            crate::place::Projection::RawDeref => match tcx.kind(ty) {
+                TyKind::RawPtr { pointee, .. } => pointee,
+                _ => ty,
+            },
             crate::place::Projection::Field(field) => match tcx.kind(ty) {
                 TyKind::Adt { adt, args } => tcx.field_ty(adt, args, *field).unwrap_or(ty),
                 _ => ty,
