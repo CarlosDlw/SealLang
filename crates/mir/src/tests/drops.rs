@@ -285,6 +285,22 @@ fn a_borrowed_temporary_outlives_the_statement_that_built_it() {
 }
 
 #[test]
+fn trivial_types_get_no_drop_site() {
+    let source = "trait Marker { } \
+                  func trivial() { let unit = (); } \
+                  func pointer(value: *i32) { } \
+                  func fat(value: *dyn Marker) { }";
+    let (fixture, hir, mir) = lower_clean(source);
+    for name in ["trivial", "pointer", "fat"] {
+        let body = function(&fixture, &hir, &mir, name);
+        assert!(
+            scope_drops(body).is_empty(),
+            "`{name}` owns no value that needs a destructor"
+        );
+    }
+}
+
+#[test]
 fn a_value_without_a_destructor_gets_no_drop_site() {
     let (fixture, hir, mir) = lower_clean("func f(value: i32) {}\n");
     let body = function(&fixture, &hir, &mir, "f");

@@ -40,6 +40,24 @@ fn the_destructor_example_runs_at_o0_and_o2() {
 }
 
 #[test]
+fn a_program_without_drop_types_emits_no_glue() {
+    let output = TempOutput::new("drop-free-asm");
+    compile(
+        "struct Point { x: i32, y: i32 } func main() -> i32 { let point = Point { x: 40, y: 2 }; point.x + point.y }",
+        output.path(),
+        Emit::Assembly,
+        OptLevel::O0,
+        false,
+    )
+    .expect("the program emits assembly");
+    let assembly = fs::read_to_string(output.path()).expect("the assembly is readable");
+    assert!(
+        !assembly.contains("seal.drop.glue."),
+        "a program with no destructor must not emit drop glue:\n{assembly}"
+    );
+}
+
+#[test]
 fn the_example_emits_drop_glue_and_no_constructors() {
     let output = TempOutput::new("drop-example-asm");
     compile(

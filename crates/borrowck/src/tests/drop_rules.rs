@@ -44,6 +44,21 @@ fn moving_a_whole_drop_value_is_allowed() {
 }
 
 #[test]
+fn destructuring_one_field_of_a_drop_type_is_rejected() {
+    let fixture = check_with_drop(
+        "struct Token { value: i32 }\n\n\
+         struct Pair { token: Token, count: i32 }\n\n\
+         func steal(pair: Pair) -> Token {\n  \
+         match pair { Pair { token, .. } => token }\n}\n",
+        &["Pair"],
+    );
+    fixture.expect(
+        "E5014",
+        "cannot move out of `Pair`, which implements `Drop`",
+    );
+}
+
+#[test]
 fn moving_an_element_out_of_an_array_is_rejected() {
     let fixture = check_with_drop(
         "struct Pair { first: i32, second: i32 }\n\n\
