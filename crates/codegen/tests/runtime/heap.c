@@ -3,8 +3,8 @@
  *
  * This program is linked against the embedded `seal_rt` archive and never
  * includes the runtime sources directly. It checks allocation, alignment,
- * zeroing, zero-size behavior, invalid parameters, layout overflow, and
- * deallocation; it does not test reallocation, which is a later phase.
+ * zeroing, zero-size behavior, invalid parameters, layout overflow,
+ * reallocation, and deallocation.
  */
 
 #include "seal_rt.h"
@@ -65,7 +65,10 @@ int main(void) {
     }
 
     check_block(1, 2);
+    check_block(1, 4);
     check_block(64, 8);
+    check_block(64, _Alignof(max_align_t));
+    check_block(64, 2 * _Alignof(max_align_t));
     check_block(64, 16);
     check_block(64, 32);
     check_block(64, 64);
@@ -76,8 +79,12 @@ int main(void) {
 
     CHECK(seal_alloc(64, 0) == NULL);
     CHECK(seal_alloc(64, 3) == NULL);
+    CHECK(seal_alloc(64, 5) == NULL);
     CHECK(seal_alloc(64, 6) == NULL);
+    CHECK(seal_alloc(64, 7) == NULL);
+    CHECK(seal_alloc(64, 12) == NULL);
     CHECK(seal_alloc(0, 0) == NULL);
+    CHECK(seal_alloc_zeroed(64, 3) == NULL);
 
     void *empty = seal_alloc(0, 8);
     CHECK(empty != NULL);
@@ -211,6 +218,7 @@ int main(void) {
 
     void *empty_realloc = seal_realloc(NULL, 0, 4096, 0);
     CHECK((uintptr_t)empty_realloc == 4096);
+    CHECK(seal_realloc(NULL, 0, 5, 16) == NULL);
 
     unsigned char *failure = (unsigned char *)seal_alloc(64, 4096);
     CHECK(failure != NULL);

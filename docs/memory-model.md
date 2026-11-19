@@ -156,9 +156,9 @@ and reports failure as `NULL`. Owned heap data arrives with the allocator API as
 a distinct owning type that implements `Drop`; allocation failure there is
 returned as a value, not hidden behind an abort. Reallocation and growth are
 explicit operations of that type, never implicit on assignment. A trait object
-also does
-not allocate: its vtable is a constant built at compile time per concrete type
-and trait reference, and coercing to it copies only the data and vtable words.
+also does not allocate: its vtable is a constant built at compile time per
+concrete type and trait reference, and coercing to it copies only the data and
+vtable words.
 
 ### D8 — Bindings are immutable by default
 

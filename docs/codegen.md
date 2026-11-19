@@ -506,13 +506,14 @@ references one of its symbols:
 - `seal_alloc_zeroed` has the same contract and zeroes every allocated byte.
 - `seal_realloc(pointer, old_size, align, new_size)` preserves the first
   `min(old_size, new_size)` bytes, keeps the requested alignment, and leaves
-  the old block valid when it returns `NULL`. A null pointer behaves like
-  `seal_alloc`; a zero new size releases the block and returns the dangling
-  pointer.
+  the old block valid when it returns `NULL` for invalid alignment, layout
+  overflow, or allocation failure. A null pointer behaves like `seal_alloc`; a
+  zero new size releases the block and returns the dangling pointer.
 - `seal_dealloc(pointer, size, align)` releases a block; a null pointer and a
-  zero size are no-ops. A zero-size allocation returns a dangling aligned
-  pointer instead of calling `malloc(0)`. The heap never panics, takes no
-  locks, and does not use stdio or the locale.
+  zero size are no-ops, and `size`/`align` must be the layout used to create
+  the block. A zero-size allocation returns a dangling aligned pointer instead
+  of calling `malloc(0)`. The heap never panics, takes no locks, and does not
+  use stdio or the locale.
 - The heap object is not pulled into programs that never allocate.
 
 ## Linking

@@ -92,6 +92,7 @@ fn the_heap_abi_satisfies_its_contract() {
     if msvc {
         compile
             .arg("/nologo")
+            .arg("/W4")
             .arg("/c")
             .arg("/I")
             .arg(&include)
@@ -101,6 +102,9 @@ fn the_heap_abi_satisfies_its_contract() {
         compile
             .arg("-std=c11")
             .arg("-O2")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg("-Wpedantic")
             .arg("-I")
             .arg(&include)
             .arg("-c")
