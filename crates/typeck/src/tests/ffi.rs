@@ -102,6 +102,14 @@ fn an_unknown_abi_is_rejected() {
 }
 
 #[test]
+fn an_external_function_named_main_is_rejected() {
+    let source = r#"
+        extern "c" { func main() -> c_int; }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3082", "reserved for the entry point");
+}
+
+#[test]
 fn an_invalid_symbol_is_rejected() {
     let source = r#"
         extern "c" { func abs(value: i32) -> i32 link_name ""; }

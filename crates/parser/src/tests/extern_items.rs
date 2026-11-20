@@ -92,6 +92,13 @@ fn external_aggregates_are_rejected() {
 }
 
 #[test]
+fn an_external_struct_in_a_block_is_rejected() {
+    let fixture = Fixture::new(r#"extern "c" { struct Point { x: i32 } }"#);
+    let _ = fixture.parse();
+    fixture.expect("E3081", "only contains declarations");
+}
+
+#[test]
 fn a_body_on_an_external_function_is_rejected() {
     let fixture = Fixture::new(r#"extern "c" { func abs(value: i32) -> i32 { value } }"#);
     let _ = fixture.parse();

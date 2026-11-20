@@ -2020,6 +2020,21 @@ fn an_external_static_is_resolved_by_the_linker() {
     assert_exit_at_both_levels(source, 42, "extern-environ");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_mutable_external_static_can_be_written_and_read() {
+    let source = r#"
+        extern "c" { static mut optind: c_int; }
+        func main() -> i32 {
+            unsafe {
+                optind = 3;
+                if optind != 3 { return 1; }
+            }
+            42
+        }"#;
+    assert_exit_at_both_levels(source, 42, "extern-optind");
+}
+
 #[test]
 fn a_reference_unsizes_into_a_raw_trait_object() {
     let source = "\
