@@ -492,6 +492,11 @@ impl<'ctx> TypeMapper<'ctx> {
         self.context.ptr_type(AddressSpace::default())
     }
 
+    /// Returns the `{ data, length }` pair used by slice and string pointers.
+    pub(crate) fn fat_pointer_type(&self) -> StructType<'ctx> {
+        self.fat_pointer
+    }
+
     /// Returns the pointer-sized integer type.
     pub(crate) fn usize_type(&self) -> Result<inkwell::types::IntType<'ctx>, CodegenError> {
         self.integer(Some(u16::from(self.pointer_width)))

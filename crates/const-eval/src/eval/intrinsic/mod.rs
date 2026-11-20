@@ -198,6 +198,8 @@ impl<'a> Interpreter<'a> {
             | IntrinsicOp::PtrWithAddr
             | IntrinsicOp::PtrLen
             | IntrinsicOp::PtrData
+            | IntrinsicOp::PtrWithLen
+            | IntrinsicOp::PtrAsStr
             | IntrinsicOp::PtrRead
             | IntrinsicOp::PtrWrite
             | IntrinsicOp::PtrReadUnaligned

@@ -29,6 +29,9 @@ impl<'a> Interpreter<'a> {
             IntrinsicOp::PtrIsNull => Ok(ConstValue::Bool(raw_is_null(&value))),
             IntrinsicOp::PtrLen => self.raw_length(&value, result_ty, span),
             IntrinsicOp::PtrData => self.raw_data(value, result_ty, span),
+            IntrinsicOp::PtrWithLen | IntrinsicOp::PtrAsStr => {
+                Err(self.error(EvalErrorKind::RawPointerAccess, span))
+            }
             IntrinsicOp::PtrAddr | IntrinsicOp::PtrExposeAddr => {
                 Err(self.error(EvalErrorKind::AddressNotComputable, span))
             }

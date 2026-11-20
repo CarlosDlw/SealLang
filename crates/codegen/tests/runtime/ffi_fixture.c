@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int32_t fixture_stored;
 
@@ -201,6 +202,17 @@ typedef ffi_point (*ffi_point_callback)(ffi_point);
 int32_t ffi_apply(ffi_callback callback, int32_t value) {
   return callback(value);
 }
+
+void ffi_fill_buffer(char *out, size_t cap) {
+  static const char text[] = "hello";
+  const size_t length = sizeof(text) - 1;
+  if (out == NULL || cap < length) {
+    return;
+  }
+  memcpy(out, text, length);
+}
+
+const char *ffi_utf8_message(void) { return "ol\xc3\xa1"; }
 
 void ffi_exit_now(int32_t code) { _Exit(code); }
 

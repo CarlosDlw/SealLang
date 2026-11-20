@@ -133,6 +133,10 @@ pub enum ReturnKind {
     Unit,
     /// The receiver's pointer type.
     Pointer,
+    /// A raw slice pointer to the receiver's pointee.
+    SlicePointer,
+    /// A raw string pointer with the receiver's mutability.
+    StrPointer,
 }
 
 /// A compiler operation behind a method.
@@ -265,6 +269,10 @@ pub enum IntrinsicOp {
     PtrLen,
     /// Thin data pointer, discarding metadata.
     PtrData,
+    /// Build a raw slice pointer from a thin pointer and a length.
+    PtrWithLen,
+    /// Reinterpret a byte slice pointer as a raw string pointer.
+    PtrAsStr,
     /// Read a value through a raw pointer.
     PtrRead,
     /// Write a value through a raw pointer.
@@ -1006,6 +1014,22 @@ pub const METHODS: &[MethodDef] = &[
         NONE,
         ReturnKind::Pointer,
         IntrinsicOp::PtrData,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "with_len",
+        ReceiverMode::Value,
+        &[ParamKind::Usize],
+        ReturnKind::SlicePointer,
+        IntrinsicOp::PtrWithLen,
+    ),
+    unsafe_method(
+        MethodOwner::RawPtr,
+        "as_str",
+        ReceiverMode::Value,
+        NONE,
+        ReturnKind::StrPointer,
+        IntrinsicOp::PtrAsStr,
     ),
     unsafe_method(
         MethodOwner::RawPtr,

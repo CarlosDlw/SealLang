@@ -30,6 +30,8 @@ fn unsafe_pointer_operations_require_a_block() {
         "func f(p: *raw mut i32, v: i32) { p.write_unaligned(v); }",
         "func f(p: *raw mut i32, q: *raw i32, n: usize) { p.copy(q, n); }",
         "func f(p: *raw mut i32, q: *raw i32, n: usize) { p.copy_nonoverlapping(q, n); }",
+        "func f(p: *raw u8) -> *raw [u8] { p.with_len(1) }",
+        "func f(p: *raw [u8]) -> *raw str { p.as_str() }",
     ] {
         let (fixture, _, _) = check_errors(source);
         fixture.expect("E3070", "requires an `unsafe` block");
@@ -81,6 +83,44 @@ fn length_reads_fat_pointer_metadata() {
         let (_, body) = function(&fixture, &hir, name);
         assert_eq!(ty_text(&hir, expr_ty(&results, tail(&hir, body))), "usize");
     }
+}
+
+#[test]
+fn with_len_builds_a_slice_pointer_and_preserves_kind() {
+    let (fixture, hir, results) = check_clean(
+        "func shared(p: *raw u8) -> *raw [u8] { unsafe { p.with_len(5) } } \
+         func mutable(p: *raw mut u8) -> *raw mut [u8] { unsafe { p.with_len(5) } }",
+    );
+    for (name, expected) in [("shared", "*raw [u8]"), ("mutable", "*raw mut [u8]")] {
+        let (_, body) = function(&fixture, &hir, name);
+        assert_eq!(ty_text(&hir, expr_ty(&results, tail(&hir, body))), expected);
+    }
+}
+
+#[test]
+fn as_str_reinterprets_a_byte_slice_pointer() {
+    let (fixture, hir, results) = check_clean(
+        "func shared(p: *raw [u8]) -> *raw str { unsafe { p.as_str() } } \
+         func mutable(p: *raw mut [u8]) -> *raw mut str { unsafe { p.as_str() } }",
+    );
+    for (name, expected) in [("shared", "*raw str"), ("mutable", "*raw mut str")] {
+        let (_, body) = function(&fixture, &hir, name);
+        assert_eq!(ty_text(&hir, expr_ty(&results, tail(&hir, body))), expected);
+    }
+}
+
+#[test]
+fn with_len_rejects_a_fat_pointer() {
+    let (fixture, _, _) =
+        check_errors("func f(p: *raw [u8]) -> *raw [u8] { unsafe { p.with_len(1) } }");
+    fixture.expect("E3075", "requires a thin pointer to a sized pointee");
+}
+
+#[test]
+fn as_str_rejects_a_non_byte_slice() {
+    let (fixture, _, _) =
+        check_errors("func f(p: *raw [i32]) -> *raw str { unsafe { p.as_str() } }");
+    fixture.expect("E3075", "requires a raw pointer to `[u8]`");
 }
 
 #[test]

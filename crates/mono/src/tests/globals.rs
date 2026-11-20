@@ -3,7 +3,7 @@
 use seal_const_eval::AllocSource;
 use seal_def::{DefId, DefKind};
 
-use crate::tests::support::{Fixture, collect_clean, collect_clean_constants};
+use crate::tests::support::{Fixture, collect_clean, collect_clean_constants, collect_errors};
 use crate::{MonoItem, MonoProgram, MonoValidationError};
 
 fn static_named(fixture: &Fixture, hir: &seal_hir::Hir, name: &str) -> DefId {
@@ -135,6 +135,25 @@ fn discovery_order_is_deterministic() {
     assert_eq!(first.items(), second.items());
     assert_eq!(first.statics(), second.statics());
     assert_eq!(first.const_allocations(), second.const_allocations());
+}
+
+#[test]
+fn constant_evaluation_rejects_with_len() {
+    let (fixture, _, _, _) = collect_errors(
+        "static BYTES: [u8; 4] = [115, 101, 97, 108];\
+         const SLICE: *raw [u8] = unsafe { (&BYTES[0] as *raw u8).with_len(4) };",
+    );
+    fixture.expect("E4032", "cannot read through this raw pointer");
+}
+
+#[test]
+fn constant_evaluation_rejects_as_str() {
+    let (fixture, _, _, _) = collect_errors(
+        "static BYTES: [u8; 4] = [115, 101, 97, 108];\
+         const SLICE: *raw [u8] = &BYTES[..] as *raw [u8];\
+         const TEXT: *raw str = unsafe { SLICE.as_str() };",
+    );
+    fixture.expect("E4032", "cannot read through this raw pointer");
 }
 
 #[test]

@@ -164,8 +164,9 @@ Raw-to-raw casts preserve the address and replace the pointee and kind. They
 are useful for byte-level work and for adding or removing write permission.
 The compiler still enforces metadata compatibility:
 
-- A thin pointer cannot become a fat pointer, and a fat pointer cannot become a
-  thin pointer; call `data()` first.
+- A cast cannot change the pointer shape. A thin pointer becomes a fat slice
+  pointer with `with_len` (inside `unsafe`), and a byte slice pointer becomes a
+  string pointer with `as_str`; a fat pointer becomes thin with `data()`.
 - A slice pointer may change its element type while keeping the length
   metadata.
 - A raw pointer to a trait object may be reborrowed as another compatible trait
@@ -332,6 +333,8 @@ pointee. The **unsafe** column is the gate required at the call site.
 | `with_addr` | `(self, address: usize) -> Same` | no | all | Replace the data address, preserving metadata |
 | `len` | `(self) -> usize` | no | `*raw str`, `*raw [T]` | Length metadata |
 | `data` | `(self) -> *raw U` | no | all | Thin data pointer; `U` is the element, `u8`, or `()` |
+| `with_len` | `(self, length: usize) -> *raw [U]` | yes | thin, sized pointee | Build a slice pointer from a data pointer and a length |
+| `as_str` | `(self) -> *raw str` | yes | `*raw [u8]`, `*raw mut [u8]` | Reinterpret a byte slice pointer as a string pointer |
 | `add` | `(self, count: usize) -> Same` | yes | sized pointee | Forward by whole elements |
 | `sub` | `(self, count: usize) -> Same` | yes | sized pointee | Backward by whole elements |
 | `offset` | `(self, count: isize) -> Same` | yes | sized pointee | Forward or backward by signed element count |
@@ -352,6 +355,37 @@ pointee. The **unsafe** column is the gate required at the call site.
 returns `*raw i32`, for `*raw str` it returns `*raw u8`, and for
 `*raw dyn Trait` it returns `*raw ()`. The pointer kind is preserved, so
 `*raw mut [i32].data()` is `*raw mut i32`.
+
+### Building a fat pointer from a thin one
+
+C APIs commonly hand back a data pointer and a length separately. `with_len`
+assembles the two words without exposing the address as an integer:
+
+```seal
+extern "c" { func read(fd: c_int, buffer: *raw mut u8, count: usize) -> isize; }
+
+let mut buffer = [0u8; 64];
+let base = &mut buffer[0] as *raw mut u8;
+let count = unsafe { read(0, base, 64usize) };
+let bytes: *raw mut [u8] = unsafe { base.with_len(count as usize) };
+```
+
+The receiver must be a thin pointer to a sized pointee; calling `with_len` on
+`*raw [T]`, `*raw str`, or `*raw dyn Trait` is `E3075` because those already
+carry metadata. The call is `unsafe`: the caller promises that `length` covers
+live, initialized elements, that the range fits in the allocation, and that the
+address is valid for that range. The data word keeps its provenance.
+
+`as_str` changes the pointee of a byte slice pointer to `str`:
+
+```seal
+let text: *raw str = unsafe { bytes.as_str() };
+```
+
+The mutability is preserved: `*raw mut [u8].as_str()` is `*raw mut str`. Only
+`[u8]` is accepted; `*raw [i32]` is `E3075`. The caller promises that the bytes
+are valid UTF-8, because the string operations trust that invariant. The data
+and length words are unchanged, so no allocation or copy occurs.
 
 ## 5. Arithmetic and bounds
 
@@ -566,6 +600,9 @@ Before an unchecked operation, establish all of these:
 8. For `copy_nonoverlapping`, source and destination do not overlap.
 9. For `write`, the destination came from a writable capability (`*raw mut T`).
 10. For a value with ownership, the program does not drop or move it twice.
+11. For `with_len`, the length covers live initialized elements in the
+    allocation and the address is valid for that range.
+12. For `as_str`, the bytes are valid UTF-8.
 
 The `unsafe` block is where the compiler stops asking. It is not a place to
 stop thinking; a short comment naming the invariant is part of good style.
@@ -674,7 +711,7 @@ a link-time address, and cannot read an arbitrary integer-built address.
 |------|---------|-------------|
 | `E3070` | An unsafe operation is outside `unsafe` | Wrap the operation or call in `unsafe { ... }` |
 | `E3074` | Unsupported pointer cast | Check the cast matrix; use `data()` before changing fat/thin shape |
-| `E3075` | Invalid raw pointer operation | Use `*raw mut T` for writes; call `data()` before arithmetic on a fat pointer |
+| `E3075` | Invalid raw pointer operation | Use `*raw mut T` for writes; call `data()` before arithmetic on a fat pointer; use `with_len`/`as_str` for the supported shape changes |
 | `E4030` | Address is not computable in a constant | Query nullness or move address observation to runtime |
 | `E4031` | Constant writes through a raw pointer | Build the value in the initializer or write at runtime |
 | `E4032` | Constant reads through an invalid pointer | Keep the access at runtime or read a known allocation |
@@ -732,8 +769,9 @@ let length = slice.len();
 let base = slice.data();
 ```
 
-Do not reconstruct metadata by hand. The compiler owns the length and vtable
-words.
+Prefer keeping the original fat pointer. When a C API returns a data pointer and
+a length separately, use `with_len` (and `as_str` for bytes) rather than forging
+the metadata with a cast; the compiler owns the layout of the length word.
 
 ### Prefer references until you need the escape hatch
 

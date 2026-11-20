@@ -6,7 +6,7 @@
 //! changes only the data address, while metadata is preserved except in
 //! `data()`, which discards it explicitly.
 
-use inkwell::values::{BasicValueEnum, IntValue, PointerValue};
+use inkwell::values::{AggregateValueEnum, BasicValueEnum, IntValue, PointerValue};
 use seal_llvm_ffi::gep;
 use seal_mir::{IntrinsicReceiver, Operand};
 use seal_span::Span;
@@ -43,6 +43,14 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             }
             IntrinsicOp::PtrLen => Ok(self.raw_length(&pointer)?.into()),
             IntrinsicOp::PtrData => Ok(self.raw_data_pointer(&pointer)?.into()),
+            IntrinsicOp::PtrWithLen => {
+                let length = args.first().ok_or_else(|| {
+                    CodegenError::internal("`with_len` is missing its length argument")
+                })?;
+                let length = self.load_operand(length)?.into_int_value();
+                self.raw_with_len(&pointer, length)
+            }
+            IntrinsicOp::PtrAsStr => self.raw_as_str(&pointer),
             IntrinsicOp::PtrWithAddr => {
                 let address = self.load_operand(&args[0])?.into_int_value();
                 self.raw_with_addr(&pointer, address)
@@ -153,6 +161,59 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             self.tcx.kind(pointer.pointee),
             TyKind::Slice { .. } | TyKind::Str | TyKind::Dyn { .. }
         )
+    }
+
+    /// Builds `{ data, length }` from a thin pointer and a length.
+    ///
+    /// The data word keeps the pointer's provenance: it is inserted directly,
+    /// never round-tripped through an integer. The caller promises that the
+    /// range is valid, which is why `with_len` is an unsafe operation.
+    fn raw_with_len(
+        &self,
+        pointer: &RawPointer<'ctx>,
+        length: IntValue<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        if self.raw_is_fat(pointer) {
+            return Err(CodegenError::internal("`with_len` received a fat pointer"));
+        }
+        let fat_type = self.mapper.fat_pointer_type();
+        let data: BasicValueEnum<'ctx> = pointer.value.into_pointer_value().into();
+        let with_data = self.build(
+            self.builder
+                .build_insert_value(fat_type.get_undef(), data, 0, "slice data"),
+            "slice data",
+        )?;
+        let AggregateValueEnum::StructValue(with_data) = with_data else {
+            return Err(CodegenError::internal(
+                "slice construction produced a non-struct value",
+            ));
+        };
+        let with_length = self.build(
+            self.builder
+                .build_insert_value(with_data, length, 1, "slice length"),
+            "slice length",
+        )?;
+        match with_length {
+            AggregateValueEnum::StructValue(value) => Ok(value.into()),
+            _ => Err(CodegenError::internal(
+                "slice construction produced a non-struct value",
+            )),
+        }
+    }
+
+    /// Reinterprets a byte slice pointer as a string pointer.
+    ///
+    /// `str` and `[u8]` share the `{ data, length }` representation, so the
+    /// value is unchanged. The unsafe contract is the UTF-8 validity of the
+    /// bytes, not a layout conversion.
+    fn raw_as_str(&self, pointer: &RawPointer<'ctx>) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let u8_ty = self.tcx.uint_ty(seal_ty::UintTy::U8);
+        match self.tcx.kind(pointer.pointee) {
+            TyKind::Slice { element } if element == u8_ty => Ok(pointer.value),
+            _ => Err(CodegenError::internal(
+                "`as_str` received a non-byte slice pointer",
+            )),
+        }
     }
 
     /// Returns the pointer's address as an integer.

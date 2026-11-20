@@ -5,6 +5,7 @@ mod defaults;
 mod drop_glue;
 mod dyn_types;
 mod externs;
+mod fat_pointers;
 mod generics;
 mod globals;
 mod noalias;

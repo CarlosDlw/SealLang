@@ -1090,6 +1090,32 @@ impl Checker<'_> {
                 .help("a thin raw pointer has no length metadata")
                 .emit();
             }
+            if def.intrinsic == IntrinsicOp::PtrWithLen && !self.is_sized(element_ty) {
+                self.error(
+                    codes::E3075,
+                    span_for_method(self.hir, receiver),
+                    format!(
+                        "`with_len` requires a thin pointer to a sized pointee, but `{}` is unsized",
+                        self.ty_text(element_ty)
+                    ),
+                )
+                .help("call `data()` first to discard the existing metadata")
+                .emit();
+            }
+            if def.intrinsic == IntrinsicOp::PtrAsStr
+                && !matches!(
+                    self.hir.ty_ctxt().kind(element_ty),
+                    TyKind::Slice { element } if element == self.u8_ty()
+                )
+            {
+                self.error(
+                    codes::E3075,
+                    span_for_method(self.hir, receiver),
+                    "`as_str` requires a raw pointer to `[u8]`",
+                )
+                .help("only a byte slice pointer can become a raw string pointer")
+                .emit();
+            }
         }
         if def.receiver == ReceiverMode::Exclusive && slice_ref_kind == Some(RefKind::Shared) {
             self.error(
@@ -1243,7 +1269,37 @@ impl Checker<'_> {
                 self.data_pointer_ty(resolution.receiver_ty)
             }
             ReturnKind::Pointer => resolution.receiver_ty,
+            ReturnKind::SlicePointer => self.slice_pointer_ty(resolution.receiver_ty),
+            ReturnKind::StrPointer => self.str_pointer_ty(resolution.receiver_ty),
         }
+    }
+
+    /// Returns `*raw [T]` with the receiver's pointer kind.
+    fn slice_pointer_ty(&self, receiver_ty: TyId) -> TyId {
+        let tcx = self.hir.ty_ctxt();
+        let TyKind::RawPtr { kind, pointee } = tcx.kind(receiver_ty) else {
+            return self.error_ty();
+        };
+        if !self.is_sized(pointee) {
+            return self.error_ty();
+        }
+        let slice = tcx.slice_ty(pointee);
+        tcx.raw_ptr_ty_with(kind, slice)
+    }
+
+    /// Returns `*raw str` with the receiver's pointer kind.
+    fn str_pointer_ty(&self, receiver_ty: TyId) -> TyId {
+        let tcx = self.hir.ty_ctxt();
+        let TyKind::RawPtr { kind, pointee } = tcx.kind(receiver_ty) else {
+            return self.error_ty();
+        };
+        if !matches!(
+            tcx.kind(pointee),
+            TyKind::Slice { element } if element == self.u8_ty()
+        ) {
+            return self.error_ty();
+        }
+        tcx.raw_ptr_ty_with(kind, tcx.str_ty())
     }
 
     /// Returns the thin pointer type produced by `data()`.

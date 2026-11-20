@@ -151,6 +151,42 @@ the result back. The internal function is not marked `noalias` when its address
 escapes, because C may call it through a path the whole-program aliasing proof
 did not model.
 
+### C buffers and fat pointers
+
+A C API frequently returns a data pointer and a length in separate values.
+`with_len` assembles them into a Seal raw slice pointer, and `as_str`
+reinterprets a `*raw [u8]` as `*raw str`:
+
+```seal
+extern "c" {
+  func ffi_fill_buffer(out: *raw mut u8, cap: usize) -> ();
+}
+
+func main() -> i32 {
+  let mut buffer = [0u8; 8];
+  unsafe {
+    let base = &mut buffer[0] as *raw mut u8;
+    ffi_fill_buffer(base, 8usize);
+    let bytes: *raw mut [u8] = base.with_len(5);
+    let text: *raw mut str = bytes.as_str();
+    let first = (*bytes)[0];
+    let length = text.len();
+    let data = text.data();
+  }
+  0
+}
+```
+
+Both methods are `unsafe`: `with_len` requires the length to describe live,
+initialized elements in the allocation, and `as_str` requires those bytes to be
+valid UTF-8. They preserve the data pointer's provenance and never round-trip
+the address through an integer. `with_len` only accepts a thin pointer to a
+sized pointee; a pointer that already carries metadata is `E3075`. `as_str`
+only accepts `*raw [u8]` and `*raw mut [u8]`.
+
+See [Raw pointers](raw-pointers.md#building-a-fat-pointer-from-a-thin-one) for
+the full contract and the safe/unsafe boundary.
+
 ### Return types and `void`
 
 Omitting the return type and writing `-> ()` both declare a C `void` function.

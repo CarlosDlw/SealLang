@@ -7,6 +7,7 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::Output;
 
 use seal_codegen::{CodegenError, Emit};
 use seal_error_codes::E6005;
@@ -15,7 +16,7 @@ use seal_session::OptLevel;
 mod support;
 
 use support::cc::{Compiler, TempDirectory};
-use support::{LinkOptions, TempOutput, compile_with_links, run};
+use support::{LinkOptions, TempOutput, compile_with_links, run_captured};
 
 /// The C fixture archive kept alive for one test.
 struct Fixture {
@@ -101,6 +102,18 @@ fn scalar_program(with_directive: bool) -> String {
 }
 
 fn compile_and_run(source: &str, links: LinkOptions, tag: &str, opt_level: OptLevel) -> i32 {
+    compile_and_run_captured(source, links, tag, opt_level)
+        .status
+        .code()
+        .expect("the program runs")
+}
+
+fn compile_and_run_captured(
+    source: &str,
+    links: LinkOptions,
+    tag: &str,
+    opt_level: OptLevel,
+) -> Output {
     let output = TempOutput::new(tag);
     compile_with_links(
         source,
@@ -111,7 +124,7 @@ fn compile_and_run(source: &str, links: LinkOptions, tag: &str, opt_level: OptLe
         links,
     )
     .expect("the fixture program links");
-    run(output.path()).code().expect("the program runs")
+    run_captured(output.path())
 }
 
 #[test]
@@ -455,6 +468,65 @@ fn c_function_pointers_and_callbacks_cross_the_boundary() {
     ] {
         let code = compile_and_run(&callback_program(), fixture.links(), tag, opt_level);
         assert_eq!(code, 77, "the atexit callback ran (O{opt_level:?})");
+    }
+}
+
+fn buffer_program() -> String {
+    String::from(
+        r#"
+        extern "c" {
+          func ffi_fill_buffer(out: *raw mut u8, cap: usize) -> ();
+          func ffi_utf8_message() -> *raw u8;
+          func seal_print(data: *raw u8, length: usize) -> c_int;
+        }
+
+        func main() -> i32 {
+          let mut buffer = [0u8; 8];
+          unsafe {
+            let base = &mut buffer[0] as *raw mut u8;
+            ffi_fill_buffer(base, 8usize);
+
+            let slice = base.with_len(5);
+            if slice.len() != 5 { return 1; }
+            if slice.data().addr() != slice.addr() { return 2; }
+            if (*slice)[0] != 104 { return 3; }
+            if (*slice)[1] != 101 { return 4; }
+            if (*slice)[4] != 111 { return 5; }
+
+            let text = slice.as_str();
+            if text.len() != 5 { return 6; }
+            if text.data().addr() != slice.data().addr() { return 7; }
+            if seal_print(text.data() as *raw u8, text.len()) != 0 { return 8; }
+
+            let message = ffi_utf8_message();
+            let message_text = message.with_len(4).as_str();
+            if seal_print(c" ", 1usize) != 0 { return 9; }
+            if seal_print(message_text.data() as *raw u8, message_text.len()) != 0 { return 10; }
+          }
+          42
+        }
+    "#,
+    )
+}
+
+#[test]
+fn c_buffers_become_slices_and_strings() {
+    let fixture = Fixture::new();
+    for (opt_level, tag) in [
+        (OptLevel::O0, "ffi-buffer-o0"),
+        (OptLevel::O2, "ffi-buffer-o2"),
+    ] {
+        let output = compile_and_run_captured(&buffer_program(), fixture.links(), tag, opt_level);
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "wrong status at {opt_level:?}"
+        );
+        assert_eq!(
+            output.stdout,
+            b"hello ol\xc3\xa1".to_vec(),
+            "wrong output at {opt_level:?}"
+        );
     }
 }
 

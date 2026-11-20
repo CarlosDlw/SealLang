@@ -69,6 +69,29 @@ fn a_raw_pointer_method_receives_the_pointer_by_value() {
 }
 
 #[test]
+fn with_len_lowers_to_an_intrinsic_with_one_length_argument() {
+    let (fixture, hir, mir) =
+        lower_clean("func build(pointer: *raw u8) -> *raw [u8] { unsafe { pointer.with_len(3) } }");
+    let body = function(&fixture, &hir, &mir, "build");
+    let mut found = false;
+    for statement in body.blocks.iter().flat_map(|block| block.statements.iter()) {
+        if let StatementKind::Assign {
+            rvalue:
+                Rvalue::Intrinsic {
+                    receiver: IntrinsicReceiver::Value(_),
+                    args,
+                    ..
+                },
+            ..
+        } = &statement.kind
+        {
+            found |= args.len() == 1;
+        }
+    }
+    assert!(found, "the length is passed as one operand");
+}
+
+#[test]
 fn a_non_copy_value_moves_out_of_a_raw_pointer() {
     let (fixture, hir, mir) = lower_clean(
         "struct Payload { value: i32 } \
