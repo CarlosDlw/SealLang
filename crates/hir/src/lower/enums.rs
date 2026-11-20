@@ -19,7 +19,9 @@ impl Lowering<'_> {
     /// function's declaration as the secondary location.
     pub(super) fn lower_enums(&mut self) {
         let items = self.enum_items.clone();
-        for (item_id, definition) in items {
+        for (item, definition) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (declaration, span) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::Enum(declaration) = &item.kind else {
@@ -56,14 +58,14 @@ impl Lowering<'_> {
                     continue;
                 }
 
-                let variant_def = self.define(DefData {
-                    kind: DefKind::Variant,
+                let variant_def = self.define(DefData::new(
+                    DefKind::Variant,
                     name,
                     name_span,
-                    span: variant_span,
-                    parent: Some(definition),
-                    mutable: false,
-                });
+                    variant_span,
+                    Some(definition),
+                    false,
+                ));
 
                 let mut fields = Vec::new();
                 match &field_list {
@@ -90,14 +92,14 @@ impl Lowering<'_> {
                                 .emit();
                                 continue;
                             }
-                            let field_def = self.define(DefData {
-                                kind: DefKind::Field,
-                                name: field_name,
-                                name_span: field_name_span,
-                                span: field_span,
-                                parent: Some(variant_def),
-                                mutable: false,
-                            });
+                            let field_def = self.define(DefData::new(
+                                DefKind::Field,
+                                field_name,
+                                field_name_span,
+                                field_span,
+                                Some(variant_def),
+                                false,
+                            ));
                             fields.push(FieldDef {
                                 def: field_def,
                                 name: Some(field_name),
@@ -107,18 +109,20 @@ impl Lowering<'_> {
                     }
                     VariantFieldList::Tuple(field_ids) => {
                         for (index, field_id) in field_ids.iter().enumerate() {
-                            let field = self.ast.tuple_field(*field_id);
-                            let ty = self.lower_type(field.ty);
-                            let field_span = field.span;
+                            let (field_ty, field_span) = {
+                                let field = self.ast.tuple_field(*field_id);
+                                (field.ty, field.span)
+                            };
+                            let ty = self.lower_type(field_ty);
                             let internal_name = self.interner.intern(&format!("#{index}"));
-                            let field_def = self.define(DefData {
-                                kind: DefKind::Field,
-                                name: internal_name,
-                                name_span: field_span,
-                                span: field_span,
-                                parent: Some(variant_def),
-                                mutable: false,
-                            });
+                            let field_def = self.define(DefData::new(
+                                DefKind::Field,
+                                internal_name,
+                                field_span,
+                                field_span,
+                                Some(variant_def),
+                                false,
+                            ));
                             fields.push(FieldDef {
                                 def: field_def,
                                 name: None,

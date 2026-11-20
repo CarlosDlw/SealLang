@@ -1208,8 +1208,8 @@ A file names the module it contributes to with at most one `module path;`
 declaration, and that declaration must come before every import and item. The
 path is one or more identifiers separated by `::`; an empty path has no module
 to name.\n\nMove the declaration to the top of the file, remove duplicates, and write a
-non-empty path such as `module geometry::shapes;`.\n\nA qualified name in an expression or type that needs module resolution is also
-reported here until the module graph is available.",
+non-empty path such as `module geometry::shapes;`.\n\nA qualified name in an expression or type that cannot be resolved against the
+module graph is reported as `E2070` instead.",
 };
 
 /// The name `root` is used where a module name is required.
@@ -1234,6 +1234,65 @@ changes silently alter callers, and prevents deterministic incremental
 analysis.\n\nImport each name explicitly: `use a::b::{C, D};`.",
 };
 
+/// A path names a module that does not exist.
+pub const E2070: ErrorCode = ErrorCode {
+    code: "E2070",
+    title: "unknown module",
+    explanation: "\
+A multi-segment path starts at the package root (`root`), at a top-level module
+of the current package, or at a dependency alias. Every following segment must
+name a submodule; the last one may name an item.\n\nCheck the spelling, declare the module with `module ...;`, or import the name
+that the path needs.",
+};
+
+/// A module is not reachable across a package boundary.
+pub const E2071: ErrorCode = ErrorCode {
+    code: "E2071",
+    title: "module is private",
+    explanation: "\
+A module of another package is reachable only when the package exposes it in\n`[package.api]`. Exposure also requires every ancestor of the module to be\nexposed, so an exposed leaf never hides the path that reaches it.\n\nExpose the module in the dependency manifest, or keep the path inside its\npackage.",
+};
+
+/// An item is not visible from the referencing module.
+pub const E2072: ErrorCode = ErrorCode {
+    code: "E2072",
+    title: "item is not visible here",
+    explanation: "\
+A `private` item is visible in its module and in that module's descendants. An\n`internal` item is visible anywhere in its package. A `public` item is visible\nfrom another package only when its module is part of the package API.\n\nMake the item `internal` or `public`, move the use into a module that can see\nit, or expose the module that declares it.",
+};
+
+/// An import does not resolve.
+pub const E2073: ErrorCode = ErrorCode {
+    code: "E2073",
+    title: "unresolved import",
+    explanation: "\
+An import names an absolute path: `root`, a top-level module, or a dependency\nalias, followed by module segments. The last segment must name a module or an\nitem that the importing module may see.\n\nCheck the spelling, declare the missing item, or import a name that exists.",
+};
+
+/// A name denotes both a module and an item.
+pub const E2074: ErrorCode = ErrorCode {
+    code: "E2074",
+    title: "ambiguous path",
+    explanation: "\
+Modules and items have separate namespaces, so one name may denote both a\nmodule and a struct, function, or trait. A path segment that could mean\neither is rejected because the two meanings lead to different resolutions.\n\nRename one of the declarations, or qualify the path so the intended namespace\nis explicit.",
+};
+
+/// An import name collides with another declaration.
+pub const E2077: ErrorCode = ErrorCode {
+    code: "E2077",
+    title: "import name collision",
+    explanation: "\
+An import introduces one local name. That name cannot repeat another import,\na top-level item, a submodule, or a dependency alias in the same file.\n\nImport the name with `as` under a distinct alias, or rename the conflicting\ndeclaration.",
+};
+
+/// Two imports bind the same local name.
+pub const E2078: ErrorCode = ErrorCode {
+    code: "E2078",
+    title: "duplicate import",
+    explanation: "\
+A file may bind a local name only once. A second import with the same local\nname makes every use ambiguous, even when both imports reach the same item.\n\nRemove one import, or alias one of them with `as`.",
+};
+
 /// A visibility or test modifier is not legal on this construct.
 pub const E2079: ErrorCode = ErrorCode {
     code: "E2079",
@@ -1245,6 +1304,47 @@ an implementation is reached through its type, and a trait method inherits the
 trait's visibility. `test` marks a function, not a module, import, field,
 variant, or implementation. `cfg` selects an item or import; it does not select
 a field or variant.\n\nRemove the modifier, or move it to the declaration that owns the behavior.",
+};
+
+/// A public item is declared in a module the package does not expose.
+pub const E2080: ErrorCode = ErrorCode {
+    code: "E2080",
+    title: "public item outside the public API",
+    explanation: "\
+`public` promises that an item is reachable from another package. That promise\nhas no effect when its module is not exposed: the item would be documented as\npublic while every outside path to it is rejected.\n\nExpose the module in `[package.api]`, or change the item to `internal`.",
+};
+
+/// The public API names a module that does not exist.
+pub const E2081: ErrorCode = ErrorCode {
+    code: "E2081",
+    title: "unknown module in the public API",
+    explanation: "\
+`[package.api]` lists module paths that the package exposes. Every path must\nname a module declared by the package, and exposing a module implicitly\nexposes its ancestors.\n\nDeclare the module, or remove the path from the API.",
+};
+
+/// An impl is declared outside the package that owns its type or trait.
+pub const E2082: ErrorCode = ErrorCode {
+    code: "E2082",
+    title: "orphan implementation",
+    explanation: "\
+An implementation may be written only in the package that declares the type or\nthe trait. This rule keeps a type's behavior independent of which packages are\nlinked and prevents two packages from providing conflicting implementations.\n\nMove the implementation into the crate that declares the type or the trait, or\nwrap the foreign type in a local newtype.",
+};
+
+/// Two fragments of one module declare the same item.
+pub const E2083: ErrorCode = ErrorCode {
+    code: "E2083",
+    title: "duplicate item across module fragments",
+    explanation: "\
+Several files may contribute items to one module. Their items share one\nnamespace, so two fragments cannot declare the same name: every use would be\nambiguous.\n\nRename one of the definitions, or move it to a different module.",
+};
+
+/// A module is used where a value is required.
+pub const E2086: ErrorCode = ErrorCode {
+    code: "E2086",
+    title: "module used as a value",
+    explanation: "\
+A module names a namespace, not storage. It cannot be passed, stored, assigned,
+or otherwise used as a value.\n\nName an item inside the module, such as a function or constant.",
 };
 
 /// A `cfg(...)` condition has an unknown key or value shape.
@@ -1270,6 +1370,54 @@ variant is part of its owner's layout, and removing it conditionally would make
 the struct or enum shape depend on the build configuration; pattern matches,
 constructors, and ABI would then disagree across targets.\n\nPlace `cfg` on the struct, enum, or item that uses the field or variant, or
 declare separate types for the configurations.",
+};
+
+/// A public function signature mentions a type that is not public.
+pub const E3100: ErrorCode = ErrorCode {
+    code: "E3100",
+    title: "public function exposes a private type",
+    explanation: "\
+A caller outside the package can name a public function, but it cannot name a\ntype that is private or internal to the package. A signature that mentions such\na type cannot be used, so the function cannot really be public.\n\nMake the type public and expose its module, or change the function to\n`internal`.",
+};
+
+/// A public constant or static mentions a type that is not public.
+pub const E3101: ErrorCode = ErrorCode {
+    code: "E3101",
+    title: "public value exposes a private type",
+    explanation: "\
+A public constant or static is part of the package API, so its declared type\nmust also be part of the API. A caller cannot use the value without naming its\ntype.\n\nMake the type public and expose its module, or change the value to `internal`.",
+};
+
+/// A public trait method mentions a type that is not public.
+pub const E3102: ErrorCode = ErrorCode {
+    code: "E3102",
+    title: "public trait method exposes a private type",
+    explanation: "\
+A public trait is implemented and called from other packages. Every parameter\nand return type of its methods must therefore be public as well, including the\ntypes of default methods.\n\nMake the type public and expose its module, or change the method and trait to\n`internal`.",
+};
+
+/// A public bound mentions a trait that is not public.
+pub const E3103: ErrorCode = ErrorCode {
+    code: "E3103",
+    title: "public bound exposes a private trait",
+    explanation: "\
+A bound is part of a declaration's interface. A caller outside the package\ncannot satisfy or name a bound whose trait is private or internal, so the\ndeclaration cannot be used as public.\n\nMake the trait public and expose its module, or change the declaration to\n`internal`.",
+};
+
+/// A public struct field mentions a type that is not public.
+pub const E3104: ErrorCode = ErrorCode {
+    code: "E3104",
+    title: "public field exposes a private type",
+    explanation: "\
+A public field can be read and written from another package, which requires\nthe field's type to be nameable there. A private field type would make the\nfield unusable while documenting it as public.\n\nMake the field type public and expose its module, make the field private, or\nchange the struct to `internal`.",
+};
+
+/// A public enum variant mentions a type that is not public.
+pub const E3105: ErrorCode = ErrorCode {
+    code: "E3105",
+    title: "public variant exposes a private type",
+    explanation: "\
+A variant of a public enum can be constructed and matched from another\npackage, so every type it carries must be public too. Otherwise the variant\ncould be named but never built.\n\nMake the carried type public and expose its module, or change the enum to\n`internal`.",
 };
 
 /// Expression types do not match.
@@ -3486,20 +3634,21 @@ pub static ALL: &[ErrorCode] = &[
     E2026, E2027, E2028, E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038,
     E2039, E2040, E2041, E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051,
     E2052, E2053, E2054, E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064,
-    E2065, E2066, E2067, E2068, E2069, E2075, E2076, E2079, E2084, E2085, E3001, E3002, E3003,
-    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
-    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
-    E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
-    E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055,
-    E3056, E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069,
-    E3070, E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083,
-    E3084, E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096,
-    E3097, E3098, E3099, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010,
-    E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023,
-    E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003,
-    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016,
-    E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008,
-    E9001, E9002,
+    E2065, E2066, E2067, E2068, E2069, E2070, E2071, E2072, E2073, E2074, E2075, E2076, E2077,
+    E2078, E2079, E2080, E2081, E2082, E2083, E2084, E2085, E2086, E3001, E3002, E3003, E3004,
+    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
+    E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
+    E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043,
+    E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056,
+    E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070,
+    E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084,
+    E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097,
+    E3098, E3099, E3100, E3101, E3102, E3103, E3104, E3105, E4001, E4002, E4003, E4004, E4005,
+    E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018,
+    E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032,
+    E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
+    E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003,
+    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3737,13 +3886,13 @@ mod tests {
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
                 "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
                 "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
-                "E2064", "E2065", "E2066", "E2067", "E2068", "E2069", "E2075", "E2076", "E2079",
-                "E2084", "E2085",
+                "E2064", "E2065", "E2066", "E2067", "E2068", "E2069", "E2070", "E2071", "E2072",
+                "E2073", "E2074", "E2075", "E2076", "E2077", "E2078", "E2079", "E2080", "E2081",
+                "E2082", "E2083", "E2084", "E2085", "E2086",
             ]
         );
-        // `E2070`-`E2074` and `E2077`-`E2078` stay unallocated: codes are
-        // never reused, so a gap is cheaper than giving an unrelated
-        // diagnostic a number out of order.
+        // Module and API codes were allocated in phase 2. Codes are never
+        // reused, so a later diagnostic receives the next free number.
     }
 
     #[test]
@@ -3751,7 +3900,7 @@ mod tests {
         let codes: Vec<&str> = ALL
             .iter()
             .map(|entry| entry.code())
-            .filter(|code| code.starts_with("E30"))
+            .filter(|code| code.starts_with("E3"))
             .collect();
         assert_eq!(
             codes,
@@ -3766,7 +3915,8 @@ mod tests {
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
                 "E3084", "E3085", "E3086", "E3087", "E3088", "E3089", "E3090", "E3091", "E3092",
-                "E3093", "E3094", "E3095", "E3096", "E3097", "E3098", "E3099",
+                "E3093", "E3094", "E3095", "E3096", "E3097", "E3098", "E3099", "E3100", "E3101",
+                "E3102", "E3103", "E3104", "E3105",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

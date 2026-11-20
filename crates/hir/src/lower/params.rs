@@ -23,14 +23,14 @@ impl Lowering<'_> {
         span: Span,
         ty: TyId,
     ) -> ParamData {
-        let definition = self.define(DefData {
-            kind: DefKind::Param,
+        let definition = self.define(DefData::new(
+            DefKind::Param,
             name,
             name_span,
             span,
-            parent: Some(owner),
-            mutable: false,
-        });
+            Some(owner),
+            false,
+        ));
 
         if let Some(first) = self.scopes.current(name) {
             let first_span = self.hir.definitions().get(first).name_span;

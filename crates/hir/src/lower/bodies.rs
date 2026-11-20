@@ -17,10 +17,9 @@ struct BodyFlags {
 impl Lowering<'_> {
     pub(super) fn lower_bodies(&mut self) {
         let items = self.function_items.clone();
-        for item_id in items {
-            let Some(&function) = self.function_defs.get(&item_id) else {
-                continue;
-            };
+        for (item, function) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (ret, params, body, is_const, is_unsafe) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::Func(declaration) = &item.kind else {
@@ -58,7 +57,9 @@ impl Lowering<'_> {
     /// ordinary function body and is checked and lowered like one.
     pub(super) fn lower_trait_bodies(&mut self) {
         let items = self.trait_method_items.clone();
-        for (item_id, method) in items {
+        for (item, method) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (ret, params, body, is_unsafe) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::TraitMethod(declaration) = &item.kind else {

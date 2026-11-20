@@ -126,9 +126,64 @@ owner's layout.
 
 Expression and type paths with two or more `::` segments keep every segment in
 `PathMulti`, `StructMulti`, and `TypeKind::PathMulti`; the existing
-`Type::associated` form with one segment keeps its shape. Module and import
-resolution belongs to the multi-file lowering phase, so HIR currently reports
-`E2069` and recovers to an error node for a qualified name it cannot resolve.
+`Type::associated` form with one segment keeps its shape. `cfg` conditions are
+parsed and retained on every item and import, but lowering does not select
+configuration yet: the project layer supplies features and target options in a
+later phase, and until then every retained declaration is analyzed.
+
+### Multi-file packages
+
+`seal_hir::lower_package` lowers every file of a package against one
+`PackagePlan`. The plan lists packages in dependency order, the files of each
+package, the modules exposed as API, and dependency aliases. The driver builds
+the plan for `sealc --plan`; a single-file invocation still uses
+`PackagePlan::single`, so the one-file pipeline is unchanged.
+
+`ModuleGraph` is built before any body is lowered. Each file names its module
+with at most one `module path::to::module;` declaration as the first item; a
+file without one contributes to the package root. Parent modules are implicit,
+so `module app::util;` creates `app` when no file declares it. Several files may
+declare the same module and their items share its namespace; a duplicate name
+across fragments is `E2083` with both spans, and a late, repeated, or empty
+declaration is `E2069`.
+
+Imports resolve before lowering bodies. A `use` path is absolute: it starts at
+the package root (`root`), at a top-level module, or at a dependency alias,
+followed by module segments and one item or module. Groups expand into one
+binding per name, `as` renames the local binding, and globs are rejected
+(`E2076`). The bindings live in a per-file `ImportTable`, so two fragments of
+one module never share the names they imported. The graph resolves each leaf
+against its `ModuleGraph`: an unknown module is `E2070`, an unknown item is
+`E2073`, a name that denotes both a module and an item is `E2074`, a local name
+that collides with another import is `E2078`, and one that collides with an item
+or submodule is `E2077`. Importing a name that resolution never uses emits the
+`unused_import` warning.
+
+Inside a body, a multi-segment path resolves its prefix through the module graph
+and its last segment through the value, type, or trait namespace, after the
+file's imports. `root::name` and `module::name` work in expressions and types,
+including an impl's self type; `Type::associated` keeps its existing meaning. A
+module used as a
+value is `E2086`, and a module that cannot be reached from another package is
+`E2071`.
+
+Every definition carries its package, compiled instance, module, visibility,
+optional documentation, and source file in `DefData`. Visibility is enforced at
+each use and import: `private` reaches the declaring module and its descendants,
+`internal` reaches the package, and `public` additionally requires the declaring
+module to be exposed. Exposing a module also exposes its ancestors; a
+`public` item in a module outside the API is `E2080`, and exposing a module the
+package does not declare is `E2081`. Signatures of public functions, values,
+trait methods, fields, and variants are validated after bodies are lowered, so a
+public signature that names a non-public type is `E3100`–`E3105`. An impl may
+only live in the package that declares the type or the trait (`E2082`).
+
+`Hir` exposes the resulting structure through `module_of_def`,
+`package_of_def`, `items_in_module`, `is_visible_from`, `public_items`,
+`is_public_api`, and `primary_package`. Symbols and instance fingerprints
+include the package instance and, when the compilation has more than one
+package or the definition is not in the root module, the module path, so equal
+names in different packages or modules never collide.
 
 ### Callable values
 

@@ -56,14 +56,14 @@ mod tests {
     use super::Scopes;
 
     fn define(definitions: &mut Definitions, name: seal_symbol::Symbol) -> seal_def::DefId {
-        definitions.push(DefData {
-            kind: DefKind::Binding,
+        definitions.push(DefData::new(
+            DefKind::Binding,
             name,
-            name_span: Span::default(),
-            span: Span::default(),
-            parent: None,
-            mutable: false,
-        })
+            Span::default(),
+            Span::default(),
+            None,
+            false,
+        ))
     }
 
     #[test]

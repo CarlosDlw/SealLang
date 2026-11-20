@@ -82,14 +82,14 @@ impl Lowering<'_> {
 
         let mut context = ArmBindings::default();
         for (name, name_span) in bindings {
-            let definition = self.hir.define(DefData {
-                kind: DefKind::Binding,
+            let definition = self.define(DefData::new(
+                DefKind::Binding,
                 name,
                 name_span,
-                span: raw.span,
-                parent: self.function,
-                mutable: false,
-            });
+                raw.span,
+                self.function,
+                false,
+            ));
             context.visible.insert(name, definition);
             self.scopes.insert(name, definition);
         }
@@ -172,7 +172,7 @@ impl Lowering<'_> {
         name_span: Span,
         fields: VariantPatternFields,
     ) -> RawPatternKind {
-        let Some(definition) = self.types.get(&type_name).copied() else {
+        let Some(definition) = self.type_def(type_name) else {
             self.report_missing_pattern_type(type_name, type_span);
             self.discard_variant_fields(fields);
             return RawPatternKind::Error;
@@ -456,7 +456,7 @@ impl Lowering<'_> {
         fields: &[NamedPatternField],
         has_rest: bool,
     ) -> RawPatternKind {
-        let Some(definition) = self.types.get(&name).copied() else {
+        let Some(definition) = self.type_def(name) else {
             self.report_missing_pattern_type(name, name_span);
             for field in fields {
                 self.build_raw_pattern(field.pattern);
@@ -562,7 +562,7 @@ impl Lowering<'_> {
 
     fn report_missing_pattern_type(&mut self, type_name: Symbol, type_span: Span) {
         let missing = self.interner.resolve(type_name);
-        if self.traits.contains_key(&type_name) {
+        if self.trait_exists(type_name) {
             self.error(
                 codes::E2027,
                 type_span,
@@ -570,7 +570,7 @@ impl Lowering<'_> {
             )
             .help("match a value of an enum or struct type")
             .emit();
-        } else if self.globals.contains_key(&type_name) {
+        } else if self.value_exists(type_name) {
             self.error(
                 codes::E2015,
                 type_span,
@@ -794,14 +794,14 @@ impl Lowering<'_> {
         if let Some(definition) = bindings.hidden.get(&name) {
             return *definition;
         }
-        let definition = self.hir.define(DefData {
-            kind: DefKind::Binding,
+        let definition = self.define(DefData::new(
+            DefKind::Binding,
             name,
-            name_span: span,
             span,
-            parent: self.function,
-            mutable: false,
-        });
+            span,
+            self.function,
+            false,
+        ));
         bindings.hidden.insert(name, definition);
         definition
     }

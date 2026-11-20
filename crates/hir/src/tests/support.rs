@@ -38,11 +38,11 @@ impl Recording {
 }
 
 pub(crate) struct Fixture {
-    #[allow(dead_code)]
     map: Arc<SourceMap>,
     pub(crate) dcx: DiagCtxt,
     pub(crate) interner: Interner,
     pub(crate) file: Arc<SourceFile>,
+    files: Vec<seal_span::FileId>,
     recording: Recording,
 }
 
@@ -60,6 +60,35 @@ impl Fixture {
             dcx,
             interner: Interner::new(),
             file,
+            files: vec![id],
+            recording,
+        }
+    }
+
+    /// Creates a fixture whose files are compiled as one package.
+    ///
+    /// Each entry is `(file name, source)`. The first file is the package
+    /// entry point; module membership comes from each file's `module`
+    /// declaration.
+    pub(crate) fn package(files: &[(&str, &str)]) -> Self {
+        assert!(!files.is_empty(), "a package needs at least one file");
+        let map = Arc::new(SourceMap::new());
+        let mut ids = Vec::with_capacity(files.len());
+        for (name, source) in files {
+            let id = map
+                .add_file(FileName::virtual_name(*name), (*source).to_owned())
+                .unwrap_or_else(|_| panic!("test source `{name}` registers"));
+            ids.push(id);
+        }
+        let file = map.file(ids[0]).expect("registered file exists");
+        let recording = Recording::default();
+        let dcx = DiagCtxt::new(Box::new(recording.clone()), Arc::clone(&map));
+        Self {
+            map,
+            dcx,
+            interner: Interner::new(),
+            file,
+            files: ids,
             recording,
         }
     }
@@ -77,6 +106,52 @@ impl Fixture {
     pub(crate) fn lower_with_c_abi(&self, c_abi: seal_ty::CAbiProperties) -> Hir {
         let ast = self.parse();
         crate::lower_with_c_abi(&ast, &self.dcx, &self.interner, c_abi)
+    }
+
+    /// Lowers every file in the fixture as one package.
+    pub(crate) fn lower_package(&self) -> Hir {
+        self.lower_package_exposing(&[])
+    }
+
+    /// Lowers the package with the given module paths in its public API.
+    ///
+    /// An empty list exposes the package root.
+    pub(crate) fn lower_package_exposing(&self, exposed: &[&str]) -> Hir {
+        let mut asts = Vec::with_capacity(self.files.len());
+        for id in &self.files {
+            let file = self.map.file(*id).expect("registered file exists");
+            let lexed = seal_lexer::lex(&file, &self.dcx, &self.interner);
+            asts.push((*id, seal_parser::parse(&lexed, &self.dcx, &self.interner)));
+        }
+        let mut plan = crate::PackagePlan::single(self.interner.intern("test"), self.files[0]);
+        if !exposed.is_empty() {
+            plan.packages[0].exposed = exposed
+                .iter()
+                .map(|path| {
+                    crate::ModulePath::new(
+                        path.split("::")
+                            .map(|segment| self.interner.intern(segment))
+                            .collect(),
+                    )
+                })
+                .collect();
+        }
+        plan.packages[0].files = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| crate::PackagePlanFile {
+                file: *file,
+                primary: index == 0,
+            })
+            .collect();
+        crate::lower_package(
+            &plan,
+            &asts,
+            &self.dcx,
+            &self.interner,
+            seal_ty::CAbiProperties::default(),
+        )
     }
 
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
@@ -129,6 +204,14 @@ impl Fixture {
 pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir) {
     let fixture = Fixture::new(source);
     let hir = fixture.lower();
+    fixture.assert_clean();
+    (fixture, hir)
+}
+
+/// Lowers a multi-file package and asserts that no diagnostic was reported.
+pub(crate) fn lower_package_clean(files: &[(&str, &str)]) -> (Fixture, Hir) {
+    let fixture = Fixture::package(files);
+    let hir = fixture.lower_package();
     fixture.assert_clean();
     (fixture, hir)
 }

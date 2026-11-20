@@ -15,7 +15,21 @@ use crate::vtable::VtableKey;
 pub fn instance_hash(hir: &Hir, instance: Instance) -> Fingerprint {
     let tcx = hir.ty_ctxt();
     let mut hasher = StableHasher::new();
-    hasher.write_usize(instance.def.index() as usize);
+    let data = hir.definitions().get(instance.def);
+    hasher.write_usize(data.package.as_usize());
+    hasher.write_usize(data.instance.as_usize());
+    hasher.write_usize(data.module.as_usize());
+    hasher.write_usize(data.name.index());
+    // Closures lifted from one function share the declared name `closure` and
+    // often share their type arguments, so the semantic fields alone do not
+    // identify them. Their definition IDs follow creation order, which is
+    // deterministic for a compilation, and keep sibling closures distinct.
+    if hir.is_closure(instance.def) {
+        hasher.write_u8(1);
+        hasher.write_usize(instance.def.index() as usize);
+    } else {
+        hasher.write_u8(0);
+    }
     let arguments = tcx.substs_args(instance.args);
     hasher.write_length(arguments.len());
     for argument in arguments {
@@ -57,7 +71,11 @@ pub fn instance_name(hir: &Hir, interner: &Interner, instance: Instance) -> Stri
 pub fn vtable_hash(hir: &Hir, key: &VtableKey) -> Fingerprint {
     let tcx = hir.ty_ctxt();
     let mut hasher = StableHasher::new();
-    hasher.write_usize(key.trait_ref.trait_def.index() as usize);
+    let data = hir.definitions().get(key.trait_ref.trait_def);
+    hasher.write_usize(data.package.as_usize());
+    hasher.write_usize(data.instance.as_usize());
+    hasher.write_usize(data.module.as_usize());
+    hasher.write_usize(data.name.index());
     hash_type(tcx, key.concrete, &mut hasher);
     let arguments = tcx.substs_args(key.trait_ref.args);
     hasher.write_length(arguments.len());

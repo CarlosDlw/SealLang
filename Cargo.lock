@@ -324,6 +324,7 @@ name = "seal-driver"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "seal-ast",
  "seal-borrowck",
  "seal-codegen",
  "seal-const-eval",
@@ -336,6 +337,8 @@ dependencies = [
  "seal-mono",
  "seal-parser",
  "seal-session",
+ "seal-span",
+ "seal-symbol",
  "seal-target",
  "seal-typeck",
  "seal-version",

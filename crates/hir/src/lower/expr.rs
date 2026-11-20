@@ -61,31 +61,19 @@ impl Lowering<'_> {
             } => {
                 self.lower_qualified_path(type_name, type_span, type_args.as_ref(), name, name_span)
             }
-            AstExprKind::PathMulti { .. } => {
-                // Module-qualified names are syntax in this phase; the module
-                // graph and resolution arrive with the multi-file lowering.
-                self.error(
-                    codes::E2069,
-                    span,
-                    "a module-qualified path needs module resolution",
-                )
-                .help("module resolution is not part of this compilation phase")
-                .emit();
-                ExprKind::Error
-            }
-            AstExprKind::StructMulti { fields, .. } => {
-                for field in fields {
-                    let _ = self.lower_expr(field.value);
-                }
-                self.error(
-                    codes::E2069,
-                    span,
-                    "a module-qualified struct literal needs module resolution",
-                )
-                .help("module resolution is not part of this compilation phase")
-                .emit();
-                ExprKind::Error
-            }
+            AstExprKind::PathMulti {
+                root,
+                root_span,
+                args,
+                segments,
+            } => self.lower_path_multi(root, root_span, args.as_ref(), &segments, span),
+            AstExprKind::StructMulti {
+                root,
+                root_span,
+                args,
+                segments,
+                fields,
+            } => self.lower_struct_multi(root, root_span, args.as_ref(), &segments, &fields, span),
             AstExprKind::Unary { op, operand } => ExprKind::Unary {
                 op,
                 operand: self.lower_expr(operand),
@@ -419,12 +407,11 @@ impl Lowering<'_> {
             return self
                 .lower_bound_associated(param, type_name, type_span, type_args, name, name_span);
         }
-        let Some(&type_def) = self.types.get(&type_name) else {
+        let Some(type_def) = self.type_def(type_name) else {
             let missing = self.interner.resolve(type_name);
             if self
-                .traits
-                .get(&type_name)
-                .is_some_and(|trait_def| self.hir.is_drop_trait(*trait_def))
+                .trait_def(type_name)
+                .is_some_and(|trait_def| self.hir.is_drop_trait(trait_def))
             {
                 self.error(
                     codes::E3065,
@@ -434,9 +421,8 @@ impl Lowering<'_> {
                 .help("the compiler runs `drop` when the value goes out of scope; remove this call")
                 .emit();
             } else if self
-                .traits
-                .get(&type_name)
-                .is_some_and(|trait_def| self.hir.is_copy_trait(*trait_def))
+                .trait_def(type_name)
+                .is_some_and(|trait_def| self.hir.is_copy_trait(trait_def))
             {
                 self.error(
                     codes::E2018,
@@ -445,7 +431,7 @@ impl Lowering<'_> {
                 )
                 .help("use `Copy` as a bound such as `T: Copy` instead of calling it")
                 .emit();
-            } else if self.traits.contains_key(&type_name) {
+            } else if self.trait_exists(type_name) {
                 self.error(
                     codes::E2027,
                     type_span,
@@ -453,7 +439,7 @@ impl Lowering<'_> {
                 )
                 .help("call an associated function through the struct that implements it")
                 .emit();
-            } else if self.globals.contains_key(&type_name) {
+            } else if self.value_exists(type_name) {
                 self.error(
                     codes::E2015,
                     type_span,
@@ -510,16 +496,18 @@ impl Lowering<'_> {
 
         match self.select_inherent_function(type_def, name, type_args, name_span) {
             InherentLookup::Found(function) => {
-                return self.qualified_function(function, name, name_span, type_args);
+                return self.qualified_function(function, function, name, name_span, type_args);
             }
             InherentLookup::Rejected => return ExprKind::Error,
             InherentLookup::Missing => {}
         }
 
         match self.hir.trait_method(type_def, name) {
-            TraitMethodLookup::Found { function, .. } => {
-                self.qualified_function(function, name, name_span, type_args)
-            }
+            TraitMethodLookup::Found {
+                trait_def,
+                function,
+                ..
+            } => self.qualified_function(function, trait_def, name, name_span, type_args),
             TraitMethodLookup::Default {
                 trait_ref,
                 function,
@@ -559,6 +547,9 @@ impl Lowering<'_> {
                     )
                     .help("call it on a value, as in `value.name()`")
                     .emit();
+                    return ExprKind::Error;
+                }
+                if !self.require_visible(trait_ref.trait_def, name_span) {
                     return ExprKind::Error;
                 }
                 ExprKind::Path {
@@ -759,7 +750,7 @@ impl Lowering<'_> {
         else {
             return None;
         };
-        let definition = *self.types.get(&type_name)?;
+        let definition = self.type_def(type_name)?;
         let adt = self.hir.adt(definition)?;
         let adt_def = self.hir.ty_ctxt().adt(adt);
         if !adt_def.is_enum() {
@@ -846,6 +837,7 @@ impl Lowering<'_> {
     fn qualified_function(
         &mut self,
         function: DefId,
+        visibility: DefId,
         name: Symbol,
         name_span: Span,
         args: Option<seal_ty::SubstsId>,
@@ -861,6 +853,9 @@ impl Lowering<'_> {
                 "call it on a value, as in `value.{function_name}()`"
             ))
             .emit();
+            return ExprKind::Error;
+        }
+        if !self.require_visible(visibility, name_span) {
             return ExprKind::Error;
         }
 
@@ -893,7 +888,7 @@ impl Lowering<'_> {
             return false;
         };
         self.interner.resolve(name) == "len"
-            && !self.globals.contains_key(&name)
+            && !self.value_exists(name)
             && self.scopes.lookup(name).is_none()
     }
 
@@ -907,8 +902,155 @@ impl Lowering<'_> {
             return false;
         };
         self.interner.resolve(name) == "drop"
-            && !self.globals.contains_key(&name)
+            && !self.value_exists(name)
             && self.scopes.lookup(name).is_none()
+    }
+
+    /// Lowers a module-qualified value path such as `a::b::run`.
+    fn lower_path_multi(
+        &mut self,
+        root: Symbol,
+        root_span: Span,
+        args: Option<&seal_ast::GenericArgs>,
+        segments: &[seal_ast::PathSegment],
+        span: Span,
+    ) -> ExprKind {
+        if let [last] = segments {
+            let module = self.module_named(root);
+            let is_type = self.type_def(root).is_some();
+            if is_type && module.is_some() {
+                self.error(
+                    codes::E2074,
+                    root_span,
+                    format!(
+                        "`{}` names both a type and a module",
+                        self.interner.resolve(root)
+                    ),
+                )
+                .help("qualify the path with `root` to select the module")
+                .emit();
+                return ExprKind::Error;
+            }
+            if is_type || self.generic_scope_param(root).is_some() {
+                return self.lower_qualified_path(root, root_span, args, last.name, last.name_span);
+            }
+        }
+
+        let Some((module, Some(last))) = self.resolve_module_path(root, root_span, segments) else {
+            return ExprKind::Error;
+        };
+        if let Some(definition) = self.globals.get(&(module, last.name)).copied() {
+            if !self.require_visible(definition, last.name_span) {
+                return ExprKind::Error;
+            }
+            let res = match self.hir.definitions().kind(definition) {
+                seal_def::DefKind::Const => crate::Res::Const(definition),
+                seal_def::DefKind::Static | seal_def::DefKind::ExternStatic => {
+                    crate::Res::Static(definition)
+                }
+                _ => crate::Res::Function(definition),
+            };
+            let expected = match res {
+                crate::Res::Function(function) => self.own_generic_count(function),
+                _ => 0,
+            };
+            let generic = last.args.as_ref().or(args);
+            let args = self.lower_expr_arguments(generic, expected);
+            return ExprKind::Path { res, args };
+        }
+
+        let name = self.interner.resolve(last.name);
+        if self.types.contains_key(&(module, last.name)) {
+            self.error(
+                codes::E2010,
+                last.name_span,
+                format!("`{name}` is a type, not a value"),
+            )
+            .help("construct it with a struct literal, or name a function")
+            .emit();
+        } else if self.traits.contains_key(&(module, last.name)) {
+            self.error(
+                codes::E2027,
+                last.name_span,
+                format!("`{name}` is a trait, not a value"),
+            )
+            .help("call one of its methods on a value of an implementing type")
+            .emit();
+        } else if self.hir.child_module(module, last.name).is_some() {
+            self.error(
+                codes::E2086,
+                span,
+                format!("`{name}` is a module, not a value"),
+            )
+            .help("name an item inside the module")
+            .emit();
+        } else {
+            self.error(
+                codes::E2002,
+                last.name_span,
+                format!("cannot find `{name}` in this module"),
+            )
+            .help("check the path, or declare the item in the module")
+            .emit();
+        }
+        ExprKind::Error
+    }
+
+    /// Lowers a module-qualified struct literal such as `a::b::Point { .. }`.
+    fn lower_struct_multi(
+        &mut self,
+        root: Symbol,
+        root_span: Span,
+        args: Option<&seal_ast::GenericArgs>,
+        segments: &[seal_ast::PathSegment],
+        fields: &[seal_ast::FieldInit],
+        span: Span,
+    ) -> ExprKind {
+        let initializers = self.lower_initializers(fields);
+        let Some((module, Some(last))) = self.resolve_module_path(root, root_span, segments) else {
+            return ExprKind::Error;
+        };
+        let Some(definition) = self.types.get(&(module, last.name)).copied() else {
+            let name = self.interner.resolve(last.name);
+            if self.traits.contains_key(&(module, last.name)) {
+                self.error(
+                    codes::E2027,
+                    last.name_span,
+                    format!("`{name}` is a trait, not a struct"),
+                )
+                .help("build a value of a struct that implements it")
+                .emit();
+            } else if self.globals.contains_key(&(module, last.name)) {
+                self.error(
+                    codes::E2011,
+                    last.name_span,
+                    format!("`{name}` is a value, not a struct"),
+                )
+                .help("a struct literal starts with a struct name")
+                .emit();
+            } else {
+                self.error(
+                    codes::E2002,
+                    last.name_span,
+                    format!("cannot find type `{name}` in this module"),
+                )
+                .help("declare it with `struct`, or check the path")
+                .emit();
+            }
+            let _ = span;
+            return ExprKind::Error;
+        };
+        if !self.require_visible(definition, last.name_span) {
+            return ExprKind::Error;
+        }
+        let type_args = self.lower_nominal_arguments(definition, last.args.as_ref().or(args));
+        self.lower_struct_value(
+            definition,
+            last.name,
+            last.name_span,
+            type_args,
+            initializers,
+        )
     }
 
     fn lower_struct_literal(
@@ -920,9 +1062,9 @@ impl Lowering<'_> {
     ) -> ExprKind {
         let initializers = self.lower_initializers(fields);
 
-        let Some(definition) = self.types.get(&name).copied() else {
+        let Some(definition) = self.type_def(name) else {
             let struct_name = self.interner.resolve(name);
-            if self.traits.contains_key(&name) {
+            if self.trait_exists(name) {
                 self.error(
                     codes::E2027,
                     name_span,
@@ -932,7 +1074,7 @@ impl Lowering<'_> {
                 .emit();
                 return ExprKind::Error;
             }
-            if self.globals.contains_key(&name) {
+            if self.value_exists(name) {
                 self.error(
                     codes::E2011,
                     name_span,
@@ -953,6 +1095,18 @@ impl Lowering<'_> {
         };
 
         let type_args = self.lower_nominal_arguments(definition, type_args);
+        self.lower_struct_value(definition, name, name_span, type_args, initializers)
+    }
+
+    /// Lowers a struct literal whose type already resolved to `definition`.
+    fn lower_struct_value(
+        &mut self,
+        definition: seal_def::DefId,
+        name: Symbol,
+        name_span: Span,
+        type_args: Option<seal_ty::SubstsId>,
+        initializers: Vec<(Symbol, Span, HirExprId)>,
+    ) -> ExprKind {
         let adt = self
             .hir
             .adt(definition)
@@ -1015,9 +1169,9 @@ impl Lowering<'_> {
     ) -> ExprKind {
         let initializers = self.lower_initializers(fields);
 
-        let Some(definition) = self.types.get(&type_name).copied() else {
+        let Some(definition) = self.type_def(type_name) else {
             let missing = self.interner.resolve(type_name);
-            if self.traits.contains_key(&type_name) {
+            if self.trait_exists(type_name) {
                 self.error(
                     codes::E2027,
                     type_span,
@@ -1025,7 +1179,7 @@ impl Lowering<'_> {
                 )
                 .help("construct a variant of an enum")
                 .emit();
-            } else if self.globals.contains_key(&type_name) {
+            } else if self.value_exists(type_name) {
                 self.error(
                     codes::E2015,
                     type_span,

@@ -632,6 +632,24 @@ impl Checker<'_> {
             }
             return self.error_ty();
         }
+        // The reachable declaration is the method itself for an inherent
+        // impl, and the trait for a trait method: a trait method inherits the
+        // trait's visibility and cannot widen it.
+        let visibility_def = match &target {
+            UserMethod::Concrete {
+                function,
+                source: MethodSource::Inherent,
+                ..
+            } => Some(*function),
+            UserMethod::Concrete {
+                source: MethodSource::Trait(trait_def),
+                ..
+            } => Some(*trait_def),
+            UserMethod::Bound { trait_ref, .. } => Some(trait_ref.trait_def),
+        };
+        if let Some(def) = visibility_def {
+            let _ = self.require_item_visible(def, span);
+        }
         let is_unsafe = match &target {
             UserMethod::Concrete { function, .. } => self
                 .results

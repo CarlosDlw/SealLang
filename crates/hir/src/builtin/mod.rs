@@ -59,14 +59,14 @@ pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> BuiltinTraits {
 /// only appears behind a raw pointer, exactly like a user `extern type`.
 fn install_c_void(hir: &mut Hir, interner: &Interner) -> DefId {
     let name = interner.intern("c_void");
-    hir.define(DefData {
-        kind: DefKind::OpaqueType,
+    hir.define(DefData::new(
+        DefKind::OpaqueType,
         name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: None,
-        mutable: false,
-    })
+        Span::default(),
+        Span::default(),
+        None,
+        false,
+    ))
 }
 
 /// Creates a reserved trait, its implicit `Self`, and its declared parameters.
@@ -77,14 +77,14 @@ pub(super) fn create_trait(
     arguments: &[&str],
 ) -> (DefId, Generics) {
     let name = interner.intern(trait_name);
-    let trait_def = hir.define(DefData {
-        kind: DefKind::Trait,
+    let trait_def = hir.define(DefData::new(
+        DefKind::Trait,
         name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: None,
-        mutable: false,
-    });
+        Span::default(),
+        Span::default(),
+        None,
+        false,
+    ));
 
     let mut params = Vec::with_capacity(arguments.len() + 1);
     params.push(define_param(hir, trait_def, interner.intern("Self"), 0).as_self());
@@ -113,14 +113,14 @@ pub(super) fn build_method(
     ret: TyId,
 ) -> (DefId, TraitMethodDef) {
     let name = interner.intern(name);
-    let method_def = hir.define(DefData {
-        kind: DefKind::TraitMethod,
+    let method_def = hir.define(DefData::new(
+        DefKind::TraitMethod,
         name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: Some(trait_def),
-        mutable: false,
-    });
+        Span::default(),
+        Span::default(),
+        Some(trait_def),
+        false,
+    ));
     let generics = Generics::new(method_def, Some(trait_def), Vec::new());
     hir.ty_ctxt_mut().insert_generics(generics.clone());
     let definition = TraitMethodDef::new(
@@ -156,14 +156,14 @@ pub(super) fn install_trait_definition(
 
 /// Declares one generic parameter of a compiler-provided trait.
 fn define_param(hir: &mut Hir, owner: DefId, name: Symbol, index: u32) -> GenericParamDef {
-    let definition = hir.define(DefData {
-        kind: DefKind::GenericParam,
+    let definition = hir.define(DefData::new(
+        DefKind::GenericParam,
         name,
-        name_span: Span::default(),
-        span: Span::default(),
-        parent: Some(owner),
-        mutable: false,
-    });
+        Span::default(),
+        Span::default(),
+        Some(owner),
+        false,
+    ));
     let param = hir.ty_ctxt_mut().push_param(definition, owner, index, name);
     GenericParamDef::new(definition, param, name, index)
 }

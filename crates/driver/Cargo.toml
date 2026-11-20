@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+seal-ast.workspace = true
 seal-borrowck.workspace = true
 seal-codegen.workspace = true
 seal-const-eval.workspace = true
@@ -26,6 +27,8 @@ seal-parser.workspace = true
 seal-error-codes.workspace = true
 seal-fs.workspace = true
 seal-session.workspace = true
+seal-span.workspace = true
+seal-symbol.workspace = true
 seal-target.workspace = true
 seal-typeck.workspace = true
 seal-version.workspace = true

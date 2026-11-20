@@ -22,14 +22,14 @@ impl Lowering<'_> {
                 // The binding is declared after its initializer is lowered, so
                 // `let x = x;` reads the outer `x`.
                 let init = binding.init.map(|init| self.lower_expr(init));
-                let local = self.hir.define(DefData {
-                    kind: DefKind::Binding,
-                    name: binding.name,
-                    name_span: binding.name_span,
+                let local = self.define(DefData::new(
+                    DefKind::Binding,
+                    binding.name,
+                    binding.name_span,
                     span,
-                    parent: self.function,
-                    mutable: binding.mutable,
-                });
+                    self.function,
+                    binding.mutable,
+                ));
                 self.scopes.insert(binding.name, local);
                 StmtKind::Let { local, ty, init }
             }

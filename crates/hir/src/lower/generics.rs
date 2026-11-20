@@ -94,14 +94,14 @@ impl Lowering<'_> {
         index: u32,
     ) -> GenericParamDef {
         let span = self.hir.definitions().get(owner).span;
-        let definition = self.define(DefData {
-            kind: DefKind::GenericParam,
+        let definition = self.define(DefData::new(
+            DefKind::GenericParam,
             name,
             name_span,
             span,
-            parent: Some(owner),
-            mutable: false,
-        });
+            Some(owner),
+            false,
+        ));
         let param = self
             .hir
             .ty_ctxt_mut()
@@ -150,10 +150,10 @@ impl Lowering<'_> {
 
         let offset = usize::from(generics.params.first().is_some_and(|param| param.is_self));
         for (position, declaration_id) in pending.params.params.iter().enumerate() {
-            let declaration = self.ast.generic_param(*declaration_id);
+            let bounds = self.ast.generic_param(*declaration_id).bounds.clone();
             let parameter = &generics.params[offset + position];
             let target = self.hir.ty_ctxt().param_ty(parameter.param);
-            let lowered = self.lower_bound_ids(target, &declaration.bounds);
+            let lowered = self.lower_bound_ids(target, &bounds);
             merge_bounds(&mut generics.params[offset + position].bounds, lowered);
         }
 
@@ -268,9 +268,9 @@ impl Lowering<'_> {
         &mut self,
         path: &TraitPath,
     ) -> Option<(DefId, seal_ty::SubstsId)> {
-        let Some(trait_def) = self.traits.get(&path.name).copied() else {
+        let Some(trait_def) = self.trait_def(path.name) else {
             let name = self.interner.resolve(path.name);
-            if self.types.contains_key(&path.name) || self.globals.contains_key(&path.name) {
+            if self.type_exists(path.name) || self.value_exists(path.name) {
                 self.error(
                     codes::E2060,
                     path.name_span,
@@ -391,7 +391,8 @@ impl Lowering<'_> {
     /// type is substituted only when an implementation is validated.
     pub(super) fn build_trait_definitions(&mut self) {
         let traits = self.trait_items.clone();
-        for (_, trait_def) in traits {
+        for (item, trait_def) in traits {
+            self.enter_file(item.file);
             let Some(generics) = self.hir.generics(trait_def) else {
                 continue;
             };

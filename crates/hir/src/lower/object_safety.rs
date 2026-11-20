@@ -260,14 +260,14 @@ impl Lowering<'_> {
         violations: &mut Vec<Violation>,
         seen: &mut FxHashSet<ViolationKey>,
     ) {
-        let Some((item_id, _)) = self
+        let Some((item, _)) = self
             .trait_items
             .iter()
             .find(|(_, definition)| *definition == trait_def)
         else {
             return;
         };
-        let ItemKind::Trait(declaration) = &self.ast.item(*item_id).kind else {
+        let ItemKind::Trait(declaration) = &self.ast_of(*item).item(item.id).kind else {
             return;
         };
         for (slot, path) in declaration.supertraits.iter().enumerate() {

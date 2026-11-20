@@ -136,14 +136,33 @@ fn qualify(kind: &str, name: &str, parent: Option<&str>) -> String {
 /// A local value sits inside a function that may itself sit inside an impl, so
 /// the whole chain is joined. That keeps two local statics with the same
 /// spelling in different methods on different types from sharing storage.
+///
+/// The package and module are part of the path when they distinguish anything:
+/// a compilation with several packages always includes the package, and a
+/// definition outside the package root always includes its module. A single-file
+/// program therefore keeps the short `seal.<name>` symbol it had before modules
+/// existed.
 pub(crate) fn definition(
     hir: &seal_hir::Hir,
     interner: &Interner,
     def: DefId,
 ) -> (String, Option<String>) {
-    let name = interner.resolve(hir.definitions().get(def).name).to_owned();
+    let data = hir.definitions().get(def);
+    let name = interner.resolve(data.name).to_owned();
+    let module = hir.module(data.module);
+    let package = hir.package(module.package);
     let mut components = Vec::new();
-    let mut parent = hir.definitions().get(def).parent;
+    if hir.packages().len() > 1 || !module.path.is_root() {
+        components.push(interner.resolve(package.name).to_owned());
+        components.extend(
+            module
+                .path
+                .segments()
+                .iter()
+                .map(|segment| interner.resolve(*segment).to_owned()),
+        );
+    }
+    let mut parent = data.parent;
     while let Some(current) = parent {
         components.push(
             interner
@@ -152,7 +171,6 @@ pub(crate) fn definition(
         );
         parent = hir.definitions().get(current).parent;
     }
-    components.reverse();
     let parent = if components.is_empty() {
         None
     } else {

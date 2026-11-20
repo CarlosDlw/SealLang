@@ -39,14 +39,14 @@ impl Lowering<'_> {
     ) -> ExprKind {
         let parent = self.function;
         let name = self.interner.intern("closure");
-        let closure = self.define(DefData {
-            kind: DefKind::Closure,
+        let closure = self.define(DefData::new(
+            DefKind::Closure,
             name,
-            name_span: span,
+            span,
             span,
             parent,
-            mutable: false,
-        });
+            false,
+        ));
 
         // A closure declares no parameters of its own, but it sees every
         // parameter of the enclosing item. Registering an empty list with the
@@ -201,22 +201,22 @@ impl Lowering<'_> {
 
         let closure = self.closure_env[frame].closure;
         let name = self.hir.definitions().name(origin);
-        let field = self.define(DefData {
-            kind: DefKind::Field,
+        let field = self.define(DefData::new(
+            DefKind::Field,
             name,
-            name_span: span,
             span,
-            parent: Some(closure),
-            mutable: false,
-        });
-        let binding = self.define(DefData {
-            kind: DefKind::Capture,
+            span,
+            Some(closure),
+            false,
+        ));
+        let binding = self.define(DefData::new(
+            DefKind::Capture,
             name,
-            name_span: span,
             span,
-            parent: Some(closure),
-            mutable: false,
-        });
+            span,
+            Some(closure),
+            false,
+        ));
         let capture = CaptureDef {
             field,
             binding,

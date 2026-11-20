@@ -1,11 +1,12 @@
 //! The definition arena.
 
-use seal_index::IndexVec;
-use seal_span::Span;
+use seal_index::{Idx, IndexVec};
+use seal_span::{FileId, Span};
 use seal_symbol::Symbol;
 
-use crate::id::DefId;
+use crate::id::{DefId, ModuleId, PackageId, PackageInstanceId};
 use crate::kind::DefKind;
+use crate::visibility::Visibility;
 
 /// A named definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,9 +27,58 @@ pub struct DefData {
     /// This is only meaningful for bindings: functions are never assignable, and
     /// parameters are immutable in the current language.
     pub mutable: bool,
+    /// The package that declares the definition.
+    pub package: PackageId,
+    /// The package instance that declares the definition.
+    pub instance: PackageInstanceId,
+    /// The module that declares the definition.
+    pub module: ModuleId,
+    /// The declared visibility.
+    pub visibility: Visibility,
+    /// The documentation text attached to the declaration, when the source
+    /// carries one.
+    pub docs: Option<Symbol>,
+    /// The source file that declares the definition, when it has one.
+    ///
+    /// Built-in definitions have no source file. The file is kept on the
+    /// definition so a later phase can tell a duplicate declared in one file
+    /// from the same name declared by two fragments of one module.
+    pub file: Option<FileId>,
 }
 
-/// The definitions of one file, in creation order.
+impl DefData {
+    /// Creates a definition in the root module of the root package.
+    ///
+    /// Lowering stamps the real package, instance, module, and file before the
+    /// definition is pushed. The constructor keeps every caller honest about
+    /// the semantic fields while leaving scope to one place.
+    #[inline]
+    pub fn new(
+        kind: DefKind,
+        name: Symbol,
+        name_span: Span,
+        span: Span,
+        parent: Option<DefId>,
+        mutable: bool,
+    ) -> Self {
+        Self {
+            kind,
+            name,
+            name_span,
+            span,
+            parent,
+            mutable,
+            package: PackageId::from_usize(0),
+            instance: PackageInstanceId::from_usize(0),
+            module: ModuleId::from_usize(0),
+            visibility: Visibility::Private,
+            docs: None,
+            file: None,
+        }
+    }
+}
+
+/// The definitions of one compilation, in creation order.
 #[derive(Clone, Debug, Default)]
 pub struct Definitions {
     defs: IndexVec<DefId, DefData>,
@@ -55,6 +105,53 @@ impl Definitions {
         &self.defs[id]
     }
 
+    /// Returns a definition for updating.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this table.
+    pub fn get_mut(&mut self, id: DefId) -> &mut DefData {
+        &mut self.defs[id]
+    }
+
+    /// Sets the scope fields of a definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this table.
+    pub fn set_scope(
+        &mut self,
+        id: DefId,
+        package: PackageId,
+        instance: PackageInstanceId,
+        module: ModuleId,
+        file: Option<FileId>,
+    ) {
+        let data = &mut self.defs[id];
+        data.package = package;
+        data.instance = instance;
+        data.module = module;
+        data.file = file;
+    }
+
+    /// Sets the declared visibility of a definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this table.
+    pub fn set_visibility(&mut self, id: DefId, visibility: Visibility) {
+        self.defs[id].visibility = visibility;
+    }
+
+    /// Sets the documentation of a definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this table.
+    pub fn set_docs(&mut self, id: DefId, docs: Option<Symbol>) {
+        self.defs[id].docs = docs;
+    }
+
     /// Returns the kind of `id`.
     pub fn kind(&self, id: DefId) -> DefKind {
         self.defs[id].kind
@@ -63,6 +160,31 @@ impl Definitions {
     /// Returns the declared name of `id`.
     pub fn name(&self, id: DefId) -> Symbol {
         self.defs[id].name
+    }
+
+    /// Returns the package that declares `id`.
+    pub fn package(&self, id: DefId) -> PackageId {
+        self.defs[id].package
+    }
+
+    /// Returns the package instance that declares `id`.
+    pub fn instance(&self, id: DefId) -> PackageInstanceId {
+        self.defs[id].instance
+    }
+
+    /// Returns the module that declares `id`.
+    pub fn module(&self, id: DefId) -> ModuleId {
+        self.defs[id].module
+    }
+
+    /// Returns the declared visibility of `id`.
+    pub fn visibility(&self, id: DefId) -> Visibility {
+        self.defs[id].visibility
+    }
+
+    /// Returns the source file of `id`, if it has one.
+    pub fn file(&self, id: DefId) -> Option<FileId> {
+        self.defs[id].file
     }
 
     /// Returns `true` if `id` may be assigned to.
@@ -93,21 +215,22 @@ impl Definitions {
 
 #[cfg(test)]
 mod tests {
+    use seal_index::Idx;
     use seal_span::Span;
     use seal_symbol::Interner;
 
     use super::{DefData, Definitions};
-    use crate::DefKind;
+    use crate::{DefKind, ModuleId, PackageId, PackageInstanceId, Visibility};
 
     fn definition(name: &Interner, text: &str, kind: DefKind, mutable: bool) -> DefData {
-        DefData {
+        DefData::new(
             kind,
-            name: name.intern(text),
-            name_span: Span::default(),
-            span: Span::default(),
-            parent: None,
+            name.intern(text),
+            Span::default(),
+            Span::default(),
+            None,
             mutable,
-        }
+        )
     }
 
     #[test]
@@ -151,5 +274,29 @@ mod tests {
             .collect();
         assert_eq!(names, [0, 1, 2]);
         assert_eq!(definitions.iter().count(), 3);
+    }
+
+    #[test]
+    fn scope_fields_start_at_the_root_and_can_be_replaced() {
+        let interner = Interner::new();
+        let mut definitions = Definitions::new();
+        let def = definitions.push(definition(&interner, "f", DefKind::Function, false));
+
+        assert_eq!(definitions.package(def), PackageId::from_usize(0));
+        assert_eq!(definitions.instance(def), PackageInstanceId::from_usize(0));
+        assert_eq!(definitions.module(def), ModuleId::from_usize(0));
+        assert_eq!(definitions.visibility(def), Visibility::Private);
+
+        let package = PackageId::from_usize(1);
+        let instance = PackageInstanceId::from_usize(2);
+        let module = ModuleId::from_usize(3);
+        definitions.set_scope(def, package, instance, module, None);
+        definitions.set_visibility(def, Visibility::Internal);
+
+        assert_eq!(definitions.package(def), package);
+        assert_eq!(definitions.instance(def), instance);
+        assert_eq!(definitions.module(def), module);
+        assert_eq!(definitions.visibility(def), Visibility::Internal);
+        assert_eq!(definitions.file(def), None);
     }
 }

@@ -656,10 +656,12 @@ impl Checker<'_> {
         self.checking_place_base = saved;
         let (ty, field) = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Adt { adt, args } => match self.hir.ty_ctxt().field_by_name(adt, name) {
-                Some(field) => (
-                    self.hir.ty_ctxt().substitute(field.ty, args),
-                    Some(field.def),
-                ),
+                Some(field) => {
+                    let field_ty = self.hir.ty_ctxt().substitute(field.ty, args);
+                    let field_def = field.def;
+                    let _ = self.require_item_visible(field_def, name_span);
+                    (field_ty, Some(field_def))
+                }
                 None => {
                     self.error(
                         seal_error_codes::E2007,
@@ -1081,6 +1083,7 @@ impl Checker<'_> {
         let args = self.aggregate_arguments(adt, &generics, explicit, expected);
         let substs = self.hir.ty_ctxt().substs(&args);
         for (field, value) in fields {
+            let _ = self.require_item_visible(*field, self.hir.expr(*value).span);
             let field_ty = match self.hir.ty_ctxt().field(adt, *field) {
                 Some(field) => self.substitute(field.ty, substs),
                 None => {

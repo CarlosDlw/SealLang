@@ -27,39 +27,34 @@ impl Lowering<'_> {
         mutable: bool,
         span: Span,
     ) {
-        let definition = self.define(DefData {
-            kind,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(kind, name, name_span, span, None, mutable),
+        );
         self.register_generics(definition, &GenericParams::empty(span), None, false);
-        self.value_items.push((item_id, definition));
+        self.value_items.push((self.item_ref(item_id), definition));
 
-        if let Some(first) = self.globals.get(&name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2068,
+        if let Some(first) = self.local_value(name) {
+            self.duplicate(
+                first,
                 name_span,
                 format!(
                     "the value `{}` is defined twice",
                     self.interner.resolve(name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each function, constant, and static a distinct name")
-            .emit();
+                codes::E2068,
+            );
         } else {
-            self.globals.insert(name, definition);
+            self.globals.insert((self.current_module, name), definition);
         }
     }
 
     /// Lowers the initializer of every file-scope constant and static.
     pub(super) fn lower_value_bodies(&mut self) {
         let items = self.value_items.clone();
-        for (item_id, definition) in items {
+        for (item, definition) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (ty, init, kind) = match &self.ast.item(item_id).kind {
                 ItemKind::Const(declaration) => (declaration.ty, declaration.init, BodyKind::Const),
                 ItemKind::Static(declaration) => (
@@ -89,14 +84,7 @@ impl Lowering<'_> {
         mutable: bool,
     ) -> DefId {
         let parent = self.function;
-        let definition = self.define(DefData {
-            kind,
-            name,
-            name_span,
-            span,
-            parent,
-            mutable,
-        });
+        let definition = self.define(DefData::new(kind, name, name_span, span, parent, mutable));
         self.register_generics(definition, &GenericParams::empty(span), None, false);
         definition
     }

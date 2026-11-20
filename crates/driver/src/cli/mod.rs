@@ -96,10 +96,11 @@ impl Cli {
     /// Applies the rules that cannot be expressed as per-argument constraints.
     fn validate(self) -> Result<Self, clap::Error> {
         if let CliCommand::Build(build) = &self.command {
-            if build.output.path.is_some() && build.compile.inputs.len() > 1 {
+            if build.output.path.is_some() && build.compile.inputs.len() > 1 && !build.compile.plan
+            {
                 return Err(Self::command().error(
                     ErrorKind::ArgumentConflict,
-                    "`--output` can only be used with a single input file",
+                    "`--output` can only be used with a single input file or `--plan`",
                 ));
             }
         }

@@ -66,14 +66,16 @@ impl Lowering<'_> {
     fn reject_copy_supertraits(&mut self) {
         let copy = self.hir.copy_trait();
         let traits = self.trait_items.clone();
-        for (item_id, trait_def) in traits {
+        for (item, trait_def) in traits {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let supertraits = match &self.ast.item(item_id).kind {
                 ItemKind::Trait(declaration) => declaration.supertraits.clone(),
                 _ => continue,
             };
             let mut reported = false;
             for path in &supertraits {
-                if self.traits.get(&path.name).copied() != Some(copy) {
+                if self.trait_def(path.name) != Some(copy) {
                     continue;
                 }
                 self.error(

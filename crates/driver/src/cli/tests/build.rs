@@ -115,6 +115,29 @@ fn remap_specs_accumulate_in_order() {
 }
 
 #[test]
+fn plan_and_expose_are_analysis_options() {
+    let args = check_args(&[
+        "check",
+        "--plan",
+        "--expose",
+        "app",
+        "--expose=app::util",
+        "main.sl",
+        "util.sl",
+    ]);
+    assert!(args.compile.plan);
+    assert_eq!(args.compile.expose, ["app", "app::util"]);
+    assert_eq!(
+        args.compile.inputs,
+        vec![PathBuf::from("main.sl"), PathBuf::from("util.sl")]
+    );
+
+    let defaults = check_args(&["check", "main.sl"]);
+    assert!(!defaults.compile.plan);
+    assert!(defaults.compile.expose.is_empty());
+}
+
+#[test]
 fn double_dash_treats_remaining_arguments_as_inputs() {
     let args = build_args(&["build", "--", "--not-a-flag.sl"]);
     assert_eq!(args.compile.inputs, vec![PathBuf::from("--not-a-flag.sl")]);
@@ -197,8 +220,12 @@ fn codegen_flags_parse() {
 #[test]
 fn output_requires_a_single_input() {
     let error = parse(&["build", "a.sl", "b.sl", "-o", "out"])
-        .expect_err("one output cannot serve two inputs");
+        .expect_err("one output cannot serve two programs");
     assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+
+    let args = build_args(&["build", "--plan", "a.sl", "b.sl", "-o", "out"]);
+    assert!(args.compile.plan);
+    assert_eq!(args.output.path, Some(PathBuf::from("out")));
 }
 
 #[test]

@@ -104,6 +104,8 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         inputs: vec![args.input.clone()],
         target: args.target.clone(),
         diagnostics: args.diagnostics.clone(),
+        plan: false,
+        expose: Vec::new(),
     };
     let request = Request::Build {
         emit: Emit::Executable,
@@ -175,8 +177,12 @@ pub(crate) fn check(args: &CheckArgs) -> Result<ExitCode, String> {
 fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, String> {
     let session = Session::new(session_options(arguments, request.output()))
         .map_err(|error| error.to_string())?;
-    for input in &arguments.inputs {
-        compile_input(&session, request, input);
+    if arguments.plan {
+        compile_package(&session, request, arguments);
+    } else {
+        for input in &arguments.inputs {
+            compile_input(&session, request, input);
+        }
     }
 
     if let Some(error) = session.diag().emitter_error() {
@@ -245,6 +251,109 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     if session.diag().error_count() != errors {
         return;
     }
+
+    compile_hir(session, request, hir, file_id, input);
+}
+
+/// Compiles every input as one package with a module graph.
+fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileArgs) {
+    let errors = session.diag().error_count();
+    let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> =
+        Vec::with_capacity(arguments.inputs.len());
+    for input in &arguments.inputs {
+        let Ok(file_id) = session.load_file(input) else {
+            return;
+        };
+        let Some(file) = session.source_map().file(file_id) else {
+            return;
+        };
+        let tokens = session.profiler().time("lex", || {
+            seal_lexer::lex(&file, session.diag(), session.interner())
+        });
+        if session.diag().error_count() != errors {
+            return;
+        }
+        let ast = session.profiler().time("parse", || {
+            seal_parser::parse(&tokens, session.diag(), session.interner())
+        });
+        if session.diag().error_count() != errors {
+            return;
+        }
+        loaded.push((file_id, ast));
+    }
+    let Some(&(primary_file, _)) = loaded.first() else {
+        session
+            .diag()
+            .bug("a package plan needs at least one source file");
+    };
+
+    let name = session.interner().intern("main");
+    let mut plan = seal_hir::PackagePlan::single(name, primary_file);
+    let entry = &mut plan.packages[0];
+    entry.files = loaded
+        .iter()
+        .enumerate()
+        .map(|(index, (file, _))| seal_hir::PackagePlanFile {
+            file: *file,
+            primary: index == 0,
+        })
+        .collect();
+    entry.exposed = expose_paths(session, &arguments.expose);
+
+    let hir = session.profiler().time("hir", || {
+        seal_hir::lower_package(
+            &plan,
+            &loaded,
+            session.diag(),
+            session.interner(),
+            session.target().c_abi(),
+        )
+    });
+    if session.diag().error_count() != errors {
+        return;
+    }
+    compile_hir(session, request, hir, primary_file, &arguments.inputs[0]);
+}
+
+/// Parses the `--expose` values into module paths.
+fn expose_paths(session: &Session, values: &[String]) -> Vec<seal_hir::ModulePath> {
+    if values.is_empty() {
+        return vec![seal_hir::ModulePath::root()];
+    }
+    let mut paths = Vec::with_capacity(values.len());
+    for value in values {
+        if value == "root" {
+            paths.push(seal_hir::ModulePath::root());
+            continue;
+        }
+        let segments: Vec<seal_symbol::Symbol> = value
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| session.interner().intern(segment))
+            .collect();
+        if segments.is_empty() {
+            session
+                .diag()
+                .error(format!("the exposed module path `{value}` is empty"))
+                .code(seal_error_codes::E2081.diag_code())
+                .help("write a path such as `a::b`, or `root`")
+                .emit();
+            continue;
+        }
+        paths.push(seal_hir::ModulePath::new(segments));
+    }
+    paths
+}
+
+/// Runs every phase after lowering for one complete program.
+fn compile_hir(
+    session: &Session,
+    request: Request<'_>,
+    hir: seal_hir::Hir,
+    file_id: seal_span::FileId,
+    input: &Path,
+) {
+    let errors = session.diag().error_count();
 
     // Lowering relies on the invariants the checker establishes, so it runs
     // only when no error was reported.

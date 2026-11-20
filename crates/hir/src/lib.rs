@@ -38,6 +38,7 @@ mod extern_decl;
 mod generics;
 mod id;
 mod lower;
+mod module;
 mod pattern;
 mod primitives;
 mod res;
@@ -53,17 +54,22 @@ pub use expr::{Expr, ExprKind, Place, Projection};
 pub use extern_decl::{ExternFunction, ExternStatic, LinkDirective};
 pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
+pub use module::{
+    ApiTable, ImportBinding, ImportTable, ImportTarget, ModuleData, ModuleFragment, ModulePath,
+    Namespace, PackageData, PackageDependency, PackagePlan, PackagePlanDependency,
+    PackagePlanEntry, PackagePlanFile,
+};
 pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
 pub use res::Res;
 pub use traits::TraitMethodLookup;
 
 use seal_ast::Ast;
-use seal_def::{DefData, DefId, DefKind, Definitions};
+use seal_def::{DefData, DefId, DefKind, Definitions, ModuleId, PackageId, Visibility};
 use seal_diagnostics::DiagCtxt;
 use seal_hash::FxHashMap;
-use seal_index::IndexVec;
-use seal_span::Span;
+use seal_index::{Idx, IndexVec};
+use seal_span::{FileId, Span};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{
     AdtId, CAbiProperties, GenericParamDef, Generics, ParamEnv, ParamTyId, SubstsId, TraitDef,
@@ -140,6 +146,13 @@ pub struct Hir {
     extern_structs: Vec<AdtId>,
     closures: FxHashMap<DefId, ClosureDef>,
     closure_adt: FxHashMap<AdtId, DefId>,
+    packages: IndexVec<PackageId, module::PackageData>,
+    modules: IndexVec<ModuleId, module::ModuleData>,
+    file_modules: FxHashMap<FileId, ModuleId>,
+    module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
+    imports: FxHashMap<FileId, module::ImportTable>,
+    api: module::ApiTable,
+    primary_package: PackageId,
 }
 
 impl Hir {
@@ -167,6 +180,117 @@ impl Hir {
     /// Returns the definition table.
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
+    }
+
+    /// Returns every package in the compilation.
+    pub fn packages(&self) -> &IndexVec<PackageId, module::PackageData> {
+        &self.packages
+    }
+
+    /// Returns every module in the compilation.
+    pub fn modules(&self) -> &IndexVec<ModuleId, module::ModuleData> {
+        &self.modules
+    }
+
+    /// Returns one module.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this compilation.
+    pub fn module(&self, id: ModuleId) -> &module::ModuleData {
+        &self.modules[id]
+    }
+
+    /// Returns one package.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this compilation.
+    pub fn package(&self, id: PackageId) -> &module::PackageData {
+        &self.packages[id]
+    }
+
+    /// Returns the module of the file `file`, if it is part of the compilation.
+    pub fn module_of_file(&self, file: FileId) -> Option<ModuleId> {
+        self.file_modules.get(&file).copied()
+    }
+
+    /// Returns the module that declares `def`.
+    pub fn module_of_def(&self, def: DefId) -> ModuleId {
+        self.definitions.module(def)
+    }
+
+    /// Returns the package that declares `def`.
+    pub fn package_of_def(&self, def: DefId) -> PackageId {
+        self.definitions.package(def)
+    }
+
+    /// Returns the child module `name` of `parent`.
+    pub fn child_module(&self, parent: ModuleId, name: seal_symbol::Symbol) -> Option<ModuleId> {
+        self.module_children.get(&(parent, name)).copied()
+    }
+
+    /// Returns the imports of one file.
+    pub fn imports(&self, file: FileId) -> Option<&module::ImportTable> {
+        self.imports.get(&file)
+    }
+
+    /// Returns the public API table.
+    pub fn api(&self) -> &module::ApiTable {
+        &self.api
+    }
+
+    pub(crate) fn api_mut(&mut self) -> &mut module::ApiTable {
+        &mut self.api
+    }
+
+    /// Returns the package this compilation produced.
+    pub fn primary_package(&self) -> PackageId {
+        self.primary_package
+    }
+
+    /// Returns `true` when `def` is part of the package's public API.
+    pub fn is_public_api(&self, def: DefId) -> bool {
+        self.definitions.visibility(def) == Visibility::Public
+            && self.modules[self.definitions.module(def)].exposed
+    }
+
+    /// Returns every top-level item declared in `module`, in source order.
+    pub fn items_in_module(&self, module: ModuleId) -> Vec<DefId> {
+        let mut items: Vec<DefId> = self
+            .definitions
+            .iter_enumerated()
+            .filter(|(_, data)| data.module == module && data.parent.is_none())
+            .map(|(id, _)| id)
+            .collect();
+        items.sort_by_key(|def| self.definitions.get(*def).span.lo());
+        items
+    }
+
+    /// Returns `true` when `def` is reachable from `from`.
+    ///
+    /// A private item is reachable in its own module and in descendants of that
+    /// module. An internal item is reachable anywhere in its package. A public
+    /// item is reachable from another package only when every module on its path
+    /// is exposed.
+    pub fn is_visible_from(&self, def: DefId, from: ModuleId) -> bool {
+        let target = self.definitions.module(def);
+        let target_package = self.definitions.package(def);
+        let from_package = self.modules[from].package;
+        if target_package == from_package {
+            return match self.definitions.visibility(def) {
+                Visibility::Private => self.modules[from]
+                    .path
+                    .starts_with(&self.modules[target].path),
+                Visibility::Internal | Visibility::Public => true,
+            };
+        }
+        self.definitions.visibility(def) == Visibility::Public && self.modules[target].exposed
+    }
+
+    /// Returns the public items of the package's API, in declaration order.
+    pub fn public_items(&self) -> &[DefId] {
+        self.api.items()
     }
 
     /// Returns the type context that owns every lowered type.
@@ -735,6 +859,13 @@ impl Hir {
             extern_structs: Vec::new(),
             closures: FxHashMap::default(),
             closure_adt: FxHashMap::default(),
+            packages: IndexVec::new(),
+            modules: IndexVec::new(),
+            file_modules: FxHashMap::default(),
+            module_children: FxHashMap::default(),
+            imports: FxHashMap::default(),
+            api: module::ApiTable::default(),
+            primary_package: PackageId::from_usize(0),
         };
         hir.builtin = Some(builtin::install(&mut hir, interner));
         hir
@@ -742,6 +873,30 @@ impl Hir {
 
     pub(crate) fn define(&mut self, data: DefData) -> DefId {
         self.definitions.push(data)
+    }
+
+    pub(crate) fn definitions_mut(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn install_graph(
+        &mut self,
+        modules: IndexVec<ModuleId, module::ModuleData>,
+        packages: IndexVec<PackageId, module::PackageData>,
+        file_modules: FxHashMap<FileId, ModuleId>,
+        api: module::ApiTable,
+        module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
+        imports: FxHashMap<FileId, module::ImportTable>,
+        primary_package: PackageId,
+    ) {
+        self.primary_package = primary_package;
+        self.modules = modules;
+        self.packages = packages;
+        self.file_modules = file_modules;
+        self.api = api;
+        self.module_children = module_children;
+        self.imports = imports;
     }
 
     pub(crate) fn push_body(&mut self, body: Body) -> BodyId {
@@ -791,4 +946,19 @@ pub fn lower_with_c_abi(
     c_abi: CAbiProperties,
 ) -> Hir {
     Hir::lower_with_c_abi(ast, dcx, interner, c_abi)
+}
+
+/// Lowers every file of a package plan into one HIR.
+///
+/// The plan names the packages, their files, their dependencies, and the
+/// modules their public API exposes. Each file must name a module whose path is
+/// either the package root or a source-declared path.
+pub fn lower_package(
+    plan: &PackagePlan,
+    asts: &[(FileId, Ast)],
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    c_abi: CAbiProperties,
+) -> Hir {
+    lower::lower_package(plan, asts, dcx, interner, c_abi)
 }

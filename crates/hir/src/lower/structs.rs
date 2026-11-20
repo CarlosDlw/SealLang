@@ -12,7 +12,9 @@ impl Lowering<'_> {
     /// Lowers every struct's fields into its reserved aggregate.
     pub(super) fn lower_structs(&mut self) {
         let items = self.struct_items.clone();
-        for (item_id, definition) in items {
+        for (item, definition) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (declaration, span) = {
                 let item = self.ast.item(item_id);
                 let ItemKind::Struct(declaration) = &item.kind else {
@@ -25,9 +27,15 @@ impl Lowering<'_> {
             let mut fields = Vec::with_capacity(declaration.fields.len());
             let mut names = FxHashSet::default();
             for field_id in &declaration.fields {
-                let (name, name_span, ty, field_span) = {
+                let (name, name_span, ty, field_span, visibility) = {
                     let field = self.ast.field(*field_id);
-                    (field.name, field.name_span, field.ty, field.span)
+                    (
+                        field.name,
+                        field.name_span,
+                        field.ty,
+                        field.span,
+                        field.visibility,
+                    )
                 };
                 let ty = self.lower_type(ty);
                 if !names.insert(name) {
@@ -44,14 +52,17 @@ impl Lowering<'_> {
                     .emit();
                     continue;
                 }
-                let field_def = self.define(DefData {
-                    kind: DefKind::Field,
-                    name,
-                    name_span,
-                    span: field_span,
-                    parent: Some(definition),
-                    mutable: false,
-                });
+                let field_def = self.define_field(
+                    visibility,
+                    DefData::new(
+                        DefKind::Field,
+                        name,
+                        name_span,
+                        field_span,
+                        Some(definition),
+                        false,
+                    ),
+                );
                 fields.push(FieldDef {
                     def: field_def,
                     name: Some(name),

@@ -73,14 +73,14 @@ mod tests {
         name: &str,
         index: u32,
     ) -> GenericParamDef {
-        let def = defs.push(DefData {
-            kind: DefKind::GenericParam,
-            name: interner.intern(name),
-            name_span: Span::default(),
-            span: Span::default(),
-            parent: None,
-            mutable: false,
-        });
+        let def = defs.push(DefData::new(
+            DefKind::GenericParam,
+            interner.intern(name),
+            Span::default(),
+            Span::default(),
+            None,
+            false,
+        ));
         GenericParamDef::new(def, param, interner.intern(name), index)
     }
 

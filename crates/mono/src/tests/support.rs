@@ -41,8 +41,8 @@ pub(crate) struct Fixture {
     dcx: DiagCtxt,
     interner: Interner,
     file: Arc<SourceFile>,
+    files: Vec<seal_span::FileId>,
     recording: Recording,
-    #[allow(dead_code)]
     map: Arc<SourceMap>,
 }
 
@@ -59,6 +59,31 @@ impl Fixture {
             dcx,
             interner: Interner::new(),
             file,
+            files: vec![id],
+            recording,
+            map,
+        }
+    }
+
+    /// Creates a fixture whose files are compiled as one package.
+    pub(crate) fn package(files: &[(&str, &str)]) -> Self {
+        assert!(!files.is_empty(), "a package needs at least one file");
+        let map = Arc::new(SourceMap::new());
+        let mut ids = Vec::with_capacity(files.len());
+        for (name, source) in files {
+            let id = map
+                .add_file(FileName::virtual_name(*name), (*source).to_owned())
+                .unwrap_or_else(|_| panic!("test source `{name}` registers"));
+            ids.push(id);
+        }
+        let file = map.file(ids[0]).expect("registered file exists");
+        let recording = Recording::default();
+        let dcx = DiagCtxt::new(Box::new(recording.clone()), Arc::clone(&map));
+        Self {
+            dcx,
+            interner: Interner::new(),
+            file,
+            files: ids,
             recording,
             map,
         }
@@ -69,16 +94,45 @@ impl Fixture {
         seal_parser::parse(&lexed, &self.dcx, &self.interner)
     }
 
+    /// Lowers the fixture to HIR, as a package when it has several files.
+    fn lower_hir(&self) -> Hir {
+        if self.files.len() == 1 {
+            let ast = self.parse();
+            return seal_hir::lower(&ast, &self.dcx, &self.interner);
+        }
+        let mut asts = Vec::with_capacity(self.files.len());
+        for id in &self.files {
+            let file = self.map.file(*id).expect("registered file exists");
+            let lexed = seal_lexer::lex(&file, &self.dcx, &self.interner);
+            asts.push((*id, seal_parser::parse(&lexed, &self.dcx, &self.interner)));
+        }
+        let mut plan = seal_hir::PackagePlan::single(self.interner.intern("test"), self.files[0]);
+        plan.packages[0].files = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| seal_hir::PackagePlanFile {
+                file: *file,
+                primary: index == 0,
+            })
+            .collect();
+        seal_hir::lower_package(
+            &plan,
+            &asts,
+            &self.dcx,
+            &self.interner,
+            seal_ty::CAbiProperties::default(),
+        )
+    }
+
     /// Lowers to HIR while retaining diagnostics for negative tests.
     pub(crate) fn hir_with_errors(&self) -> Hir {
-        let ast = self.parse();
-        seal_hir::lower(&ast, &self.dcx, &self.interner)
+        self.lower_hir()
     }
 
     /// Runs the front end without collection, requiring no diagnostics.
     pub(crate) fn frontend(&self) -> (Hir, Mir) {
-        let ast = self.parse();
-        let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        let hir = self.lower_hir();
         let typeck = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
         self.assert_clean();
         let mir = seal_mir::lower(&hir, &typeck);
@@ -136,8 +190,7 @@ impl Fixture {
         limits: Limits,
         destructors: &[(&str, &str)],
     ) -> (Hir, Mir, seal_const_eval::ConstProgram, MonoProgram) {
-        let ast = self.parse();
-        let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        let hir = self.lower_hir();
         for (aggregate, destructor) in destructors {
             let adt = self.aggregate(&hir, aggregate);
             let method = self.function(&hir, destructor);
@@ -237,6 +290,14 @@ impl Fixture {
 /// Collects `source`, requiring no front-end diagnostics.
 pub(crate) fn collect_clean(source: &str) -> (Fixture, Hir, Mir, MonoProgram) {
     let fixture = Fixture::new(source);
+    let (hir, mir, program) = fixture.lower();
+    fixture.assert_clean();
+    (fixture, hir, mir, program)
+}
+
+/// Collects a multi-file package, requiring no front-end diagnostics.
+pub(crate) fn collect_clean_package(files: &[(&str, &str)]) -> (Fixture, Hir, Mir, MonoProgram) {
+    let fixture = Fixture::package(files);
     let (hir, mir, program) = fixture.lower();
     fixture.assert_clean();
     (fixture, hir, mir, program)

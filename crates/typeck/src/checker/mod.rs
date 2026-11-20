@@ -29,6 +29,7 @@ mod slice_patterns;
 mod stmt;
 mod trait_solver;
 mod types;
+mod visibility;
 
 use seal_def::DefId;
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};

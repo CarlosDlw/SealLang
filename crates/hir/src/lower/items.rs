@@ -75,12 +75,13 @@ impl Lowering<'_> {
     /// `Point::new` needs the impl registry to be complete, so bodies are
     /// lowered only after every pass.
     pub(super) fn collect_items(&mut self) {
-        // `Module` and `Use` are syntax only in this phase: they carry no
-        // definitions yet, and every collection loop below skips them. The
-        // multi-file lowering phase turns them into the module graph.
-        let items: Vec<ItemId> = self.ast.program().items().to_vec();
+        // `Module` and `Use` are syntax only here: the module graph already
+        // consumed them, and every collection loop below skips them.
+        let items = self.top_level_items();
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Struct(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -88,7 +89,9 @@ impl Lowering<'_> {
             self.collect_struct(item_id, declaration.name, declaration.name_span, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::OpaqueType(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -96,7 +99,9 @@ impl Lowering<'_> {
             self.collect_opaque_type(item_id, declaration.name, declaration.name_span, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Enum(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -104,7 +109,9 @@ impl Lowering<'_> {
             self.collect_enum(item_id, declaration.name, declaration.name_span, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Trait(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -112,7 +119,9 @@ impl Lowering<'_> {
             self.collect_trait(item_id, declaration.name, declaration.name_span, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -120,7 +129,9 @@ impl Lowering<'_> {
             self.collect_function(item_id, declaration.name, declaration.name_span, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let (kind, name, name_span, mutable, span) = match &self.ast.item(item_id).kind {
                 ItemKind::Const(declaration) => (
                     DefKind::Const,
@@ -141,7 +152,9 @@ impl Lowering<'_> {
             self.collect_value(item_id, kind, name, name_span, mutable, span);
         }
 
-        for &item_id in &items {
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Impl(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -210,14 +223,10 @@ impl Lowering<'_> {
             return;
         }
 
-        let definition = self.define(DefData {
-            kind: DefKind::Trait,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable: false,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::Trait, name, name_span, span, None, false),
+        );
         let (generics, supertraits, where_clause, methods) = {
             let ItemKind::Trait(declaration) = &self.ast.item(item_id).kind else {
                 return;
@@ -231,13 +240,9 @@ impl Lowering<'_> {
         };
         self.register_generics(definition, &generics, None, true);
         self.queue_bounds(definition, &generics, &supertraits, &where_clause, None);
-        self.trait_items.push((item_id, definition));
+        self.trait_items.push((self.item_ref(item_id), definition));
 
-        let existing = self
-            .types
-            .get(&name)
-            .copied()
-            .or_else(|| self.traits.get(&name).copied());
+        let existing = self.local_type(name).or_else(|| self.local_trait(name));
         if let Some(first) = existing {
             let first_span = self.hir.definitions().get(first).name_span;
             self.error(
@@ -252,7 +257,7 @@ impl Lowering<'_> {
             .help("give each struct, enum, and trait a distinct name")
             .emit();
         } else {
-            self.traits.insert(name, definition);
+            self.traits.insert((self.current_module, name), definition);
             self.hir.insert_trait_name(name, definition);
         }
 
@@ -298,17 +303,21 @@ impl Lowering<'_> {
         }
         seen.insert(name, name_span);
 
-        let definition = self.define(DefData {
-            kind: DefKind::TraitMethod,
-            name,
-            name_span,
-            span: self.ast.item(item_id).span,
-            parent: Some(trait_def),
-            mutable: false,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(
+                DefKind::TraitMethod,
+                name,
+                name_span,
+                self.ast.item(item_id).span,
+                Some(trait_def),
+                false,
+            ),
+        );
         self.register_generics(definition, &generics_decl, Some(trait_def), false);
         self.queue_bounds(definition, &generics_decl, &[], &where_clause, None);
-        self.trait_method_items.push((item_id, definition));
+        self.trait_method_items
+            .push((self.item_ref(item_id), definition));
 
         let has_self_parameter = params.iter().any(|param| self.is_self_parameter(*param));
         let (receiver, parameters) = self.trait_signature(trait_def, &params);
@@ -397,14 +406,14 @@ impl Lowering<'_> {
 
     /// Creates the definition and generic parameter list for one impl block.
     fn begin_impl(&mut self, declaration: &ImplDecl, span: Span) -> DefId {
-        let definition = self.define(DefData {
-            kind: DefKind::Impl,
-            name: self.self_symbol,
-            name_span: span,
+        let definition = self.define(DefData::new(
+            DefKind::Impl,
+            self.self_symbol,
             span,
-            parent: None,
-            mutable: false,
-        });
+            span,
+            None,
+            false,
+        ));
         self.register_generics(definition, &declaration.generics, None, false);
         definition
     }
@@ -429,12 +438,12 @@ impl Lowering<'_> {
             _ => None,
         };
         if let Some((name, name_span)) = path {
-            if !self.types.contains_key(&name)
-                && !self.traits.contains_key(&name)
+            if !self.type_exists(name)
+                && !self.trait_exists(name)
                 && self.generic_scope_param(name).is_none()
             {
                 let display = self.interner.resolve(name);
-                let message = if self.globals.contains_key(&name) {
+                let message = if self.value_exists(name) {
                     format!("`{display}` is a value, not a type")
                 } else {
                     format!("cannot find type `{display}` for this impl")
@@ -464,7 +473,7 @@ impl Lowering<'_> {
     /// Registers every function in one inherent impl block under its type.
     fn collect_inherent_impl(&mut self, item_id: ItemId, declaration: &ImplDecl, span: Span) {
         let impl_def = self.begin_impl(declaration, span);
-        self.impl_items.push((item_id, impl_def));
+        self.impl_items.push((self.item_ref(item_id), impl_def));
         let self_ty = self.lower_impl_self_type(declaration, impl_def);
         self.queue_bounds(
             impl_def,
@@ -475,6 +484,7 @@ impl Lowering<'_> {
         );
 
         let nominal = self.nominal_impl_target(self_ty);
+        let _orphan = self.check_orphan_impl(nominal, None, span);
         if nominal.is_none() && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error) {
             let display = self.display_ty(self_ty);
             let ty_span = self.ast.ty(declaration.self_ty).span;
@@ -522,7 +532,7 @@ impl Lowering<'_> {
     /// Registers every function in one trait impl block.
     fn collect_trait_impl(&mut self, item_id: ItemId, declaration: &ImplDecl, span: Span) {
         let impl_def = self.begin_impl(declaration, span);
-        self.impl_items.push((item_id, impl_def));
+        self.impl_items.push((self.item_ref(item_id), impl_def));
         let self_ty = self.lower_impl_self_type(declaration, impl_def);
         self.queue_bounds(
             impl_def,
@@ -594,6 +604,11 @@ impl Lowering<'_> {
         }
 
         let nominal = self.nominal_impl_target(self_ty);
+        let _orphan = self.check_orphan_impl(
+            nominal,
+            trait_ref.map(|trait_ref| trait_ref.trait_def),
+            span,
+        );
 
         if let Some(trait_ref) = trait_ref {
             let trait_def = trait_ref.trait_def;
@@ -698,17 +713,20 @@ impl Lowering<'_> {
         let generics = declaration.generics.clone();
         let where_clause = declaration.where_clause.clone();
 
-        let definition = self.define(DefData {
-            kind: DefKind::Function,
-            name,
-            name_span,
-            span,
-            parent: Some(type_def.unwrap_or(impl_def)),
-            mutable: false,
-        });
-        self.function_defs.insert(item_id, definition);
-        self.function_item_of.insert(definition, item_id);
-        self.function_items.push(item_id);
+        let definition = self.define_item(
+            item_id,
+            DefData::new(
+                DefKind::Function,
+                name,
+                name_span,
+                span,
+                Some(type_def.unwrap_or(impl_def)),
+                false,
+            ),
+        );
+        let item = self.item_ref(item_id);
+        self.function_item_of.insert(definition, item);
+        self.function_items.push((item, definition));
         self.impl_self_ty_of_function.insert(definition, self_ty);
         self.register_generics(definition, &generics, Some(impl_def), false);
         self.queue_bounds(definition, &generics, &[], &where_clause, Some(self_ty));
@@ -1048,7 +1066,7 @@ impl Lowering<'_> {
 
             let is_unsafe = self.function_item_of.get(&function).is_some_and(|item| {
                 matches!(
-                    &self.ast.item(*item).kind,
+                    &self.ast_of(*item).item(item.id).kind,
                     ItemKind::Func(declaration) if declaration.is_unsafe
                 )
             });
@@ -1075,7 +1093,9 @@ impl Lowering<'_> {
     /// Lowers an implementation function's parameters and return type with the
     /// impl's `Self` substituted.
     fn lowered_impl_signature(&mut self, function: DefId, self_ty: TyId) -> Option<ImplSignature> {
-        let item_id = *self.function_item_of.get(&function)?;
+        let item = *self.function_item_of.get(&function)?;
+        self.enter_file(item.file);
+        let item_id = item.id;
         let (name, params, ret, name_span, is_unsafe) = {
             let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
                 return None;
@@ -1370,16 +1390,12 @@ impl Lowering<'_> {
     }
 
     fn collect_function(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
-        let definition = self.define(DefData {
-            kind: DefKind::Function,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable: false,
-        });
-        self.function_defs.insert(item_id, definition);
-        self.function_items.push(item_id);
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::Function, name, name_span, span, None, false),
+        );
+        let item = self.item_ref(item_id);
+        self.function_items.push((item, definition));
         let (generics, where_clause) = match &self.ast.item(item_id).kind {
             ItemKind::Func(declaration) => (
                 declaration.generics.clone(),
@@ -1390,33 +1406,26 @@ impl Lowering<'_> {
         self.register_generics(definition, &generics, None, false);
         self.queue_bounds(definition, &generics, &[], &where_clause, None);
 
-        if let Some(first) = self.globals.get(&name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2001,
+        if let Some(first) = self.local_value(name) {
+            self.duplicate(
+                first,
                 name_span,
                 format!(
                     "the function `{}` is defined twice",
                     self.interner.resolve(name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each function a distinct name")
-            .emit();
+                codes::E2001,
+            );
         } else {
-            self.globals.insert(name, definition);
+            self.globals.insert((self.current_module, name), definition);
         }
     }
 
     fn collect_struct(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
-        let definition = self.define(DefData {
-            kind: DefKind::Struct,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable: false,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::Struct, name, name_span, span, None, false),
+        );
         let is_extern = matches!(
             &self.ast.item(item_id).kind,
             ItemKind::Struct(declaration) if declaration.is_extern
@@ -1434,7 +1443,7 @@ impl Lowering<'_> {
         if is_extern {
             self.hir.push_extern_struct(adt);
         }
-        self.struct_items.push((item_id, definition));
+        self.struct_items.push((self.item_ref(item_id), definition));
         if let ItemKind::Struct(declaration) = &self.ast.item(item_id).kind {
             self.register_generics(definition, &declaration.generics, None, false);
             let count = self.own_generic_count(definition) as u32;
@@ -1448,64 +1457,50 @@ impl Lowering<'_> {
             );
         }
 
-        if let Some(first) = self.types.get(&name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2005,
+        if let Some(first) = self.local_type(name) {
+            self.duplicate(
+                first,
                 name_span,
                 format!(
                     "the type `{}` is defined twice",
                     self.interner.resolve(name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each struct, enum, and trait a distinct name")
-            .emit();
+                codes::E2005,
+            );
         } else {
-            self.types.insert(name, definition);
+            self.types.insert((self.current_module, name), definition);
         }
     }
 
     fn collect_opaque_type(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
-        let definition = self.define(DefData {
-            kind: DefKind::OpaqueType,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable: false,
-        });
-        self.opaque_items.push((item_id, definition));
-        if let Some(first) = self.types.get(&name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2005,
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::OpaqueType, name, name_span, span, None, false),
+        );
+        self.opaque_items.push((self.item_ref(item_id), definition));
+        if let Some(first) = self.local_type(name) {
+            self.duplicate(
+                first,
                 name_span,
                 format!(
                     "the type `{}` is defined twice",
                     self.interner.resolve(name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each struct, enum, opaque type, and trait a distinct name")
-            .emit();
+                codes::E2005,
+            );
         } else {
-            self.types.insert(name, definition);
+            self.types.insert((self.current_module, name), definition);
         }
     }
 
     fn collect_enum(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
-        let definition = self.define(DefData {
-            kind: DefKind::Enum,
-            name,
-            name_span,
-            span,
-            parent: None,
-            mutable: false,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::Enum, name, name_span, span, None, false),
+        );
         let adt = self.hir.ty_ctxt().push_adt(definition, name, AdtKind::Enum);
         self.hir.insert_adt(definition, adt);
-        self.enum_items.push((item_id, definition));
+        self.enum_items.push((self.item_ref(item_id), definition));
         if let ItemKind::Enum(declaration) = &self.ast.item(item_id).kind {
             self.register_generics(definition, &declaration.generics, None, false);
             let count = self.own_generic_count(definition) as u32;
@@ -1519,21 +1514,18 @@ impl Lowering<'_> {
             );
         }
 
-        if let Some(first) = self.types.get(&name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2005,
+        if let Some(first) = self.local_type(name) {
+            self.duplicate(
+                first,
                 name_span,
                 format!(
                     "the type `{}` is defined twice",
                     self.interner.resolve(name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each struct, enum, and trait a distinct name")
-            .emit();
+                codes::E2005,
+            );
         } else {
-            self.types.insert(name, definition);
+            self.types.insert((self.current_module, name), definition);
         }
     }
 }

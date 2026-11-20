@@ -58,16 +58,57 @@ impl Lowering<'_> {
                 let element = self.lower_type_inner(element, unknown_parameter, false);
                 self.hir.ty_ctxt_mut().array_ty(element, length)
             }
-            TypeKind::PathMulti { .. } => {
-                // Qualified type paths are syntax in this phase; the module
-                // graph and resolution arrive with the multi-file lowering.
-                self.error(
-                    codes::E2069,
-                    self.ast.ty(ty).span,
-                    "a module-qualified type needs module resolution",
-                )
-                .help("module resolution is not part of this compilation phase")
-                .emit();
+            TypeKind::PathMulti {
+                root,
+                root_span,
+                args,
+                segments,
+            } => {
+                let span = self.ast.ty(ty).span;
+                let Some((module, Some(last))) =
+                    self.resolve_module_path(root, root_span, &segments)
+                else {
+                    return self.hir.ty_ctxt_mut().error_ty();
+                };
+                if let Some(definition) = self.types.get(&(module, last.name)).copied() {
+                    if !self.require_visible(definition, last.name_span) {
+                        return self.hir.ty_ctxt_mut().error_ty();
+                    }
+                    let generic_args = last.args.as_ref().or(args.as_ref());
+                    return self.lower_type_definition(
+                        definition,
+                        generic_args,
+                        last.name_span,
+                        span,
+                        behind_raw_pointer,
+                    );
+                }
+                let name = self.interner.resolve(last.name);
+                if self.traits.contains_key(&(module, last.name)) {
+                    self.error(
+                        codes::E2027,
+                        span,
+                        format!("`{name}` is a trait, not a type"),
+                    )
+                    .help("name the struct that implements it, or call a method on a value")
+                    .emit();
+                } else if self.globals.contains_key(&(module, last.name)) {
+                    self.error(
+                        codes::E2011,
+                        span,
+                        format!("`{name}` is a value, not a type"),
+                    )
+                    .help("annotations accept primitive types, references, and struct names")
+                    .emit();
+                } else {
+                    self.error(
+                        codes::E2002,
+                        span,
+                        format!("cannot find type `{name}` in this module"),
+                    )
+                    .help("declare it with `struct`, or check the path")
+                    .emit();
+                }
                 self.hir.ty_ctxt_mut().error_ty()
             }
             TypeKind::Tuple(elements) => {
@@ -216,42 +257,17 @@ impl Lowering<'_> {
                     return self.hir.ty_ctxt().param_ty(param);
                 }
 
-                if let Some(definition) = self.types.get(&symbol).copied() {
-                    if self.hir.definitions().kind(definition) == seal_def::DefKind::OpaqueType {
-                        let span = self.ast.ty(ty).span;
-                        let name = self.hir.definitions().name(definition);
-                        let opaque = self.hir.ty_ctxt().opaque_ty(definition, name);
-                        if behind_raw_pointer {
-                            return opaque;
-                        }
-                        let display = self.interner.resolve(name).to_owned();
-                        self.error(
-                            codes::E3087,
-                            span,
-                            format!(
-                                "the opaque type `{display}` can only appear behind a raw pointer"
-                            ),
-                        )
-                        .help("write `*raw {display}` or `*raw mut {display}` and let C own the storage")
-                        .emit();
-                        return self.hir.ty_ctxt_mut().error_ty();
-                    }
-                    let adt = self
-                        .hir
-                        .adt(definition)
-                        .expect("every struct definition reserves an aggregate");
-                    let expected = self.hir.ty_ctxt().adt_generic_count(adt) as usize;
-                    let Some(args) = self.lower_type_arguments(
+                if let Some(definition) = self.type_def(symbol) {
+                    let span = self.ast.ty(ty).span;
+                    return self.lower_type_definition(
+                        definition,
                         path.args.as_ref(),
-                        expected,
-                        false,
                         path.name_span,
-                    ) else {
-                        return self.hir.ty_ctxt_mut().error_ty();
-                    };
-                    return self.hir.ty_ctxt().adt_ty_with(adt, args);
+                        span,
+                        behind_raw_pointer,
+                    );
                 }
-                if self.traits.contains_key(&symbol) {
+                if self.trait_exists(symbol) {
                     if let Some(args) = &path.args {
                         for argument in &args.args {
                             let _ = self.lower_type(*argument);
@@ -271,7 +287,7 @@ impl Lowering<'_> {
 
                 let span = self.ast.ty(ty).span;
                 let name = self.interner.resolve(symbol);
-                if self.globals.contains_key(&symbol) {
+                if self.value_exists(symbol) {
                     self.error(
                         codes::E2011,
                         span,
@@ -346,6 +362,44 @@ impl Lowering<'_> {
             }
             TypeKind::Error => self.hir.ty_ctxt_mut().error_ty(),
         }
+    }
+
+    /// Lowers a type name that resolved to `definition`.
+    fn lower_type_definition(
+        &mut self,
+        definition: seal_def::DefId,
+        args: Option<&seal_ast::GenericArgs>,
+        name_span: seal_span::Span,
+        span: seal_span::Span,
+        behind_raw_pointer: bool,
+    ) -> TyId {
+        if self.hir.definitions().kind(definition) == seal_def::DefKind::OpaqueType {
+            let name = self.hir.definitions().name(definition);
+            let opaque = self.hir.ty_ctxt().opaque_ty(definition, name);
+            if behind_raw_pointer {
+                return opaque;
+            }
+            let display = self.interner.resolve(name).to_owned();
+            self.error(
+                codes::E3087,
+                span,
+                format!("the opaque type `{display}` can only appear behind a raw pointer"),
+            )
+            .help(format!(
+                "write `*raw {display}` or `*raw mut {display}` and let C own the storage"
+            ))
+            .emit();
+            return self.hir.ty_ctxt_mut().error_ty();
+        }
+        let adt = self
+            .hir
+            .adt(definition)
+            .expect("every struct definition reserves an aggregate");
+        let expected = self.hir.ty_ctxt().adt_generic_count(adt) as usize;
+        let Some(args) = self.lower_type_arguments(args, expected, false, name_span) else {
+            return self.hir.ty_ctxt_mut().error_ty();
+        };
+        self.hir.ty_ctxt().adt_ty_with(adt, args)
     }
 
     /// Reports `ty` when a function pointer parameter or result is unsized.

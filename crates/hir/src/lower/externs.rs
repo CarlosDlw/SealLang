@@ -35,8 +35,10 @@ enum ExternalShape {
 impl Lowering<'_> {
     /// Registers every external declaration before any body is lowered.
     pub(super) fn collect_extern_items(&mut self) {
-        let items: Vec<ItemId> = self.ast.program().items().to_vec();
-        for item_id in items {
+        let items = self.top_level_items();
+        for item in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             match self.ast.item(item_id).kind.clone() {
                 ItemKind::ExternFunc(declaration) => {
                     self.collect_extern_function(item_id, &declaration);
@@ -72,7 +74,9 @@ impl Lowering<'_> {
     /// Lowers every external signature and detects conflicting symbols.
     pub(super) fn lower_extern_declarations(&mut self) {
         let functions = self.extern_function_items.clone();
-        for (item_id, definition) in functions {
+        for (item, definition) in functions {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::ExternFunc(declaration) = self.ast.item(item_id).kind.clone() else {
                 continue;
             };
@@ -106,7 +110,9 @@ impl Lowering<'_> {
         }
 
         let statics = self.extern_static_items.clone();
-        for (item_id, definition) in statics {
+        for (item, definition) in statics {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::ExternStatic(declaration) = self.ast.item(item_id).kind.clone() else {
                 continue;
             };
@@ -233,73 +239,77 @@ impl Lowering<'_> {
 
     /// Creates the definition for one external function declaration.
     fn collect_extern_function(&mut self, item_id: ItemId, declaration: &seal_ast::ExternFnDecl) {
-        let definition = self.define(DefData {
-            kind: DefKind::ExternFunction,
-            name: declaration.name,
-            name_span: declaration.name_span,
-            span: declaration.span,
-            parent: None,
-            mutable: false,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(
+                DefKind::ExternFunction,
+                declaration.name,
+                declaration.name_span,
+                declaration.span,
+                None,
+                false,
+            ),
+        );
         self.register_generics(
             definition,
             &GenericParams::empty(declaration.span),
             None,
             false,
         );
-        self.extern_function_items.push((item_id, definition));
+        self.extern_function_items
+            .push((self.item_ref(item_id), definition));
 
-        if let Some(first) = self.globals.get(&declaration.name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2001,
+        if let Some(first) = self.local_value(declaration.name) {
+            self.duplicate(
+                first,
                 declaration.name_span,
                 format!(
                     "the function `{}` is defined twice",
                     self.interner.resolve(declaration.name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each function a distinct name")
-            .emit();
+                codes::E2001,
+            );
         } else {
-            self.globals.insert(declaration.name, definition);
+            self.globals
+                .insert((self.current_module, declaration.name), definition);
         }
     }
 
     /// Creates the definition for one external static declaration.
     fn collect_extern_static(&mut self, item_id: ItemId, declaration: &seal_ast::ExternStaticDecl) {
-        let definition = self.define(DefData {
-            kind: DefKind::ExternStatic,
-            name: declaration.name,
-            name_span: declaration.name_span,
-            span: declaration.span,
-            parent: None,
-            mutable: declaration.mutable,
-        });
+        let definition = self.define_item(
+            item_id,
+            DefData::new(
+                DefKind::ExternStatic,
+                declaration.name,
+                declaration.name_span,
+                declaration.span,
+                None,
+                declaration.mutable,
+            ),
+        );
         self.register_generics(
             definition,
             &GenericParams::empty(declaration.span),
             None,
             false,
         );
-        self.extern_static_items.push((item_id, definition));
+        self.extern_static_items
+            .push((self.item_ref(item_id), definition));
 
-        if let Some(first) = self.globals.get(&declaration.name).copied() {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2068,
+        if let Some(first) = self.local_value(declaration.name) {
+            self.duplicate(
+                first,
                 declaration.name_span,
                 format!(
                     "the value `{}` is defined twice",
                     self.interner.resolve(declaration.name)
                 ),
-            )
-            .secondary(first_span, "first defined here")
-            .help("give each function, constant, and static a distinct name")
-            .emit();
+                codes::E2068,
+            );
         } else {
-            self.globals.insert(declaration.name, definition);
+            self.globals
+                .insert((self.current_module, declaration.name), definition);
         }
     }
 
@@ -310,14 +320,14 @@ impl Lowering<'_> {
             (param.name, param.name_span, param.ty, param.span)
         };
         let ty = self.lower_type(ty);
-        let definition = self.define(DefData {
-            kind: DefKind::Param,
+        let definition = self.define(DefData::new(
+            DefKind::Param,
             name,
             name_span,
             span,
-            parent: Some(function),
-            mutable: false,
-        });
+            Some(function),
+            false,
+        ));
         ParamData {
             def: definition,
             ty,

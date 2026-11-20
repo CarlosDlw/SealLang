@@ -11,7 +11,9 @@ impl Lowering<'_> {
     /// identity nominal even before a declaration is used behind a pointer.
     pub(super) fn lower_opaque_types(&mut self) {
         let items = self.opaque_items.clone();
-        for (item_id, definition) in items {
+        for (item, definition) in items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::OpaqueType(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
