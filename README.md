@@ -26,6 +26,20 @@ cargo build --release
 10
 ```
 
+For multi-file projects, `seal` owns the project layer:
+
+```text
+cargo build --release
+./target/release/seal new demo --yes
+./target/release/seal run --project demo
+```
+
+`seal new` writes a `seal.toml`, a multi-file `src/`, a lockfile, and a test
+directory. `seal build`, `seal check`, and `seal run` discover members and
+targets, build a versioned compile plan, and invoke the compiler in-process.
+`seal metadata` exposes the module and target model to editors, and
+`seal doctor` checks the linker, cache, and lockfile.
+
 `sealc build` runs the whole pipeline: it type-checks, borrow-checks, lowers
 checked MIR to LLVM IR, optimizes, and links an executable. `sealc run` builds
 that executable in a temporary directory, runs it with inherited standard
@@ -150,6 +164,14 @@ const func scaled(value: i32) -> i32 {
 ## Command line
 
 ```text
+seal new [PATH] [--template bin|lib|workspace] [--vcs git|none] [--yes]
+seal init [--template bin|lib|workspace]
+seal build [TARGET...] [-p PACKAGE] [--workspace] [--profile NAME] [--release]
+seal check [TARGET...] [-p PACKAGE] [--workspace]
+seal run [TARGET...] [-p PACKAGE] [--bin NAME] [-- <ARGS>...]
+seal metadata [--no-deps]
+seal doctor [--json] [--fix]
+
 sealc build [OPTIONS] <INPUT>...
 sealc check [OPTIONS] <INPUT>...
 sealc run [OPTIONS] <INPUT> [-- <ARGS>...]
@@ -246,6 +268,8 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/memory-model.md`](docs/memory-model.md) | Ownership, moves, borrowing, allocation, and the decisions behind them |
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
+| [`docs/project/manifest.md`](docs/project/manifest.md) | Project manifests, members, targets, path dependencies, lockfile, and API exposure |
+| [`docs/project/cli.md`](docs/project/cli.md) | The `seal` commands, compile plans, metadata, doctor, and exit status |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |

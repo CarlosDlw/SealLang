@@ -1338,6 +1338,14 @@ pub const E2083: ErrorCode = ErrorCode {
 Several files may contribute items to one module. Their items share one\nnamespace, so two fragments cannot declare the same name: every use would be\nambiguous.\n\nRename one of the definitions, or move it to a different module.",
 };
 
+/// A target's entry path does not name a callable function.
+pub const E2087: ErrorCode = ErrorCode {
+    code: "E2087",
+    title: "invalid target entry point",
+    explanation: "\
+A `bin`, `example`, or `generator` target names the function that starts the\nprogram with `entry = \"module::function\"`. The path must resolve to exactly\none function with no parameters that returns `i32` or `()`.\n\nCheck that the module is declared in one of the target's sources and that the\nfunction is declared at the module's top level.",
+};
+
 /// A module is used where a value is required.
 pub const E2086: ErrorCode = ErrorCode {
     code: "E2086",
@@ -2270,6 +2278,102 @@ Reduce the number of distinct types that need a destructor, for example by
 grouping values behind a single aggregate, or split the program so each part
 uses fewer of them. The limit exists so such a program reports an error instead
 of consuming unbounded memory.",
+};
+
+/// A compile plan file is missing, unreadable, or uses an unknown schema.
+pub const E8001: ErrorCode = ErrorCode {
+    code: "E8001",
+    title: "invalid compile plan file",
+    explanation: "\
+`sealc --plan-file` reads a versioned JSON plan produced by `seal`. A missing\nfile, malformed JSON, or a schema version newer than this compiler understands\nis rejected before any source is loaded.\n\nRegenerate the plan with a matching `seal`, or use `sealc` directly for a\nsingle-file build.",
+};
+
+/// A dependency kind is not supported by the current project layer.
+pub const E8002: ErrorCode = ErrorCode {
+    code: "E8002",
+    title: "unsupported dependency",
+    explanation: "\
+This phase resolves path dependencies inside the project. Registry and git\ndependencies need the registry, feature resolution, and lockfile support that\narrive in the next phase, so they are rejected instead of being silently\nignored.\n\nUse a `path` dependency, or wait for registry resolution.",
+};
+
+/// A target declaration is invalid.
+pub const E8003: ErrorCode = ErrorCode {
+    code: "E8003",
+    title: "invalid target",
+    explanation: "\
+A target must declare a supported kind, a primary source, and an entry function\nwhen its kind produces an executable. Check the `[targets.<name>]` table and the\nsource globs it uses.",
+};
+
+/// A source glob matched no files.
+pub const E8004: ErrorCode = ErrorCode {
+    code: "E8004",
+    title: "source glob matched no files",
+    explanation: "\
+Every source glob must match at least one `.sl` file. A pattern that silently\nmatches nothing would hide a misspelled directory or extension.\n\nFix the pattern or add the missing source file.",
+};
+
+/// A manifest is invalid or contradicts another manifest.
+pub const E8005: ErrorCode = ErrorCode {
+    code: "E8005",
+    title: "invalid manifest",
+    explanation: "\
+`seal.toml` is validated as a whole: names, versions, targets, profiles, path\ndependencies, and globs must be consistent across the project. The diagnostic\npoints at the key that needs to change.",
+};
+
+/// The package graph contains a cycle.
+pub const E8006: ErrorCode = ErrorCode {
+    code: "E8006",
+    title: "dependency cycle",
+    explanation: "\
+Packages are compiled in dependency order. A cycle has no first package, so it\ncannot be ordered. The diagnostic lists the cycle so one edge can be removed or\nthe packages can be merged.",
+};
+
+/// Feature resolution failed.
+pub const E8007: ErrorCode = ErrorCode {
+    code: "E8007",
+    title: "feature resolution failed",
+    explanation: "\
+Features are enabled per dependency edge and must form one consistent\nconfiguration. An unknown feature or a conflicting selection is reported here.",
+};
+
+/// The lockfile is invalid or out of date.
+pub const E8008: ErrorCode = ErrorCode {
+    code: "E8008",
+    title: "lockfile error",
+    explanation: "\
+`seal.lock` records the resolved path packages and their checksums. It is\ndeterministic and versioned; `--locked` refuses to change it.\n\nRun `seal build` without `--locked`, or regenerate the lockfile with `seal` when\nthe manifest changed intentionally.",
+};
+
+/// A profile is invalid or unknown.
+pub const E8009: ErrorCode = ErrorCode {
+    code: "E8009",
+    title: "invalid profile",
+    explanation: "\
+A profile controls optimization, debug information, assertions, LTO, and code\ngeneration units. It must be declared before it is selected, and its values must\nbe inside the supported ranges.",
+};
+
+/// A project produced a structurally invalid compile plan.
+pub const E8010: ErrorCode = ErrorCode {
+    code: "E8010",
+    title: "invalid compile plan",
+    explanation: "\
+A plan names packages in dependency order, exactly one primary package, and one\nprimary source per package. A dependency may only point to an earlier package.\nThe project layer reports this code when its output violates one of those\ninvariants, so the compiler never loads a malformed graph.",
+};
+
+/// A project file could not be read.
+pub const E8011: ErrorCode = ErrorCode {
+    code: "E8011",
+    title: "project I/O error",
+    explanation: "\
+The project layer could not read or write a file it needs, such as `seal.toml` or\n`seal.lock`. Check the path, permissions, and that the project root exists.",
+};
+
+/// More than one runnable target matches a command.
+pub const E8103: ErrorCode = ErrorCode {
+    code: "E8103",
+    title: "ambiguous runnable target",
+    explanation: "\
+`seal run` needs exactly one executable target. A package with several binaries,\nexamples, or generators is ambiguous. Select one with `--bin`, `--example`, or\nname the target explicitly.",
 };
 
 /// The internal compiler error code.
@@ -3635,20 +3739,21 @@ pub static ALL: &[ErrorCode] = &[
     E2039, E2040, E2041, E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051,
     E2052, E2053, E2054, E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064,
     E2065, E2066, E2067, E2068, E2069, E2070, E2071, E2072, E2073, E2074, E2075, E2076, E2077,
-    E2078, E2079, E2080, E2081, E2082, E2083, E2084, E2085, E2086, E3001, E3002, E3003, E3004,
-    E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017,
-    E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030,
-    E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043,
-    E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056,
-    E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070,
-    E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084,
-    E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097,
-    E3098, E3099, E3100, E3101, E3102, E3103, E3104, E3105, E4001, E4002, E4003, E4004, E4005,
-    E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018,
-    E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032,
-    E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011,
-    E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003,
-    E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E2078, E2079, E2080, E2081, E2082, E2083, E2084, E2085, E2086, E2087, E3001, E3002, E3003,
+    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
+    E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
+    E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055,
+    E3056, E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069,
+    E3070, E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083,
+    E3084, E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096,
+    E3097, E3098, E3099, E3100, E3101, E3102, E3103, E3104, E3105, E4001, E4002, E4003, E4004,
+    E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017,
+    E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031,
+    E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
+    E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
+    E8008, E8009, E8010, E8011, E8103, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3888,7 +3993,7 @@ mod tests {
                 "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
                 "E2064", "E2065", "E2066", "E2067", "E2068", "E2069", "E2070", "E2071", "E2072",
                 "E2073", "E2074", "E2075", "E2076", "E2077", "E2078", "E2079", "E2080", "E2081",
-                "E2082", "E2083", "E2084", "E2085", "E2086",
+                "E2082", "E2083", "E2084", "E2085", "E2086", "E2087",
             ]
         );
         // Module and API codes were allocated in phase 2. Codes are never

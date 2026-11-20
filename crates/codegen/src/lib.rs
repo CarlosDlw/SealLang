@@ -50,6 +50,7 @@
 //!     libraries: Vec::new(),
 //!     search_paths: Vec::new(),
 //!     link_args: Vec::new(),
+//!     entry: None,
 //! };
 //! seal_codegen::emit(input, &options)?;
 //! ```

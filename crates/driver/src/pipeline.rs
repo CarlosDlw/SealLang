@@ -9,12 +9,18 @@
 //! accidentally produce files or silently skip code generation.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 
 use seal_codegen::{CodegenInput, CodegenOptions, Emit};
+use seal_def::{DefId, PackageId, PackageInstanceId};
+use seal_index::Idx;
+use seal_plan::CompilePlan;
 use seal_session::Session;
 use seal_target::host_triple;
+
+use crate::api;
+use crate::plan::resolve_entry;
 
 use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, LinkArgs, OutputArgs, RunArgs};
 use crate::options::session_options;
@@ -23,7 +29,7 @@ use crate::report;
 use crate::temp::TemporaryDirectory;
 
 /// What the selected command asks the pipeline to do.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Request<'a> {
     /// Run analysis through monomorphization and write nothing.
     Check,
@@ -33,7 +39,10 @@ enum Request<'a> {
         output: &'a OutputArgs,
         runtime_archive: Option<&'a Path>,
         link: &'a LinkArgs,
+        planned_output: Option<PathBuf>,
     },
+    /// Write a JSON API snapshot after analysis.
+    Api { path: PathBuf },
 }
 
 /// Whether compilation completed without errors.
@@ -55,35 +64,52 @@ impl Outcome {
 }
 
 impl Request<'_> {
+    /// Replaces the artifact path with the one named by a compile plan.
+    fn with_planned_output(mut self, path: Option<PathBuf>) -> Self {
+        if let Self::Build { planned_output, .. } = &mut self {
+            *planned_output = path;
+        }
+        self
+    }
+
     /// Returns the output options that affect session configuration, if any.
     fn output(&self) -> Option<&OutputArgs> {
         match self {
-            Self::Check => None,
+            Self::Check | Self::Api { .. } => None,
             Self::Build { output, .. } => Some(output),
         }
     }
 
     /// Returns the verb that describes this request in the failure summary.
-    const fn action(&self) -> &'static str {
+    fn action(&self) -> &'static str {
         match self {
             Self::Check => "check",
             Self::Build { .. } => "compile",
+            Self::Api { .. } => "snapshot",
         }
     }
 }
 
 /// Compiles every input and writes the requested artifacts.
 pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
-    compile(
-        &args.compile,
+    let request = if args.output.is_api() {
+        Request::Api {
+            path: args
+                .output
+                .path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("api.json")),
+        }
+    } else {
         Request::Build {
             emit: args.output.artifact(),
             output: &args.output,
             runtime_archive: args.runtime_archive.as_deref(),
             link: &args.link,
-        },
-    )
-    .map(Outcome::code)
+            planned_output: None,
+        }
+    };
+    compile(&args.compile, request).map(Outcome::code)
 }
 
 /// Builds one input into a temporary executable and runs it.
@@ -105,6 +131,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         target: args.target.clone(),
         diagnostics: args.diagnostics.clone(),
         plan: false,
+        plan_file: None,
         expose: Vec::new(),
     };
     let request = Request::Build {
@@ -112,6 +139,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         output: &output,
         runtime_archive: args.runtime_archive.as_deref(),
         link: &args.link,
+        planned_output: None,
     };
 
     match compile(&compile_arguments, request)? {
@@ -175,13 +203,31 @@ pub(crate) fn check(args: &CheckArgs) -> Result<ExitCode, String> {
 
 /// Creates the session, compiles each input, and reports the final status.
 fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, String> {
-    let session = Session::new(session_options(arguments, request.output()))
-        .map_err(|error| error.to_string())?;
-    if arguments.plan {
-        compile_package(&session, request, arguments);
+    let plan = match &arguments.plan_file {
+        Some(path) => match CompilePlan::load(path) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                eprintln!("error: {error}");
+                return Ok(Outcome::Failed(ExitCode::from(1)));
+            }
+        },
+        None => None,
+    };
+    let mut options = session_options(arguments, request.output());
+    if let Some(plan) = &plan {
+        options.target =
+            seal_target::TargetTriple::parse(&plan.target).map_err(|error| error.to_string())?;
+    }
+    let session = Session::new(options).map_err(|error| error.to_string())?;
+    if let Some(plan) = plan {
+        if !compile_plan_file(&session, request.clone(), plan) {
+            return Ok(Outcome::Failed(ExitCode::from(1)));
+        }
+    } else if arguments.plan {
+        compile_package(&session, request.clone(), arguments);
     } else {
         for input in &arguments.inputs {
-            compile_input(&session, request, input);
+            compile_input(&session, request.clone(), input);
         }
     }
 
@@ -192,7 +238,11 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
         eprint!("{}", session.profiler().report());
     }
     if session.abort_if_errors().is_err() {
-        let files = arguments.inputs.len();
+        let files = if arguments.plan_file.is_some() {
+            1
+        } else {
+            arguments.inputs.len()
+        };
         let errors = session.diag().error_count();
         eprintln!(
             "error: could not {} {} input {} due to {} previous {}",
@@ -252,7 +302,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
 
-    compile_hir(session, request, hir, file_id, input);
+    compile_hir(session, request, hir, file_id, input, None);
 }
 
 /// Compiles every input as one package with a module graph.
@@ -312,7 +362,129 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
     if session.diag().error_count() != errors {
         return;
     }
-    compile_hir(session, request, hir, primary_file, &arguments.inputs[0]);
+    compile_hir(
+        session,
+        request,
+        hir,
+        primary_file,
+        &arguments.inputs[0],
+        None,
+    );
+}
+
+/// Compiles one package graph from a versioned plan file.
+fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan) -> bool {
+    let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> = Vec::new();
+    let mut file_ids = std::collections::BTreeMap::new();
+    let mut primary: Option<(seal_span::FileId, PathBuf)> = None;
+    let errors = session.diag().error_count();
+    for (index, package) in plan.packages.iter().enumerate() {
+        for file in &package.files {
+            let Ok(file_id) = session.load_file(&file.path) else {
+                return false;
+            };
+            let Some(source) = session.source_map().file(file_id) else {
+                return false;
+            };
+            let tokens = session.profiler().time("lex", || {
+                seal_lexer::lex(&source, session.diag(), session.interner())
+            });
+            if session.diag().error_count() != errors {
+                return false;
+            }
+            let ast = session.profiler().time("parse", || {
+                seal_parser::parse(&tokens, session.diag(), session.interner())
+            });
+            if session.diag().error_count() != errors {
+                return false;
+            }
+            if index == plan.primary && file.primary {
+                primary = Some((file_id, file.path.clone()));
+            }
+            file_ids.insert(file.path.clone(), file_id);
+            loaded.push((file_id, ast));
+        }
+    }
+    let Some((primary_file, primary_input)) = primary else {
+        eprintln!("error: the compile plan has no primary source file");
+        return false;
+    };
+
+    let mut package_plan = seal_hir::PackagePlan {
+        packages: Vec::with_capacity(plan.packages.len()),
+        primary: PackageId::from_usize(plan.primary),
+    };
+    for package in &plan.packages {
+        let name = session.interner().intern(&package.name);
+        let mut files = Vec::with_capacity(package.files.len());
+        for file in &package.files {
+            let Some(id) = file_ids.get(&file.path) else {
+                eprintln!(
+                    "error: the compile plan names the unloaded file `{}`",
+                    file.path.display()
+                );
+                return false;
+            };
+            files.push(seal_hir::PackagePlanFile {
+                file: *id,
+                primary: file.primary,
+            });
+        }
+        let exposed = package
+            .exposed
+            .iter()
+            .filter_map(|value| module_path(session, value))
+            .collect();
+        let dependencies = package
+            .dependencies
+            .iter()
+            .map(|dependency| seal_hir::PackagePlanDependency {
+                alias: session.interner().intern(&dependency.alias),
+                package: PackageId::from_usize(dependency.package),
+            })
+            .collect();
+        package_plan.packages.push(seal_hir::PackagePlanEntry {
+            name,
+            instance: PackageInstanceId::from_usize(package.instance as usize),
+            files,
+            exposed,
+            dependencies,
+        });
+    }
+    let hir = session.profiler().time("hir", || {
+        seal_hir::lower_package(
+            &package_plan,
+            &loaded,
+            session.diag(),
+            session.interner(),
+            session.target().c_abi(),
+        )
+    });
+    if session.diag().error_count() != errors {
+        return false;
+    }
+    let entry = match &plan.entry {
+        Some(value) => match resolve_entry(session, &hir, value) {
+            Some(definition) => Some(definition),
+            None => return false,
+        },
+        None => None,
+    };
+    let request = request.with_planned_output(plan.output.clone());
+    compile_hir(session, request, hir, primary_file, &primary_input, entry);
+    true
+}
+
+fn module_path(session: &Session, value: &str) -> Option<seal_hir::ModulePath> {
+    if value == "root" {
+        return Some(seal_hir::ModulePath::root());
+    }
+    let segments: Vec<_> = value
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| session.interner().intern(segment))
+        .collect();
+    (!segments.is_empty()).then(|| seal_hir::ModulePath::new(segments))
 }
 
 /// Parses the `--expose` values into module paths.
@@ -352,6 +524,7 @@ fn compile_hir(
     hir: seal_hir::Hir,
     file_id: seal_span::FileId,
     input: &Path,
+    entry: Option<DefId>,
 ) {
     let errors = session.diag().error_count();
 
@@ -446,13 +619,30 @@ fn compile_hir(
         output,
         runtime_archive,
         link,
-    } = request
+        planned_output,
+    } = &request
     else {
+        if let Request::Api { path } = &request {
+            if let Err(error) = api::write(session, &hir, path) {
+                session.diag().bug(error);
+            }
+        }
         return;
     };
+    let output_path = planned_output
+        .clone()
+        .unwrap_or_else(|| artifact_path(output, input, *emit));
+    if let Some(parent) = output_path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            session.diag().bug(format!(
+                "cannot create the artifact directory `{}`: {error}",
+                parent.display()
+            ));
+        }
+    }
     let options = CodegenOptions {
-        emit,
-        output: artifact_path(output, input, emit),
+        emit: *emit,
+        output: output_path,
         opt_level: output.optimization.opt_level,
         debug_info: output.optimization.debug_info,
         crate_name: input
@@ -462,6 +652,7 @@ fn compile_hir(
         libraries: link.libraries.clone(),
         search_paths: link.search_paths.clone(),
         link_args: link.link_args.clone(),
+        entry,
     };
     let codegen_input = CodegenInput {
         mono: &mono,

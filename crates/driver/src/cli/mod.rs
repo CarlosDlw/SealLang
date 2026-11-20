@@ -95,6 +95,37 @@ impl Cli {
 
     /// Applies the rules that cannot be expressed as per-argument constraints.
     fn validate(self) -> Result<Self, clap::Error> {
+        let compile = match &self.command {
+            CliCommand::Build(build) => Some(&build.compile),
+            CliCommand::Check(check) => Some(&check.compile),
+            _ => None,
+        };
+        if let Some(compile) = compile {
+            if compile.plan_file.is_some() && !compile.inputs.is_empty() {
+                return Err(Self::command().error(
+                    ErrorKind::ArgumentConflict,
+                    "`--plan-file` cannot be combined with input files",
+                ));
+            }
+            if compile.plan_file.is_some() && compile.plan {
+                return Err(Self::command().error(
+                    ErrorKind::ArgumentConflict,
+                    "`--plan-file` and `--plan` cannot be combined",
+                ));
+            }
+            if compile.plan_file.is_none() && compile.inputs.is_empty() {
+                return Err(Self::command().error(
+                    ErrorKind::MissingRequiredArgument,
+                    "provide at least one input file or `--plan-file`",
+                ));
+            }
+            if compile.plan_file.is_some() && !compile.expose.is_empty() {
+                return Err(Self::command().error(
+                    ErrorKind::ArgumentConflict,
+                    "`--expose` belongs to `--plan`; a plan names its own exposed modules",
+                ));
+            }
+        }
         if let CliCommand::Build(build) = &self.command {
             if build.output.path.is_some() && build.compile.inputs.len() > 1 && !build.compile.plan
             {

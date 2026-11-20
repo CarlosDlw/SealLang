@@ -43,7 +43,11 @@ allowed to depend only on crates below it in the list.
 | `seal-profiling` | Phase timings for `--time-passes`. |
 | `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
-| `seal-driver` | The `sealc` binary: clap-based subcommands and argument groups, exit codes, panic policy, and phase wiring. |
+| `seal-plan` | The versioned `CompilePlan` exchanged between the project layer and the driver: target, profile, packages, files, API paths, dependency aliases, cfg values, entry, and output. |
+| `seal-manifest` | `seal.toml` parsing and validation: project/package settings, targets, path dependencies, env, profiles, API exposure, unknown-key warnings, and span-bearing diagnostics. |
+| `seal-project` | Member and source discovery, path-dependency graph and cycles, target selection, deterministic lockfile, metadata model, and one plan per target. |
+| `seal-cli` | The `seal` binary: templates, build/run/check, metadata, doctor, and in-process driver invocation. |
+| `seal-driver` | The `sealc` binary and driver library: clap-based subcommands and argument groups, single-file and plan-file pipelines, exit codes, panic policy, and phase wiring. |
 
 ## Compilation pipeline
 
@@ -77,6 +81,14 @@ source
 | Borrow check | `seal-borrowck` | MIR and `ConstProgram` | loans, origins, effects | `E5xxx` |
 | Monomorphize | `seal-mono` | MIR, `ConstProgram` | `MonoProgram` | `E7xxx` |
 | Code generation | `seal-codegen` | `MonoProgram`, `ConstProgram` | IR and artifacts | `E6xxx` |
+
+The project layer sits in front of this pipeline. `seal-manifest` parses and
+validates `seal.toml`; `seal-project` discovers members and sources, resolves
+path dependencies, detects cycles, builds targets, and writes `seal.lock`;
+`seal-plan` serializes the resulting graph. `seal` writes a plan and invokes
+the driver in-process, while `sealc --plan-file` loads the same plan directly.
+The driver validates every plan invariant before loading a source file, so a
+malformed graph is `E8001`/`E8010` rather than a partial compilation.
 
 HIR lowering validates trait-impl coherence first, then opt-in `Copy`
 implementations, then `Drop` implementations. `Copy` validation registers

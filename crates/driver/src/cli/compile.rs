@@ -11,7 +11,7 @@ use super::target::TargetArgs;
 #[derive(Debug, Args)]
 pub(crate) struct CompileArgs {
     /// Source files to analyze.
-    #[arg(value_name = "INPUT", required = true)]
+    #[arg(value_name = "INPUT")]
     pub(crate) inputs: Vec<PathBuf>,
 
     /// Compile every input as one package instead of one program per file.
@@ -21,6 +21,12 @@ pub(crate) struct CompileArgs {
     /// independent single-file program.
     #[arg(long, help_heading = "Compilation")]
     pub(crate) plan: bool,
+
+    /// Read the package graph from a versioned JSON compile plan.
+    ///
+    /// `seal` writes this file; it replaces positional inputs and `--plan`.
+    #[arg(long = "plan-file", value_name = "PATH", help_heading = "Compilation")]
+    pub(crate) plan_file: Option<PathBuf>,
 
     /// Expose a module path in the package API, for example `a::b` or `root`.
     ///

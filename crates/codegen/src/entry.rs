@@ -38,6 +38,23 @@ pub(crate) fn validate(hir: &Hir, mono: &MonoProgram) -> Result<Instance, Codege
         1 => candidates[0],
         count => return Err(CodegenError::EntryPoint(EntryPointError::Multiple(count))),
     };
+    validate_selected(hir, mono, definition)
+}
+
+/// Validates a function explicitly selected by a project entry path.
+///
+/// The project layer already resolved the path and reported `E2087` when it
+/// did not name a function, so this only checks the entry-point signature.
+pub(crate) fn validate_selected(
+    hir: &Hir,
+    mono: &MonoProgram,
+    definition: DefId,
+) -> Result<Instance, CodegenError> {
+    if hir.definitions().get(definition).kind != DefKind::Function {
+        return Err(CodegenError::internal(
+            "the selected entry point is not a function",
+        ));
+    }
     let generics = hir.flattened_generics(definition).len();
     if generics != 0 {
         return Err(CodegenError::EntryPoint(EntryPointError::Generic(generics)));

@@ -24,6 +24,8 @@ pub(crate) enum EmitArg {
     Asm,
     /// Linked native executable.
     Exe,
+    /// A JSON snapshot of the package API and module tree.
+    Api,
 }
 
 impl From<EmitArg> for Emit {
@@ -32,6 +34,7 @@ impl From<EmitArg> for Emit {
             EmitArg::Obj => Self::Object,
             EmitArg::Asm => Self::Assembly,
             EmitArg::Exe => Self::Executable,
+            EmitArg::Api => Self::Object,
         }
     }
 }

@@ -39,4 +39,9 @@ impl OutputArgs {
     pub(crate) fn artifact(&self) -> Emit {
         self.emit.into()
     }
+
+    /// Returns whether the request writes an API snapshot instead of code.
+    pub(crate) fn is_api(&self) -> bool {
+        self.emit == EmitArg::Api
+    }
 }

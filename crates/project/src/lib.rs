@@ -1,0 +1,280 @@
+//! The project layer between `seal.toml` and the compiler driver.
+//!
+//! It discovers members and source files, resolves path dependencies, detects
+//! cycles, validates targets, builds a deterministic lockfile, and produces one
+//! [`CompilePlan`] per target. It never invokes the compiler itself.
+
+#![warn(missing_docs)]
+
+mod error;
+mod graph;
+mod lockfile;
+mod plan;
+mod source;
+mod targets;
+
+use std::path::{Path, PathBuf};
+
+pub use error::{ProjectError, ProjectResult};
+pub use lockfile::{LockDependency, LockPackage, Lockfile};
+pub use plan::PlanOptions;
+
+use seal_manifest::{LoadedManifest, Manifest, ManifestWarning, TargetKind};
+use seal_plan::{CompilePlan, PlanPackage};
+
+/// One build target of a package.
+#[derive(Clone, Debug)]
+pub struct Target {
+    /// The target name.
+    pub name: String,
+    /// The artifact kind.
+    pub kind: TargetKind,
+    /// The entry function path, when the target has one.
+    pub entry: Option<String>,
+    /// Every source file of the target, primary first.
+    pub files: Vec<PathBuf>,
+    /// The primary source file.
+    pub primary: PathBuf,
+    /// An artifact path override relative to the project root.
+    pub output: Option<PathBuf>,
+    /// The target's profile override.
+    pub profile: Option<String>,
+    /// The linker override.
+    pub linker: Option<String>,
+    /// The linker script.
+    pub linker_script: Option<PathBuf>,
+}
+
+impl Target {
+    /// Returns whether the target produces an executable.
+    pub fn is_executable(&self) -> bool {
+        matches!(
+            self.kind,
+            TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Bench
+                | TargetKind::Example
+                | TargetKind::Generator
+        )
+    }
+}
+
+/// One resolved dependency edge.
+#[derive(Clone, Debug)]
+pub struct Dependency {
+    /// The name the package uses in imports.
+    pub alias: String,
+    /// Index into [`Project::packages`].
+    pub package: usize,
+}
+
+/// One resolved package, in dependency order.
+#[derive(Clone, Debug)]
+pub struct Package {
+    /// The package name.
+    pub name: String,
+    /// The package version.
+    pub version: String,
+    /// The package root.
+    pub root: PathBuf,
+    /// The complete manifest.
+    pub manifest: Manifest,
+    /// Every base source file, sorted.
+    pub files: Vec<PathBuf>,
+    /// Declared or inferred targets.
+    pub targets: Vec<Target>,
+    /// Resolved dependency edges.
+    pub dependencies: Vec<Dependency>,
+}
+
+impl Package {
+    /// Returns the library target, when the package declares one.
+    pub fn library(&self) -> Option<&Target> {
+        self.targets
+            .iter()
+            .find(|target| target.kind == TargetKind::Lib)
+    }
+
+    /// Returns a target by name.
+    pub fn target(&self, name: &str) -> Option<&Target> {
+        self.targets.iter().find(|target| target.name == name)
+    }
+}
+
+/// A fully loaded project.
+#[derive(Clone, Debug)]
+pub struct Project {
+    /// The canonical project root.
+    pub root: PathBuf,
+    /// The project name.
+    pub name: String,
+    /// Packages selected by commands without `--workspace`.
+    pub default_members: Vec<String>,
+    /// Packages in dependency order.
+    pub packages: Vec<Package>,
+    /// Non-fatal manifest warnings.
+    pub warnings: Vec<ManifestWarning>,
+    /// The current lockfile contents.
+    pub lockfile: Lockfile,
+}
+
+impl Project {
+    /// Loads the project rooted at `root`.
+    pub fn load(root: &Path) -> ProjectResult<Self> {
+        graph::load(root)
+    }
+
+    /// Returns the package at `index`.
+    pub fn package(&self, index: usize) -> &Package {
+        &self.packages[index]
+    }
+
+    /// Returns the package with `name`.
+    pub fn package_by_name(&self, name: &str) -> Option<(usize, &Package)> {
+        self.packages
+            .iter()
+            .enumerate()
+            .find(|(_, package)| package.name == name)
+    }
+
+    /// Returns the package declared at the project root, if any.
+    pub fn root_package(&self) -> Option<usize> {
+        self.packages
+            .iter()
+            .position(|package| package.root == self.root)
+    }
+
+    /// Returns the default package for commands without `-p`.
+    pub fn default_package(&self) -> ProjectResult<usize> {
+        if let Some(index) = self.root_package() {
+            return Ok(index);
+        }
+        for member in &self.default_members {
+            let name = member.rsplit('/').next().unwrap_or(member);
+            if let Some((index, _)) = self.package_by_name(name) {
+                return Ok(index);
+            }
+            if let Some((index, _)) = self
+                .packages
+                .iter()
+                .enumerate()
+                .find(|(_, package)| package.root.ends_with(member))
+            {
+                return Ok(index);
+            }
+        }
+        if let Some((index, _)) = self.package_by_name(&self.name) {
+            return Ok(index);
+        }
+        if self.packages.len() == 1 {
+            return Ok(0);
+        }
+        Err(ProjectError::manifest(
+            "the project has several packages; select one with `-p <PACKAGE>` or `--workspace`",
+        ))
+    }
+
+    /// Builds one compile plan.
+    pub fn compile_plan(
+        &self,
+        package: usize,
+        target: &str,
+        options: &PlanOptions,
+    ) -> ProjectResult<CompilePlan> {
+        plan::compile_plan(self, package, target, options)
+    }
+
+    /// Returns all targets selected by `--all-targets`.
+    pub fn all_targets(&self) -> Vec<(usize, &Target)> {
+        self.packages
+            .iter()
+            .enumerate()
+            .flat_map(|(index, package)| package.targets.iter().map(move |target| (index, target)))
+            .collect()
+    }
+
+    /// Computes the deterministic lockfile for the project.
+    pub fn resolve_lockfile(&self, target: &str) -> Lockfile {
+        lockfile::resolve(self, target)
+    }
+
+    /// Writes the lockfile when its contents changed.
+    pub fn write_lockfile(&self) -> ProjectResult<bool> {
+        self.lockfile.write_if_changed(&self.root.join("seal.lock"))
+    }
+
+    /// Returns the plan packages for one package, dependencies first.
+    pub(crate) fn ordered_packages(&self, primary: usize) -> Vec<usize> {
+        let mut ordered = Vec::new();
+        let mut seen = vec![false; self.packages.len()];
+        collect(self, primary, &mut seen, &mut ordered);
+        ordered
+    }
+
+    /// Returns the plan package for one package, independent of remapping.
+    pub(crate) fn plan_package(&self, index: usize, remap: &[usize]) -> PlanPackage {
+        let package = &self.packages[index];
+        let target = package.library().or_else(|| package.targets.first());
+        let (files, exposed) = match target {
+            Some(target) => (
+                target
+                    .files
+                    .iter()
+                    .map(|path| seal_plan::PlanFile {
+                        path: path.clone(),
+                        primary: *path == target.primary,
+                    })
+                    .collect(),
+                package
+                    .manifest
+                    .package
+                    .as_ref()
+                    .and_then(|manifest| manifest.api.as_ref())
+                    .map_or_else(|| vec!["root".to_owned()], |api| api.expose.clone()),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        let dependencies = package
+            .dependencies
+            .iter()
+            .map(|dependency| seal_plan::PlanDependency {
+                alias: dependency.alias.clone(),
+                package: remap[dependency.package],
+            })
+            .collect();
+        PlanPackage {
+            name: package.name.clone(),
+            version: package.version.clone(),
+            instance: 0,
+            root: package.root.clone(),
+            files,
+            exposed,
+            dependencies,
+            cfg: seal_plan::CfgOptions::default(),
+        }
+    }
+}
+
+fn collect(project: &Project, index: usize, seen: &mut [bool], ordered: &mut Vec<usize>) {
+    if seen[index] {
+        return;
+    }
+    seen[index] = true;
+    for dependency in &project.packages[index].dependencies {
+        collect(project, dependency.package, seen, ordered);
+    }
+    ordered.push(index);
+}
+
+/// Loads a manifest and returns it with the canonical root.
+pub(crate) fn load_manifest(root: &Path) -> ProjectResult<LoadedManifest> {
+    let path = root.join("seal.toml");
+    if !path.is_file() {
+        return Err(ProjectError::io(format!(
+            "no `seal.toml` found at `{}`; run `seal init` to create one",
+            root.display()
+        )));
+    }
+    seal_manifest::load(&path)
+        .map_err(|error| ProjectError::manifest(format!("{}: {}", path.display(), error)))
+}

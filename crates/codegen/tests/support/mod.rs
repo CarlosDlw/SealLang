@@ -237,6 +237,7 @@ fn compile_for_target_with_runtime_and_links(
             libraries: links.libraries,
             search_paths: links.search_paths,
             link_args: links.link_args,
+            entry: None,
         },
     )
     .map(|_| ())

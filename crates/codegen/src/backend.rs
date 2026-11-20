@@ -141,7 +141,10 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     };
 
     let entry_point = if options.emit == Emit::Executable {
-        Some(entry::validate(input.hir, input.mono)?)
+        Some(match options.entry {
+            Some(definition) => entry::validate_selected(input.hir, input.mono, definition)?,
+            None => entry::validate(input.hir, input.mono)?,
+        })
     } else {
         None
     };

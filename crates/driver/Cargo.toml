@@ -20,15 +20,23 @@ seal-codegen.workspace = true
 seal-const-eval.workspace = true
 seal-diagnostics.workspace = true
 seal-hir.workspace = true
+seal-index.workspace = true
 seal-lexer.workspace = true
 seal-mir.workspace = true
 seal-mono.workspace = true
 seal-parser.workspace = true
 seal-error-codes.workspace = true
+seal-def.workspace = true
 seal-fs.workspace = true
+seal-plan.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 seal-session.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
 seal-target.workspace = true
 seal-typeck.workspace = true
 seal-version.workspace = true
+
+[dev-dependencies]
+seal-plan.workspace = true

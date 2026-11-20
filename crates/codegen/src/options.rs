@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use seal_def::DefId;
 use seal_session::OptLevel;
 
 /// The artifact a code generation request produces.
@@ -58,6 +59,10 @@ pub struct CodegenOptions {
     pub search_paths: Vec<PathBuf>,
     /// Arguments passed to the linker unchanged.
     pub link_args: Vec<OsString>,
+    /// An explicitly selected entry function.
+    ///
+    /// `None` keeps the single-file convention of looking for `main`.
+    pub entry: Option<DefId>,
 }
 
 impl CodegenOptions {
@@ -73,6 +78,7 @@ impl CodegenOptions {
             libraries: Vec::new(),
             search_paths: Vec::new(),
             link_args: Vec::new(),
+            entry: None,
         }
     }
 }
