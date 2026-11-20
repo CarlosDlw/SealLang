@@ -45,13 +45,17 @@ impl Checker<'_> {
             } => (Some(function), Some(trait_ref)),
             _ => {
                 let ty = self.infer_expr(callee, None, flow);
+                let ty = self.resolve_deep(ty);
+                if let Some(result) = self.check_indirect_call(ty, args, flow, span) {
+                    return result;
+                }
                 if !self.is_error(ty) {
                     self.error(
                         codes::E3006,
                         self.hir.expr(callee).span,
                         "this expression is not callable",
                     )
-                    .help("only function items can be called")
+                    .help("call a function item, or call through a `*raw extern \"c\" func(...)` pointer")
                     .emit();
                 }
                 (None, None)
@@ -172,6 +176,87 @@ impl Checker<'_> {
             Some((_, ret, _)) => ret,
             None => self.error_ty(),
         }
+    }
+
+    /// Checks a call through a raw C function pointer.
+    ///
+    /// Returns `None` when `callee_ty` is not a raw pointer to a C function
+    /// signature, so the caller can report the ordinary not-callable error.
+    /// A match returns `Ok` with the call's result type, or `Err` after the
+    /// arguments were checked and a diagnostic was emitted.
+    fn check_indirect_call(
+        &mut self,
+        callee_ty: TyId,
+        args: &[HirExprId],
+        flow: &mut Flow,
+        span: Span,
+    ) -> Option<TyId> {
+        let (pointer_kind, signature) = self.hir.ty_ctxt().fn_ptr_parts(callee_ty)?;
+        if pointer_kind.is_mut() {
+            self.error(
+                codes::E3089,
+                span,
+                "a C function pointer cannot be called through a mutable pointer",
+            )
+            .help("use `*raw extern \"c\" func(...)`; function pointers are read-only")
+            .emit();
+            for arg in args {
+                self.infer_expr(*arg, None, flow);
+            }
+            return Some(self.error_ty());
+        }
+        self.require_unsafe_function_pointer(span);
+
+        let fixed = signature.params.len();
+        if signature.variadic {
+            if args.len() < fixed {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "this C function pointer requires at least {fixed} argument(s) but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help("pass every fixed parameter, then any number of variadic arguments")
+                .emit();
+            }
+        } else if fixed != args.len() {
+            self.error(
+                codes::E3008,
+                span,
+                format!(
+                    "this C function pointer takes {fixed} argument(s) but {} were supplied",
+                    args.len()
+                ),
+            )
+            .help("pass exactly one argument for each parameter")
+            .emit();
+        }
+
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(expected) = signature.params.get(index) {
+                self.check_expr(*arg, *expected, flow);
+                continue;
+            }
+            let ty = self.infer_expr(*arg, None, flow);
+            if signature.variadic
+                && !self.is_error(ty)
+                && self.hir.ty_ctxt().variadic_promotion(ty).is_none()
+            {
+                let text = self.ty_text(ty);
+                self.error(
+                    codes::E3088,
+                    self.hir.expr(*arg).span,
+                    format!("`{text}` cannot be passed through `...`"),
+                )
+                .help(
+                    "pass an integer, `f64`, or a thin raw pointer; C applies the default argument promotions",
+                )
+                .emit();
+            }
+        }
+        Some(signature.ret)
     }
 
     /// Checks `T::function(...)` where the function is declared by a bound.

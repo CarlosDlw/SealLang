@@ -872,6 +872,24 @@ impl Reachability<'_> {
                     self.check_generic_args(args);
                 }
             }
+            TypeKind::FnSig {
+                abi_span,
+                params,
+                ret,
+                variadic_span,
+                ..
+            } => {
+                self.assert_span(abi_span);
+                if let Some(span) = variadic_span {
+                    self.assert_span(span);
+                }
+                for parameter in params {
+                    self.check_type(parameter);
+                }
+                if let Some(ret) = ret {
+                    self.check_type(ret);
+                }
+            }
             _ => {}
         }
     }

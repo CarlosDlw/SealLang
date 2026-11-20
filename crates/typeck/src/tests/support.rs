@@ -240,6 +240,23 @@ pub(crate) fn expect_ty(hir: &Hir, ty: TyId, expected: &str) {
 /// local, and a signature for every function.
 pub(crate) fn assert_invariants(fixture: &Fixture, hir: &Hir, results: &TypeckResults) {
     let mut callees = BTreeSet::new();
+    let mut function_items = BTreeSet::new();
+    for expr in hir.expr_arena().iter() {
+        if let ExprKind::Cast { operand, .. } = &expr.kind
+            && matches!(
+                &hir.expr(*operand).kind,
+                ExprKind::Path {
+                    res: Res::Function(_) | Res::TraitFunction { .. },
+                    ..
+                }
+            )
+        {
+            // A function item has no value type. Its address cast either records
+            // the instantiation for code generation or reports a diagnostic, so
+            // the operand is intentionally untyped in both cases.
+            function_items.insert(*operand);
+        }
+    }
     for expr in hir.expr_arena().iter() {
         if let ExprKind::Call { callee, .. } = &expr.kind
             && matches!(
@@ -254,7 +271,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, hir: &Hir, results: &TypeckRe
         }
     }
     for (id, _) in hir.expr_arena().iter_enumerated() {
-        if !callees.contains(&id) {
+        if !callees.contains(&id) && !function_items.contains(&id) {
             assert!(
                 results.expr_ty(id).is_some(),
                 "expression {id:?} has no type"

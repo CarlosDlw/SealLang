@@ -328,6 +328,17 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 check_operand(statement, arg, context);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            // The callee is a raw C function pointer. Its body is outside the
+            // aliasing proof, and every argument is a C value rather than a
+            // checked reference, so the call contributes no loan contract.
+            unknown |= operand_unknown(callee, context);
+            check_operand(statement, callee, context);
+            for arg in args {
+                unknown |= operand_unknown(arg, context);
+                check_operand(statement, arg, context);
+            }
+        }
         Rvalue::Call {
             target,
             args,

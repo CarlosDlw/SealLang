@@ -544,6 +544,12 @@ fn moved_places(rvalue: &Rvalue) -> Vec<&Place> {
                 add_move(arg, &mut places);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            add_move(callee, &mut places);
+            for arg in args {
+                add_move(arg, &mut places);
+            }
+        }
         Rvalue::Intrinsic { receiver, args, .. } => {
             if let IntrinsicReceiver::Value(operand) = receiver {
                 add_move(operand, &mut places);

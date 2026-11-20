@@ -2,7 +2,7 @@
 
 use seal_ast::{TypeId, TypeKind};
 use seal_error_codes as codes;
-use seal_ty::{RawPtrKind, TyCtxt, TyId};
+use seal_ty::{Abi, FnSigDef, RawPtrKind, TyCtxt, TyId};
 
 use super::Lowering;
 use crate::primitives::primitive_kind;
@@ -68,6 +68,58 @@ impl Lowering<'_> {
             TypeKind::Slice { element } => {
                 let element = self.lower_type_inner(element, unknown_parameter, false);
                 self.hir.ty_ctxt_mut().slice_ty(element)
+            }
+            TypeKind::FnSig {
+                abi,
+                abi_span,
+                params,
+                ret,
+                variadic,
+                ..
+            } => {
+                let span = self.ast.ty(ty).span;
+                if !behind_raw_pointer {
+                    self.error(
+                        codes::E3089,
+                        span,
+                        "a C function signature must appear behind `*raw`",
+                    )
+                    .help("write `*raw extern \"c\" func(...)` for a callable C function pointer")
+                    .emit();
+                }
+                let abi_name = self.interner.resolve(abi);
+                let abi = match Abi::from_name(abi_name) {
+                    Some(abi) => abi,
+                    None => {
+                        self.error(
+                            codes::E3080,
+                            abi_span,
+                            format!("unknown or unavailable ABI `{abi_name}`"),
+                        )
+                        .help("available conventions are `\"c\"`, `\"cdecl\"`, and `\"system\"`")
+                        .emit();
+                        Abi::C
+                    }
+                };
+                let params: Vec<TyId> = params
+                    .into_iter()
+                    .map(|parameter| self.lower_type_inner(parameter, unknown_parameter, false))
+                    .collect();
+                let ret = match ret {
+                    Some(ret) => self.lower_type_inner(ret, unknown_parameter, false),
+                    None => self.hir.ty_ctxt().unit_ty(),
+                };
+                let signature = self.hir.ty_ctxt().fn_sig_ty(FnSigDef {
+                    abi,
+                    params,
+                    ret,
+                    variadic,
+                });
+                self.hir.insert_fn_sig(crate::FnSigUse {
+                    ty: signature,
+                    span,
+                });
+                signature
             }
             TypeKind::Dyn(path) => {
                 let span = self.ast.ty(ty).span;

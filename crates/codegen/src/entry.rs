@@ -83,6 +83,7 @@ fn describe(kind: TyKind) -> String {
         TyKind::Tuple(_) => "a tuple".to_owned(),
         TyKind::Adt { .. } => "a struct".to_owned(),
         TyKind::Opaque { .. } => "an opaque type".to_owned(),
+        TyKind::FnSig(_) => "a C function signature".to_owned(),
         TyKind::Unit => "()".to_owned(),
         TyKind::Never => "!".to_owned(),
         TyKind::Error => "an error type".to_owned(),

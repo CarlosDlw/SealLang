@@ -54,6 +54,24 @@ fn substitute_args(ctxt: &TyCtxt, ty: TyId, args: &[TyId]) -> TyId {
                 .collect();
             ctxt.tuple_ty(&elements)
         }
+        TyKind::FnSig(id) => {
+            let signature = ctxt.fn_sig(id);
+            let params: Vec<TyId> = signature
+                .params
+                .iter()
+                .map(|parameter| substitute_args(ctxt, *parameter, args))
+                .collect();
+            let ret = substitute_args(ctxt, signature.ret, args);
+            if params == signature.params && ret == signature.ret {
+                return ty;
+            }
+            ctxt.fn_sig_ty(crate::FnSigDef {
+                abi: signature.abi,
+                params,
+                ret,
+                variadic: signature.variadic,
+            })
+        }
         TyKind::Adt { adt, args: inner } => {
             let inner_args = ctxt.substs_args(inner);
             let substituted: Vec<TyId> = inner_args
@@ -121,6 +139,13 @@ fn collect_free_params(
                 collect_free_params(ctxt, argument, seen, params);
             }
         }
+        TyKind::FnSig(id) => {
+            let signature = ctxt.fn_sig(id);
+            for parameter in &signature.params {
+                collect_free_params(ctxt, *parameter, seen, params);
+            }
+            collect_free_params(ctxt, signature.ret, seen, params);
+        }
         _ => {}
     }
 }
@@ -141,6 +166,14 @@ pub(crate) fn contains_param(ctxt: &TyCtxt, ty: TyId) -> bool {
             .substs_args(args)
             .into_iter()
             .any(|argument| contains_param(ctxt, argument)),
+        TyKind::FnSig(id) => {
+            let signature = ctxt.fn_sig(id);
+            signature
+                .params
+                .iter()
+                .any(|parameter| contains_param(ctxt, *parameter))
+                || contains_param(ctxt, signature.ret)
+        }
         _ => false,
     }
 }

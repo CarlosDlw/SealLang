@@ -195,6 +195,35 @@ int32_t ffi_variadic_kinds(int32_t count, ...) {
   return first == 1 && second == 2.5 && third == 3;
 }
 
+typedef int32_t (*ffi_callback)(int32_t);
+typedef ffi_point (*ffi_point_callback)(ffi_point);
+
+int32_t ffi_apply(ffi_callback callback, int32_t value) {
+  return callback(value);
+}
+
+void ffi_exit_now(int32_t code) { _Exit(code); }
+
+int32_t ffi_register_atexit(void (*callback)(void)) { return atexit(callback); }
+
+int32_t ffi_apply_null(ffi_callback callback) { return callback == NULL; }
+
+int32_t ffi_signal_like(ffi_callback callback) { return callback(42); }
+
+ffi_point ffi_apply_point(ffi_point_callback callback, ffi_point point) {
+  return callback(point);
+}
+
+static int compare_i32(const void *left, const void *right) {
+  int32_t a = *(const int32_t *)left;
+  int32_t b = *(const int32_t *)right;
+  return (a > b) - (a < b);
+}
+
+void ffi_qsort_ints(int32_t *values, int32_t count) {
+  qsort(values, (size_t)count, sizeof(int32_t), compare_i32);
+}
+
 int32_t ffi_variadic_first_char(int32_t count, ...) {
   if (count < 1) {
     return -1;

@@ -72,8 +72,12 @@ pub enum EvalErrorKind {
     DestructorInConstant,
     /// A compile-time call kept a symbolic type argument.
     NonConcreteArguments,
-    /// A constant calls an external function.
+    /// A constant calls an external function or through a C function pointer.
     ExternCall,
+    /// A constant takes the address of a function as a C pointer.
+    FunctionAddress,
+    /// A constant calls through a C function pointer.
+    FunctionPointerCall,
     /// A constant reads an external static.
     ExternStatic,
     /// A constant panicked, or a compile-time call had an invalid body.
@@ -110,7 +114,7 @@ impl EvalErrorKind {
             Self::IntrinsicNotWhitelisted => codes::E4022,
             Self::DestructorInConstant => codes::E4028,
             Self::NonConcreteArguments | Self::Panic(_) => codes::E4027,
-            Self::ExternCall => codes::E4033,
+            Self::ExternCall | Self::FunctionAddress | Self::FunctionPointerCall => codes::E4033,
             Self::ExternStatic => codes::E4034,
             Self::Internal(_) => return None,
         })
@@ -182,6 +186,12 @@ impl EvalErrorKind {
             }
             Self::ExternCall => {
                 "a constant context cannot call a function implemented outside Seal".to_owned()
+            }
+            Self::FunctionAddress => {
+                "a constant context cannot take the address of a function as a C pointer".to_owned()
+            }
+            Self::FunctionPointerCall => {
+                "a constant context cannot call through a C function pointer".to_owned()
             }
             Self::ExternStatic => "a constant context cannot read an external static".to_owned(),
             Self::Panic(message) => format!("constant evaluation panicked: {message}"),
@@ -285,6 +295,8 @@ mod tests {
             (EvalErrorKind::DestructorInConstant, Some("E4028")),
             (EvalErrorKind::NonConcreteArguments, Some("E4027")),
             (EvalErrorKind::ExternCall, Some("E4033")),
+            (EvalErrorKind::FunctionAddress, Some("E4033")),
+            (EvalErrorKind::FunctionPointerCall, Some("E4033")),
             (EvalErrorKind::ExternStatic, Some("E4034")),
             (EvalErrorKind::Panic("boom".to_owned()), Some("E4027")),
             (EvalErrorKind::Internal("bug".to_owned()), None),

@@ -228,6 +228,11 @@ pub enum ValidationError {
         /// The block containing the call.
         block: BasicBlockId,
     },
+    /// An indirect call's callee is not a read-only raw C function pointer.
+    IndirectCalleeNotFunctionPointer {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
     /// A move reads an unsized place by value.
     MoveFromUnsizedPlace {
         /// The block containing the move.
@@ -388,6 +393,10 @@ impl fmt::Display for ValidationError {
             Self::DynamicSignatureMismatch { block } => write!(
                 f,
                 "block {block:?} has a dynamic call that does not match the trait method"
+            ),
+            Self::IndirectCalleeNotFunctionPointer { block } => write!(
+                f,
+                "block {block:?} calls through a value that is not a C function pointer"
             ),
             Self::MoveFromUnsizedPlace { block } => {
                 write!(f, "block {block:?} moves out of an unsized place")
@@ -822,7 +831,8 @@ fn constant_ty(tcx: &seal_ty::TyCtxt, operand: &Operand) -> Option<seal_ty::TyId
             crate::operand::Constant::Int { ty, .. }
             | crate::operand::Constant::Float { ty, .. }
             | crate::operand::Constant::Str { ty, .. }
-            | crate::operand::Constant::CStr { ty, .. },
+            | crate::operand::Constant::CStr { ty, .. }
+            | crate::operand::Constant::FunctionAddr { ty, .. },
         ) => Some(*ty),
         Operand::Constant(crate::operand::Constant::Bool(_)) => Some(tcx.bool_ty()),
         Operand::Constant(crate::operand::Constant::Char(_)) => Some(tcx.char_ty()),
@@ -993,6 +1003,49 @@ fn check_rvalue(
             }
             Ok(())
         }
+        Rvalue::IndirectCall {
+            callee,
+            args,
+            arg_spans,
+        } => {
+            if args.len() != arg_spans.len() {
+                return Err(ValidationError::CallSpansMismatch {
+                    args: args.len(),
+                    spans: arg_spans.len(),
+                });
+            }
+            check_operand(body, block, callee, hir)?;
+            if let Some(hir) = hir {
+                let callee_ty = operand_ty(hir, body, callee)
+                    .ok_or(ValidationError::IndirectCalleeNotFunctionPointer { block })?;
+                let Some((kind, signature)) = hir.ty_ctxt().fn_ptr_parts(callee_ty) else {
+                    return Err(ValidationError::IndirectCalleeNotFunctionPointer { block });
+                };
+                if kind.is_mut() {
+                    return Err(ValidationError::IndirectCalleeNotFunctionPointer { block });
+                }
+                let arity_mismatch = if signature.variadic {
+                    args.len() < signature.params.len()
+                } else {
+                    args.len() != signature.params.len()
+                };
+                if arity_mismatch {
+                    return Err(ValidationError::CallArityMismatch {
+                        args: args.len(),
+                        parameters: signature.params.len(),
+                    });
+                }
+                for (expected, argument) in signature.params.iter().zip(args) {
+                    if operand_ty(hir, body, argument).is_some_and(|ty| ty != *expected) {
+                        return Err(ValidationError::RvalueOperandTypeMismatch { block });
+                    }
+                }
+            }
+            for arg in args {
+                check_operand(body, block, arg, hir)?;
+            }
+            Ok(())
+        }
         Rvalue::Call {
             target,
             args,
@@ -1088,6 +1141,14 @@ fn contains_infer(hir: &Hir, ty: seal_ty::TyId) -> bool {
             .substs_args(args)
             .iter()
             .any(|argument| contains_infer(hir, *argument)),
+        TyKind::FnSig(id) => {
+            let signature = tcx.fn_sig(id);
+            signature
+                .params
+                .iter()
+                .any(|parameter| contains_infer(hir, *parameter))
+                || contains_infer(hir, signature.ret)
+        }
         _ => false,
     }
 }

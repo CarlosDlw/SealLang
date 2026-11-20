@@ -215,7 +215,11 @@ impl<'ctx> TypeMapper<'ctx> {
                 BasicTypeEnum::StructType(tuple_type)
             }
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Opaque { .. } => {
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Opaque { .. }
+            | TyKind::FnSig(_) => {
                 return Err(CodegenError::internal(
                     "an unsized type has no LLVM value type; only its reference is representable",
                 ));

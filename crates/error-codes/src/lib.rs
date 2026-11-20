@@ -2761,6 +2761,22 @@ reference, fat pointer, slice, or string through `...`; pass a raw pointer
 instead.",
 };
 
+/// A C function pointer type or operation is invalid.
+pub const E3089: ErrorCode = ErrorCode {
+    code: "E3089",
+    title: "invalid C function pointer use",
+    explanation: "\
+A C function pointer is written `*raw extern \"c\" func(...) -> ...`. It is
+read-only, so `*raw mut extern` is rejected. Calling through the pointer always
+requires `unsafe`, because the compiler cannot prove that the address is valid,
+non-null, and points at a function with the declared signature.
+
+A Seal function becomes such a pointer only through an explicit `as` cast inside
+`unsafe`. The function must have no receiver and the target signature must match
+exactly. A generic function must be instantiated with explicit type arguments
+before its address can be taken.",
+};
+
 /// A C string literal contains an interior NUL byte.
 pub const E3090: ErrorCode = ErrorCode {
     code: "E3090",
@@ -3280,13 +3296,13 @@ pub static ALL: &[ErrorCode] = &[
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
-    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085, E3086, E3087, E3088, E3090,
-    E3091, E3092, E3093, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010,
-    E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023,
-    E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003,
-    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016,
-    E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008,
-    E9001, E9002,
+    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085, E3086, E3087, E3088, E3089,
+    E3090, E3091, E3092, E3093, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009,
+    E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022,
+    E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002,
+    E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015,
+    E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007,
+    E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3548,13 +3564,14 @@ mod tests {
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
-                "E3084", "E3085", "E3086", "E3087", "E3088", "E3090", "E3091", "E3092", "E3093",
+                "E3084", "E3085", "E3086", "E3087", "E3088", "E3089", "E3090", "E3091", "E3092",
+                "E3093",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is
         // cheaper than giving an unrelated diagnostic a number out of order.
-        // The FFI block reserves `E3079` and `E3089` for later phases, which
-        // is why the list is not contiguous.
+        // The FFI block reserves `E3079` for a later phase, which is why the
+        // list is not contiguous.
     }
 
     #[test]

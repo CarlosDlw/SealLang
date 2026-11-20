@@ -920,8 +920,18 @@ impl<'a> BodyLowering<'a> {
                 }
             }
             ExprKind::Cast { operand, .. } => {
-                let from = self.expr_ty(operand);
                 let to = self.expr_ty(expr);
+                if let Some(instance) = self.typeck.function_address(expr) {
+                    if let Some(dest) = dest {
+                        self.assign_constant(
+                            dest,
+                            Constant::FunctionAddr { instance, ty: to },
+                            span,
+                        );
+                    }
+                    return;
+                }
+                let from = self.expr_ty(operand);
                 let kind = self.typeck.cast_kind(expr).unwrap_or_else(|| {
                     panic!(
                         "cast expression {expr:?} has no recorded kind; \
@@ -1163,6 +1173,39 @@ impl<'a> BodyLowering<'a> {
             } => Some(function),
             _ => None,
         };
+
+        if function.is_none() {
+            let callee_ty = self.expr_ty(callee);
+            if let Some((_, signature)) = self.hir.ty_ctxt().fn_ptr_parts(callee_ty) {
+                let callee = self.lower_operand(callee);
+                let arg_spans: Vec<Span> =
+                    args.iter().map(|arg| self.hir.expr(*arg).span).collect();
+                let arg_types: Vec<TyId> = args.iter().map(|arg| self.expr_ty(*arg)).collect();
+                let mut arguments: Vec<Operand> =
+                    args.iter().map(|arg| self.lower_operand(*arg)).collect();
+                if signature.variadic {
+                    self.promote_variadic_arguments(
+                        &mut arguments,
+                        &arg_types,
+                        signature.params.len(),
+                        span,
+                    );
+                }
+                if let Some(dest) = dest {
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::IndirectCall {
+                            callee,
+                            args: arguments,
+                            arg_spans,
+                        },
+                        span,
+                    );
+                }
+                return;
+            }
+        }
+
         let arg_spans: Vec<Span> = args.iter().map(|arg| self.hir.expr(*arg).span).collect();
         let arg_types: Vec<TyId> = args
             .iter()

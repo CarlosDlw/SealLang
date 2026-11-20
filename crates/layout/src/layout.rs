@@ -269,7 +269,11 @@ impl<'a> LayoutCtxt<'a> {
                 }
                 Layout::new(round_up(offset, align), align)
             }
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Opaque { .. } => {
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Opaque { .. }
+            | TyKind::FnSig(_) => {
                 return Err(LayoutError::Unsized(ty));
             }
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),

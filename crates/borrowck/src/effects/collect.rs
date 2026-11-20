@@ -178,6 +178,18 @@ pub(super) fn collect_rvalue(
             }
             calls.push(dynamic_candidates.get(method).cloned().unwrap_or_default());
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            collect_operand(hir, callee, direct);
+            for arg in args {
+                collect_operand(hir, arg, direct);
+            }
+            // The callable body is outside Seal, or was chosen at run time, so
+            // the callee may read and write any storage reachable through the
+            // raw arguments.
+            direct.unknown = true;
+            direct.touches_raw = true;
+            calls.push(Vec::new());
+        }
         Rvalue::Call { target, args, .. } => {
             for arg in args {
                 collect_operand(hir, arg, direct);

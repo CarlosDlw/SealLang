@@ -471,6 +471,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             // A zero-sized basic type keeps `-g` total without inventing a
             // storage layout for an unsized type.
             TyKind::Dyn { .. } => self.basic_type(ty, "dyn", 0, encoding::UNSIGNED)?,
+            TyKind::FnSig(_) => self.basic_type(ty, "func", 0, encoding::UNSIGNED)?,
             TyKind::Unit | TyKind::Never | TyKind::Error => {
                 self.basic_type(ty, "()", 0, encoding::UNSIGNED)?
             }

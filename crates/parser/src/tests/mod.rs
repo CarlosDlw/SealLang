@@ -8,6 +8,7 @@ mod errors;
 mod examples;
 mod exprs;
 mod extern_items;
+mod fn_sigs;
 mod for_loop;
 mod generics;
 mod globals;

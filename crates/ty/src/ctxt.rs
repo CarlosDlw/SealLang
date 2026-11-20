@@ -11,10 +11,11 @@ use seal_target::CAbiProperties;
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 use crate::copy::CopyImpls;
 use crate::drop::DropImpls;
+use crate::fn_sig::FnSigDef;
 use crate::generics::{
     GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
 };
-use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
+use crate::id::{AdtId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
 use crate::kind::{FloatTy, IntTy, RawPtrKind, RefKind, TyKind, UintTy};
 
 /// The outer constructor of an impl target or trait goal.
@@ -63,6 +64,8 @@ pub enum ImplHead {
     Error,
     /// An opaque type.
     Opaque,
+    /// A C function signature.
+    FnSig,
 }
 
 impl TyCtxt {
@@ -83,6 +86,7 @@ impl TyCtxt {
             TyKind::Slice { .. } => ImplHead::Slice,
             TyKind::Dyn { .. } => ImplHead::Dyn,
             TyKind::Opaque { .. } => ImplHead::Opaque,
+            TyKind::FnSig(_) => ImplHead::FnSig,
             TyKind::Tuple(tuple) => ImplHead::Tuple(self.tuple_elements(tuple).len()),
             TyKind::Param(_) => ImplHead::Param,
             TyKind::Infer(_) => ImplHead::Infer,
@@ -108,6 +112,8 @@ pub struct TyCtxt {
     adts: RefCell<IndexVec<AdtId, AdtDef>>,
     tuples: RefCell<IndexVec<TupleId, Vec<TyId>>>,
     tuple_interner: RefCell<FxHashMap<Vec<TyId>, TupleId>>,
+    fn_sigs: RefCell<IndexVec<FnSigId, FnSigDef>>,
+    fn_sig_interner: RefCell<FxHashMap<FnSigDef, FnSigId>>,
     params: RefCell<IndexVec<ParamTyId, ParamTy>>,
     param_interner: RefCell<FxHashMap<ParamTy, ParamTyId>>,
     substs_arena: RefCell<IndexVec<SubstsId, Vec<TyId>>>,
@@ -684,6 +690,49 @@ impl TyCtxt {
         self.tuples.borrow().len()
     }
 
+    /// Returns the unsized C function signature type for `signature`.
+    ///
+    /// The signature is interned structurally, so two occurrences with the same
+    /// ABI, parameters, result, and variadicity share one [`TyId`]. The returned
+    /// type is the pointee of a raw function pointer, never a value type.
+    pub fn fn_sig_ty(&self, signature: FnSigDef) -> TyId {
+        let existing = self.fn_sig_interner.borrow().get(&signature).copied();
+        let id = match existing {
+            Some(id) => id,
+            None => {
+                let id = self.fn_sigs.borrow_mut().push(signature.clone());
+                self.fn_sig_interner.borrow_mut().insert(signature, id);
+                id
+            }
+        };
+        self.intern(TyKind::FnSig(id))
+    }
+
+    /// Returns one interned C function signature.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this context.
+    pub fn fn_sig(&self, id: FnSigId) -> FnSigDef {
+        self.fn_sigs.borrow()[id].clone()
+    }
+
+    /// Returns the signature of `ty` when it is a C function signature.
+    pub fn fn_sig_id(&self, ty: TyId) -> Option<FnSigId> {
+        match self.kind(ty) {
+            TyKind::FnSig(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Returns the C function signature and pointer kind of a raw function
+    /// pointer type.
+    pub fn fn_ptr_parts(&self, ty: TyId) -> Option<(RawPtrKind, FnSigDef)> {
+        let (kind, pointee) = self.raw_parts(ty)?;
+        let id = self.fn_sig_id(pointee)?;
+        Some((kind, self.fn_sig(id)))
+    }
+
     /// Returns the struct field template with the given definition in `adt`.
     ///
     /// Enum fields live on their variant; use [`TyCtxt::variant_field`] for
@@ -924,6 +973,7 @@ impl TyCtxt {
             | TyKind::Slice { .. }
             | TyKind::Dyn { .. }
             | TyKind::Opaque { .. }
+            | TyKind::FnSig(_)
             | TyKind::Infer(_) => false,
         }
     }
@@ -944,6 +994,7 @@ impl TyCtxt {
             | TyKind::Slice { .. }
             | TyKind::Dyn { .. }
             | TyKind::Opaque { .. }
+            | TyKind::FnSig(_)
             | TyKind::Infer(_) => false,
             TyKind::Param(_) => true,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),

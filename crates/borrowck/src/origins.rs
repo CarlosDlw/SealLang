@@ -477,6 +477,17 @@ fn transfer(
                 state.clear(place);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            if destination_holds_references {
+                let mut origins = operand_origins(hir, body, program, state, callee);
+                for arg in args {
+                    origins.extend(&operand_origins(hir, body, program, state, arg));
+                }
+                state.assign(place, origins);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Aggregate { fields, .. } => {
             state.clear(place);
             if destination_holds_references {

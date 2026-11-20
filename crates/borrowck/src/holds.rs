@@ -306,6 +306,23 @@ fn transfer(
                 state.clear(place);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            let mut loans = LoanSet::default();
+            if destination_has_reference {
+                for operand in std::iter::once(callee).chain(args) {
+                    match operand.place() {
+                        Some(source) if source.is_deref() => {
+                            loans.extend(all_loans.iter().copied())
+                        }
+                        Some(source) => loans.extend(state.at(&source)),
+                        None => {}
+                    }
+                }
+                state.assign(place, loans);
+            } else {
+                state.clear(place);
+            }
+        }
         Rvalue::Aggregate { fields, .. } => {
             // Record loans per field, not for the whole aggregate: a later write
             // to one field must drop only that field's loans.

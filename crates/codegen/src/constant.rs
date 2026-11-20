@@ -133,6 +133,11 @@ impl<'a, 'ctx> Constants<'a, 'ctx> {
                 let (data, _) = self.string_global(self.interner.resolve(*value))?;
                 data.into()
             }
+            Constant::FunctionAddr { .. } => {
+                return Err(CodegenError::internal(
+                    "a function address reaches code generation through its enclosing body",
+                ));
+            }
             Constant::Unit => self.mapper.empty_type().const_zero().into(),
         })
     }

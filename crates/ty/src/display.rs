@@ -126,6 +126,27 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 f.write_str(")")
             }
+            TyKind::FnSig(id) => {
+                let signature = self.ctxt.fn_sig(id);
+                write!(f, "extern \"{}\" func(", signature.abi.as_str())?;
+                for (index, parameter) in signature.params.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", self.display(*parameter))?;
+                }
+                if signature.variadic {
+                    if !signature.params.is_empty() {
+                        f.write_str(", ")?;
+                    }
+                    f.write_str("...")?;
+                }
+                f.write_str(")")?;
+                if !matches!(self.ctxt.kind(signature.ret), TyKind::Unit) {
+                    write!(f, " -> {}", self.display(signature.ret))?;
+                }
+                Ok(())
+            }
             TyKind::Unit => f.write_str("()"),
             TyKind::Never => f.write_str("!"),
             TyKind::Error => f.write_str("<error>"),

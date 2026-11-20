@@ -185,9 +185,13 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     "raw pointer equality",
                 )?)
             }
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Param(_) => Err(
-                CodegenError::internal("an unsized or uninstantiated type has no equality"),
-            ),
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::FnSig(_)
+            | TyKind::Param(_) => Err(CodegenError::internal(
+                "an unsized or uninstantiated type has no equality",
+            )),
             TyKind::Infer(_) => Err(CodegenError::internal(
                 "an unresolved inference type reached an equality comparison",
             )),

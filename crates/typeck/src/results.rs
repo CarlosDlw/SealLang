@@ -383,6 +383,7 @@ pub struct TypeckResults {
     index_protocols: FxHashMap<HirExprId, IndexProtocol>,
     iterations: FxHashMap<HirExprId, IterationProtocol>,
     instantiations: FxHashMap<HirExprId, Instance>,
+    function_addresses: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
     casts: FxHashMap<HirExprId, CastKind>,
 }
@@ -432,6 +433,15 @@ impl TypeckResults {
         self.instantiations.get(&expr).copied()
     }
 
+    /// Returns the function instance whose address `expr` produces.
+    ///
+    /// Only a cast of a function item to a raw C function pointer records an
+    /// entry. The instance is fully instantiated, so code generation can emit a
+    /// C-ABI trampoline for exactly that function.
+    pub fn function_address(&self, expr: HirExprId) -> Option<Instance> {
+        self.function_addresses.get(&expr).copied()
+    }
+
     /// Returns the implicit conversion applied to `expr`, if any.
     pub fn coercion(&self, expr: HirExprId) -> Option<Coercion> {
         self.coercions.get(&expr).copied()
@@ -457,6 +467,7 @@ impl TypeckResults {
             index_protocols: FxHashMap::default(),
             iterations: FxHashMap::default(),
             instantiations: FxHashMap::default(),
+            function_addresses: FxHashMap::default(),
             coercions: FxHashMap::default(),
             casts: FxHashMap::default(),
         }
@@ -492,6 +503,10 @@ impl TypeckResults {
 
     pub(crate) fn record_instantiation(&mut self, expr: HirExprId, instance: Instance) {
         self.instantiations.insert(expr, instance);
+    }
+
+    pub(crate) fn record_function_address(&mut self, expr: HirExprId, instance: Instance) {
+        self.function_addresses.insert(expr, instance);
     }
 
     pub(crate) fn record_coercion(&mut self, expr: HirExprId, coercion: Coercion) {

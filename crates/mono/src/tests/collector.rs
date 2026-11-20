@@ -52,6 +52,23 @@ fn call_targets(body: &seal_mir::Body) -> Vec<CallTarget> {
 }
 
 #[test]
+fn a_function_address_keeps_its_target_reachable() {
+    let (fixture, hir, _mir, program) = collect_clean(
+        r#"
+        func double_it(value: i32) -> i32 { value * 2 }
+        func main() -> i32 {
+            unsafe {
+                let callback = double_it as *raw extern "c" func(i32) -> i32;
+                0
+            }
+        }"#,
+    );
+    let mut collected = names(&fixture, &hir, &program);
+    collected.sort();
+    assert_eq!(collected, ["double_it", "main"]);
+}
+
+#[test]
 fn a_non_generic_program_collects_one_instance_per_function() {
     let (fixture, hir, _mir, program) = collect_clean(
         "func helper(value: i32) -> i32 { value }\

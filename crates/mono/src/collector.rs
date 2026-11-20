@@ -9,8 +9,8 @@ use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_index::{Idx, IndexVec};
 use seal_mir::{
-    Body, BodyKind, IntrinsicReceiver, Mir, Operand, Place, PlaceRoot, Rvalue, StatementKind,
-    TerminatorKind, place_ty,
+    Body, BodyKind, Constant, IntrinsicReceiver, Mir, Operand, Place, PlaceRoot, Rvalue,
+    StatementKind, TerminatorKind, place_ty,
 };
 use seal_span::Span;
 use seal_symbol::Interner;
@@ -509,6 +509,12 @@ impl Collector<'_> {
                     self.scan_operand(arg, span);
                 }
             }
+            Rvalue::IndirectCall { callee, args, .. } => {
+                self.scan_operand(callee, span);
+                for arg in args {
+                    self.scan_operand(arg, span);
+                }
+            }
             Rvalue::Aggregate { fields, .. } => {
                 for (_, operand) in fields {
                     self.scan_operand(operand, span);
@@ -529,6 +535,14 @@ impl Collector<'_> {
             Operand::Const(def) => {
                 if let Some(value) = self.constants.value(*def).cloned() {
                     self.scan_value(&value, span);
+                }
+            }
+            Operand::Constant(Constant::FunctionAddr { instance, .. }) => {
+                // The address can be called from C, so the function body must be
+                // monomorphized even when no Seal call site names it.
+                if self.hir.body_of(instance.def).is_some() {
+                    let chain = vec![(*instance, span)];
+                    self.enqueue(*instance, 0, chain, span);
                 }
             }
             Operand::Constant(_) => {}

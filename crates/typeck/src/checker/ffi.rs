@@ -16,6 +16,7 @@ impl Checker<'_> {
     /// Builds the signature of every external function and validates the type
     /// of every external static.
     pub(super) fn build_externs(&mut self) {
+        self.validate_fn_sigs();
         self.validate_extern_structs();
         let functions: Vec<_> = self.hir.extern_functions().to_vec();
         for definition in functions {
@@ -51,6 +52,34 @@ impl Checker<'_> {
             };
             let span = self.hir.definitions().get(definition).span;
             self.check_ffi_type(data.ty, FfiPosition::Static, span);
+        }
+    }
+
+    /// Validates every declared C function signature.
+    ///
+    /// A signature is the pointee of a callable C function pointer, so each
+    /// fixed parameter and the return type must be FFI-safe independently. A
+    /// variadic signature must also have at least one fixed parameter.
+    fn validate_fn_sigs(&mut self) {
+        let uses = self.hir.fn_sigs().to_vec();
+        for usage in uses {
+            let Some(id) = self.hir.ty_ctxt().fn_sig_id(usage.ty) else {
+                continue;
+            };
+            let signature = self.hir.ty_ctxt().fn_sig(id);
+            if signature.variadic && signature.params.is_empty() {
+                self.error(
+                    seal_error_codes::E3084,
+                    usage.span,
+                    "a variadic C function signature needs at least one fixed parameter",
+                )
+                .help("declare the fixed parameters C always receives, then `...`")
+                .emit();
+            }
+            for parameter in &signature.params {
+                self.check_ffi_type(*parameter, FfiPosition::FunctionPointer, usage.span);
+            }
+            self.check_ffi_type(signature.ret, FfiPosition::Return, usage.span);
         }
     }
 

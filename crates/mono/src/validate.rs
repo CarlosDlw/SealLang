@@ -326,6 +326,13 @@ fn check_rvalue(
             }
             Ok(())
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            check_operand(tcx, instance, callee)?;
+            for argument in args {
+                check_operand(tcx, instance, argument)?;
+            }
+            Ok(())
+        }
         Rvalue::Call { target, args, .. } => {
             match *target {
                 CallTarget::Direct {
@@ -387,6 +394,16 @@ fn check_operand(
         | Constant::Float { ty, .. }
         | Constant::Str { ty, .. }
         | Constant::CStr { ty, .. } => check_type(tcx, instance, *ty),
+        Constant::FunctionAddr {
+            instance: function,
+            ty,
+        } => {
+            check_type(tcx, instance, *ty)?;
+            for argument in tcx.substs_args(function.args) {
+                check_type(tcx, instance, argument)?;
+            }
+            Ok(())
+        }
         Constant::Bool(_) | Constant::Char(_) | Constant::Unit => Ok(()),
     }
 }
@@ -572,6 +589,13 @@ fn check_rvalue_globals(
             Ok(())
         }
         Rvalue::Call { args, .. } => {
+            for arg in args {
+                check_operand_global(program, constants, arg)?;
+            }
+            Ok(())
+        }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            check_operand_global(program, constants, callee)?;
             for arg in args {
                 check_operand_global(program, constants, arg)?;
             }

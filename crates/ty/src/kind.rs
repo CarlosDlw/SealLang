@@ -5,7 +5,7 @@ use std::fmt;
 use seal_def::DefId;
 use seal_symbol::Symbol;
 
-use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
+use crate::id::{AdtId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
 
 /// A signed integer type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -330,6 +330,12 @@ pub enum TyKind {
     /// arena. The empty tuple is represented as [`TyKind::Unit`], not as a
     /// zero-element tuple, so `()` has one canonical meaning everywhere.
     Tuple(TupleId),
+    /// A C function signature, written `extern "c" func(...) -> ...`.
+    ///
+    /// The signature is unsized and only appears as the pointee of a raw
+    /// pointer; `*raw extern "c" func(...)` is the callable C function pointer.
+    /// Its parameter and return types live in the function-signature arena.
+    FnSig(FnSigId),
     /// The unit type `()`.
     Unit,
     /// The never type `!`, the type of expressions that do not return.

@@ -364,6 +364,131 @@ fn a_pointer_to_an_extern_struct_crosses_a_variadic_boundary() {
 }
 
 #[test]
+fn a_c_function_pointer_can_be_taken_and_called_in_unsafe() {
+    let source = r#"
+        func double_it(value: i32) -> i32 { value * 2 }
+        func apply(callback: *raw extern "c" func(i32) -> i32, value: i32) -> i32 {
+            unsafe { callback(value) }
+        }
+        func main() -> i32 {
+            unsafe {
+                let callback = double_it as *raw extern "c" func(i32) -> i32;
+                apply(callback, 21)
+            }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn taking_a_function_address_requires_unsafe() {
+    let source = r#"
+        func double_it(value: i32) -> i32 { value * 2 }
+        func main() {
+            let callback = double_it as *raw extern "c" func(i32) -> i32;
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect(
+        "E3089",
+        "using a C function pointer requires an `unsafe` block",
+    );
+}
+
+#[test]
+fn calling_through_a_function_pointer_requires_unsafe() {
+    let source = r#"
+        func apply(callback: *raw extern "c" func(i32) -> i32, value: i32) -> i32 {
+            callback(value)
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect(
+        "E3089",
+        "using a C function pointer requires an `unsafe` block",
+    );
+}
+
+#[test]
+fn a_function_pointer_cast_requires_an_identical_signature() {
+    let source = r#"
+        func identity(value: i32) -> i32 { value }
+        func main() {
+            unsafe {
+                let callback = identity as *raw extern "c" func(i64) -> i32;
+            }
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3089", "does not match the C function pointer type");
+}
+
+#[test]
+fn a_method_path_is_rejected_before_it_can_become_a_c_function_pointer() {
+    let source = r#"
+        struct Counter { value: i32 }
+        impl Counter {
+            func bump(self: *mut Counter) {}
+        }
+        func main() {
+            unsafe {
+                let callback = Counter::bump as *raw extern "c" func();
+            }
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E2019", "is a method, not an associated function");
+}
+
+#[test]
+fn an_integer_pointer_can_become_a_c_function_pointer() {
+    let source = r#"
+        func main() {
+            unsafe {
+                let pointer = c"seal" as *raw u8;
+                let callback = pointer as *raw extern "c" func();
+            }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn a_generic_function_address_needs_explicit_arguments() {
+    let source = r#"
+        func identity<T>(value: T) -> T { value }
+        func main() {
+            unsafe {
+                let callback = identity as *raw extern "c" func(i32) -> i32;
+            }
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3089", "needs explicit type arguments");
+}
+
+#[test]
+fn an_explicitly_instantiated_generic_function_address_is_accepted() {
+    let source = r#"
+        func identity<T>(value: T) -> T { value }
+        func main() {
+            unsafe {
+                let callback = identity::<i32> as *raw extern "c" func(i32) -> i32;
+            }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn a_mutable_c_function_pointer_is_rejected() {
+    let source = r#"
+        func take(callback: *raw mut extern "c" func()) {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3089", "cannot be `mut`");
+}
+
+#[test]
+fn a_c_function_pointer_signature_is_checked_for_ffi_safety() {
+    let source = r#"
+        func take(callback: *raw extern "c" func(char)) {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3084", "is not FFI-safe");
+}
+
+#[test]
 fn conflicting_variadic_shapes_are_rejected() {
     let source = r#"
         extern "c" {

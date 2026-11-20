@@ -187,7 +187,7 @@ impl Parser<'_> {
     }
 
     /// Parses the ABI string after `extern`.
-    fn parse_abi(&mut self) -> (Symbol, Span) {
+    pub(crate) fn parse_abi(&mut self) -> (Symbol, Span) {
         let token = self.current();
         if let TokenKind::Str(symbol) = token.kind {
             self.bump();

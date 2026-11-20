@@ -256,6 +256,7 @@ impl<'a> Interpreter<'a> {
                 offset: 0,
                 mutable: false,
             }),
+            Constant::FunctionAddr { .. } => Err(self.error(EvalErrorKind::FunctionAddress, span)),
             Constant::Unit => Ok(ConstValue::Unit),
         }
     }

@@ -156,6 +156,17 @@ fn hash_type(tcx: &TyCtxt, ty: TyId, hasher: &mut StableHasher) {
             hasher.write_u8(18);
             hasher.write_usize(def.index() as usize);
         }
+        TyKind::FnSig(id) => {
+            hasher.write_u8(19);
+            let signature = tcx.fn_sig(id);
+            hasher.write_u8(signature.abi as u8);
+            hasher.write_u8(u8::from(signature.variadic));
+            hasher.write_length(signature.params.len());
+            for parameter in signature.params {
+                hash_type(tcx, parameter, hasher);
+            }
+            hash_type(tcx, signature.ret, hasher);
+        }
         TyKind::Param(param) => {
             hasher.write_u8(14);
             hasher.write_usize(param.index() as usize);

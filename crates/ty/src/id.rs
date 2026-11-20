@@ -58,3 +58,12 @@ newtype_index! {
     /// which makes the arity and every element part of type identity.
     pub struct TupleId;
 }
+
+newtype_index! {
+    /// Index of an interned C function signature in a [`TyCtxt`](crate::TyCtxt).
+    ///
+    /// A function signature is structural: the ABI, the ordered parameter
+    /// list, the return type, and variadicity decide identity. The signature is
+    /// never stored by value; only a raw pointer to it has a representation.
+    pub struct FnSigId;
+}

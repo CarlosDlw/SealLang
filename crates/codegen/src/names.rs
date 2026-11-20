@@ -36,6 +36,15 @@ pub(crate) fn instance(base: &str, fingerprint: Fingerprint) -> String {
     format!("{base}.{fingerprint}")
 }
 
+/// Returns the linker symbol for the C-ABI callback wrapper of one function.
+///
+/// `instance` identifies the Seal function and `signature` its concrete C
+/// signature. Both are stable fingerprints, so a repeated cast reuses the same
+/// wrapper and distinct signatures never share one.
+pub(crate) fn callback(instance: Fingerprint, signature: Fingerprint) -> String {
+    format!("seal.callback.{instance}.{signature}")
+}
+
 /// Returns the linker symbol for the drop glue of one concrete type.
 ///
 /// The fingerprint covers the whole type structure, so distinct types never

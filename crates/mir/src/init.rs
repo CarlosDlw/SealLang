@@ -148,6 +148,12 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
                 move_operand(arg, state);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            move_operand(callee, state);
+            for arg in args {
+                move_operand(arg, state);
+            }
+        }
         Rvalue::Intrinsic { receiver, args, .. } => {
             if let IntrinsicReceiver::Value(operand) = receiver {
                 move_operand(operand, state);

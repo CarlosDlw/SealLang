@@ -90,9 +90,11 @@ impl Checker<'_> {
             TyKind::Param(_) => Err(NotComparable::Parameter),
             // An unsized value cannot be an operand, so these only appear while
             // recovering from another error.
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Opaque { .. } => {
-                Err(NotComparable::Value(ty))
-            }
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Opaque { .. }
+            | TyKind::FnSig(_) => Err(NotComparable::Value(ty)),
         }
     }
 

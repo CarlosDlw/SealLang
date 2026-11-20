@@ -59,6 +59,7 @@
 mod artifact;
 mod backend;
 mod c_abi;
+mod callback;
 mod cast;
 mod const_image;
 mod const_value;

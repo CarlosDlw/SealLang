@@ -16,6 +16,7 @@ use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_index::Idx;
+use seal_mir::{Constant, Operand, Rvalue, StatementKind};
 use seal_mono::{MonoProgram, MonoVTable, VtableId, VtableKey};
 use seal_ty::{Instance, TyCtxt, TyId};
 
@@ -143,17 +144,33 @@ fn emit_vtable<'ctx>(
     Ok(global)
 }
 
-/// Returns a copy of `facts` without any function reachable through a vtable.
+/// Returns a copy of `facts` without any function reachable through a vtable or
+/// whose address escapes as a C function pointer.
 ///
 /// A dynamic call is a call site the whole-program aliasing proof never saw, so
-/// an exclusive receiver of a vtable method cannot be marked `noalias`. This
-/// includes supertrait methods, because they share the same vtable. The input
-/// set is never mutated.
+/// an exclusive receiver of a vtable method cannot be marked `noalias`. The same
+/// applies to a function whose address is handed to C: the callback may be
+/// invoked from a path the proof does not model. This includes supertrait
+/// methods, because they share the same vtable. The input set is never mutated.
 pub(crate) fn filtered_noalias(mono: &MonoProgram, facts: &FxHashSet<DefId>) -> FxHashSet<DefId> {
     let mut filtered = facts.clone();
     for table in mono.vtables().iter() {
         for entry in &table.entries {
             filtered.remove(&entry.def);
+        }
+    }
+    for instance in mono.instances().iter() {
+        for block in instance.body.blocks.iter() {
+            for statement in &block.statements {
+                let StatementKind::Assign {
+                    rvalue: Rvalue::Use(Operand::Constant(Constant::FunctionAddr { instance, .. })),
+                    ..
+                } = &statement.kind
+                else {
+                    continue;
+                };
+                filtered.remove(&instance.def);
+            }
         }
     }
     filtered

@@ -91,7 +91,7 @@ impl<'ctx> Externals<'ctx> {
 /// attributes rather than enum attributes. Without `byval`, LLVM would pass a
 /// large System V struct pointer in a register instead of copying it to the
 /// stack as C expects.
-fn apply_signature_attributes(
+pub(crate) fn apply_signature_attributes(
     module: &Module<'_>,
     function: FunctionValue<'_>,
     signature: &CSignature<'_>,

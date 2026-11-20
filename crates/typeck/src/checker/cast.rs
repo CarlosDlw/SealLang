@@ -8,9 +8,9 @@
 //! generation.
 
 use seal_error_codes as codes;
-use seal_hir::HirExprId;
+use seal_hir::{ExprKind, HirExprId, Res};
 use seal_span::Span;
-use seal_ty::{CastKind, TraitRef, TyId, TyKind};
+use seal_ty::{CastKind, FnSigId, Instance, RawPtrKind, TraitRef, TyId, TyKind};
 
 use super::trait_solver::Proof;
 
@@ -32,9 +32,46 @@ impl Checker<'_> {
         target_span: Span,
         flow: &mut Flow,
     ) -> TyId {
+        let target = self.resolve_deep(ty);
+        if let Some((pointer_kind, signature)) = self.function_pointer_target(target) {
+            if pointer_kind.is_mut() {
+                self.error(
+                    codes::E3089,
+                    target_span,
+                    "a C function pointer cannot be `mut`",
+                )
+                .help("remove `mut`; function pointers are read-only")
+                .emit();
+                return self.error_ty();
+            }
+            if let ExprKind::Path { res, .. } = self.hir.expr(operand).kind.clone() {
+                match res {
+                    Res::Function(function) => {
+                        return self.check_function_address_cast(
+                            expr,
+                            operand,
+                            (function, signature),
+                            target,
+                            (as_span, target_span),
+                        );
+                    }
+                    Res::TraitFunction { .. } => {
+                        self.error(
+                            codes::E3089,
+                            as_span.cover(target_span),
+                            "a trait method cannot become a C function pointer",
+                        )
+                        .help("convert a concrete function with no receiver instead")
+                        .emit();
+                        return self.error_ty();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let source = self.infer_expr(operand, None, flow);
         let source = self.resolve_deep(source);
-        let target = self.resolve_deep(ty);
         if self.is_error(source) || self.is_error(target) {
             return self.error_ty();
         }
@@ -97,7 +134,105 @@ impl Checker<'_> {
         {
             return self.error_ty();
         }
+        if self.function_pointer_target(target).is_some() {
+            self.require_unsafe_function_pointer(as_span.cover(target_span));
+        }
         self.results.record_cast(expr, kind);
+        target
+    }
+
+    /// Returns the pointer kind and signature when `ty` is a C function pointer.
+    fn function_pointer_target(&self, ty: TyId) -> Option<(RawPtrKind, FnSigId)> {
+        let tcx = self.hir.ty_ctxt();
+        let (kind, pointee) = tcx.raw_parts(ty)?;
+        Some((kind, tcx.fn_sig_id(pointee)?))
+    }
+
+    /// Checks a cast of a function item to a raw C function pointer.
+    ///
+    /// The source is not inferred as an ordinary value: a function item has no
+    /// value type. Its declared signature is instantiated first, then compared
+    /// field by field with the target signature. The instantiation is recorded
+    /// for code generation, which emits a C-ABI trampoline around the Seal
+    /// function so aggregate arguments and results follow the target's ABI.
+    fn check_function_address_cast(
+        &mut self,
+        expr: HirExprId,
+        operand: HirExprId,
+        (function, signature): (seal_def::DefId, FnSigId),
+        target: TyId,
+        (as_span, target_span): (Span, Span),
+    ) -> TyId {
+        self.require_unsafe_function_pointer(as_span.cover(target_span));
+        if self.hir.receiver(function).is_some() {
+            self.error(
+                codes::E3089,
+                self.hir.expr(operand).span,
+                "a method with a receiver cannot become a C function pointer",
+            )
+            .help("use a function that takes its state through a raw pointer parameter")
+            .emit();
+            return self.error_ty();
+        }
+
+        let explicit = self
+            .hir
+            .expr_args(operand)
+            .map(|substs| self.hir.ty_ctxt().substs_args(substs));
+        let all_generics = self.hir.flattened_generics(function).len();
+        let own_generics = self
+            .hir
+            .generics(function)
+            .map_or(0, |generics| generics.params.len());
+        if all_generics > 0
+            && (own_generics == 0 || explicit.as_ref().is_none_or(|args| args.is_empty()))
+        {
+            self.error(
+                codes::E3089,
+                self.hir.expr(operand).span,
+                "the address of a generic function needs explicit type arguments",
+            )
+            .help("write the instantiation before the cast, as in `function::<i32> as ...`")
+            .emit();
+            return self.error_ty();
+        }
+
+        let instantiated =
+            self.instantiate_function(function, &Default::default(), explicit.as_deref(), None);
+        let Some((params, ret, substs)) =
+            self.finish_function_instantiation(expr, function, instantiated, as_span)
+        else {
+            return self.error_ty();
+        };
+        let declared = self.hir.ty_ctxt().fn_sig(signature);
+        let variadic = self
+            .hir
+            .extern_function(function)
+            .is_some_and(|declaration| declaration.variadic);
+        if declared.params != params || declared.ret != ret || declared.variadic != variadic {
+            let declared_text = self.ty_text(target);
+            self.error(
+                codes::E3089,
+                as_span.cover(target_span),
+                format!(
+                    "the function signature does not match the C function pointer type `{declared_text}`"
+                ),
+            )
+            .secondary(
+                self.hir.expr(operand).span,
+                format!(
+                    "the function takes {} parameter(s) and returns `{}`",
+                    params.len(),
+                    self.ty_text(ret)
+                ),
+            )
+            .help("make the parameter and return types identical, including variadicity")
+            .emit();
+            return self.error_ty();
+        }
+
+        self.results
+            .record_function_address(expr, Instance::new(function, substs));
         target
     }
 

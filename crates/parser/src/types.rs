@@ -23,14 +23,38 @@ impl Parser<'_> {
                 self.bump();
             }
             let mutable = self.eat(TokenKind::Mut);
-            let pointee = self.parse_type();
-            let span = start.cover(self.builder.ast().ty(pointee).span);
-            let kind = if raw {
-                TypeKind::RawPointer { pointee, mutable }
+            if raw && self.at_contextual("extern") {
+                // A C function pointer is always read-only: the pointer value
+                // names code, not mutable storage. Reject `mut` and recover as
+                // the read-only form so one typo does not cascade.
+                if mutable {
+                    self.error(
+                        codes::E3089,
+                        start.cover(self.current_span()),
+                        "a C function pointer cannot be `mut`",
+                    )
+                    .help("remove `mut`; function pointers are read-only")
+                    .emit();
+                }
+                let pointee = self.parse_fn_sig_type();
+                let span = start.cover(self.builder.ast().ty(pointee).span);
+                self.builder.push_type(
+                    TypeKind::RawPointer {
+                        pointee,
+                        mutable: false,
+                    },
+                    span,
+                )
             } else {
-                TypeKind::Pointer { pointee, mutable }
-            };
-            self.builder.push_type(kind, span)
+                let pointee = self.parse_type();
+                let span = start.cover(self.builder.ast().ty(pointee).span);
+                let kind = if raw {
+                    TypeKind::RawPointer { pointee, mutable }
+                } else {
+                    TypeKind::Pointer { pointee, mutable }
+                };
+                self.builder.push_type(kind, span)
+            }
         } else if self.eat(TokenKind::LParen) {
             if self.eat(TokenKind::RParen) {
                 let span = start.cover(self.previous_span());
@@ -135,6 +159,107 @@ impl Parser<'_> {
 
         self.depth -= 1;
         result
+    }
+
+    /// Parses `extern "c" func(T, ...) -> R` after `*raw`.
+    ///
+    /// The caller has already consumed `*raw`. The signature is a type-level
+    /// description of a C function, so its parameter list contains types only;
+    /// names would be a declaration detail, not part of the pointer type.
+    fn parse_fn_sig_type(&mut self) -> TypeId {
+        let start = self.current_span();
+        self.bump();
+        let (abi, abi_span) = self.parse_abi();
+        if !self.eat(TokenKind::Func) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E3081,
+                self.current_span(),
+                format!("expected `func` after the C function ABI, found {found}"),
+            )
+            .help("write the parameter list after `func`, as in `*raw extern \"c\" func()`")
+            .emit();
+        }
+
+        let mut params = Vec::new();
+        let mut variadic = false;
+        let mut variadic_span = None;
+        if self.eat(TokenKind::LParen) {
+            while !self.at(TokenKind::RParen) && !self.is_eof() {
+                let before = self.index;
+                if self.at(TokenKind::DotDotDot) {
+                    variadic_span = Some(self.current_span());
+                    self.bump();
+                    variadic = true;
+                    break;
+                }
+                params.push(self.parse_type());
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                if self.at(TokenKind::RParen) || self.is_eof() {
+                    break;
+                }
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `,` between C function parameters, found {found}"),
+                )
+                .help("separate parameter types with `,`")
+                .emit();
+                if !can_start_type(self.current_kind()) {
+                    break;
+                }
+                self.ensure_progress(before);
+            }
+            if variadic && !self.at(TokenKind::RParen) {
+                self.error(
+                    codes::E3088,
+                    self.current_span(),
+                    "`...` must be the last element of the parameter list",
+                )
+                .help("move `...` to the end, after every fixed parameter")
+                .emit();
+                while !self.at(TokenKind::RParen) && !self.is_eof() {
+                    self.bump();
+                }
+            }
+            if let Some(span) = variadic_span
+                && params.is_empty()
+            {
+                self.error(
+                    codes::E3088,
+                    span,
+                    "a variadic C function needs at least one fixed parameter",
+                )
+                .help("declare the fixed parameters C always receives, then `...`")
+                .emit();
+            }
+            let _ = self.expect(TokenKind::RParen, "`)` after the parameter list");
+        } else if !self.is_eof() {
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                "expected `(` after `func`",
+            )
+            .help("write the parameter types, as in `func(i32) -> i32`")
+            .emit();
+        }
+
+        let ret = self.eat(TokenKind::Arrow).then(|| self.parse_type());
+        let span = start.cover(self.previous_span());
+        self.builder.push_type(
+            TypeKind::FnSig {
+                abi,
+                abi_span,
+                params,
+                ret,
+                variadic,
+                variadic_span,
+            },
+            span,
+        )
     }
 
     /// Returns `true` when the current token spells the contextual keyword.

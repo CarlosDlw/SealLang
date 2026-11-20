@@ -57,6 +57,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 args,
                 span,
             } => self.emit_intrinsic(*method, receiver, args, *span),
+            Rvalue::IndirectCall { callee, args, .. } => self.call_function_pointer(callee, args),
             Rvalue::Call { target, args, .. } => {
                 if let CallTarget::Extern { def, .. } = target {
                     return self.call_extern(*def, args);
@@ -899,6 +900,96 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     self.builder
                         .build_load(aggregate, slot, "extern.sret.result"),
                     "external sret load",
+                )
+            }
+        }
+    }
+
+    /// Emits a call through a raw C function pointer.
+    ///
+    /// The pointer's signature supplies the C ABI shape. Arguments and the
+    /// result are converted exactly like an external declaration's, because the
+    /// callee is a C function selected at run time rather than a Seal body.
+    fn call_function_pointer(
+        &self,
+        callee: &Operand,
+        arguments: &[Operand],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let callee_ty = self.operand_type(callee)?;
+        let (_, signature) = self.tcx.fn_ptr_parts(callee_ty).ok_or_else(|| {
+            CodegenError::internal("an indirect call has a non-function callee".to_owned())
+        })?;
+        let c_signature =
+            self.mapper
+                .c_signature(&signature.params, signature.ret, signature.variadic)?;
+        let function = self.load_operand(callee)?.into_pointer_value();
+
+        let mut values = Vec::with_capacity(c_signature.params.len());
+        let mut sret_slot = None;
+        if let CReturn::Sret(aggregate) = c_signature.ret {
+            let slot = self.build(
+                self.builder.build_alloca(aggregate, "indirect.sret"),
+                "indirect sret storage",
+            )?;
+            values.push(slot.into());
+            sret_slot = Some(slot);
+        }
+        let fixed = usize::from(sret_slot.is_some());
+        for (index, argument) in arguments.iter().enumerate() {
+            let value = self.load_operand(argument)?;
+            let converted = match c_signature.params.get(fixed + index) {
+                Some(parameter) => match parameter.kind {
+                    CParamKind::Direct => value,
+                    CParamKind::Coerced(ty) => self.coerce_aggregate(value, ty)?,
+                    CParamKind::ByPointer { aggregate, .. } => {
+                        let slot = self.build(
+                            self.builder.build_alloca(aggregate, "indirect.byval"),
+                            "indirect by-value storage",
+                        )?;
+                        self.build(
+                            self.builder.build_store(slot, value),
+                            "indirect by-value copy",
+                        )?;
+                        slot.into()
+                    }
+                },
+                None => value,
+            };
+            values.push(BasicMetadataValueEnum::from(converted));
+        }
+        let call = self.build(
+            self.builder.build_indirect_call(
+                c_signature.function_type,
+                function,
+                &values,
+                "indirect call",
+            ),
+            "indirect call",
+        )?;
+        match c_signature.ret {
+            CReturn::Void => Ok(self.mapper.empty_type().const_zero().into()),
+            CReturn::Direct => match call.try_as_basic_value() {
+                ValueKind::Basic(value) => Ok(value),
+                ValueKind::Instruction(_) => Err(CodegenError::internal(
+                    "an indirect function returned no LLVM value",
+                )),
+            },
+            CReturn::Coerced(_) => {
+                let ValueKind::Basic(value) = call.try_as_basic_value() else {
+                    return Err(CodegenError::internal(
+                        "a coerced indirect result returned no LLVM value",
+                    ));
+                };
+                self.coerce_aggregate(value, self.mapper.basic(signature.ret)?)
+            }
+            CReturn::Sret(aggregate) => {
+                let slot = sret_slot.ok_or_else(|| {
+                    CodegenError::internal("an sret indirect call has no destination storage")
+                })?;
+                self.build(
+                    self.builder
+                        .build_load(aggregate, slot, "indirect.sret.result"),
+                    "indirect sret load",
                 )
             }
         }

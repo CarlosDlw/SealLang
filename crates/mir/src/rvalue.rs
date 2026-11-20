@@ -360,6 +360,20 @@ pub enum Rvalue {
         /// The result type after the same replacement.
         ret_ty: TyId,
     },
+    /// Calls through a raw C function pointer.
+    ///
+    /// The callee is evaluated before the arguments, exactly like the source
+    /// expression. Its type is `*raw extern "c" func(...)`, which supplies the
+    /// fixed arity, variadicity, and result type. The call is always inside
+    /// `unsafe`; type checking enforces that before lowering.
+    IndirectCall {
+        /// The function pointer value, evaluated first.
+        callee: Operand,
+        /// Arguments in evaluation order.
+        args: Vec<Operand>,
+        /// The source range of each argument, matching `args` by position.
+        arg_spans: Vec<Span>,
+    },
     /// Calls a function or a trait method.
     ///
     /// Calls are rvalues because Seal has no unwinding and a call cannot fail in

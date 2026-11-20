@@ -278,6 +278,25 @@ impl<'a> Checker<'a> {
         .emit();
     }
 
+    /// Reports a use of a C function pointer outside `unsafe`.
+    ///
+    /// Taking the address of a Seal function and converting an arbitrary raw
+    /// pointer to a callable C pointer both cross the FFI boundary: the caller
+    /// must establish that the resulting address is callable with the declared
+    /// signature. Calling through the pointer is checked separately.
+    pub(super) fn require_unsafe_function_pointer(&mut self, span: Span) {
+        if self.unsafe_depth > 0 {
+            return;
+        }
+        self.error(
+            codes::E3089,
+            span,
+            "using a C function pointer requires an `unsafe` block",
+        )
+        .help("wrap the cast in `unsafe { ... }` and establish that the address is callable")
+        .emit();
+    }
+
     pub(super) fn error(
         &self,
         code: ErrorCode,

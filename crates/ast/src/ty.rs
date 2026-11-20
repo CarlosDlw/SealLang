@@ -308,6 +308,24 @@ pub enum TypeKind {
         /// The type of each element.
         element: TypeId,
     },
+    /// A C function signature, written `extern "c" func(T, ...) -> R`.
+    ///
+    /// The signature only appears as the pointee of a raw pointer; the parser
+    /// produces it after `*raw extern`.
+    FnSig {
+        /// The ABI spelling written between the quotes.
+        abi: seal_symbol::Symbol,
+        /// The span of the ABI string, for diagnostics.
+        abi_span: Span,
+        /// Fixed parameter types in declaration order.
+        params: Vec<TypeId>,
+        /// The return type, or `None` when the source omits `-> T`.
+        ret: Option<TypeId>,
+        /// Whether the parameter list ends with `...`.
+        variadic: bool,
+        /// The span of `...`, when present.
+        variadic_span: Option<Span>,
+    },
     /// Syntax the parser could not turn into a type.
     Error,
 }

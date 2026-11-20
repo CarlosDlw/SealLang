@@ -67,6 +67,8 @@ pub enum NotFfiSafe {
     Opaque,
     /// A zero-length array, which has no portable C representation.
     EmptyArray,
+    /// A C function signature used by value instead of behind a raw pointer.
+    FunctionSignature,
 }
 
 impl NotFfiSafe {
@@ -87,6 +89,7 @@ impl NotFfiSafe {
             Self::Never => "the never type has no C return type",
             Self::Opaque => "an opaque type has no size or C layout",
             Self::EmptyArray => "a zero-length array has no C representation",
+            Self::FunctionSignature => "a C function signature must appear behind `*raw`",
         }
     }
 
@@ -106,6 +109,7 @@ impl NotFfiSafe {
             Self::Never => "return a type C can represent",
             Self::Opaque => "use `*raw T` to pass C-owned storage indirectly",
             Self::EmptyArray => "use a non-empty array",
+            Self::FunctionSignature => "write `*raw extern \"c\" func(...)`",
         }
     }
 }
@@ -198,6 +202,7 @@ pub fn safety(tcx: &TyCtxt, ty: TyId, position: FfiPosition) -> Result<(), NotFf
                 Err(NotFfiSafe::Aggregate)
             }
         }
+        TyKind::FnSig(_) => Err(NotFfiSafe::FunctionSignature),
         TyKind::Param(_) => Err(NotFfiSafe::Generic),
         TyKind::Infer(_) | TyKind::Error => Err(NotFfiSafe::Unresolved),
     }

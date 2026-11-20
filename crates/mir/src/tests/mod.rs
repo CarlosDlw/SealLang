@@ -12,6 +12,7 @@ mod drops;
 mod dyn_types;
 mod enums;
 mod examples;
+mod fn_pointers;
 mod for_loop;
 mod generics;
 mod globals;

@@ -26,6 +26,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 | Constant::CStr { ty, .. } => *ty,
                 Constant::Bool(_) => self.tcx.bool_ty(),
                 Constant::Char(_) => self.tcx.char_ty(),
+                Constant::FunctionAddr { ty, .. } => *ty,
                 Constant::Unit => self.tcx.unit_ty(),
             },
         })
@@ -37,6 +38,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         operand: &Operand,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match operand {
+            Operand::Constant(Constant::FunctionAddr { instance, ty }) => {
+                self.function_address(*instance, *ty)
+            }
             Operand::Constant(constant) => self.constants.emit(constant),
             // A value constant is read from one private global holding its
             // evaluated memory image, so aggregate constants with relocations

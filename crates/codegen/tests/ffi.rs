@@ -374,6 +374,90 @@ fn invalid_library_names_are_e6005() {
     }
 }
 
+fn callback_program() -> String {
+    String::from(
+        r#"
+        extern struct Point { x: c_int, y: c_int }
+        extern "c" {
+          func ffi_apply(callback: *raw extern "c" func(i32) -> i32, value: i32) -> i32;
+          func ffi_scalar_i32(value: i32) -> i32;
+          func ffi_apply_null(callback: *raw extern "c" func(i32) -> i32) -> i32;
+          func ffi_signal_like(callback: *raw extern "c" func(i32) -> i32) -> i32;
+          func ffi_apply_point(callback: *raw extern "c" func(Point) -> Point, point: Point) -> Point;
+          func ffi_sum_ints(count: i32, ...) -> i32;
+          func ffi_register_atexit(callback: *raw extern "c" func()) -> c_int;
+          func ffi_exit_now(code: c_int) -> ();
+          func qsort(base: *raw mut c_void, count: usize, size: usize, compare: *raw extern "c" func(*raw c_void, *raw c_void) -> c_int) -> ();
+        }
+
+        func double_it(value: i32) -> i32 { value * 2 }
+
+        func add_point(point: Point) -> Point {
+          Point { x: point.x + 1, y: point.y + 1 }
+        }
+
+        func compare_ints(left: *raw c_void, right: *raw c_void) -> c_int {
+          unsafe {
+            let a = *(left as *raw i32);
+            let b = *(right as *raw i32);
+            if a < b { -1 } else if a > b { 1 } else { 0 }
+          }
+        }
+
+        func on_exit() {
+          unsafe { ffi_exit_now(77); }
+        }
+
+        func main() -> i32 {
+          let mut values = [3, 1, 2];
+          unsafe {
+            let callback = double_it as *raw extern "c" func(i32) -> i32;
+            if ffi_apply(callback, 21) != 42 { return 1; }
+            let external_callback = ffi_scalar_i32 as *raw extern "c" func(i32) -> i32;
+            if ffi_apply(external_callback, 41) != 42 { return 14; }
+            let null = 0usize as *raw extern "c" func(i32) -> i32;
+            if !null.is_null() { return 13; }
+            if ffi_apply_null(null) != 1 { return 2; }
+            if ffi_apply_null(callback) != 0 { return 12; }
+            if ffi_signal_like(callback) != 84 { return 3; }
+
+            let compare = compare_ints as *raw extern "c" func(*raw c_void, *raw c_void) -> c_int;
+            let base = &mut values[0] as *raw mut i32 as *raw mut c_void;
+            qsort(base, 3usize, 4usize, compare);
+            if values[0] != 1 { return 4; }
+            if values[1] != 2 { return 5; }
+            if values[2] != 3 { return 6; }
+
+            let point_callback = add_point as *raw extern "c" func(Point) -> Point;
+            let point = Point { x: 10, y: 20 };
+            let moved = ffi_apply_point(point_callback, point);
+            if moved.x != 11 { return 8; }
+            if moved.y != 21 { return 9; }
+
+            let variadic = ffi_sum_ints as *raw extern "c" func(i32, ...) -> i32;
+            if variadic(3, 1i32, 2i32, 39i32) != 42 { return 10; }
+
+            let exit_callback = on_exit as *raw extern "c" func();
+            if ffi_register_atexit(exit_callback) != 0 { return 11; }
+          }
+          0
+        }
+    "#,
+    )
+}
+
+#[test]
+fn c_function_pointers_and_callbacks_cross_the_boundary() {
+    let fixture = Fixture::new();
+    for (opt_level, tag) in [
+        (OptLevel::O0, "ffi-callback-o0"),
+        (OptLevel::O2, "ffi-callback-o2"),
+    ] {
+        let code = compile_and_run(&callback_program(), fixture.links(), tag, opt_level);
+        assert_eq!(code, 77, "the atexit callback ran (O{opt_level:?})");
+    }
+}
+
 #[test]
 fn a_missing_search_path_is_e6005() {
     let fixture = Fixture::new();

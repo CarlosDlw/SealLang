@@ -87,6 +87,19 @@ pub struct DynTypeUse {
     pub span: Span,
 }
 
+/// One source-level use of a C function signature.
+///
+/// The signature is recorded during lowering so the checker can validate every
+/// parameter and the return type with the same FFI-safety predicate it uses for
+/// external declarations. The span points at the complete signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FnSigUse {
+    /// The lowered signature type, normally the pointee of a raw pointer.
+    pub ty: TyId,
+    /// The source span of the signature.
+    pub span: Span,
+}
+
 /// The lowered representation of one file.
 #[derive(Debug)]
 pub struct Hir {
@@ -112,6 +125,7 @@ pub struct Hir {
     receivers: FxHashMap<DefId, ReceiverKind>,
     inherent_impls: Vec<InherentImpl>,
     dyn_types: Vec<DynTypeUse>,
+    fn_sigs: Vec<FnSigUse>,
     extern_functions: FxHashMap<DefId, extern_decl::ExternFunction>,
     extern_function_order: Vec<DefId>,
     extern_statics: FxHashMap<DefId, extern_decl::ExternStatic>,
@@ -433,6 +447,11 @@ impl Hir {
         &self.dyn_types
     }
 
+    /// Returns every C function-signature use recorded during lowering.
+    pub fn fn_sigs(&self) -> &[FnSigUse] {
+        &self.fn_sigs
+    }
+
     /// Returns the external declaration for `def`, if it is an external function.
     pub fn extern_function(&self, def: DefId) -> Option<&extern_decl::ExternFunction> {
         self.extern_functions.get(&def)
@@ -582,6 +601,10 @@ impl Hir {
         self.dyn_types.push(usage);
     }
 
+    pub(crate) fn insert_fn_sig(&mut self, usage: FnSigUse) {
+        self.fn_sigs.push(usage);
+    }
+
     /// Returns all blocks, indexable by [`HirBlockId`].
     pub fn block_arena(&self) -> &IndexVec<HirBlockId, Block> {
         &self.blocks
@@ -617,6 +640,7 @@ impl Hir {
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
             dyn_types: Vec::new(),
+            fn_sigs: Vec::new(),
             extern_functions: FxHashMap::default(),
             extern_function_order: Vec::new(),
             extern_statics: FxHashMap::default(),

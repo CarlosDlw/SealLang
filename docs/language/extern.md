@@ -1,10 +1,9 @@
 # External functions and statics
 
 Status: declared functions, calls, static storage, native library resolution,
-C-layout structs passed and returned by value, opaque types, and `c_void` are
-implemented in the current language version. Variadic declarations and function
-pointers belong to later phases and are rejected with a diagnostic instead of
-being silently accepted.
+C-layout structs passed and returned by value, opaque types, `c_void`, variadic
+declarations, C function pointer types, callbacks, and indirect calls are
+implemented in the current language version.
 
 An `extern` declaration names code or storage that C defines and the linker
 resolves. Seal does not own the body or the storage: it emits a declaration,
@@ -101,6 +100,56 @@ only appear as the pointee of a raw pointer. Writing it by value in a binding, a
 field, an array, a parameter, or a return type is `E3087`; dereferencing a raw
 pointer to it is also `E3087`. The built-in `c_void` follows the same rule and is
 the intended pointee for an untyped C pointer.
+
+### C function pointer types
+
+A C function pointer is written as a raw pointer to a C function signature:
+
+```seal
+*raw extern "c" func(i32, *raw c_void) -> c_int
+```
+
+The ABI string and `func` are part of the type. Parameters are types only; a
+function pointer type does not name its parameters. A trailing `...` marks a
+variadic signature and must follow at least one fixed parameter. Omitting the
+result means C `void`.
+
+The signature is unsized and only appears as the pointee of `*raw`. The pointer
+itself is one word, is `Copy`, and is FFI-safe. Every fixed parameter and the
+result pass through the same FFI-safety predicate as an external declaration,
+so `char`, checked references, Seal-layout aggregates, tuples, and opaque values
+by value are `E3084`. The signature is read-only: `*raw mut extern func` is
+`E3089`.
+
+A Seal function becomes a C function pointer with an explicit cast:
+
+```seal
+extern "c" { func apply(callback: *raw extern "c" func(i32) -> i32, value: i32) -> i32; }
+
+func double_it(value: i32) -> i32 { value * 2 }
+
+func main() -> i32 {
+  unsafe {
+    let callback = double_it as *raw extern "c" func(i32) -> i32;
+    apply(callback, 21)
+  }
+}
+```
+
+The function must have no receiver, its instantiated signature must match the
+target exactly (including variadicity), and a generic function needs explicit
+type arguments: `identity::<i32> as ...`. Taking the address and converting an
+arbitrary raw pointer to a function pointer both require `unsafe`. Calling
+through the pointer also requires `unsafe`, because the compiler cannot prove
+that the address is non-null and callable with the declared signature.
+
+A Seal function is emitted with Seal's internal ABI. An aggregate parameter or
+result would therefore disagree with a C caller, so the compiler emits one
+cached C-ABI trampoline per `(function instance, pointer type)`. The trampoline
+receives C arguments, converts them, calls the internal function, and converts
+the result back. The internal function is not marked `noalias` when its address
+escapes, because C may call it through a path the whole-program aliasing proof
+did not model.
 
 ### Return types and `void`
 
@@ -339,11 +388,12 @@ runtime archive, or partial executable is left behind.
 | `E3086` | An external static is accessed outside `unsafe`, or an immutable one is written |
 | `E3087` | An opaque type is used by value or dereferenced |
 | `E3088` | A variadic declaration or argument is malformed, or its type cannot cross `...` |
+| `E3089` | A C function pointer is mutable, mismatched, generic without instantiation, has a receiver, or is used outside `unsafe` |
 | `E3090` | A `c"..."` literal contains an interior NUL |
 | `E3091` | A `link` directive is malformed (missing string, extra token, or missing `;`) |
 | `E3092` | An `extern` declaration is nested inside another `extern` block |
 | `E3093` | An external function, struct, or opaque type is generic |
-| `E4033` | A constant calls an external function |
+| `E4033` | A constant calls an external function or C function pointer, or takes a C function address |
 | `E4034` | A constant reads an external static |
 | `E6003` | The linker failed; the message names the command and libraries |
 | `E6005` | A library name or `-L` search path is invalid |
@@ -354,7 +404,8 @@ The following are deliberately rejected, never silently miscompiled:
 
 - Seal cannot define its own variadic function; only an `extern` declaration
   may end in `...` (`E3088`).
-- Function pointers and callbacks (rejected as a non-FFI-safe type).
+- A Seal function pointer is not a first-class value type: only the raw C form
+  exists, and taking a Seal function's address is an explicit cast.
 - Per-declaration attributes such as `noalias` or `noreturn` are not accepted
   on an external declaration.
 - C aggregates by value on an architecture without an implemented aggregate

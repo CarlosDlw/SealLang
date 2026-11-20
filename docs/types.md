@@ -42,6 +42,8 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Raw string pointer | `*raw str`, `*raw mut str` | 2 × pointer | pointer | yes | yes | no |
 | Raw slice pointer | `*raw [T]`, `*raw mut [T]` | 2 × pointer | pointer | yes | yes | no |
 | Raw trait-object pointer | `*raw dyn Trait`, `*raw mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
+| C function signature | not written alone | unsized | unsized | no | no | no |
+| C function pointer | `*raw extern "c" func(...) -> R` | pointer | pointer | yes | yes | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | C-layout aggregate | `extern struct S` | computed | computed | opt-in | yes, if every field is | opt-in |
 | Opaque type | `extern type T`, `c_void` | unsized | unsized | no | no | no |
@@ -459,6 +461,16 @@ safe queries. `len()` is available on raw slice and string pointers, and
 Pointer arithmetic (`add`, `sub`, `offset`, `byte_add`, `byte_offset`,
 `wrapping_add`, `wrapping_sub`, `wrapping_offset`, and `offset_from`) requires a
 sized pointee; call `data()` first for a fat pointer.
+
+A C function pointer is a thin raw pointer whose pointee is a C function
+signature: `*raw extern "c" func(i32) -> c_int`. The signature is unsized and
+never appears by value. The pointer is one word, `Copy`, and FFI-safe. It is
+always read-only (`*raw mut extern func` is `E3089`), and every fixed parameter
+and result must be FFI-safe. A Seal function converts to it with an explicit
+cast whose instantiated signature matches exactly; the compiler emits a C-ABI
+trampoline when the internal ABI differs. Taking the address, forging the
+pointer from an integer, and calling through it require `unsafe`. See
+[External functions and statics](language/extern.md#c-function-pointer-types).
 
 Dereferencing, reading, writing, copying, and non-wrapping arithmetic are unsafe
 operations and require an `unsafe { ... }` block. `*raw T` is read-only for

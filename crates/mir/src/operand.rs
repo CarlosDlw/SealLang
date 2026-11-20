@@ -2,7 +2,7 @@
 
 use seal_def::DefId;
 use seal_symbol::Symbol;
-use seal_ty::TyId;
+use seal_ty::{Instance, TyId};
 
 use crate::place::Place;
 
@@ -39,6 +39,17 @@ pub enum Constant {
         /// The unescaped contents, without the terminator.
         value: Symbol,
         /// The `*raw u8` type selected by the checker.
+        ty: TyId,
+    },
+    /// The address of a Seal function, converted to a C function pointer.
+    ///
+    /// `ty` is the raw pointer type the cast produced. The instance is fully
+    /// instantiated, so code generation can emit a C-ABI trampoline around the
+    /// exact function body.
+    FunctionAddr {
+        /// The function and its complete type arguments.
+        instance: Instance,
+        /// The raw C function pointer type.
         ty: TyId,
     },
     /// The unit value.

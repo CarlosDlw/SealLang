@@ -188,6 +188,9 @@ impl<'a> Interpreter<'a> {
             }
             Rvalue::TraitObjectReborrow { source, .. } => self.read_operand(source, span),
             Rvalue::Call { target, args, .. } => self.eval_call(*target, args, span),
+            Rvalue::IndirectCall { .. } => {
+                Err(self.error(EvalErrorKind::FunctionPointerCall, span))
+            }
             Rvalue::Intrinsic {
                 method,
                 receiver,

@@ -93,6 +93,12 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
                 operand_uses(arg, uses);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            operand_uses(callee, uses);
+            for arg in args {
+                operand_uses(arg, uses);
+            }
+        }
         Rvalue::Intrinsic { receiver, args, .. } => {
             match receiver {
                 seal_mir::IntrinsicReceiver::Place(place) => place_uses(place, uses),

@@ -111,6 +111,12 @@ fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
                 substitute_operand(tcx, substs, argument);
             }
         }
+        Rvalue::IndirectCall { callee, args, .. } => {
+            substitute_operand(tcx, substs, callee);
+            for argument in args {
+                substitute_operand(tcx, substs, argument);
+            }
+        }
         Rvalue::Aggregate { kind, fields } => {
             *kind = match *kind {
                 AggregateKind::Struct { adt, args } => AggregateKind::Struct {
@@ -198,9 +204,13 @@ fn substitute_operand(tcx: &TyCtxt, substs: SubstsId, operand: &mut Operand) {
         Constant::Int { ty, .. }
         | Constant::Float { ty, .. }
         | Constant::Str { ty, .. }
-        | Constant::CStr { ty, .. } => {
+        | Constant::CStr { ty, .. }
+        | Constant::FunctionAddr { ty, .. } => {
             *ty = tcx.substitute(*ty, substs);
         }
         Constant::Bool(_) | Constant::Char(_) | Constant::Unit => {}
+    }
+    if let Constant::FunctionAddr { instance, .. } = constant {
+        *instance = Instance::new(instance.def, substitute_substs(tcx, substs, instance.args));
     }
 }
