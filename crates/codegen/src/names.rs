@@ -154,6 +154,15 @@ pub(crate) fn definition(
     let mut components = Vec::new();
     if hir.packages().len() > 1 || !module.path.is_root() {
         components.push(interner.resolve(package.name).to_owned());
+        if hir
+            .packages()
+            .iter()
+            .filter(|other| other.name == package.name)
+            .count()
+            > 1
+        {
+            components.push(format!("i{}", package.instance.index()));
+        }
         components.extend(
             module
                 .path

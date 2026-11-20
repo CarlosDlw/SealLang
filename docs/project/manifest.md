@@ -55,6 +55,10 @@ Without `[targets]`, the project infers one target:
 - otherwise `src/lib.sl` produces a `lib` target;
 - otherwise loading fails with `E8003` and a pointer to `seal new`.
 
+`target.when` accepts a typed `cfg` table (`os`, `arch`, `env`,
+`pointer-width`, `any`, `all`, `not`). An inactive target stays in the project
+model but is skipped for a build whose triple does not match.
+
 An explicit target names a `kind` and, for `bin`, `example`, and `generator`,
 an `entry` function path. A missing entry is `E2087`; an entry that does not
 resolve to one top-level function is also `E2087`. A `lib` target cannot name
@@ -80,10 +84,53 @@ A missing path, a version that does not match, an edge that leaves the project,
 and a dependency cycle are reported before compilation (`E8002`, `E8006`).
 Registry and git edges are rejected explicitly rather than ignored.
 
+Dependency edges may carry a `when` condition and a per-edge feature list:
+
+```toml
+[dependencies]
+serde = { path = "../serde", features = ["derive"], optional = true }
+windows = { path = "../windows", when = { os = "windows" } }
+```
+
+`when` is evaluated against the target being built, not against the host that
+loads the project. An inactive edge is not visited by feature resolution.
+
+## Features
+
+Features are additive inside one package instance but are never unified across
+the graph. Two dependents that request different sets receive two instances of
+the same package, each with its own aliases and symbol names. Equal sets share
+one instance.
+
+```toml
+[package.features]
+default = ["std"]
+std = []
+derive = ["dep:serde", "serde?/derive"]
+use-windows = ["dep:windows"]
+
+[package.features.conflicts]
+std = ["no-std"]
+no-std = ["std"]
+```
+
+`dep:name` activates an optional dependency, `name/feature` activates the
+dependency and requests one of its features, and `name?/feature` requests the
+feature only when the optional dependency is already active. Unknown names,
+conflicts, and more than eight feature variants of one package are `E8007`.
+The limits are deliberate: they keep the instance graph explainable.
+
+`--features` and `--all-features` select features of the root package;
+`--no-default-features` suppresses its `default` feature. `seal tree` prints
+the resulting instance graph and `seal why` explains each instance and the
+edge that requested it.
+
 `seal.lock` records every path package, its relative source, a checksum over
-its files, and its resolved dependency edges. It is sorted, has no timestamps
+its files, the union of its instance features and `cfg`, every concrete
+instance, and its resolved dependency edges. It is sorted, has no timestamps
 or absolute paths, and is written only when its bytes change. `--locked` and
-`--frozen` fail with `E8008` instead of rewriting a stale lockfile.
+`--frozen` compare the same per-edge resolution and fail with `E8008` instead of
+rewriting a stale lockfile.
 
 ## API
 
@@ -101,7 +148,16 @@ expose = ["root"]
 
 Profiles control `opt-level`, `debug`, `debug-assertions`, `lto`,
 `codegen-units`, `strip`, and `incremental`; `inherits` starts from another
-profile. `dev` and `release` are built in. An unknown profile is `E8009`.
+profile and may inherit a built-in. Only the project root owns profile
+definitions. `dev`, `release`, `test`, and `bench` are built in. A target may
+name a profile; an explicit `--profile` or `--release` overrides it. An unknown
+profile is `E8009`.
+
+Source items and imports may carry `cfg(feature("..."))`,
+`cfg(target.os == "...")`, `cfg(debug_assertions)`, `cfg(test)`, and
+the other typed conditions. Items, imports, and whole modules whose condition
+is false are not lowered or typechecked. `cfg(env("NAME"))` is accepted only
+for a value declared in `[env]`; an undeclared name is `E2084`.
 
 `[env]` values may be written as a string or as a table with `value`,
 `tracked`, and `secret`. The values are carried by the project model; using
@@ -118,6 +174,10 @@ them in the compiler's build key belongs to the cache phase.
 | `E8005` | Invalid or contradictory manifest |
 | `E8006` | Dependency cycle |
 | `E8007` | Feature resolution failure |
+| `E8021` | Path dependency escapes the project |
+| `E8022` | Missing path dependency |
+| `E8023` | Incompatible dependency version |
+| `E8024` | Invalid dependency declaration |
 | `E8008` | Lockfile missing, stale, or malformed |
 | `E8009` | Unknown or invalid profile |
 | `E8010` | Structurally invalid compile plan |

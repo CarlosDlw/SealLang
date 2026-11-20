@@ -60,6 +60,9 @@ pub struct CfgOptions {
     pub test: bool,
     /// Whether `cfg(bench)` is active.
     pub bench: bool,
+    /// Declared environment values available to `cfg(env("..."))`.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// One package of the compilation, in dependency order.
@@ -216,7 +219,8 @@ impl CompilePlan {
         }
 
         let mut names = std::collections::BTreeSet::new();
-        let mut files = std::collections::BTreeSet::new();
+        let mut files: std::collections::BTreeMap<PathBuf, (String, u32)> =
+            std::collections::BTreeMap::new();
         for (index, package) in self.packages.iter().enumerate() {
             if package.name.trim().is_empty() {
                 return Err(PlanError::invalid(format!(
@@ -241,12 +245,24 @@ impl CompilePlan {
                     package.name
                 )));
             }
+            let mut own_files = std::collections::BTreeSet::new();
             for file in &package.files {
-                if !files.insert(file.path.clone()) {
+                if !own_files.insert(file.path.clone()) {
                     return Err(PlanError::invalid(format!(
-                        "the source file `{}` appears in more than one package",
-                        file.path.display()
+                        "the source file `{}` appears twice in package `{}`",
+                        file.path.display(),
+                        package.name
                     )));
+                }
+                if let Some((name, _instance)) =
+                    files.insert(file.path.clone(), (package.name.clone(), package.instance))
+                {
+                    if name != package.name {
+                        return Err(PlanError::invalid(format!(
+                            "the source file `{}` appears in more than one package",
+                            file.path.display()
+                        )));
+                    }
                 }
             }
             let mut aliases = std::collections::BTreeSet::new();

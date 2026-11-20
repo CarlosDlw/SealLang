@@ -35,7 +35,9 @@ $ seal check -p app
 `-p` selects one package; `--workspace` selects every package. `--all-targets`
 adds tests, benches, and examples. A positional target name selects one target.
 `--profile` chooses a declared profile and `--release` is shorthand for the
-built-in release profile.
+built-in release profile. `--cfg test`, `--cfg bench`, and
+`--cfg debug_assertions` force the corresponding boolean condition for
+coverage builds; other names are rejected because the configuration is typed.
 
 The lockfile is refreshed before a build. `--locked` and `--frozen` compare it
 with the current resolution and fail with `E8008` instead of changing it.
@@ -53,6 +55,21 @@ ambiguous (`E8103`); `--bin` or an explicit target name selects one. Arguments
 after `--` are forwarded unchanged, and the process exit status is `seal`'s
 status.
 
+## Explaining the graph
+
+```console
+$ seal tree
+$ seal tree -p app --features std
+$ seal why -p serde --features std
+```
+
+`tree` prints the resolved package-instance graph. A package requested with two
+different feature sets appears twice, each with its own bracketed feature list.
+`why` prints every instance of a package, its deterministic instance hash, its
+features, and the dependency edges that requested it. Both commands accept
+`--target`, `--features`, `--all-features`, `--no-default-features`, and
+`--cfg`.
+
 ## Metadata and doctor
 
 ```console
@@ -63,8 +80,8 @@ $ seal doctor --json --fix
 ```
 
 `metadata` prints versioned, deterministic JSON containing the project, target
-triple, packages, targets, module index, files, features, and dependency
-aliases. It is enough for an editor to list modules and targets without running
+triple, packages, targets, module index, files, features, dependency edges, and
+concrete package instances. It is enough for an editor to list modules and targets without running
 code generation.
 
 `doctor` checks the embedded toolchain, a linker on `PATH`, a writable

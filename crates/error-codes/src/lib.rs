@@ -2360,6 +2360,38 @@ pub const E8010: ErrorCode = ErrorCode {
 A plan names packages in dependency order, exactly one primary package, and one\nprimary source per package. A dependency may only point to an earlier package.\nThe project layer reports this code when its output violates one of those\ninvariants, so the compiler never loads a malformed graph.",
 };
 
+/// A path dependency escapes the project.
+pub const E8021: ErrorCode = ErrorCode {
+    code: "E8021",
+    title: "path dependency escapes the project",
+    explanation: "\
+A path dependency must live inside the project root. Allowing it to escape would\nmake the build depend on a directory the project does not own and would make the\nlockfile non-portable.",
+};
+
+/// A path dependency does not exist.
+pub const E8022: ErrorCode = ErrorCode {
+    code: "E8022",
+    title: "missing path dependency",
+    explanation: "\
+Every path dependency must point at a directory containing a `seal.toml` with a\n`[package]` table. Fix the path or create the manifest.",
+};
+
+/// A path dependency version is incompatible.
+pub const E8023: ErrorCode = ErrorCode {
+    code: "E8023",
+    title: "incompatible dependency version",
+    explanation: "\
+The version requirement on a path dependency must match the package version in\nthat directory. Update the requirement or the dependency manifest.",
+};
+
+/// A dependency declaration is ambiguous or malformed.
+pub const E8024: ErrorCode = ErrorCode {
+    code: "E8024",
+    title: "invalid dependency declaration",
+    explanation: "\
+A dependency needs exactly one source and a unique local alias. Two declarations\nthat resolve to the same name cannot be told apart at the use site.",
+};
+
 /// A project file could not be read.
 pub const E8011: ErrorCode = ErrorCode {
     code: "E8011",
@@ -3753,7 +3785,7 @@ pub static ALL: &[ErrorCode] = &[
     E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
-    E8008, E8009, E8010, E8011, E8103, E9001, E9002,
+    E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8103, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

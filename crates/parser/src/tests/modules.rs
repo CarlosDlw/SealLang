@@ -190,12 +190,20 @@ fn a_missing_module_semicolon_recovers_at_the_next_item() {
 }
 
 #[test]
+fn a_cfg_module_is_a_conditional_module() {
+    let fixture = Fixture::new("cfg(feature(\"std\")) module a;");
+    let ast = fixture.parse();
+    assert!(fixture.codes().is_empty());
+    let item = ast.item(ast.program().items()[0]);
+    assert!(item.modifiers.cfg.is_some());
+}
+
+#[test]
 fn module_modifiers_are_rejected_with_one_diagnostic() {
     for source in [
         "public module a;",
         "internal module a;",
         "private module a;",
-        "cfg(feature(\"std\")) module a;",
         "test module a;",
     ] {
         let fixture = Fixture::new(source);

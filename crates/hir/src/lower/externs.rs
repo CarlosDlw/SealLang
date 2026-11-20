@@ -55,6 +55,9 @@ impl Lowering<'_> {
                             });
                     }
                     for member in block.items {
+                        if !self.item_enabled(member) {
+                            continue;
+                        }
                         match self.ast.item(member).kind.clone() {
                             ItemKind::ExternFunc(declaration) => {
                                 self.collect_extern_function(member, &declaration);

@@ -199,7 +199,32 @@ impl Session {
     /// A source-map failure is reported as a diagnostic and returned as an error
     /// guarantee; it is never silently dropped.
     pub fn add_file(&self, name: FileName, text: String) -> Result<FileId, ErrorGuaranteed> {
-        match self.source_map.add_file(name, text) {
+        self.add_file_impl(name, text, false)
+    }
+
+    /// Registers an in-memory file as a distinct compilation unit.
+    ///
+    /// This is used when one real source belongs to several package instances.
+    pub fn add_file_distinct(
+        &self,
+        name: FileName,
+        text: String,
+    ) -> Result<FileId, ErrorGuaranteed> {
+        self.add_file_impl(name, text, true)
+    }
+
+    fn add_file_impl(
+        &self,
+        name: FileName,
+        text: String,
+        distinct: bool,
+    ) -> Result<FileId, ErrorGuaranteed> {
+        let result = if distinct {
+            self.source_map.add_file_distinct(name, text)
+        } else {
+            self.source_map.add_file(name, text)
+        };
+        match result {
             Ok(id) => Ok(id),
             Err(seal_span::SourceMapError::FileTooLarge { len, max }) => Err(self
                 .diag
@@ -223,6 +248,18 @@ impl Session {
         self.profiler.time("load", || {
             match seal_fs::load(path, seal_fs::DEFAULT_MAX_FILE_SIZE) {
                 Ok(source) => self.add_file(FileName::real(source.path()), source.into_text()),
+                Err(error) => Err(self.report_load_error(error)),
+            }
+        })
+    }
+
+    /// Loads a source file as a distinct compilation unit.
+    pub fn load_file_distinct(&self, path: &Path) -> Result<FileId, ErrorGuaranteed> {
+        self.profiler.time("load", || {
+            match seal_fs::load(path, seal_fs::DEFAULT_MAX_FILE_SIZE) {
+                Ok(source) => {
+                    self.add_file_distinct(FileName::real(source.path()), source.into_text())
+                }
                 Err(error) => Err(self.report_load_error(error)),
             }
         })

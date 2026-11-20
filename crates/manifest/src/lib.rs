@@ -8,18 +8,22 @@
 
 #![warn(missing_docs)]
 
+mod cfg;
 mod dependency;
 mod env;
 mod error;
+mod feature;
 mod package;
 mod profile;
 mod project;
 mod target;
 mod validate;
 
+pub use cfg::CfgSpec;
 pub use dependency::{DependencyManifest, DependencySpec};
 pub use env::EnvValue;
 pub use error::{Location, ManifestError, ManifestResult, ManifestWarning};
+pub use feature::FeatureManifest;
 pub use package::{ApiManifest, PackageManifest};
 pub use profile::ProfileManifest;
 pub use project::ProjectManifest;

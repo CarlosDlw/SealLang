@@ -57,7 +57,7 @@ fn an_explicit_target_name_selects_only_that_target() {
 }
 
 #[test]
-fn a_target_profile_overrides_command_line_profiles() {
+fn a_command_line_profile_overrides_the_target_profile() {
     let fixture = sample_project("build-profile");
     let project = load(&fixture);
     let package = project.package(0);
@@ -68,7 +68,7 @@ fn a_target_profile_overrides_command_line_profiles() {
     selection.profile = Some("custom".to_owned());
     assert_eq!(
         plan_options(&selection, BuildMode::Build, main).profile,
-        "release"
+        "custom"
     );
     assert_eq!(
         plan_options(&selection, BuildMode::Build, share).profile,
@@ -81,4 +81,17 @@ fn a_target_profile_overrides_command_line_profiles() {
         plan_options(&selection, BuildMode::Build, share).profile,
         "release"
     );
+}
+
+#[test]
+fn a_target_profile_selects_optimization_values() {
+    let fixture = sample_project("build-profile-values");
+    let project = load(&fixture);
+    let target = project.package(0).target("main").expect("main target");
+    let options = plan_options(&selection(), BuildMode::Build, target);
+    let plan = project
+        .compile_plan(0, "main", &options)
+        .expect("the plan resolves");
+    assert_eq!(plan.profile.opt_level, 3);
+    assert!(!plan.profile.debug);
 }

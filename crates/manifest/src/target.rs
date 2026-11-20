@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cfg::CfgSpec;
+
 /// The kind of artifact a target produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,6 +70,12 @@ pub struct TargetManifest {
     /// Features required before this target is built.
     #[serde(default)]
     pub required_features: Vec<String>,
+    /// A typed condition that activates the target.
+    #[serde(default)]
+    pub when: Option<CfgSpec>,
+    /// Declared environment values for this target.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
     /// The profile this target uses by default.
     #[serde(default)]
     pub profile: Option<String>,
@@ -95,6 +103,8 @@ impl TargetManifest {
             include: Vec::new(),
             reuse: None,
             required_features: Vec::new(),
+            when: None,
+            env: std::collections::BTreeMap::new(),
             profile: None,
             runtime: None,
             linker: None,
@@ -112,6 +122,8 @@ impl TargetManifest {
             include: Vec::new(),
             reuse: None,
             required_features: Vec::new(),
+            when: None,
+            env: std::collections::BTreeMap::new(),
             profile: None,
             runtime: None,
             linker: None,

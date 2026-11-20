@@ -157,6 +157,8 @@ pub struct PackageData {
     pub modules: Vec<ModuleId>,
     /// Direct dependencies, in plan order.
     pub dependencies: Vec<PackageDependency>,
+    /// The configuration facts for this instance.
+    pub cfg: crate::CfgEnvironment,
 }
 
 /// One source file in a package plan.
@@ -195,6 +197,7 @@ impl PackagePlan {
                 }],
                 exposed: vec![ModulePath::root()],
                 dependencies: Vec::new(),
+                cfg: crate::CfgEnvironment::default(),
             }],
             primary: PackageId::from_usize(0),
         }
@@ -214,6 +217,8 @@ pub struct PackagePlanEntry {
     pub exposed: Vec<ModulePath>,
     /// Dependency aliases.
     pub dependencies: Vec<PackagePlanDependency>,
+    /// The configuration facts for this instance.
+    pub cfg: crate::CfgEnvironment,
 }
 
 /// One dependency alias in a package plan.
@@ -407,6 +412,7 @@ impl ModuleGraph {
                 root,
                 modules: vec![root],
                 dependencies: Vec::new(),
+                cfg: entry.cfg.clone(),
             });
 
             for file in &entry.files {
@@ -416,6 +422,11 @@ impl ModuleGraph {
                         file.file.index()
                     ));
                 };
+                if !crate::cfg::module_enabled(ast, &graph.packages[package_id].cfg, interner) {
+                    graph.file_module.insert(file.file, root);
+                    graph.file_package.insert(file.file, package_id);
+                    continue;
+                }
                 let module = graph.module_of_file(package_id, ast, dcx, interner);
                 graph.file_module.insert(file.file, module);
                 graph.file_package.insert(file.file, package_id);
@@ -424,7 +435,8 @@ impl ModuleGraph {
                     file: file.file,
                     span: module_declaration_span(ast),
                 });
-                graph.collect_item_names(module, ast);
+                let cfg = graph.packages[package_id].cfg.clone();
+                graph.collect_item_names(module, ast, &cfg, interner);
             }
 
             for dependency in &entry.dependencies {
@@ -509,6 +521,13 @@ impl ModuleGraph {
             let ItemKind::Module(module) = &item.kind else {
                 continue;
             };
+            if item.modifiers.cfg.is_some_and(|condition| {
+                !self.packages[package]
+                    .cfg
+                    .evaluate(ast, condition, interner)
+            }) {
+                continue;
+            }
             if declaration.is_none() {
                 declaration = Some((position, module.clone(), item.span));
             } else {
@@ -563,9 +582,22 @@ impl ModuleGraph {
     }
 
     /// Records every top-level item's namespace and visibility.
-    fn collect_item_names(&mut self, module: ModuleId, ast: &seal_ast::Ast) {
+    fn collect_item_names(
+        &mut self,
+        module: ModuleId,
+        ast: &seal_ast::Ast,
+        cfg: &crate::CfgEnvironment,
+        interner: &Interner,
+    ) {
         for &item_id in ast.program().items() {
             let item = ast.item(item_id);
+            if item
+                .modifiers
+                .cfg
+                .is_some_and(|condition| !cfg.evaluate(ast, condition, interner))
+            {
+                continue;
+            }
             let (name, namespace) = match &item.kind {
                 ItemKind::Struct(declaration) => (declaration.name, Namespace::Type),
                 ItemKind::Enum(declaration) => (declaration.name, Namespace::Type),

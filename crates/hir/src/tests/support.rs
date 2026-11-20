@@ -178,6 +178,15 @@ impl Fixture {
     ///
     /// An empty list exposes the package root.
     pub(crate) fn lower_package_exposing(&self, exposed: &[&str]) -> Hir {
+        self.lower_package_exposing_with_cfg(exposed, crate::CfgEnvironment::default())
+    }
+
+    /// Lowers every file in the fixture with explicit configuration facts.
+    pub(crate) fn lower_package_with_cfg(&self, cfg: crate::CfgEnvironment) -> Hir {
+        self.lower_package_exposing_with_cfg(&[], cfg)
+    }
+
+    fn lower_package_exposing_with_cfg(&self, exposed: &[&str], cfg: crate::CfgEnvironment) -> Hir {
         let mut asts = Vec::with_capacity(self.files.len());
         for id in &self.files {
             let file = self.map.file(*id).expect("registered file exists");
@@ -200,6 +209,7 @@ impl Fixture {
                 primary: index == 0,
             })
             .collect();
+        plan.packages[0].cfg = cfg;
         crate::lower_package(
             &plan,
             &asts,
@@ -250,6 +260,7 @@ impl Fixture {
                 files,
                 exposed,
                 dependencies,
+                cfg: crate::CfgEnvironment::default(),
             });
         }
 

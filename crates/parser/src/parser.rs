@@ -106,13 +106,22 @@ impl<'a> Parser<'a> {
                 let item = self.parse_use(modifiers);
                 self.items.push(item);
             } else if self.at_name("module") {
-                if !modifiers.is_empty() {
+                if modifiers.has_visibility {
                     self.error(
                         codes::E2079,
                         self.current_span(),
-                        "a module declaration cannot have modifiers",
+                        "a module declaration cannot have a visibility modifier",
                     )
-                    .help("remove the modifiers; a module is always internal to its package")
+                    .help("remove the visibility; a module is always internal to its package")
+                    .emit();
+                }
+                if modifiers.is_test {
+                    self.error(
+                        codes::E2079,
+                        self.current_span(),
+                        "a module declaration cannot be a test",
+                    )
+                    .help("remove `test`; it applies to functions")
                     .emit();
                 }
                 self.item_modifiers = modifiers;

@@ -145,6 +145,7 @@ pub(crate) fn load(root: &Path) -> ProjectResult<Project> {
             .as_ref()
             .map(|project| project.default_members.clone())
             .unwrap_or_default(),
+        profiles: root_loaded.manifest.profiles.clone(),
         lockfile: crate::Lockfile::default(),
     };
     project.lockfile = project.resolve_lockfile(host_triple().as_str());
@@ -307,19 +308,19 @@ fn resolve_path_dependencies(
         let dependencies = path_dependencies(&root, specs)?;
         for (alias, path, requirement) in dependencies {
             let canonical = path.canonicalize().map_err(|error| {
-                ProjectError::dependency(format!(
+                ProjectError::path_dependency(format!(
                     "the path dependency `{alias}` at `{}` cannot be resolved: {error}",
                     path.display()
                 ))
             })?;
             if !canonical.starts_with(project_root) {
-                return Err(ProjectError::dependency(format!(
+                return Err(ProjectError::path_escape(format!(
                     "the path dependency `{alias}` at `{}` leaves the project root",
                     path.display()
                 )));
             }
             if !canonical.is_dir() || !canonical.join("seal.toml").is_file() {
-                return Err(ProjectError::dependency(format!(
+                return Err(ProjectError::path_dependency(format!(
                     "the path dependency `{alias}` at `{}` has no `seal.toml`",
                     path.display()
                 )));
@@ -327,7 +328,7 @@ fn resolve_path_dependencies(
             if !specs.contains_key(&canonical) {
                 let loaded = crate::load_manifest(&canonical)?;
                 if loaded.manifest.package.is_none() {
-                    return Err(ProjectError::dependency(format!(
+                    return Err(ProjectError::dependency_declaration(format!(
                         "the path dependency `{alias}` at `{}` has no `[package]` table",
                         canonical.display()
                     )));
@@ -348,12 +349,12 @@ fn resolve_path_dependencies(
                     .and_then(|spec| spec.loaded.manifest.package.as_ref())
                     .ok_or_else(|| ProjectError::dependency("a dependency has no package"))?;
                 let version = semver::Version::parse(&dependency.version).map_err(|error| {
-                    ProjectError::dependency(format!(
+                    ProjectError::version(format!(
                         "the path dependency `{alias}` has an invalid version: {error}"
                     ))
                 })?;
                 if !requirement.matches(&version) {
-                    return Err(ProjectError::dependency(format!(
+                    return Err(ProjectError::version(format!(
                         "the path dependency `{alias}` requires `{requirement}` but the package is `{version}`"
                     )));
                 }
@@ -415,18 +416,19 @@ fn dependency_edges(
 ) -> ProjectResult<Vec<Dependency>> {
     let mut dependencies = Vec::new();
     for (alias, dependency) in &manifest.dependencies {
-        let path = match dependency {
+        let detail = match dependency {
             DependencySpec::Version(_) => {
                 return Err(ProjectError::dependency(format!(
                     "the dependency `{alias}` uses a registry version; this phase supports path dependencies only"
                 )));
             }
-            DependencySpec::Detailed(detail) => detail.path.as_ref().ok_or_else(|| {
-                ProjectError::dependency(format!("the dependency `{alias}` has no path"))
-            })?,
+            DependencySpec::Detailed(detail) => detail,
         };
+        let path = detail.path.as_ref().ok_or_else(|| {
+            ProjectError::dependency(format!("the dependency `{alias}` has no path"))
+        })?;
         let canonical = root.join(path).canonicalize().map_err(|error| {
-            ProjectError::dependency(format!(
+            ProjectError::path_dependency(format!(
                 "the dependency `{alias}` cannot be resolved: {error}"
             ))
         })?;
@@ -441,6 +443,10 @@ fn dependency_edges(
         dependencies.push(Dependency {
             alias: alias.clone(),
             package,
+            features: detail.features.clone(),
+            default_features: detail.default_features,
+            optional: detail.optional,
+            when: detail.when.clone(),
         });
     }
     dependencies.sort_by(|left, right| left.alias.cmp(&right.alias));

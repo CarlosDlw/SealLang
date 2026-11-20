@@ -32,6 +32,7 @@
 
 mod body;
 mod builtin;
+mod cfg;
 mod closure;
 mod expr;
 mod extern_decl;
@@ -49,6 +50,7 @@ mod tests;
 
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
+pub use cfg::CfgEnvironment;
 pub use closure::{CaptureDef, CaptureSource, ClosureDef};
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use extern_decl::{ExternFunction, ExternStatic, LinkDirective};

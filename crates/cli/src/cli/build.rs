@@ -124,8 +124,15 @@ pub(crate) fn select_jobs(
         }
         return Ok(jobs);
     }
+    let triple = selection
+        .target_triple
+        .clone()
+        .unwrap_or_else(|| host_triple().as_str().to_owned());
     for package in packages {
         for target in &project.package(package).targets {
+            if !target.is_active_for(&triple) {
+                continue;
+            }
             let include = if selection.all_targets {
                 true
             } else {
@@ -177,27 +184,29 @@ pub(crate) fn plan_options(
     mode: BuildMode,
     target: &seal_project::Target,
 ) -> PlanOptions {
-    let profile = target.profile.clone().unwrap_or_else(|| {
-        if selection.release {
-            "release".to_owned()
-        } else {
-            selection
-                .profile
-                .clone()
-                .unwrap_or_else(|| "dev".to_owned())
-        }
-    });
+    let (profile, profile_explicit) = if let Some(profile) = &selection.profile {
+        (profile.clone(), true)
+    } else if selection.release {
+        ("release".to_owned(), true)
+    } else {
+        (
+            target.profile.clone().unwrap_or_else(|| "dev".to_owned()),
+            false,
+        )
+    };
     PlanOptions {
         target: selection
             .target_triple
             .clone()
             .unwrap_or_else(|| host_triple().as_str().to_owned()),
         profile,
+        profile_explicit,
         mode,
         output: None,
         features: selection.features.clone(),
         no_default_features: selection.no_default_features,
         all_features: selection.all_features,
+        cfgs: selection.cfgs.clone(),
     }
 }
 
@@ -207,7 +216,30 @@ pub(crate) fn prepare_lockfile(
     target: &str,
     selection: &Selection,
 ) -> Result<(), ExitCode> {
-    let expected = project.resolve_lockfile(target);
+    let lock_profile = if let Some(profile) = &selection.profile {
+        profile.clone()
+    } else if selection.release {
+        "release".to_owned()
+    } else {
+        project
+            .default_package()
+            .ok()
+            .and_then(|package| project.package(package).targets.first())
+            .and_then(|target| target.profile.clone())
+            .unwrap_or_else(|| "dev".to_owned())
+    };
+    let options = PlanOptions {
+        target: target.to_owned(),
+        profile: lock_profile,
+        profile_explicit: selection.profile.is_some() || selection.release,
+        mode: BuildMode::Check,
+        output: None,
+        features: selection.features.clone(),
+        no_default_features: selection.no_default_features,
+        all_features: selection.all_features,
+        cfgs: selection.cfgs.clone(),
+    };
+    let expected = project.resolve_lockfile_with(target, &options);
     let path = project.root.join("seal.lock");
     if selection.locked || selection.frozen {
         let existing = seal_project::Lockfile::load(&path).map_err(|error| {
@@ -224,8 +256,8 @@ pub(crate) fn prepare_lockfile(
         }
         return Ok(());
     }
-    project
-        .write_lockfile()
+    expected
+        .write_if_changed(&path)
         .map(|_| ())
         .map_err(|error| ui::error(error.code(), error.message()))
 }

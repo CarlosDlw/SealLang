@@ -191,10 +191,16 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
                 }
             }
         }
-        for (name, feature) in &package.features {
+        for (name, feature) in package.features.values() {
             validate_identifier(name, index, "package.features")?;
             for value in feature {
-                validate_identifier(value, index, "package.features")?;
+                validate_feature_request(value, index, "package.features")?;
+            }
+        }
+        for (name, conflicts) in package.features.conflict_map() {
+            validate_identifier(name, index, "package.features.conflicts")?;
+            for conflict in conflicts {
+                validate_identifier(conflict, index, "package.features.conflicts")?;
             }
         }
     }
@@ -225,13 +231,8 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
                 ));
             }
         }
-        if let Some(profile) = &target.profile {
-            if !manifest.profiles.contains_key(profile) {
-                return Err(index.fail(
-                    &format!("{path}.profile"),
-                    format!("the `{name}` target names the unknown profile `{profile}`"),
-                ));
-            }
+        for key in target.env.keys() {
+            validate_identifier(key, index, &format!("{path}.env"))?;
         }
         if let Some(runtime) = &target.runtime {
             if !matches!(runtime.as_str(), "default" | "none") {
@@ -303,11 +304,15 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
         }
     }
 
+    fn profile_known(manifest: &Manifest, name: &str) -> bool {
+        matches!(name, "dev" | "release" | "test" | "bench") || manifest.profiles.contains_key(name)
+    }
+
     for (name, profile) in &manifest.profiles {
         validate_identifier(name, index, "profiles")?;
         let path = format!("profiles.{name}");
         if let Some(inherited) = &profile.inherits {
-            if !manifest.profiles.contains_key(inherited) {
+            if !profile_known(manifest, inherited) {
                 return Err(index.fail(
                     &format!("{path}.inherits"),
                     format!("the profile `{name}` inherits the unknown profile `{inherited}`"),
@@ -382,6 +387,24 @@ fn validate_target_name(name: &str, index: &KeyIndex, path: &str) -> ManifestRes
             ),
         ))
     }
+}
+
+fn validate_feature_request(value: &str, index: &KeyIndex, path: &str) -> ManifestResult<()> {
+    if let Some(dependency) = value.strip_prefix("dep:") {
+        return validate_identifier(dependency, index, path);
+    }
+    if let Some((dependency, feature)) = value.split_once('/') {
+        let dependency = dependency.strip_suffix('?').unwrap_or(dependency);
+        if dependency.is_empty() || feature.is_empty() || feature.contains('/') {
+            return Err(index.fail(
+                path,
+                format!("`{value}` is not `dependency/feature` or `dependency?/feature`"),
+            ));
+        }
+        validate_identifier(dependency, index, path)?;
+        return validate_identifier(feature, index, path);
+    }
+    validate_identifier(value, index, path)
 }
 
 fn validate_identifier(name: &str, index: &KeyIndex, path: &str) -> ManifestResult<()> {
@@ -715,11 +738,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_profile_reference_is_rejected() {
-        let error = load_str(
+    fn an_unknown_target_profile_is_resolved_at_plan_time() {
+        let manifest = load_str(
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n[targets.main]\nkind = \"bin\"\nentry = \"root::main\"\nprofile = \"missing\"\n",
         )
-        .unwrap_err();
-        assert!(error.message().contains("unknown profile"));
+        .expect("the manifest itself is valid");
+        assert!(manifest.manifest.targets.contains_key("main"));
     }
 }

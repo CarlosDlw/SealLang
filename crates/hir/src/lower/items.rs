@@ -704,6 +704,9 @@ impl Lowering<'_> {
         type_def: Option<DefId>,
         self_ty: TyId,
     ) -> Option<(Symbol, DefId)> {
+        if !self.item_enabled(item_id) {
+            return None;
+        }
         let ItemKind::Func(declaration) = &self.ast.item(item_id).kind else {
             return None;
         };

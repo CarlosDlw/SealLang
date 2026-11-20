@@ -7,6 +7,8 @@ mod init;
 pub(crate) mod metadata;
 pub(crate) mod new;
 mod run;
+mod tree;
+mod why;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -106,6 +108,10 @@ pub(crate) enum Command {
     Run(RunArgs),
     /// Analyze targets without writing artifacts.
     Check(CheckArgs),
+    /// Print the resolved package-instance graph.
+    Tree(QueryArgs),
+    /// Explain why packages and features are in the plan.
+    Why(QueryArgs),
     /// Print the project model as JSON.
     Metadata(MetadataArgs),
     /// Check the toolchain, linker, cache, and lockfile.
@@ -154,6 +160,10 @@ pub(crate) struct Selection {
     /// Disable default features.
     #[arg(long)]
     pub(crate) no_default_features: bool,
+
+    /// Force a boolean `cfg` fact (`test`, `bench`, `debug_assertions`).
+    #[arg(long = "cfg", value_name = "FACT")]
+    pub(crate) cfgs: Vec<String>,
 
     /// Fail if the lockfile would change.
     #[arg(long)]
@@ -233,6 +243,34 @@ pub(crate) struct CheckArgs {
     pub(crate) selection: Selection,
 }
 
+/// Options shared by `tree` and `why`.
+#[derive(Debug, Args)]
+pub(crate) struct QueryArgs {
+    /// Select one package by name.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+
+    /// Compile for a target triple.
+    #[arg(long, value_name = "TRIPLE")]
+    pub(crate) target_triple: Option<String>,
+
+    /// Enable features.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    pub(crate) features: Vec<String>,
+
+    /// Enable every feature.
+    #[arg(long, conflicts_with = "features")]
+    pub(crate) all_features: bool,
+
+    /// Disable default features.
+    #[arg(long)]
+    pub(crate) no_default_features: bool,
+
+    /// Force a boolean `cfg` fact (`test`, `bench`, `debug_assertions`).
+    #[arg(long = "cfg", value_name = "FACT")]
+    pub(crate) cfgs: Vec<String>,
+}
+
 /// `seal metadata`.
 #[derive(Debug, Args)]
 pub(crate) struct MetadataArgs {
@@ -296,6 +334,8 @@ where
         Command::Build(args) => build::build(&cli, &project, args),
         Command::Run(args) => run::run(&cli, &project, args),
         Command::Check(args) => check::check(&cli, &project, args),
+        Command::Tree(args) => tree::tree(&cli, &project, args),
+        Command::Why(args) => why::why(&cli, &project, args),
         Command::Metadata(args) => metadata::metadata(&cli, &project, args),
         Command::Doctor(args) => doctor::doctor(&cli, &project, args),
     }

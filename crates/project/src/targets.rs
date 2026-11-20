@@ -82,6 +82,8 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             profile: None,
             linker: None,
             linker_script: None,
+            required_features: Vec::new(),
+            when: None,
         }]);
     }
     let lib = root.join("src/lib.sl");
@@ -97,6 +99,8 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             profile: None,
             linker: None,
             linker_script: None,
+            required_features: Vec::new(),
+            when: None,
         }]);
     }
     Err(ProjectError::target(format!(
@@ -182,6 +186,8 @@ fn build_one(
         profile: declaration.profile.clone(),
         linker: declaration.linker.clone(),
         linker_script,
+        required_features: declaration.required_features.clone(),
+        when: declaration.when.clone(),
     })
 }
 

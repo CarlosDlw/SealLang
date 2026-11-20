@@ -113,9 +113,34 @@ impl SourceMap {
     /// of the second registration is ignored. This keeps diagnostics pointing at
     /// one file id even when a module is reached by two paths.
     pub fn add_file(&self, name: FileName, source: String) -> Result<FileId, SourceMapError> {
+        self.add_file_impl(name, source, true)
+    }
+
+    /// Registers a file and always returns a fresh id.
+    ///
+    /// The same source can legitimately be compiled as more than one package
+    /// instance. Those instances need separate spans even though diagnostics
+    /// should still display the same real path, so this method skips the
+    /// duplicate-name check in [`SourceMap::add_file`].
+    pub fn add_file_distinct(
+        &self,
+        name: FileName,
+        source: String,
+    ) -> Result<FileId, SourceMapError> {
+        self.add_file_impl(name, source, false)
+    }
+
+    fn add_file_impl(
+        &self,
+        name: FileName,
+        source: String,
+        deduplicate: bool,
+    ) -> Result<FileId, SourceMapError> {
         let mut files = self.write_files();
-        if let Some(index) = files.iter().position(|file| file.name() == &name) {
-            return Ok(FileId::from_usize(index));
+        if deduplicate {
+            if let Some(index) = files.iter().position(|file| file.name() == &name) {
+                return Ok(FileId::from_usize(index));
+            }
         }
         if files.len() >= FileId::MAX.index() as usize {
             return Err(SourceMapError::TooManyFiles);
@@ -341,6 +366,20 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(map.len(), 1);
         assert_eq!(map.file(first).expect("file exists").text(), "one");
+    }
+
+    #[test]
+    fn distinct_files_can_share_a_display_name() {
+        let map = map();
+        let first = map
+            .add_file_distinct(FileName::virtual_name("a"), "one".to_owned())
+            .expect("first file");
+        let second = map
+            .add_file_distinct(FileName::virtual_name("a"), "two".to_owned())
+            .expect("second file");
+        assert_ne!(first, second);
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.file(second).expect("file exists").text(), "two");
     }
 
     #[test]

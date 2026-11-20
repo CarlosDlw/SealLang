@@ -6,21 +6,26 @@
 
 #![warn(missing_docs)]
 
+mod cfg;
 mod error;
+mod features;
 mod graph;
 mod lockfile;
 mod plan;
+mod profiles;
 mod source;
 mod targets;
 
 use std::path::{Path, PathBuf};
 
 pub use error::{ProjectError, ProjectResult};
-pub use lockfile::{LockDependency, LockPackage, Lockfile};
+pub use lockfile::{LockCfg, LockDependency, LockInstance, LockPackage, Lockfile};
 pub use plan::PlanOptions;
 
-use seal_manifest::{LoadedManifest, Manifest, ManifestWarning, TargetKind};
-use seal_plan::{CompilePlan, PlanPackage};
+use seal_manifest::{
+    CfgSpec, LoadedManifest, Manifest, ManifestWarning, ProfileManifest, TargetKind,
+};
+use seal_plan::CompilePlan;
 
 /// One build target of a package.
 #[derive(Clone, Debug)]
@@ -43,9 +48,25 @@ pub struct Target {
     pub linker: Option<String>,
     /// The linker script.
     pub linker_script: Option<PathBuf>,
+    /// Features that must be enabled before the target is built.
+    pub required_features: Vec<String>,
+    /// The configuration condition under which this target exists.
+    pub when: Option<seal_manifest::CfgSpec>,
 }
 
 impl Target {
+    /// Returns whether the target's `when` condition holds for a triple.
+    pub fn is_active_for(&self, target: &str) -> bool {
+        let Some(condition) = &self.when else {
+            return true;
+        };
+        seal_target::TargetTriple::parse(target)
+            .ok()
+            .is_some_and(|triple| {
+                crate::cfg::CfgEnvironment::for_triple(&triple).matches(condition)
+            })
+    }
+
     /// Returns whether the target produces an executable.
     pub fn is_executable(&self) -> bool {
         matches!(
@@ -66,6 +87,14 @@ pub struct Dependency {
     pub alias: String,
     /// Index into [`Project::packages`].
     pub package: usize,
+    /// Features requested by this edge.
+    pub features: Vec<String>,
+    /// Whether the dependency's default feature is enabled.
+    pub default_features: bool,
+    /// Whether the dependency is activated by a feature.
+    pub optional: bool,
+    /// A typed activation condition.
+    pub when: Option<CfgSpec>,
 }
 
 /// One resolved package, in dependency order.
@@ -116,6 +145,8 @@ pub struct Project {
     pub warnings: Vec<ManifestWarning>,
     /// The current lockfile contents.
     pub lockfile: Lockfile,
+    /// Root-level profiles. Members cannot declare hidden profiles.
+    pub profiles: std::collections::BTreeMap<String, ProfileManifest>,
 }
 
 impl Project {
@@ -195,76 +226,22 @@ impl Project {
 
     /// Computes the deterministic lockfile for the project.
     pub fn resolve_lockfile(&self, target: &str) -> Lockfile {
-        lockfile::resolve(self, target)
+        lockfile::resolve(self, target, None)
+    }
+
+    /// Computes the lockfile for an explicit feature selection.
+    pub fn resolve_lockfile_with(&self, target: &str, options: &PlanOptions) -> Lockfile {
+        lockfile::resolve(self, target, Some(options))
     }
 
     /// Writes the lockfile when its contents changed.
     pub fn write_lockfile(&self) -> ProjectResult<bool> {
         self.lockfile.write_if_changed(&self.root.join("seal.lock"))
     }
-
-    /// Returns the plan packages for one package, dependencies first.
-    pub(crate) fn ordered_packages(&self, primary: usize) -> Vec<usize> {
-        let mut ordered = Vec::new();
-        let mut seen = vec![false; self.packages.len()];
-        collect(self, primary, &mut seen, &mut ordered);
-        ordered
-    }
-
-    /// Returns the plan package for one package, independent of remapping.
-    pub(crate) fn plan_package(&self, index: usize, remap: &[usize]) -> PlanPackage {
-        let package = &self.packages[index];
-        let target = package.library().or_else(|| package.targets.first());
-        let (files, exposed) = match target {
-            Some(target) => (
-                target
-                    .files
-                    .iter()
-                    .map(|path| seal_plan::PlanFile {
-                        path: path.clone(),
-                        primary: *path == target.primary,
-                    })
-                    .collect(),
-                package
-                    .manifest
-                    .package
-                    .as_ref()
-                    .and_then(|manifest| manifest.api.as_ref())
-                    .map_or_else(|| vec!["root".to_owned()], |api| api.expose.clone()),
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
-        let dependencies = package
-            .dependencies
-            .iter()
-            .map(|dependency| seal_plan::PlanDependency {
-                alias: dependency.alias.clone(),
-                package: remap[dependency.package],
-            })
-            .collect();
-        PlanPackage {
-            name: package.name.clone(),
-            version: package.version.clone(),
-            instance: 0,
-            root: package.root.clone(),
-            files,
-            exposed,
-            dependencies,
-            cfg: seal_plan::CfgOptions::default(),
-        }
-    }
 }
 
-fn collect(project: &Project, index: usize, seen: &mut [bool], ordered: &mut Vec<usize>) {
-    if seen[index] {
-        return;
-    }
-    seen[index] = true;
-    for dependency in &project.packages[index].dependencies {
-        collect(project, dependency.package, seen, ordered);
-    }
-    ordered.push(index);
-}
+#[cfg(test)]
+mod tests;
 
 /// Loads a manifest and returns it with the canonical root.
 pub(crate) fn load_manifest(root: &Path) -> ProjectResult<LoadedManifest> {

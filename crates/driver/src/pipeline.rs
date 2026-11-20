@@ -302,7 +302,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
 
-    compile_hir(session, request, hir, file_id, input, None);
+    compile_hir(session, request, hir, file_id, input, None, None);
 }
 
 /// Compiles every input as one package with a module graph.
@@ -369,6 +369,7 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         primary_file,
         &arguments.inputs[0],
         None,
+        None,
     );
 }
 
@@ -380,7 +381,7 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
     let errors = session.diag().error_count();
     for (index, package) in plan.packages.iter().enumerate() {
         for file in &package.files {
-            let Ok(file_id) = session.load_file(&file.path) else {
+            let Ok(file_id) = session.load_file_distinct(&file.path) else {
                 return false;
             };
             let Some(source) = session.source_map().file(file_id) else {
@@ -401,7 +402,7 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
             if index == plan.primary && file.primary {
                 primary = Some((file_id, file.path.clone()));
             }
-            file_ids.insert(file.path.clone(), file_id);
+            file_ids.insert((index, file.path.clone()), file_id);
             loaded.push((file_id, ast));
         }
     }
@@ -414,11 +415,11 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
         packages: Vec::with_capacity(plan.packages.len()),
         primary: PackageId::from_usize(plan.primary),
     };
-    for package in &plan.packages {
+    for (index, package) in plan.packages.iter().enumerate() {
         let name = session.interner().intern(&package.name);
         let mut files = Vec::with_capacity(package.files.len());
         for file in &package.files {
-            let Some(id) = file_ids.get(&file.path) else {
+            let Some(id) = file_ids.get(&(index, file.path.clone())) else {
                 eprintln!(
                     "error: the compile plan names the unloaded file `{}`",
                     file.path.display()
@@ -443,12 +444,29 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
                 package: PackageId::from_usize(dependency.package),
             })
             .collect();
+        let cfg = seal_hir::CfgEnvironment {
+            features: package.cfg.features.iter().cloned().collect(),
+            target_os: package.cfg.target_os.clone(),
+            target_arch: package.cfg.target_arch.clone(),
+            target_env: package.cfg.target_env.clone(),
+            pointer_width: package.cfg.pointer_width,
+            debug_assertions: package.cfg.debug_assertions,
+            test: package.cfg.test,
+            bench: package.cfg.bench,
+            env: package
+                .cfg
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        };
         package_plan.packages.push(seal_hir::PackagePlanEntry {
             name,
-            instance: PackageInstanceId::from_usize(package.instance as usize),
+            instance: PackageInstanceId::from_usize(index),
             files,
             exposed,
             dependencies,
+            cfg,
         });
     }
     let hir = session.profiler().time("hir", || {
@@ -471,7 +489,15 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
         None => None,
     };
     let request = request.with_planned_output(plan.output.clone());
-    compile_hir(session, request, hir, primary_file, &primary_input, entry);
+    compile_hir(
+        session,
+        request,
+        hir,
+        primary_file,
+        &primary_input,
+        entry,
+        Some(&plan.profile),
+    );
     true
 }
 
@@ -525,6 +551,7 @@ fn compile_hir(
     file_id: seal_span::FileId,
     input: &Path,
     entry: Option<DefId>,
+    profile: Option<&seal_plan::PlanProfile>,
 ) {
     let errors = session.diag().error_count();
 
@@ -640,11 +667,19 @@ fn compile_hir(
             ));
         }
     }
+    let opt_level = profile.map_or(output.optimization.opt_level, |profile| {
+        match profile.opt_level {
+            0 => seal_session::OptLevel::O0,
+            1 => seal_session::OptLevel::O1,
+            2 => seal_session::OptLevel::O2,
+            _ => seal_session::OptLevel::O3,
+        }
+    });
     let options = CodegenOptions {
         emit: *emit,
         output: output_path,
-        opt_level: output.optimization.opt_level,
-        debug_info: output.optimization.debug_info,
+        opt_level,
+        debug_info: profile.map_or(output.optimization.debug_info, |profile| profile.debug),
         crate_name: input
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned()),

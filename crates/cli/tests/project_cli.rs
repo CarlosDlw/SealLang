@@ -84,6 +84,76 @@ fn a_new_binary_project_builds_checks_and_runs() {
 }
 
 #[test]
+fn per_edge_features_build_two_instances_of_one_package() {
+    let fixture = fixture("features");
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"features\"\nmembers = [\"crates/*\"]\ndefault-members = [\"crates/app\"]\n",
+    );
+    write(
+        &fixture.root.join("crates/common/seal.toml"),
+        "[package]\nname = \"common\"\nversion = \"0.1.0\"\n\n[package.features]\ndefault = []\na = []\nb = []\n",
+    );
+    write(
+        &fixture.root.join("crates/common/src/lib.sl"),
+        "cfg(feature(\"a\")) public func which() -> i32 { 1 }\ncfg(feature(\"b\")) public func which() -> i32 { 2 }\npublic func base() -> i32 { 0 }\n",
+    );
+    write(
+        &fixture.root.join("crates/left/seal.toml"),
+        "[package]\nname = \"left\"\nversion = \"0.1.0\"\n\n[dependencies]\ncommon = { path = \"../common\", features = [\"a\"] }\n",
+    );
+    write(
+        &fixture.root.join("crates/left/src/lib.sl"),
+        "use common::which;\npublic func left() -> i32 { which() }\n",
+    );
+    write(
+        &fixture.root.join("crates/right/seal.toml"),
+        "[package]\nname = \"right\"\nversion = \"0.1.0\"\n\n[dependencies]\ncommon = { path = \"../common\", features = [\"b\"] }\n",
+    );
+    write(
+        &fixture.root.join("crates/right/src/lib.sl"),
+        "use common::which;\npublic func right() -> i32 { which() }\n",
+    );
+    write(
+        &fixture.root.join("crates/app/seal.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nleft = { path = \"../left\" }\nright = { path = \"../right\" }\n",
+    );
+    write(
+        &fixture.root.join("crates/app/src/main.sl"),
+        "use left::left;\nuse right::right;\nfunc main() -> i32 { left() + right() }\n",
+    );
+    let build = output(seal().arg("build").arg("--project").arg(&fixture.root));
+    assert_success(&build);
+    let lock = std::fs::read_to_string(fixture.root.join("seal.lock")).expect("lockfile");
+    assert!(lock.contains("[[instances]]"));
+    assert_success(&output(
+        seal()
+            .arg("build")
+            .arg("--locked")
+            .arg("--project")
+            .arg(&fixture.root),
+    ));
+    let tree = output(seal().arg("tree").arg("--project").arg(&fixture.root));
+    assert_success(&tree);
+    let text = String::from_utf8_lossy(&tree.stdout);
+    assert_eq!(text.matches("common 0.1.0").count(), 2);
+    assert!(text.contains("[a"));
+    assert!(text.contains("[b"));
+    let why = output(
+        seal()
+            .arg("why")
+            .arg("-p")
+            .arg("common")
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&why);
+    let why = String::from_utf8_lossy(&why.stdout);
+    assert_eq!(why.matches("common 0.1.0").count(), 2);
+    assert!(why.contains("required by"));
+}
+
+#[test]
 fn a_library_project_builds_without_a_main() {
     let fixture = fixture("lib");
     assert_success(&output(

@@ -104,6 +104,7 @@ pub(super) fn selection() -> Selection {
         features: Vec::new(),
         all_features: false,
         no_default_features: false,
+        cfgs: Vec::new(),
         locked: false,
         frozen: false,
     }

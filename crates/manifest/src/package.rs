@@ -1,8 +1,8 @@
 //! Package settings and the public API.
 
-use std::collections::BTreeMap;
-
 use serde::Deserialize;
+
+use crate::feature::FeatureManifest;
 
 /// The `[package]` table.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -33,9 +33,9 @@ pub struct PackageManifest {
     /// The public API selection.
     #[serde(default)]
     pub api: Option<ApiManifest>,
-    /// Feature declarations; resolved in the next phase.
+    /// Feature declarations and their conflict table.
     #[serde(default)]
-    pub features: BTreeMap<String, Vec<String>>,
+    pub features: FeatureManifest,
     /// Free-form tool metadata.
     #[serde(default)]
     pub metadata: Option<toml::Value>,

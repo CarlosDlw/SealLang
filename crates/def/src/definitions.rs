@@ -38,6 +38,8 @@ pub struct DefData {
     /// The documentation text attached to the declaration, when the source
     /// carries one.
     pub docs: Option<Symbol>,
+    /// The source `cfg(...)` condition, when the declaration has one.
+    pub cfg: Option<Symbol>,
     /// The source file that declares the definition, when it has one.
     ///
     /// Built-in definitions have no source file. The file is kept on the
@@ -73,6 +75,7 @@ impl DefData {
             module: ModuleId::from_usize(0),
             visibility: Visibility::Private,
             docs: None,
+            cfg: None,
             file: None,
         }
     }
@@ -150,6 +153,11 @@ impl Definitions {
     /// Panics if `id` did not come from this table.
     pub fn set_docs(&mut self, id: DefId, docs: Option<Symbol>) {
         self.defs[id].docs = docs;
+    }
+
+    /// Records the source `cfg(...)` condition of a definition.
+    pub fn set_cfg(&mut self, id: DefId, cfg: Option<Symbol>) {
+        self.defs[id].cfg = cfg;
     }
 
     /// Returns the kind of `id`.

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::cfg::CfgSpec;
+
 /// A dependency written either as a version string or as a table.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
@@ -36,6 +38,9 @@ pub struct DependencyManifest {
     /// Whether the dependency is optional.
     #[serde(default)]
     pub optional: bool,
+    /// A typed condition that activates the dependency.
+    #[serde(default)]
+    pub when: Option<CfgSpec>,
     /// The registry name.
     #[serde(default)]
     pub registry: Option<String>,

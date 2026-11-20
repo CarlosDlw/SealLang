@@ -53,6 +53,31 @@ impl ProjectError {
         Self::new("E8006", message)
     }
 
+    /// An invalid, unknown, or conflicting feature (`E8007`).
+    pub fn feature(message: impl Into<String>) -> Self {
+        Self::new("E8007", message)
+    }
+
+    /// A path dependency that leaves the project (`E8021`).
+    pub fn path_escape(message: impl Into<String>) -> Self {
+        Self::new("E8021", message)
+    }
+
+    /// A missing path dependency (`E8022`).
+    pub fn path_dependency(message: impl Into<String>) -> Self {
+        Self::new("E8022", message)
+    }
+
+    /// An invalid dependency declaration (`E8024`).
+    pub fn dependency_declaration(message: impl Into<String>) -> Self {
+        Self::new("E8024", message)
+    }
+
+    /// An incompatible dependency version (`E8023`).
+    pub fn version(message: impl Into<String>) -> Self {
+        Self::new("E8023", message)
+    }
+
     /// A lockfile failure (`E8008`).
     pub fn lockfile(message: impl Into<String>) -> Self {
         Self::new("E8008", message)

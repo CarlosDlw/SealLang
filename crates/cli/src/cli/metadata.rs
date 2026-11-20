@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use seal_project::{Package, Project, Target};
+use seal_project::{LockInstance, Package, Project, Target};
 use seal_target::host_triple;
 use serde::Serialize;
 
@@ -17,6 +17,7 @@ struct Metadata {
     root: String,
     target: TargetInfo,
     packages: Vec<PackageInfo>,
+    instances: Vec<LockInstance>,
 }
 
 #[derive(Serialize)]
@@ -38,6 +39,16 @@ struct PackageInfo {
     modules: Vec<String>,
     files: Vec<String>,
     dependencies: Vec<String>,
+    dependency_edges: Vec<DependencyInfo>,
+}
+
+#[derive(Serialize)]
+struct DependencyInfo {
+    alias: String,
+    package: usize,
+    features: Vec<String>,
+    optional: bool,
+    default_features: bool,
 }
 
 #[derive(Serialize)]
@@ -92,18 +103,22 @@ pub(crate) fn report_json(project: &Project, no_deps: bool) -> Result<String, St
             arch: spec.triple().arch().as_str().to_owned(),
             pointer_width: spec.pointer_width(),
         },
-        packages: packages.into_iter().map(package_info).collect(),
+        packages: packages
+            .into_iter()
+            .map(|package| package_info(package, project))
+            .collect(),
+        instances: project.lockfile.instances.clone(),
     };
     serde_json::to_string_pretty(&metadata)
         .map_err(|error| format!("cannot serialize metadata: {error}"))
 }
 
-fn package_info(package: &Package) -> PackageInfo {
+fn package_info(package: &Package, project: &Project) -> PackageInfo {
     let mut features: Vec<String> = package
         .manifest
         .package
         .as_ref()
-        .map(|manifest| manifest.features.keys().cloned().collect())
+        .map(|manifest| manifest.features.names().map(ToOwned::to_owned).collect())
         .unwrap_or_default();
     features.sort();
     PackageInfo {
@@ -111,7 +126,15 @@ fn package_info(package: &Package) -> PackageInfo {
         version: package.version.clone(),
         root: package.root.display().to_string(),
         features,
-        enabled_features: Vec::new(),
+        enabled_features: project
+            .lockfile
+            .instances
+            .iter()
+            .filter(|instance| instance.name == package.name)
+            .flat_map(|instance| instance.features.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
         targets: package.targets.iter().map(target_info).collect(),
         modules: modules(package),
         files: package
@@ -124,6 +147,17 @@ fn package_info(package: &Package) -> PackageInfo {
             .dependencies
             .iter()
             .map(|dependency| dependency.alias.clone())
+            .collect(),
+        dependency_edges: package
+            .dependencies
+            .iter()
+            .map(|dependency| DependencyInfo {
+                alias: dependency.alias.clone(),
+                package: dependency.package,
+                features: dependency.features.clone(),
+                optional: dependency.optional,
+                default_features: dependency.default_features,
+            })
             .collect(),
     }
 }

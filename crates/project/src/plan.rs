@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use seal_manifest::TargetKind;
 use seal_plan::{BuildMode, CfgOptions, CompilePlan, PlanMetadata, PlanProfile};
 use seal_target::TargetTriple;
+use sha2::{Digest, Sha256};
 
+use crate::cfg::CfgEnvironment;
 use crate::error::{ProjectError, ProjectResult};
-use crate::{Project, Target};
+use crate::{Project, Target, features, profiles};
 
 /// Options shared by `build`, `run`, and `check`.
 #[derive(Clone, Debug)]
@@ -16,6 +18,8 @@ pub struct PlanOptions {
     pub target: String,
     /// The profile name.
     pub profile: String,
+    /// Whether `profile` came from the command line and overrides the target.
+    pub profile_explicit: bool,
     /// Whether to check or write an artifact.
     pub mode: BuildMode,
     /// An explicit artifact path.
@@ -26,6 +30,8 @@ pub struct PlanOptions {
     pub no_default_features: bool,
     /// Whether every feature is enabled.
     pub all_features: bool,
+    /// Boolean `cfg` facts forced on the command line.
+    pub cfgs: Vec<String>,
 }
 
 impl Default for PlanOptions {
@@ -33,11 +39,13 @@ impl Default for PlanOptions {
         Self {
             target: seal_target::host_triple().as_str().to_owned(),
             profile: "dev".to_owned(),
+            profile_explicit: false,
             mode: BuildMode::Check,
             output: None,
             features: Vec::new(),
             no_default_features: false,
             all_features: false,
+            cfgs: Vec::new(),
         }
     }
 }
@@ -55,45 +63,104 @@ pub(crate) fn compile_plan(
             package.name
         ))
     })?;
-    let profile_name = target
-        .profile
-        .clone()
-        .unwrap_or_else(|| options.profile.clone());
-    let profile = profile_for(project, &profile_name)?;
+    let profile_name = if options.profile_explicit {
+        options.profile.clone()
+    } else {
+        target
+            .profile
+            .clone()
+            .unwrap_or_else(|| options.profile.clone())
+    };
+    let profile = profiles::resolve(project, &profile_name)?;
     let triple = TargetTriple::parse(&options.target)
         .map_err(|error| ProjectError::plan(error.to_string()))?;
     let spec = triple.spec();
-
-    let order = project.ordered_packages(package_index);
-    let mut remap = vec![usize::MAX; project.packages.len()];
-    for (position, index) in order.iter().enumerate() {
-        remap[*index] = position;
+    let cfg = CfgEnvironment::for_triple(&triple);
+    if target
+        .when
+        .as_ref()
+        .is_some_and(|condition| !cfg.matches(condition))
+    {
+        return Err(ProjectError::target(format!(
+            "the target `{}` is inactive for `{}`",
+            target.name, options.target
+        )));
     }
-    let primary = remap[package_index];
-    let mut packages = Vec::with_capacity(order.len());
-    for index in &order {
-        let mut plan_package = project.plan_package(*index, &remap);
-        if *index == package_index {
-            plan_package.files = target
-                .files
-                .iter()
-                .map(|path| seal_plan::PlanFile {
-                    path: path.clone(),
-                    primary: *path == target.primary,
-                })
-                .collect();
+    for value in &options.cfgs {
+        if !matches!(value.as_str(), "test" | "bench" | "debug_assertions") {
+            return Err(ProjectError::manifest(format!(
+                "`--cfg {value}` is not a supported boolean configuration; use `test`, `bench`, or `debug_assertions`"
+            )));
         }
-        plan_package.cfg = CfgOptions {
-            features: options.features.clone(),
-            target_os: spec.triple().os().as_str().to_owned(),
-            target_arch: spec.triple().arch().as_str().to_owned(),
-            target_env: String::new(),
-            pointer_width: spec.pointer_width(),
-            debug_assertions: profile.debug_assertions,
-            test: target.kind == TargetKind::Test,
-            bench: target.kind == TargetKind::Bench,
+    }
+    let graph = features::resolve(project, package_index, target, options, &cfg)?;
+
+    let primary = graph.primary;
+    let mut packages = Vec::with_capacity(graph.instances.len());
+    for (position, instance) in graph.instances.iter().enumerate() {
+        let package = project.package(instance.package);
+        let source_target = if instance.package == package_index {
+            Some(target)
+        } else {
+            package.library().or_else(|| package.targets.first())
         };
-        packages.push(plan_package);
+        let files = source_target
+            .map(|target| {
+                target
+                    .files
+                    .iter()
+                    .map(|path| seal_plan::PlanFile {
+                        path: path.clone(),
+                        primary: *path == target.primary,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let exposed = package
+            .manifest
+            .package
+            .as_ref()
+            .and_then(|manifest| manifest.api.as_ref())
+            .map_or_else(|| vec!["root".to_owned()], |api| api.expose.clone());
+        let dependencies = instance
+            .dependencies
+            .iter()
+            .map(|dependency| seal_plan::PlanDependency {
+                alias: dependency.alias.clone(),
+                package: dependency.instance,
+            })
+            .collect();
+        let features: Vec<String> = instance.features.iter().cloned().collect();
+        packages.push(seal_plan::PlanPackage {
+            name: package.name.clone(),
+            version: package.version.clone(),
+            instance: instance_hash(package, &features, &cfg, &profile),
+            root: package.root.clone(),
+            files,
+            exposed,
+            dependencies,
+            cfg: CfgOptions {
+                features,
+                target_os: spec.triple().os().as_str().to_owned(),
+                target_arch: spec.triple().arch().as_str().to_owned(),
+                target_env: String::new(),
+                pointer_width: spec.pointer_width(),
+                debug_assertions: profile.debug_assertions
+                    || options.cfgs.iter().any(|value| value == "debug_assertions"),
+                test: position == primary
+                    && (target.kind == TargetKind::Test
+                        || options.cfgs.iter().any(|value| value == "test")),
+                bench: position == primary
+                    && (target.kind == TargetKind::Bench
+                        || options.cfgs.iter().any(|value| value == "bench")),
+                env: package
+                    .manifest
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.value().to_owned()))
+                    .collect(),
+            },
+        });
     }
 
     let output = match options.mode {
@@ -149,58 +216,32 @@ fn default_output(project: &Project, target: &Target, profile: &str) -> PathBuf 
         .join(file)
 }
 
-fn profile_for(project: &Project, name: &str) -> ProjectResult<PlanProfile> {
-    let defaults = match name {
-        "dev" | "test" => PlanProfile::default(),
-        "release" | "bench" => PlanProfile {
-            opt_level: 2,
-            debug: false,
-            debug_assertions: false,
-            lto: "off".to_owned(),
-            codegen_units: 1,
-            strip: false,
-            incremental: false,
-        },
-        _ => {
-            let Some(declared) = project
-                .packages
-                .iter()
-                .find_map(|package| package.manifest.profiles.get(name))
-                .cloned()
-            else {
-                return Err(ProjectError::profile(format!(
-                    "the profile `{name}` is not declared in the project"
-                )));
-            };
-            let mut inherited = declared.inherits.as_deref().map_or_else(
-                || Ok(PlanProfile::default()),
-                |parent| profile_for(project, parent),
-            )?;
-            if let Some(value) = declared.opt_level {
-                inherited.opt_level = value;
-            }
-            if let Some(value) = declared.debug {
-                inherited.debug = value;
-            }
-            if let Some(value) = declared.debug_assertions {
-                inherited.debug_assertions = value;
-            }
-            if let Some(value) = declared.lto {
-                inherited.lto = value;
-            }
-            if let Some(value) = declared.codegen_units {
-                inherited.codegen_units = value;
-            }
-            if let Some(value) = declared.strip {
-                inherited.strip = value;
-            }
-            if let Some(value) = declared.incremental {
-                inherited.incremental = value;
-            }
-            return Ok(inherited);
-        }
-    };
-    Ok(defaults)
+pub(crate) fn instance_hash(
+    package: &crate::Package,
+    features: &[String],
+    cfg: &CfgEnvironment,
+    profile: &PlanProfile,
+) -> u32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"seal-package-instance-v1\0");
+    hasher.update(package.name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(package.version.as_bytes());
+    hasher.update(b"\0");
+    for feature in features {
+        hasher.update(feature.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(cfg.os().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cfg.arch().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cfg.env().as_bytes());
+    hasher.update(b"\0");
+    hasher.update([cfg.pointer_width()]);
+    hasher.update([profile.debug_assertions as u8]);
+    let digest = hasher.finalize();
+    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
 }
 
 /// Returns the artifact name for a target, used by the CLI.

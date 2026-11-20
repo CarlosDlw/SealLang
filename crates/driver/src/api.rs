@@ -28,6 +28,8 @@ struct ApiItem {
     kind: &'static str,
     module: String,
     visibility: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cfg: Option<String>,
 }
 
 /// The complete snapshot.
@@ -61,6 +63,9 @@ pub(crate) fn write(session: &Session, hir: &Hir, output: &Path) -> Result<(), S
             kind: kind_name(data.kind),
             module: path_string(&hir.module(data.module).path, session.interner()),
             visibility: format!("{:?}", data.visibility).to_lowercase(),
+            cfg: data
+                .cfg
+                .map(|cfg| session.interner().resolve(cfg).to_owned()),
         })
         .collect();
     items.sort_by(|left, right| {

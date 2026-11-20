@@ -5,6 +5,7 @@ mod arrays;
 mod borrows;
 mod c_types;
 mod casts;
+mod cfg;
 mod closures;
 mod control_flow;
 mod copy_impls;

@@ -40,10 +40,22 @@ pub(crate) fn resolve_imports(
         let Some(&module) = graph.file_module.get(file) else {
             continue;
         };
+        let cfg = &graph.packages[package].cfg;
+        if !crate::cfg::module_enabled(ast, cfg, interner) {
+            continue;
+        }
         for &item_id in ast.program().items() {
-            let ItemKind::Use(declaration) = &ast.item(item_id).kind else {
+            let item = ast.item(item_id);
+            let ItemKind::Use(declaration) = &item.kind else {
                 continue;
             };
+            if item
+                .modifiers
+                .cfg
+                .is_some_and(|condition| !cfg.evaluate(ast, condition, interner))
+            {
+                continue;
+            }
             resolve_declaration(
                 graph,
                 &mut tables[index],

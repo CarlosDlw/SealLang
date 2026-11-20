@@ -105,6 +105,7 @@ fn lower_plan(
     interner: &Interner,
     c_abi: CAbiProperties,
 ) -> Hir {
+    crate::cfg::validate_env(plan, asts, dcx, interner);
     let graph = crate::module::ModuleGraph::build(plan, asts, dcx, interner);
     let imports = imports::resolve_imports(&graph, asts, dcx, interner);
     let files: Vec<AstFile<'_>> = asts
@@ -321,11 +322,35 @@ impl<'a> Lowering<'a> {
         self.files[item.file].ast
     }
 
+    /// Returns whether the item's `cfg` condition is active in this instance.
+    pub(super) fn item_enabled(&self, item_id: ItemId) -> bool {
+        let Some(condition) = self.ast.item(item_id).modifiers.cfg else {
+            return true;
+        };
+        self.hir
+            .package(self.current_package)
+            .cfg
+            .evaluate(self.ast, condition, self.interner)
+    }
+
     /// Returns every top-level item of every file, in file order.
     pub(super) fn top_level_items(&self) -> Vec<ItemRef> {
         let mut items = Vec::new();
         for (file, source) in self.files.iter().enumerate() {
+            let cfg = &self.hir.package(source.package).cfg;
+            if !crate::cfg::module_enabled(source.ast, cfg, self.interner) {
+                continue;
+            }
             for &id in source.ast.program().items() {
+                if source
+                    .ast
+                    .item(id)
+                    .modifiers
+                    .cfg
+                    .is_some_and(|condition| !cfg.evaluate(source.ast, condition, self.interner))
+                {
+                    continue;
+                }
                 items.push(ItemRef { file, id });
             }
         }
@@ -602,6 +627,11 @@ impl<'a> Lowering<'a> {
         self.hir
             .definitions_mut()
             .set_visibility(definition, crate::module::visibility_from(visibility));
+        if let Some(condition) = self.ast.item(item_id).modifiers.cfg {
+            let text = crate::cfg::format(self.ast, condition, self.interner);
+            let symbol = self.interner.intern(&text);
+            self.hir.definitions_mut().set_cfg(definition, Some(symbol));
+        }
         definition
     }
 
