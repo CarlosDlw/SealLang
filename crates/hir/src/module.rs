@@ -613,10 +613,15 @@ impl ModuleGraph {
             };
             current = next;
         }
+        // A leaf keeps every ancestor reachable, but the root is part of the
+        // API only when it is listed explicitly. Exposing `app` must not make
+        // root items public just because `app` is a child of the root.
         let mut exposed = current;
         loop {
-            self.api.expose(exposed);
-            self.modules[exposed].exposed = true;
+            if !self.modules[exposed].path.is_root() || path.is_root() {
+                self.api.expose(exposed);
+                self.modules[exposed].exposed = true;
+            }
             match self.modules[exposed].parent {
                 Some(parent) => exposed = parent,
                 None => break,

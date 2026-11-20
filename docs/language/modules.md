@@ -121,6 +121,10 @@ func main() -> i32 { app::util::double(21) }
 func make() -> app::util::Point { app::util::Point { x: 1, y: 2 } }
 ```
 
+`root::name` reaches an item of the package root, including when the path has a
+single segment; the parser treats `root` specially because it is always a
+module and never a type.
+
 The prefix resolves through the module graph, and the last segment resolves in
 the namespace the position needs: value, type, or trait. `Type::associated`
 keeps its existing meaning: when the first segment names a type rather than a

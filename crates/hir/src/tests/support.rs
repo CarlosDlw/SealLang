@@ -6,11 +6,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     Body, BodyId, BodyKind, ExprKind, Hir, HirBlockId, HirExprId, HirPatternId, HirStmtId,
+    ModuleId, ModulePath, PackagePlan, PackagePlanDependency, PackagePlanEntry, PackagePlanFile,
     PatternKind, Res, StmtKind,
 };
 use seal_ast::Ast;
-use seal_def::{DefId, DefKind};
+use seal_def::{DefId, DefKind, PackageId, PackageInstanceId};
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
+use seal_index::Idx;
 use seal_span::{FileName, SourceFile, SourceMap, Span};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::TyId;
@@ -43,7 +45,22 @@ pub(crate) struct Fixture {
     pub(crate) interner: Interner,
     pub(crate) file: Arc<SourceFile>,
     files: Vec<seal_span::FileId>,
+    package_files: Vec<Vec<seal_span::FileId>>,
+    packages: Vec<PackageSpec>,
     recording: Recording,
+}
+
+/// One package in a multi-package HIR fixture.
+#[derive(Clone, Copy)]
+pub(crate) struct PackageSpec {
+    /// The package name exposed to symbols and importer aliases.
+    pub(crate) name: &'static str,
+    /// The package files, in order; the first file is the entry file.
+    pub(crate) files: &'static [(&'static str, &'static str)],
+    /// Modules exposed by the package API. Empty exposes the root.
+    pub(crate) exposed: &'static [&'static str],
+    /// Dependency aliases and the package index each names.
+    pub(crate) dependencies: &'static [(&'static str, usize)],
 }
 
 impl Fixture {
@@ -61,6 +78,8 @@ impl Fixture {
             interner: Interner::new(),
             file,
             files: vec![id],
+            package_files: Vec::new(),
+            packages: Vec::new(),
             recording,
         }
     }
@@ -88,7 +107,49 @@ impl Fixture {
             dcx,
             interner: Interner::new(),
             file,
-            files: ids,
+            files: ids.clone(),
+            package_files: vec![ids],
+            packages: Vec::new(),
+            recording,
+        }
+    }
+
+    /// Creates a fixture whose packages are compiled together in plan order.
+    ///
+    /// A package may depend only on a package that appears before it. The last
+    /// package is the primary package, mirroring a dependency list compiled for
+    /// its final consumer.
+    pub(crate) fn from_packages(specs: &[PackageSpec]) -> Self {
+        assert!(!specs.is_empty(), "a plan needs at least one package");
+        let map = Arc::new(SourceMap::new());
+        let mut package_files = Vec::with_capacity(specs.len());
+        for spec in specs {
+            assert!(
+                !spec.files.is_empty(),
+                "package `{}` needs at least one file",
+                spec.name
+            );
+            let mut ids = Vec::with_capacity(spec.files.len());
+            for (name, source) in spec.files {
+                let id = map
+                    .add_file(FileName::virtual_name(*name), (*source).to_owned())
+                    .unwrap_or_else(|_| panic!("test source `{name}` registers"));
+                ids.push(id);
+            }
+            package_files.push(ids);
+        }
+        let files: Vec<seal_span::FileId> = package_files.iter().flatten().copied().collect();
+        let file = map.file(files[0]).expect("registered file exists");
+        let recording = Recording::default();
+        let dcx = DiagCtxt::new(Box::new(recording.clone()), Arc::clone(&map));
+        Self {
+            map,
+            dcx,
+            interner: Interner::new(),
+            file,
+            files,
+            package_files,
+            packages: specs.to_vec(),
             recording,
         }
     }
@@ -127,13 +188,7 @@ impl Fixture {
         if !exposed.is_empty() {
             plan.packages[0].exposed = exposed
                 .iter()
-                .map(|path| {
-                    crate::ModulePath::new(
-                        path.split("::")
-                            .map(|segment| self.interner.intern(segment))
-                            .collect(),
-                    )
-                })
+                .map(|path| module_path(&self.interner, path))
                 .collect();
         }
         plan.packages[0].files = self
@@ -145,6 +200,61 @@ impl Fixture {
                 primary: index == 0,
             })
             .collect();
+        crate::lower_package(
+            &plan,
+            &asts,
+            &self.dcx,
+            &self.interner,
+            seal_ty::CAbiProperties::default(),
+        )
+    }
+
+    /// Lowers every package in plan order.
+    pub(crate) fn lower_packages(&self) -> Hir {
+        let mut asts = Vec::with_capacity(self.files.len());
+        for id in &self.files {
+            let file = self.map.file(*id).expect("registered file exists");
+            let lexed = seal_lexer::lex(&file, &self.dcx, &self.interner);
+            asts.push((*id, seal_parser::parse(&lexed, &self.dcx, &self.interner)));
+        }
+
+        let mut packages = Vec::with_capacity(self.packages.len());
+        for (index, spec) in self.packages.iter().enumerate() {
+            let files = self.package_files[index]
+                .iter()
+                .enumerate()
+                .map(|(position, file)| PackagePlanFile {
+                    file: *file,
+                    primary: position == 0,
+                })
+                .collect();
+            let exposed = if spec.exposed.is_empty() {
+                vec![ModulePath::root()]
+            } else {
+                spec.exposed
+                    .iter()
+                    .map(|path| module_path(&self.interner, path))
+                    .collect()
+            };
+            let dependencies = spec
+                .dependencies
+                .iter()
+                .map(|(alias, package)| PackagePlanDependency {
+                    alias: self.interner.intern(alias),
+                    package: PackageId::from_usize(*package),
+                })
+                .collect();
+            packages.push(PackagePlanEntry {
+                name: self.interner.intern(spec.name),
+                instance: PackageInstanceId::from_usize(index),
+                files,
+                exposed,
+                dependencies,
+            });
+        }
+
+        let primary = PackageId::from_usize(packages.len() - 1);
+        let plan = PackagePlan { packages, primary };
         crate::lower_package(
             &plan,
             &asts,
@@ -199,6 +309,47 @@ impl Fixture {
     pub(crate) fn symbol(&self, symbol: Symbol) -> String {
         self.interner.resolve(symbol).to_owned()
     }
+}
+
+/// Parses a module path written with `::`, or `root`.
+fn module_path(interner: &Interner, path: &str) -> ModulePath {
+    if path == "root" {
+        return ModulePath::root();
+    }
+    ModulePath::new(
+        path.split("::")
+            .map(|segment| interner.intern(segment))
+            .collect(),
+    )
+}
+
+/// Returns the primary package's root module.
+pub(crate) fn root_module(hir: &Hir) -> ModuleId {
+    hir.package(hir.primary_package()).root
+}
+
+/// Returns the child module `name` of `parent`.
+pub(crate) fn child_module(hir: &Hir, fixture: &Fixture, parent: ModuleId, name: &str) -> ModuleId {
+    let symbol = fixture.interner.intern(name);
+    hir.child_module(parent, symbol)
+        .unwrap_or_else(|| panic!("no submodule named `{name}`"))
+}
+
+/// Returns the item of `kind` named `name` declared directly in `module`.
+pub(crate) fn item_in_module(
+    hir: &Hir,
+    fixture: &Fixture,
+    module: ModuleId,
+    kind: DefKind,
+    name: &str,
+) -> DefId {
+    hir.items_in_module(module)
+        .into_iter()
+        .find(|def| {
+            hir.definitions().kind(*def) == kind
+                && fixture.symbol(hir.definitions().name(*def)) == name
+        })
+        .unwrap_or_else(|| panic!("no {kind:?} named `{name}` in the module"))
 }
 
 pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir) {

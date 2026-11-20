@@ -171,7 +171,8 @@ Every definition carries its package, compiled instance, module, visibility,
 optional documentation, and source file in `DefData`. Visibility is enforced at
 each use and import: `private` reaches the declaring module and its descendants,
 `internal` reaches the package, and `public` additionally requires the declaring
-module to be exposed. Exposing a module also exposes its ancestors; a
+module to be exposed. Exposing a module also exposes every non-root ancestor
+needed to reach it; the root is exposed only by listing `root` explicitly. A
 `public` item in a module outside the API is `E2080`, and exposing a module the
 package does not declare is `E2081`. Signatures of public functions, values,
 trait methods, fields, and variants are validated after bodies are lowered, so a

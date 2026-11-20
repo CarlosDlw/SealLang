@@ -1,5 +1,6 @@
 //! HIR lowering and name-resolution tests.
 
+mod api;
 mod arrays;
 mod borrows;
 mod c_types;
@@ -17,10 +18,12 @@ mod for_loop;
 mod generics;
 mod globals;
 mod if_let;
+mod imports;
 mod match_advanced;
 mod match_expr;
 mod methods;
 mod modules;
+mod packages;
 mod protocols;
 mod resolve;
 mod slices;

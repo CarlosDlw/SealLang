@@ -741,6 +741,41 @@ impl Parser<'_> {
             });
         }
 
+        // `root` is always a module, never a type, so `root::name` keeps the
+        // module-path shape even with a single segment. Every other single
+        // segment stays the associated path form, because the parser cannot
+        // know whether it names a type or a module.
+        if segments.len() == 1
+            && segments[0].args.is_none()
+            && self.interner.resolve(name) == "root"
+        {
+            let end = segments[0].name_span;
+            let span = name_span.cover(end);
+            if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                let fields = self.parse_field_initializers(InitializerContext::Struct);
+                let span = span.cover(self.previous_span());
+                return self.builder.push_expr(
+                    ExprKind::StructMulti {
+                        root: name,
+                        root_span: name_span,
+                        args: type_args,
+                        segments,
+                        fields,
+                    },
+                    span,
+                );
+            }
+            return self.builder.push_expr(
+                ExprKind::PathMulti {
+                    root: name,
+                    root_span: name_span,
+                    args: type_args,
+                    segments,
+                },
+                span,
+            );
+        }
+
         if segments.len() == 1 && segments[0].args.is_none() {
             let segment = &segments[0];
             if self.struct_literal_allowed && self.at(TokenKind::LBrace) {

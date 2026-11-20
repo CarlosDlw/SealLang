@@ -26,6 +26,30 @@ fn multi_segment_value_paths_keep_every_name() {
 }
 
 #[test]
+fn a_single_root_segment_keeps_the_module_path_shape() {
+    for source in [
+        "func f() { root::main() }",
+        "func f() { root::Point { x: 1 } }",
+    ] {
+        let (fixture, ast) = parse_clean(source);
+        let expression = tail(&ast, sole_function(&ast));
+        let expression = match &expression.kind {
+            ExprKind::Call { callee, .. } => ast.expr(*callee),
+            _ => expression,
+        };
+        assert!(
+            matches!(
+                expression.kind,
+                ExprKind::PathMulti { .. } | ExprKind::StructMulti { .. }
+            ),
+            "source: {source}, got {:?}",
+            expression.kind
+        );
+        assert_invariants(&fixture, &ast);
+    }
+}
+
+#[test]
 fn one_qualified_segment_keeps_the_associated_name_shape() {
     let (_, ast) = parse_clean("func f() { Type::assoc }");
     let expression = tail(&ast, sole_function(&ast));
