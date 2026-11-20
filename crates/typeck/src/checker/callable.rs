@@ -38,6 +38,7 @@ impl Checker<'_> {
         {
             self.report_mutable_borrow(callee);
         }
+        self.note_fn_once_call(callee, info.kind, flow);
 
         let params = info.signature.params.len();
         if params != args.len() {

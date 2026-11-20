@@ -11,15 +11,18 @@ use crate::results::ClosureHint;
 impl Checker<'_> {
     /// Returns the expected callable signature at a closure literal.
     ///
-    /// Only a function pointer fixes both lists in this phase. A concrete
-    /// `Fn` bound supplies the same information once the built-in traits exist.
+    /// A function pointer fixes both lists directly. A parameter or inference
+    /// variable bound by `Fn`/`FnMut`/`FnOnce` supplies the tuple and result of
+    /// its strongest function-trait bound instead.
     pub(super) fn expected_signature(&mut self, expected: Option<TyId>) -> Option<ClosureHint> {
         let expected = self.resolve_deep(expected?);
-        let parts = self.hir.ty_ctxt().fn_ptr_parts(expected)?;
-        Some(ClosureHint {
-            params: parts.params,
-            ret: parts.ret,
-        })
+        if let Some(parts) = self.hir.ty_ctxt().fn_ptr_parts(expected) {
+            return Some(ClosureHint {
+                params: parts.params,
+                ret: parts.ret,
+            });
+        }
+        self.fn_trait_hint(expected)
     }
 
     /// Resolves the parameter types from annotations, falling back to the
@@ -105,7 +108,7 @@ impl Checker<'_> {
         .emit();
     }
 
-    fn signature_text(&self, params: &[TyId], ret: TyId) -> String {
+    pub(in crate::checker) fn signature_text(&self, params: &[TyId], ret: TyId) -> String {
         let params = params
             .iter()
             .map(|ty| {

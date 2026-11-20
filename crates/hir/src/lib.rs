@@ -384,6 +384,34 @@ impl Hir {
         self.copy_trait() == def
     }
 
+    /// Returns the built-in trait declaration for `kind`.
+    pub fn fn_trait(&self, kind: seal_ty::ClosureKind) -> DefId {
+        self.builtin_traits().fn_traits.trait_def(kind)
+    }
+
+    /// Returns the closure kind named by `trait_def`, if it is a function
+    /// trait.
+    pub fn fn_trait_kind(&self, trait_def: DefId) -> Option<seal_ty::ClosureKind> {
+        self.builtin.as_ref()?.fn_traits.kind(trait_def)
+    }
+
+    /// Returns the closure kind named by `name`, if it is a function trait.
+    pub fn fn_trait_named(&self, name: Symbol) -> Option<seal_ty::ClosureKind> {
+        seal_ty::ClosureKind::ALL
+            .into_iter()
+            .find(|kind| self.definitions().name(self.fn_trait(*kind)) == name)
+    }
+
+    /// Returns `true` when `def` is a function trait declaration.
+    pub fn is_fn_trait(&self, def: DefId) -> bool {
+        self.fn_trait_kind(def).is_some()
+    }
+
+    /// Returns the call method declared by the function trait `kind`.
+    pub fn fn_trait_method(&self, kind: seal_ty::ClosureKind) -> DefId {
+        self.builtin_traits().fn_traits.method(kind)
+    }
+
     /// Returns the definition of the built-in opaque `c_void` type.
     pub fn c_void(&self) -> DefId {
         self.builtin_traits().c_void
@@ -446,6 +474,7 @@ impl Hir {
         if self.protocol_of_trait(def).is_some()
             || self.is_drop_trait(def)
             || self.is_copy_trait(def)
+            || self.is_fn_trait(def)
             || self.is_c_void(def)
         {
             return true;

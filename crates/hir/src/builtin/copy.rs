@@ -26,6 +26,14 @@ pub(crate) struct CopyDefs {
 /// The trait has only its implicit `Self` parameter and declares no methods.
 pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> CopyDefs {
     let (trait_def, generics) = create_trait(hir, interner, "Copy", &[]);
-    install_trait_definition(hir, interner, "Copy", trait_def, generics, Vec::new());
+    install_trait_definition(
+        hir,
+        interner,
+        "Copy",
+        trait_def,
+        generics,
+        Vec::new(),
+        Vec::new(),
+    );
     CopyDefs { trait_def }
 }

@@ -7,7 +7,7 @@ use seal_layout::VtableSlot;
 use seal_methods::MethodId;
 use seal_ty::{
     AdtId, CastKind, ClosureKind, GenericParamDef, Instance, PathElem, RawPtrKind, RefKind,
-    TraitRef, TyId,
+    SubstsId, TraitRef, TyId,
 };
 
 /// One step from a place to a sub-place, with the field resolved.
@@ -277,6 +277,15 @@ pub enum ResolvedCall {
         closure: DefId,
         /// The closure kind, which decides the receiver adjustment.
         kind: ClosureKind,
+    },
+    /// A call through a parameter declared with a function-trait bound.
+    FnTrait {
+        /// The bound that supplies the signature and receiver adjustment.
+        trait_ref: TraitRef,
+        /// The chosen callable kind, the strongest bound in use.
+        kind: ClosureKind,
+        /// The bound's parameter types, in declaration order.
+        parameters: SubstsId,
     },
 }
 

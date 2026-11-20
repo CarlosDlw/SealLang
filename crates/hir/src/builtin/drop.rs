@@ -44,6 +44,14 @@ pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> DropDefs {
         Vec::new(),
         unit,
     );
-    install_trait_definition(hir, interner, "Drop", trait_def, generics, vec![definition]);
+    install_trait_definition(
+        hir,
+        interner,
+        "Drop",
+        trait_def,
+        generics,
+        Vec::new(),
+        vec![definition],
+    );
     DropDefs { trait_def, method }
 }

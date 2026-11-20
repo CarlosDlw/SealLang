@@ -63,6 +63,11 @@ impl Checker<'_> {
         if !self.validated_trait_arguments.insert(trait_ref) {
             return;
         }
+        // Function traits validate their own shape during lowering: the first
+        // argument is a tuple and the result is checked for `Sized` there.
+        if self.hir.is_fn_trait(trait_ref.trait_def) {
+            return;
+        }
         for argument in self.hir.ty_ctxt().substs_args(trait_ref.args) {
             if !self.is_error(argument) && !self.is_sized(argument) {
                 self.report_unsized(span, argument, "trait argument");
@@ -120,6 +125,7 @@ impl Checker<'_> {
             .unwrap_or(0);
         let own_start = signature.generics.len().saturating_sub(own_count);
         let args = self.instantiate_arguments(&signature.generics, seed, explicit_own, own_start);
+        self.register_argument_bounds(&signature.generics, &args);
         let substs = self.hir.ty_ctxt().substs(&args);
         let params = signature
             .params
@@ -156,6 +162,7 @@ impl Checker<'_> {
             seed.insert(parameter.param, argument);
         }
         let args = self.instantiate_arguments(&generics, &seed, explicit_own, own_start);
+        self.register_argument_bounds(&generics, &args);
         let substs = self.hir.ty_ctxt().substs(&args);
         let params = method
             .signature
@@ -278,6 +285,7 @@ impl Checker<'_> {
         if let Some(explicit) = explicit {
             let args = self.hir.ty_ctxt().substs_args(explicit);
             if args.len() == generics.len() {
+                self.register_argument_bounds(generics, &args);
                 return args;
             }
         }
@@ -290,10 +298,14 @@ impl Checker<'_> {
         {
             let args = self.hir.ty_ctxt().substs_args(args);
             if args.len() == generics.len() {
+                self.register_argument_bounds(generics, &args);
                 return args;
             }
         }
-        self.instantiate_arguments(generics, &FxHashMap::default(), None, generics.len())
+        let args =
+            self.instantiate_arguments(generics, &FxHashMap::default(), None, generics.len());
+        self.register_argument_bounds(generics, &args);
+        args
     }
 
     /// Returns the generic parameter list of an aggregate declaration.
@@ -380,7 +392,7 @@ impl Checker<'_> {
         }
     }
 
-    fn substitute_trait_ref(&self, trait_ref: TraitRef, substs: SubstsId) -> TraitRef {
+    pub(super) fn substitute_trait_ref(&self, trait_ref: TraitRef, substs: SubstsId) -> TraitRef {
         let self_ty = self.hir.ty_ctxt().substitute(trait_ref.self_ty, substs);
         let args: Vec<TyId> = self
             .hir

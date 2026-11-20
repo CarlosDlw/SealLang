@@ -63,6 +63,27 @@ impl Checker<'_> {
             return found;
         }
 
+        match self.coerce_to_fn_trait(expr, found, expected) {
+            Ok(true) => {
+                // The value keeps its closure or pointer type; the bound only
+                // constrains how the generic parameter may be used.
+                self.results.record_expr(expr, found);
+                found
+            }
+            Err(()) => {
+                self.results.record_expr(expr, self.error_ty());
+                self.error_ty()
+            }
+            Ok(false) => self.check_expr_after_fn_trait(expr, found, expected),
+        }
+    }
+
+    fn check_expr_after_fn_trait(
+        &mut self,
+        expr: HirExprId,
+        found: seal_ty::TyId,
+        expected: seal_ty::TyId,
+    ) -> seal_ty::TyId {
         match self.coerce_to_trait_object(expr, found, expected) {
             Ok(true) => {
                 self.results.record_coercion(

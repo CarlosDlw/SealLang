@@ -14,6 +14,7 @@ mod exhaustive;
 mod expr;
 mod ffi;
 mod flow;
+mod fn_traits;
 mod for_loop;
 mod generics;
 mod iteration;
@@ -76,6 +77,10 @@ pub(crate) struct Checker<'a> {
     pub(super) results: TypeckResults,
     pub(super) infer: InferCtxt,
     pub(super) env: ParamEnv,
+    /// Function-trait bounds attached to inference variables created by
+    /// instantiating generic parameters. `InferCtxt` itself does not retain
+    /// bounds, so the checker records them at the instantiation site.
+    pub(super) inferred_bounds: fn_traits::InferredBounds,
     pub(super) proof_cache: FxHashMap<TraitRef, trait_solver::Proof>,
     /// Trait references whose own type arguments have been checked for
     /// `Sized` storage. Impl methods share their impl's parameters, so a
@@ -128,6 +133,7 @@ impl<'a> Checker<'a> {
             results: TypeckResults::new(),
             infer: InferCtxt::new(),
             env: ParamEnv::new(),
+            inferred_bounds: fn_traits::InferredBounds::default(),
             proof_cache: FxHashMap::default(),
             validated_trait_arguments: FxHashSet::default(),
             owner: None,
@@ -234,6 +240,7 @@ impl<'a> Checker<'a> {
         self.ret = signature.ret;
         self.infer = InferCtxt::new();
         self.env = self.hir.param_env(body.owner);
+        self.inferred_bounds.clear();
         self.proof_cache.clear();
         self.owner = Some(body.owner);
         self.const_fn = body.is_const;
@@ -379,6 +386,9 @@ impl<'a> Checker<'a> {
 
     /// Proves `goal` under the current body's parameter environment.
     pub(super) fn prove_trait(&mut self, goal: TraitRef) -> trait_solver::Proof {
+        if let Some(proof) = self.prove_builtin_trait(goal) {
+            return proof;
+        }
         let mut solver = trait_solver::Solver::new(self.hir, &self.env, &mut self.proof_cache);
         solver.prove(goal, 0)
     }

@@ -2878,7 +2878,7 @@ moved, so it stays usable after the closure is created.",
 /// those traits cannot be named or called dynamically in this position.
 pub const E3096: ErrorCode = ErrorCode {
     code: "E3096",
-    title: "unsupported closure call syntax",
+    title: "unsupported callable use",
     explanation: "\
 A closure is called with the call operator: `f(a, b)`. The traits `Fn`,
 `FnMut`, and `FnOnce` describe closures to the type system, but they are not
@@ -2887,7 +2887,32 @@ because it would silently change the argument list into a single tuple and
 would expose an implementation detail of the closure lowering.
 
 Write `f(a, b)` instead. A closure that captures nothing can also be stored in
-a `func(...)` pointer and called through that value.",
+a `func(...)` pointer and called through that value.
+
+The same code reports a malformed function-trait use: a bound whose first
+argument is not a tuple, a result that is not sized, a missing argument list,
+and a `dyn Fn(...)` object. Function traits are bounds for static dispatch,
+not traits that can be implemented or turned into trait objects.",
+};
+
+/// A function trait is declared or implemented explicitly.
+///
+/// `Fn`, `FnMut`, and `FnOnce` are compiler-provided. Their implementations
+/// are the closures the compiler types and safe function pointers; a user
+/// declaration could not describe either one, and an explicit implementation
+/// would create a second callable protocol the solver cannot relate to them.
+pub const E3097: ErrorCode = ErrorCode {
+    code: "E3097",
+    title: "function trait cannot be declared or implemented",
+    explanation: "\
+The function traits are installed by the compiler before user items. Use one
+as a bound, as in `func apply<F: Fn(i32) -> i32>(f: F)`, and the compiler
+proves it for closures and safe function pointers with the signature and
+receiver the bound requires.
+
+Declaring `trait Fn<...>` or writing `impl Fn<...> for Type` is rejected:
+closures are not nominal types with methods, and a user implementation could
+not be called through the closure convention the compiler emits.",
 };
 
 /// A function pointer conversion changes the signature or weakens safety.
@@ -3395,12 +3420,12 @@ pub static ALL: &[ErrorCode] = &[
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
     E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085, E3086, E3087, E3088, E3089,
-    E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3098, E3099, E4001, E4002, E4003, E4004,
-    E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017,
-    E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031,
-    E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
-    E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097, E3098, E3099, E4001, E4002, E4003,
+    E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016,
+    E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030,
+    E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009,
+    E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001,
+    E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3663,15 +3688,13 @@ mod tests {
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
                 "E3084", "E3085", "E3086", "E3087", "E3088", "E3089", "E3090", "E3091", "E3092",
-                "E3093", "E3094", "E3095", "E3096", "E3098", "E3099",
+                "E3093", "E3094", "E3095", "E3096", "E3097", "E3098", "E3099",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is
         // cheaper than giving an unrelated diagnostic a number out of order.
-        // The FFI block reserves `E3079` for a later phase, and the
-        // first-class function plan reserves `E3097` for the `Fn`-trait
-        // declarations rejected in phase 5; that is why the list is not
-        // contiguous.
+        // The FFI block reserves `E3079` for a later phase. Every first-class
+        // function code is now allocated; only `E3079` remains a gap.
     }
 
     #[test]

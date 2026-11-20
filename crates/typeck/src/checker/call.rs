@@ -49,6 +49,11 @@ impl Checker<'_> {
                 if let Some(closure) = self.closure_of_ty(ty) {
                     return self.check_closure_call(expr, callee, closure, args, flow, span);
                 }
+                if let Some(result) =
+                    self.check_fn_trait_param_call(expr, callee, ty, args, flow, span)
+                {
+                    return result;
+                }
                 if let Some(result) = self.check_indirect_call(ty, args, flow, span) {
                     return result;
                 }

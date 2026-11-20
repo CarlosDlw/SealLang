@@ -9,6 +9,7 @@
 
 pub(crate) mod copy;
 pub(crate) mod drop;
+pub(crate) mod fn_traits;
 pub(crate) mod protocols;
 
 use seal_def::{DefData, DefId, DefKind};
@@ -16,7 +17,7 @@ use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{
     GenericParamDef, GenericSignature, Generics, TraitDef, TraitMethodDef, TraitMethodReceiver,
-    TyId,
+    TraitRef, TyId,
 };
 
 use crate::Hir;
@@ -30,6 +31,8 @@ pub(crate) struct BuiltinTraits {
     pub(crate) drop: drop::DropDefs,
     /// The `Copy` marker trait.
     pub(crate) copy: copy::CopyDefs,
+    /// The function traits.
+    pub(crate) fn_traits: fn_traits::FnTraits,
     /// The built-in opaque `c_void` type.
     pub(crate) c_void: DefId,
 }
@@ -39,11 +42,13 @@ pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> BuiltinTraits {
     let protocols = protocols::install(hir, interner);
     let drop = drop::install(hir, interner);
     let copy = copy::install(hir, interner);
+    let fn_traits = fn_traits::install(hir, interner);
     let c_void = install_c_void(hir, interner);
     BuiltinTraits {
         protocols,
         drop,
         copy,
+        fn_traits,
         c_void,
     }
 }
@@ -136,6 +141,7 @@ pub(super) fn install_trait_definition(
     trait_name: &str,
     trait_def: DefId,
     generics: Generics,
+    supertraits: Vec<TraitRef>,
     methods: Vec<TraitMethodDef>,
 ) {
     let name = interner.intern(trait_name);
@@ -143,7 +149,7 @@ pub(super) fn install_trait_definition(
         trait_def,
         name,
         generics,
-        Vec::new(),
+        supertraits,
         methods,
     ));
 }

@@ -55,6 +55,19 @@ impl Lowering<'_> {
             let TyKind::Dyn { trait_def, .. } = self.hir.ty_ctxt().kind(usage.ty) else {
                 continue;
             };
+            if let Some(kind) = self.hir.fn_trait_kind(trait_def) {
+                self.error(
+                    codes::E3096,
+                    usage.span,
+                    format!(
+                        "the function trait `{}` cannot be used as a trait object",
+                        kind.as_str()
+                    ),
+                )
+                .help("use `F: Fn(...)` as a generic bound, or call a `func(...)` pointer")
+                .emit();
+                continue;
+            }
             if self.hir.is_copy_trait(trait_def) {
                 self.error(
                     codes::E3078,

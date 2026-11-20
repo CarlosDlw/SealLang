@@ -35,6 +35,11 @@ impl Flow {
         self.init.assign(local, path);
     }
 
+    /// Records that a place was moved out, so later uses are rejected.
+    pub(crate) fn move_out(&mut self, local: DefId, path: &[PathElem]) {
+        self.init.move_out(local, path);
+    }
+
     /// Joins the states after the two arms of a conditional.
     ///
     /// A place is initialized afterwards only when both continuing paths

@@ -15,6 +15,7 @@ mod examples;
 mod ffi;
 mod flow;
 mod fn_ptrs;
+mod fn_traits;
 mod for_loop;
 mod generics;
 mod globals;

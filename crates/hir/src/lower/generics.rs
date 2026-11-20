@@ -294,6 +294,11 @@ impl Lowering<'_> {
             }
             return None;
         };
+        if let Some(kind) = self.hir.fn_trait_kind(trait_def) {
+            return self
+                .lower_fn_trait_arguments(kind, path)
+                .map(|args| (trait_def, args));
+        }
         let expected = self
             .hir
             .generics(trait_def)
@@ -301,6 +306,82 @@ impl Lowering<'_> {
             .unwrap_or(0);
         let args = self.lower_type_arguments(path.args.as_ref(), expected, true, path.name_span)?;
         Some((trait_def, args))
+    }
+
+    /// Lowers and validates the two arguments of a function trait.
+    ///
+    /// The sugar always supplies a tuple of parameter types and a result type.
+    /// The explicit spelling has to follow the same shape: the first argument
+    /// must be a tuple (or `()`), and the result must be `Sized`.
+    fn lower_fn_trait_arguments(
+        &mut self,
+        kind: seal_ty::ClosureKind,
+        path: &TraitPath,
+    ) -> Option<seal_ty::SubstsId> {
+        let name = kind.as_str();
+        let Some(args) = &path.args else {
+            self.error(
+                codes::E3096,
+                path.name_span,
+                format!("the function trait `{name}` needs argument and result types"),
+            )
+            .help(format!("write the bound as `{name}(A, B) -> R`"))
+            .emit();
+            return None;
+        };
+        if args.args.len() != 2 {
+            self.error(
+                codes::E3096,
+                args.span,
+                format!(
+                    "the function trait `{name}` takes two type arguments, a tuple of parameters and a result, but {} were supplied",
+                    args.args.len()
+                ),
+            )
+            .help(format!("write the bound as `{name}(A, B) -> R`"))
+            .emit();
+            for argument in &args.args {
+                let _ = self.lower_type_inner(*argument, true, false);
+            }
+            return None;
+        }
+        let lowered: Vec<TyId> = args
+            .args
+            .iter()
+            .map(|argument| self.lower_type_inner(*argument, true, false))
+            .collect();
+        let parameters = lowered[0];
+        if !matches!(
+            self.hir.ty_ctxt().kind(parameters),
+            TyKind::Tuple(_) | TyKind::Unit
+        ) {
+            let display = self.display_ty(parameters);
+            self.error(
+                codes::E3096,
+                args.span,
+                format!(
+                    "the first argument of `{name}` must be a tuple of parameter types, found `{display}`"
+                ),
+            )
+            .help(format!("write the bound as `{name}(A, B) -> R`, or remove the bound"))
+            .emit();
+            return None;
+        }
+        let output = lowered[1];
+        if !self.hir.ty_ctxt().is_sized(output)
+            && !matches!(self.hir.ty_ctxt().kind(output), TyKind::Error)
+        {
+            let display = self.display_ty(output);
+            self.error(
+                codes::E3096,
+                args.span,
+                format!("the result `{display}` of `{name}` must be sized"),
+            )
+            .help("return the value behind a pointer, or use a sized result type")
+            .emit();
+            return None;
+        }
+        Some(self.hir.ty_ctxt().substs(&lowered))
     }
 
     /// Builds the semantic declaration of every trait from its lowered bounds

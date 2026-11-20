@@ -228,6 +228,7 @@ fn install_iterator(hir: &mut Hir, interner: &Interner) -> IteratorDefs {
         Protocol::Iterator.name(),
         trait_def,
         generics,
+        Vec::new(),
         vec![has_next_def, next_def],
     );
 
@@ -256,6 +257,7 @@ fn install_into_iterator(hir: &mut Hir, interner: &Interner) -> IntoIteratorDefs
         Protocol::IntoIterator.name(),
         trait_def,
         generics,
+        Vec::new(),
         vec![iter_def],
     );
 
@@ -284,6 +286,7 @@ fn install_index(hir: &mut Hir, interner: &Interner) -> IndexDefs {
         Protocol::Index.name(),
         trait_def,
         generics,
+        Vec::new(),
         vec![index_def],
     );
 
@@ -312,6 +315,7 @@ fn install_index_mut(hir: &mut Hir, interner: &Interner) -> IndexMutDefs {
         Protocol::IndexMut.name(),
         trait_def,
         generics,
+        Vec::new(),
         vec![index_mut_def],
     );
 

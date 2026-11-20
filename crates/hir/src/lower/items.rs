@@ -170,6 +170,22 @@ impl Lowering<'_> {
             .emit();
             return;
         }
+        if let Some(kind) = self.hir.fn_trait_named(name) {
+            self.error(
+                codes::E3097,
+                name_span,
+                format!(
+                    "the trait name `{}` is reserved for a compiler-provided function trait",
+                    kind.as_str()
+                ),
+            )
+            .help(format!(
+                "use `{}` as a bound; closures and safe function pointers implement it automatically",
+                kind.as_str()
+            ))
+            .emit();
+            return;
+        }
         if self.hir.definitions().name(self.hir.drop_trait()) == name {
             self.error(
                 codes::E2066,
@@ -522,6 +538,24 @@ impl Lowering<'_> {
             .and_then(|path| self.lower_impl_trait_ref(path, self_ty));
         self.self_ty = saved;
         self.pop_generic_scope(levels);
+
+        if let Some(trait_ref) = trait_ref
+            && let Some(kind) = self.hir.fn_trait_kind(trait_ref.trait_def)
+        {
+            self.error(
+                codes::E3097,
+                self.ast
+                    .item(item_id)
+                    .span,
+                format!(
+                    "`{}` cannot be implemented explicitly; closures and safe function pointers implement it automatically",
+                    kind.as_str()
+                ),
+            )
+            .help("use the trait as a bound instead of implementing it for a type")
+            .emit();
+            return;
+        }
 
         if let Some(trait_ref) = trait_ref
             && let Some(protocol) = self.hir.protocol_of_trait(trait_ref.trait_def)

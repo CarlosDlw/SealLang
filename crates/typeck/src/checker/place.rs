@@ -211,15 +211,20 @@ impl Checker<'_> {
         if place.contains_deref() || !place.root.is_local() {
             return;
         }
-        if self.place_state(&place, flow) != InitState::Initialized {
+        let state = self.place_state(&place, flow);
+        if state != InitState::Initialized {
             let text = self.place_text(&place);
-            self.error(
-                codes::E3011,
-                span,
-                format!("`{text}` is possibly uninitialized"),
-            )
-            .help(format!("assign a value to `{text}` before reading it"))
-            .emit();
+            let (message, help) = match state {
+                InitState::Moved => (
+                    format!("`{text}` was moved and cannot be used again"),
+                    "reassign the value before using it".to_owned(),
+                ),
+                _ => (
+                    format!("`{text}` is possibly uninitialized"),
+                    format!("assign a value to `{text}` before reading it"),
+                ),
+            };
+            self.error(codes::E3011, span, message).help(help).emit();
         }
     }
 

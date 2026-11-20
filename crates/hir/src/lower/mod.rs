@@ -125,6 +125,10 @@ impl<'a> Lowering<'a> {
         traits.insert(hir.definitions().name(drop_trait), drop_trait);
         let copy_trait = hir.copy_trait();
         traits.insert(hir.definitions().name(copy_trait), copy_trait);
+        for kind in seal_ty::ClosureKind::ALL {
+            let definition = hir.fn_trait(kind);
+            traits.insert(hir.definitions().name(definition), definition);
+        }
         let c_void = hir.c_void();
         let c_void_name = hir.definitions().name(c_void);
         let mut types = FxHashMap::default();
