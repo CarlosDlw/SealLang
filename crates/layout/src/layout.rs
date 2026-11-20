@@ -247,6 +247,9 @@ impl<'a> LayoutCtxt<'a> {
             TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
                 self.pointer_layout(pointee, pointer)
             }
+            // A Seal function pointer is one machine word. Its signature
+            // describes calls, not the storage of the value itself.
+            TyKind::FnPtr(_) => Layout::new(pointer, pointer),
             TyKind::Unit | TyKind::Never | TyKind::Error => Layout::new(0, 1),
             TyKind::Array { element, length } => {
                 let element_layout = self.layout_inner(element, stack)?;

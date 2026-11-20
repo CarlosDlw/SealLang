@@ -55,7 +55,9 @@ impl Checker<'_> {
                         self.hir.expr(callee).span,
                         "this expression is not callable",
                     )
-                    .help("call a function item, or call through a `*raw extern \"c\" func(...)` pointer")
+                    .help(
+                        "call a function item, or call through a `func(...)` or `*raw extern \"c\" func(...)` pointer",
+                    )
                     .emit();
                 }
                 (None, None)
@@ -191,7 +193,41 @@ impl Checker<'_> {
         flow: &mut Flow,
         span: Span,
     ) -> Option<TyId> {
-        let (pointer_kind, signature) = self.hir.ty_ctxt().fn_ptr_parts(callee_ty)?;
+        if let Some(definition) = self.hir.ty_ctxt().fn_ptr_parts(callee_ty) {
+            if definition.is_unsafe && self.unsafe_depth == 0 {
+                self.error(
+                    codes::E3070,
+                    span,
+                    "calling an `unsafe func(...)` pointer requires an `unsafe` block",
+                )
+                .help("wrap the call in `unsafe { ... }` and establish its preconditions")
+                .emit();
+            }
+            if definition.params.len() != args.len() {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "this function pointer takes {} argument(s) but {} were supplied",
+                        definition.params.len(),
+                        args.len()
+                    ),
+                )
+                .help("pass exactly one argument for each parameter")
+                .emit();
+            }
+            for (index, arg) in args.iter().enumerate() {
+                match definition.params.get(index) {
+                    Some(expected) => self.check_expr(*arg, *expected, flow),
+                    None => {
+                        self.infer_expr(*arg, None, flow);
+                    }
+                }
+            }
+            return Some(definition.ret);
+        }
+
+        let (pointer_kind, signature) = self.hir.ty_ctxt().c_fn_ptr_parts(callee_ty)?;
         if pointer_kind.is_mut() {
             self.error(
                 codes::E3089,

@@ -184,6 +184,11 @@ fn substitute_target(tcx: &TyCtxt, substs: SubstsId, target: CallTarget) -> Call
             parameters,
             variadic,
         },
+        // The pointer type names the signature, so it follows the instance.
+        CallTarget::FnPtr { ty, receiver } => CallTarget::FnPtr {
+            ty: tcx.substitute(ty, substs),
+            receiver,
+        },
     }
 }
 

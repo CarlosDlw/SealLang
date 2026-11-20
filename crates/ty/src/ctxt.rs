@@ -11,11 +11,14 @@ use seal_target::CAbiProperties;
 use crate::adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 use crate::copy::CopyImpls;
 use crate::drop::DropImpls;
+use crate::fn_ptr::FnPtrDef;
 use crate::fn_sig::FnSigDef;
 use crate::generics::{
     GenericParamDef, Generics, ParamEnv, ParamTy, TraitDef, TraitImplDef, TraitRef,
 };
-use crate::id::{AdtId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx};
+use crate::id::{
+    AdtId, FnPtrId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId, VariantIdx,
+};
 use crate::kind::{FloatTy, IntTy, RawPtrKind, RefKind, TyKind, UintTy};
 
 /// The outer constructor of an impl target or trait goal.
@@ -66,6 +69,8 @@ pub enum ImplHead {
     Opaque,
     /// A C function signature.
     FnSig,
+    /// A Seal function pointer.
+    FnPtr,
 }
 
 impl TyCtxt {
@@ -87,6 +92,7 @@ impl TyCtxt {
             TyKind::Dyn { .. } => ImplHead::Dyn,
             TyKind::Opaque { .. } => ImplHead::Opaque,
             TyKind::FnSig(_) => ImplHead::FnSig,
+            TyKind::FnPtr(_) => ImplHead::FnPtr,
             TyKind::Tuple(tuple) => ImplHead::Tuple(self.tuple_elements(tuple).len()),
             TyKind::Param(_) => ImplHead::Param,
             TyKind::Infer(_) => ImplHead::Infer,
@@ -114,6 +120,8 @@ pub struct TyCtxt {
     tuple_interner: RefCell<FxHashMap<Vec<TyId>, TupleId>>,
     fn_sigs: RefCell<IndexVec<FnSigId, FnSigDef>>,
     fn_sig_interner: RefCell<FxHashMap<FnSigDef, FnSigId>>,
+    fn_ptrs: RefCell<IndexVec<FnPtrId, FnPtrDef>>,
+    fn_ptr_interner: RefCell<FxHashMap<FnPtrDef, FnPtrId>>,
     params: RefCell<IndexVec<ParamTyId, ParamTy>>,
     param_interner: RefCell<FxHashMap<ParamTy, ParamTyId>>,
     substs_arena: RefCell<IndexVec<SubstsId, Vec<TyId>>>,
@@ -727,10 +735,48 @@ impl TyCtxt {
 
     /// Returns the C function signature and pointer kind of a raw function
     /// pointer type.
-    pub fn fn_ptr_parts(&self, ty: TyId) -> Option<(RawPtrKind, FnSigDef)> {
+    ///
+    /// The name is explicit about the C spelling: a Seal function pointer is
+    /// [`TyCtxt::fn_ptr_parts`], which describes a sized value instead of the
+    /// pointee of a raw pointer.
+    pub fn c_fn_ptr_parts(&self, ty: TyId) -> Option<(RawPtrKind, FnSigDef)> {
         let (kind, pointee) = self.raw_parts(ty)?;
         let id = self.fn_sig_id(pointee)?;
         Some((kind, self.fn_sig(id)))
+    }
+
+    /// Returns the interned Seal function pointer type for `definition`.
+    ///
+    /// The definition is interned structurally, so two occurrences with the
+    /// same parameters, result, and safety qualifier share one [`TyId`].
+    pub fn fn_ptr_ty(&self, definition: FnPtrDef) -> TyId {
+        let existing = self.fn_ptr_interner.borrow().get(&definition).copied();
+        let id = match existing {
+            Some(id) => id,
+            None => {
+                let id = self.fn_ptrs.borrow_mut().push(definition.clone());
+                self.fn_ptr_interner.borrow_mut().insert(definition, id);
+                id
+            }
+        };
+        self.intern(TyKind::FnPtr(id))
+    }
+
+    /// Returns one interned Seal function pointer definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` did not come from this context.
+    pub fn fn_ptr_def(&self, id: FnPtrId) -> FnPtrDef {
+        self.fn_ptrs.borrow()[id].clone()
+    }
+
+    /// Returns the definition of `ty` when it is a Seal function pointer.
+    pub fn fn_ptr_parts(&self, ty: TyId) -> Option<FnPtrDef> {
+        match self.kind(ty) {
+            TyKind::FnPtr(id) => Some(self.fn_ptr_def(id)),
+            _ => None,
+        }
     }
 
     /// Returns the struct field template with the given definition in `adt`.
@@ -928,6 +974,7 @@ impl TyCtxt {
             | TyKind::Float(_)
             | TyKind::Ref { .. }
             | TyKind::RawPtr { .. }
+            | TyKind::FnPtr(_)
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
@@ -997,6 +1044,9 @@ impl TyCtxt {
             | TyKind::FnSig(_)
             | TyKind::Infer(_) => false,
             TyKind::Param(_) => true,
+            // A function pointer is one machine word, whatever its signature
+            // contains: the parameters and result describe calls, not storage.
+            TyKind::FnPtr(_) => true,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Tuple(tuple) => self
                 .tuple_elements(tuple)
@@ -1147,6 +1197,16 @@ impl TyCtxt {
                 .substs_args(args)
                 .into_iter()
                 .any(|argument| self.contains_reference_inner(argument, visiting)),
+            // The signature is part of the value's type, so a function pointer
+            // whose call can receive a reference carries one indirectly.
+            TyKind::FnPtr(id) => {
+                let definition = self.fn_ptr_def(id);
+                definition
+                    .params
+                    .iter()
+                    .any(|parameter| self.contains_reference_inner(*parameter, visiting))
+                    || self.contains_reference_inner(definition.ret, visiting)
+            }
             TyKind::Adt { adt, args } => {
                 let key = (adt, args);
                 if !visiting.insert(key) {
@@ -1197,6 +1257,14 @@ impl TyCtxt {
                 .substs_args(args)
                 .into_iter()
                 .any(|argument| self.contains_exclusive_reference_inner(argument, visiting)),
+            TyKind::FnPtr(id) => {
+                let definition = self.fn_ptr_def(id);
+                definition
+                    .params
+                    .iter()
+                    .any(|parameter| self.contains_exclusive_reference_inner(*parameter, visiting))
+                    || self.contains_exclusive_reference_inner(definition.ret, visiting)
+            }
             TyKind::Adt { adt, args } => {
                 let key = (adt, args);
                 if !visiting.insert(key) {
@@ -1785,6 +1853,45 @@ mod tests {
             ctxt.is_copy(pair),
             ctxt.is_copy_with(pair, &ParamEnv::new())
         );
+    }
+
+    #[test]
+    fn function_pointers_are_structural_sized_and_copy() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let boolean = ctxt.bool_ty();
+        let definition = crate::FnPtrDef {
+            params: vec![int, boolean],
+            ret: int,
+            is_unsafe: false,
+        };
+        let first = ctxt.fn_ptr_ty(definition.clone());
+        let second = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: vec![int, boolean],
+            ret: int,
+            is_unsafe: false,
+        });
+        assert_eq!(first, second, "equal signatures share one type");
+
+        let different = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: vec![int],
+            ret: int,
+            is_unsafe: false,
+        });
+        assert_ne!(first, different, "the parameter list is part of identity");
+
+        let unsafe_pointer = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: vec![int, boolean],
+            ret: int,
+            is_unsafe: true,
+        });
+        assert_ne!(first, unsafe_pointer, "safety is part of identity");
+
+        assert!(ctxt.is_sized(first));
+        assert!(ctxt.is_copy(first));
+        assert!(!ctxt.needs_drop(first));
+        assert_eq!(ctxt.fn_ptr_parts(first), Some(definition));
+        assert_eq!(ctxt.fn_ptr_parts(int), None);
     }
 
     #[test]

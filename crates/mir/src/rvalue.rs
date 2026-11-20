@@ -145,15 +145,31 @@ pub enum CallTarget {
         /// Whether the declaration is variadic.
         variadic: bool,
     },
+    /// A call through a Seal function pointer.
+    ///
+    /// The pointer value is the first element of the call's `args`, followed by
+    /// the real arguments in source order. That keeps the callee in evaluation
+    /// order without making this target unbounded: the target stays `Copy` and
+    /// names only the pointer type and how its receiver is reached. Phase 2
+    /// always uses `receiver: None`, where the first argument is the pointer
+    /// itself; closures fill in the environment kind later.
+    FnPtr {
+        /// The pointer type the call was checked against, always
+        /// [`TyKind::FnPtr`](seal_ty::TyKind::FnPtr).
+        ty: TyId,
+        /// How the pointer is reached from its receiver, when it is not the
+        /// argument itself.
+        receiver: Option<seal_ty::RefKind>,
+    },
 }
 
 impl CallTarget {
-    /// Returns the callee instance, or `None` for an external call.
+    /// Returns the callee instance, or `None` for an external or indirect call.
     #[inline]
     pub fn try_instance(self) -> Option<Instance> {
         match self {
             Self::Direct { instance, .. } | Self::TraitMethod { instance, .. } => Some(instance),
-            Self::Extern { .. } => None,
+            Self::Extern { .. } | Self::FnPtr { .. } => None,
         }
     }
 
@@ -161,21 +177,29 @@ impl CallTarget {
     ///
     /// # Panics
     ///
-    /// Panics for an external call. Callers that may see one use
-    /// [`CallTarget::try_instance`].
+    /// Panics for an external or function pointer call. Callers that may see
+    /// one use [`CallTarget::try_instance`].
     #[inline]
     pub fn instance(self) -> Instance {
         self.try_instance()
-            .expect("an external call has no Seal instance")
+            .expect("an external or function pointer call has no Seal instance")
     }
 
     /// Returns the expected parameter count.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a function pointer call: its signature lives in the target's
+    /// `ty`, and readers must query the type context for the parameter list.
     #[inline]
     pub fn parameters(self) -> usize {
         match self {
             Self::Direct { parameters, .. }
             | Self::TraitMethod { parameters, .. }
             | Self::Extern { parameters, .. } => parameters,
+            Self::FnPtr { .. } => {
+                panic!("a function pointer call takes its parameters from `ty`")
+            }
         }
     }
 
@@ -183,6 +207,12 @@ impl CallTarget {
     #[inline]
     pub fn is_trait_method(self) -> bool {
         matches!(self, Self::TraitMethod { .. })
+    }
+
+    /// Returns `true` for a call through a Seal function pointer.
+    #[inline]
+    pub fn is_fn_ptr(self) -> bool {
+        matches!(self, Self::FnPtr { .. })
     }
 
     /// Returns `true` for a call implemented outside Seal.

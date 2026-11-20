@@ -91,7 +91,7 @@ fn borrowing_an_uninitialized_binding_is_rejected() {
 #[test]
 fn function_items_cannot_be_borrowed() {
     let (fixture, _, _) = check_errors("func g() {}\nfunc f() { let r = &g; }");
-    fixture.expect("E3007", "function item");
+    fixture.expect("E3013", "already a pointer");
 }
 
 #[test]

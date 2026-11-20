@@ -444,11 +444,10 @@ fn a_type_parameter_rejects_field_and_index_access_without_panicking() {
 }
 
 #[test]
-fn a_generic_function_with_explicit_arguments_is_not_a_value() {
+fn a_generic_function_with_explicit_arguments_is_a_value() {
     let source = "func identity<T>(value: T) -> T { value } \
                   func main() { let function = identity::<i32>; }";
-    let (fixture, _, _) = check_errors(source);
-    fixture.expect("E3007", "cannot be used as a value");
+    check_clean(source);
 }
 
 #[test]
@@ -586,12 +585,12 @@ fn pointers_to_a_parameter_are_usable_without_a_copy_bound() {
 }
 
 #[test]
-fn a_generic_function_cannot_be_passed_as_a_value() {
+fn a_generic_function_needs_explicit_arguments_as_a_value() {
     let source = "func identity<T>(value: T) -> T { value } \
                   func consume(value: i32) { } \
                   func main() { consume(identity); }";
     let (fixture, _, _) = check_errors(source);
-    fixture.expect("E3007", "cannot be used as a value");
+    fixture.expect("E3099", "needs explicit type arguments");
 }
 
 #[test]

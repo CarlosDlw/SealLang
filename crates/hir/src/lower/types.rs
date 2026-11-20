@@ -305,13 +305,58 @@ impl Lowering<'_> {
                 }
                 self.hir.ty_ctxt_mut().error_ty()
             }
-            // The first-class function phases give this type its own
-            // representation. Until they land, a `func` annotation lowers to
-            // the error type rather than a placeholder that could leak into
-            // type checking.
-            TypeKind::FnPtr { .. } => self.hir.ty_ctxt_mut().error_ty(),
+            TypeKind::FnPtr {
+                params,
+                ret,
+                is_unsafe,
+            } => {
+                let mut lowered = Vec::with_capacity(params.len());
+                for parameter in params {
+                    let span = self.ast.ty(parameter).span;
+                    let parameter = self.lower_type_inner(parameter, unknown_parameter, false);
+                    self.require_sized(parameter, span, "a function pointer parameter");
+                    lowered.push(parameter);
+                }
+                let ret = match ret {
+                    Some(ret) => {
+                        let span = self.ast.ty(ret).span;
+                        let ret = self.lower_type_inner(ret, unknown_parameter, false);
+                        self.require_sized(ret, span, "a function pointer result");
+                        ret
+                    }
+                    None => self.hir.ty_ctxt().unit_ty(),
+                };
+                self.hir.ty_ctxt().fn_ptr_ty(seal_ty::FnPtrDef {
+                    params: lowered,
+                    ret,
+                    is_unsafe,
+                })
+            }
             TypeKind::Error => self.hir.ty_ctxt_mut().error_ty(),
         }
+    }
+
+    /// Reports `ty` when a function pointer parameter or result is unsized.
+    ///
+    /// The signature describes calls, so every parameter and the result are
+    /// passed by value and need a size fixed at compile time. The function
+    /// pointer itself is always sized.
+    fn require_sized(&mut self, ty: TyId, span: seal_span::Span, what: &str) {
+        if self.hir.ty_ctxt().is_sized(ty) {
+            return;
+        }
+        let text = self
+            .hir
+            .ty_ctxt()
+            .display_with(ty, self.interner)
+            .to_string();
+        self.error(
+            codes::E3010,
+            span,
+            format!("{what} cannot have the unsized type `{text}`"),
+        )
+        .help("pass a pointer, such as `*str` or `*[T]`, instead of the value")
+        .emit();
     }
 }
 

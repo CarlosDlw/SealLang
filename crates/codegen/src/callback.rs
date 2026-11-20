@@ -33,6 +33,16 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         instance: seal_ty::Instance,
         pointer_ty: TyId,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        // A Seal function pointer calls the internal body directly: both sides
+        // use the internal ABI, so no C trampoline is involved.
+        if self.tcx.fn_ptr_parts(pointer_ty).is_some() {
+            let internal = self.functions.get(&instance).copied().ok_or_else(|| {
+                CodegenError::internal(format!(
+                    "the address of {instance:?} was requested but its body was not declared"
+                ))
+            })?;
+            return Ok(internal.as_global_value().as_pointer_value().into());
+        }
         if let Some(function) = self.externals.function(instance.def) {
             return Ok(function.as_global_value().as_pointer_value().into());
         }

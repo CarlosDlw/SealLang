@@ -352,16 +352,6 @@ impl<'a> Checker<'a> {
         .emit();
     }
 
-    pub(super) fn report_function_as_value(&self, span: Span) {
-        self.error(
-            codes::E3007,
-            span,
-            "a function item cannot be used as a value",
-        )
-        .help("call the function instead, for example `name(...)`")
-        .emit();
-    }
-
     /// Returns the declared type of a local definition.
     pub(super) fn local_type(&self, local: DefId) -> TyId {
         self.results.local_ty(local).unwrap_or_else(|| {

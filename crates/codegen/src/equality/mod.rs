@@ -192,6 +192,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             | TyKind::Param(_) => Err(CodegenError::internal(
                 "an unsized or uninstantiated type has no equality",
             )),
+            TyKind::FnPtr(_) => Err(CodegenError::internal(
+                "a function pointer has no equality; type checking rejects it first",
+            )),
             TyKind::Infer(_) => Err(CodegenError::internal(
                 "an unresolved inference type reached an equality comparison",
             )),

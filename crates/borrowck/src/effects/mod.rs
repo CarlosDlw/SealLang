@@ -167,7 +167,9 @@ impl Effects {
             }
             // An external function has no Seal body: it may read or write any
             // static and exercise raw-memory contracts the checker cannot see.
-            CallTarget::Extern { .. } => GlobalEffects::unknown(),
+            // A function pointer names no callee until run time, so it carries
+            // the same conservative summary.
+            CallTarget::Extern { .. } | CallTarget::FnPtr { .. } => GlobalEffects::unknown(),
         }
     }
 

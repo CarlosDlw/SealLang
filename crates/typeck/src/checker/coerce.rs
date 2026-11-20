@@ -1,13 +1,15 @@
 //! Implicit coercions applied at expected-type boundaries.
 //!
-//! The only coercion in the language is pointer unsizing:
+//! Two coercions exist:
 //!
-//! - `*S` becomes `*dyn Trait` when `S` implements the trait;
-//! - `*mut S` becomes `*mut dyn Trait` under the same condition.
+//! - `*S` becomes `*dyn Trait` when `S` implements the trait, and `*mut S`
+//!   becomes `*mut dyn Trait` under the same condition;
+//! - a safe `func(...)` becomes an `unsafe func(...)` with the same signature.
 //!
-//! The source and target reference kinds must match. Coercions are recorded on
-//! the expression so MIR and monomorphization consume the decision instead of
-//! repeating proof search.
+//! The source and target reference kinds must match. A trait-object coercion is
+//! recorded on the expression so MIR and monomorphization consume the decision
+//! instead of repeating proof search. Function-pointer safety is a property of
+//! the same address, so it needs no MIR operation.
 
 use seal_error_codes as codes;
 use seal_hir::HirExprId;
@@ -73,11 +75,23 @@ impl Checker<'_> {
                 self.results.record_expr(expr, expected);
                 expected
             }
-            Ok(false) => {
-                let span = self.hir.expr(expr).span;
-                self.mismatch(span, expected, found);
-                found
-            }
+            Ok(false) => match self.coerce_to_function_pointer(expr, found, expected) {
+                Ok(true) => {
+                    // The address is the same value; only the signature it may
+                    // be called with changed, so no MIR rvalue is needed.
+                    self.results.record_expr(expr, expected);
+                    expected
+                }
+                Ok(false) => {
+                    let span = self.hir.expr(expr).span;
+                    self.mismatch(span, expected, found);
+                    found
+                }
+                Err(()) => {
+                    self.results.record_expr(expr, self.error_ty());
+                    self.error_ty()
+                }
+            },
             Err(()) => {
                 self.results.record_expr(expr, self.error_ty());
                 self.error_ty()
@@ -184,6 +198,59 @@ impl Checker<'_> {
                 Err(())
             }
         }
+    }
+
+    /// Attempts to coerce one Seal function pointer to another.
+    ///
+    /// `Ok(false)` means the target is not a function pointer, so ordinary
+    /// equality applies. `Err(())` means the conversion was rejected with
+    /// `E3098`. Only the safety qualifier may change: the parameters and the
+    /// result must be identical, and a safe pointer may become `unsafe`.
+    fn coerce_to_function_pointer(
+        &mut self,
+        expr: HirExprId,
+        source: seal_ty::TyId,
+        target: seal_ty::TyId,
+    ) -> Result<bool, ()> {
+        let tcx = self.hir.ty_ctxt();
+        let Some(target_def) = tcx.fn_ptr_parts(target) else {
+            return Ok(false);
+        };
+        let Some(source_def) = tcx.fn_ptr_parts(source) else {
+            return Ok(false);
+        };
+        if source_def.matches(&target_def)
+            || (source_def.params == target_def.params
+                && source_def.ret == target_def.ret
+                && !source_def.is_unsafe
+                && target_def.is_unsafe)
+        {
+            return Ok(true);
+        }
+
+        let span = self.hir.expr(expr).span;
+        let (message, help) = if source_def.is_unsafe && !target_def.is_unsafe {
+            (
+                "cannot drop `unsafe` from a function pointer".to_owned(),
+                "keep the pointer as `unsafe func(...)`, or call it inside an `unsafe` block",
+            )
+        } else if source_def.params != target_def.params || source_def.ret != target_def.ret {
+            (
+                format!(
+                    "function pointer signatures differ: expected `{}`, found `{}`",
+                    self.ty_text(target),
+                    self.ty_text(source)
+                ),
+                "make the parameter and result types identical",
+            )
+        } else {
+            (
+                "this function cannot become the expected function pointer".to_owned(),
+                "use a function item with the same signature and safety qualifier",
+            )
+        };
+        self.error(codes::E3098, span, message).help(help).emit();
+        Err(())
     }
 
     fn report_missing_trait_object_impl(

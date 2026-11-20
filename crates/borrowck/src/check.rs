@@ -347,9 +347,20 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             for arg in args {
                 check_operand(statement, arg, context);
             }
+            // A function pointer call carries the pointer value as its first
+            // argument. It is a `Copy` scalar, not a source argument, so the
+            // loan check and its one-based diagnostics skip it.
+            let (borrow_args, borrow_spans): (&[seal_mir::Operand], &[seal_span::Span]) =
+                match target {
+                    seal_mir::CallTarget::FnPtr { .. } => (
+                        args.get(1..).unwrap_or_default(),
+                        arg_spans.get(1..).unwrap_or_default(),
+                    ),
+                    _ => (args.as_slice(), arg_spans.as_slice()),
+                };
             let outcome = calls::check(calls::CallSite {
-                args,
-                arg_spans,
+                args: borrow_args,
+                arg_spans: borrow_spans,
                 span: statement.span,
                 origins: context.origins,
                 const_locals: context.const_locals,

@@ -190,6 +190,9 @@ impl<'ctx> TypeMapper<'ctx> {
             TyKind::Ref { pointee, .. } | TyKind::RawPtr { pointee, .. } => {
                 self.pointer_type(pointee)
             }
+            // A Seal function pointer is one opaque pointer. The signature is
+            // checked before code generation and only shapes the call.
+            TyKind::FnPtr(_) => BasicTypeEnum::PointerType(self.pointer()),
             TyKind::Array { element, length } => {
                 let length = u32::try_from(length).map_err(|_| {
                     CodegenError::internal(format!(

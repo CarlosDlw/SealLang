@@ -69,6 +69,8 @@ pub enum NotFfiSafe {
     EmptyArray,
     /// A C function signature used by value instead of behind a raw pointer.
     FunctionSignature,
+    /// A Seal function pointer, whose internal ABI is not a C function ABI.
+    FunctionPointer,
 }
 
 impl NotFfiSafe {
@@ -90,6 +92,7 @@ impl NotFfiSafe {
             Self::Opaque => "an opaque type has no size or C layout",
             Self::EmptyArray => "a zero-length array has no C representation",
             Self::FunctionSignature => "a C function signature must appear behind `*raw`",
+            Self::FunctionPointer => "a Seal function pointer does not use the C ABI",
         }
     }
 
@@ -110,6 +113,9 @@ impl NotFfiSafe {
             Self::Opaque => "use `*raw T` to pass C-owned storage indirectly",
             Self::EmptyArray => "use a non-empty array",
             Self::FunctionSignature => "write `*raw extern \"c\" func(...)`",
+            Self::FunctionPointer => {
+                "cast it explicitly with `as *raw extern \"c\" func(...)` at the boundary"
+            }
         }
     }
 }
@@ -203,6 +209,7 @@ pub fn safety(tcx: &TyCtxt, ty: TyId, position: FfiPosition) -> Result<(), NotFf
             }
         }
         TyKind::FnSig(_) => Err(NotFfiSafe::FunctionSignature),
+        TyKind::FnPtr(_) => Err(NotFfiSafe::FunctionPointer),
         TyKind::Param(_) => Err(NotFfiSafe::Generic),
         TyKind::Infer(_) | TyKind::Error => Err(NotFfiSafe::Unresolved),
     }

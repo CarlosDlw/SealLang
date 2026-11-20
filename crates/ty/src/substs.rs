@@ -7,6 +7,7 @@
 
 use seal_hash::FxHashSet;
 
+use crate::FnPtrDef;
 use crate::ctxt::TyCtxt;
 use crate::id::{ParamTyId, SubstsId, TyId};
 use crate::kind::TyKind;
@@ -70,6 +71,23 @@ fn substitute_args(ctxt: &TyCtxt, ty: TyId, args: &[TyId]) -> TyId {
                 params,
                 ret,
                 variadic: signature.variadic,
+            })
+        }
+        TyKind::FnPtr(id) => {
+            let definition = ctxt.fn_ptr_def(id);
+            let params: Vec<TyId> = definition
+                .params
+                .iter()
+                .map(|parameter| substitute_args(ctxt, *parameter, args))
+                .collect();
+            let ret = substitute_args(ctxt, definition.ret, args);
+            if params == definition.params && ret == definition.ret {
+                return ty;
+            }
+            ctxt.fn_ptr_ty(FnPtrDef {
+                params,
+                ret,
+                is_unsafe: definition.is_unsafe,
             })
         }
         TyKind::Adt { adt, args: inner } => {
@@ -146,6 +164,13 @@ fn collect_free_params(
             }
             collect_free_params(ctxt, signature.ret, seen, params);
         }
+        TyKind::FnPtr(id) => {
+            let definition = ctxt.fn_ptr_def(id);
+            for parameter in &definition.params {
+                collect_free_params(ctxt, *parameter, seen, params);
+            }
+            collect_free_params(ctxt, definition.ret, seen, params);
+        }
         _ => {}
     }
 }
@@ -173,6 +198,14 @@ pub(crate) fn contains_param(ctxt: &TyCtxt, ty: TyId) -> bool {
                 .iter()
                 .any(|parameter| contains_param(ctxt, *parameter))
                 || contains_param(ctxt, signature.ret)
+        }
+        TyKind::FnPtr(id) => {
+            let definition = ctxt.fn_ptr_def(id);
+            definition
+                .params
+                .iter()
+                .any(|parameter| contains_param(ctxt, *parameter))
+                || contains_param(ctxt, definition.ret)
         }
         _ => false,
     }

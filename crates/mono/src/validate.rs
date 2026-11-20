@@ -349,6 +349,9 @@ fn check_rvalue(
                     return Err(MonoValidationError::SymbolicCall { instance, span });
                 }
                 CallTarget::Extern { .. } => {}
+                CallTarget::FnPtr { ty, .. } => {
+                    check_type(tcx, instance, ty)?;
+                }
             }
             for argument in args {
                 check_operand(tcx, instance, argument)?;

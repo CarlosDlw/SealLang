@@ -27,6 +27,11 @@ impl<'a> Interpreter<'a> {
                     span,
                 ));
             }
+            // The pointer value is only known at run time, so the evaluator
+            // cannot follow the call.
+            CallTarget::FnPtr { .. } => {
+                return Err(self.error(EvalErrorKind::FunctionPointerCall, span));
+            }
         };
         self.instantiate_call(instance, args, span)
     }

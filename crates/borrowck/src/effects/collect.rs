@@ -204,6 +204,12 @@ pub(super) fn collect_rvalue(
                     direct.unknown = true;
                     direct.touches_raw = true;
                 }
+                // The callee is chosen at run time: its body may reach any
+                // static and any raw-memory contract.
+                CallTarget::FnPtr { .. } => {
+                    direct.unknown = true;
+                    direct.touches_raw = true;
+                }
             }
             let candidates = match target {
                 CallTarget::Direct { instance, .. } => {
@@ -217,7 +223,7 @@ pub(super) fn collect_rvalue(
                     .get(&instance.def)
                     .cloned()
                     .unwrap_or_default(),
-                CallTarget::Extern { .. } => Vec::new(),
+                CallTarget::Extern { .. } | CallTarget::FnPtr { .. } => Vec::new(),
             };
             calls.push(candidates);
         }

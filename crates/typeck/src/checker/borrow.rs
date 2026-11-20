@@ -42,9 +42,26 @@ impl Checker<'_> {
         if !is_place {
             if !self.is_error(ty) {
                 let span = self.hir.expr(operand).span;
-                self.error(codes::E3013, span, "cannot borrow this expression")
-                    .help("borrow a place, such as a binding or a parameter")
+                let function = matches!(
+                    self.hir.expr(operand).kind,
+                    ExprKind::Path {
+                        res: seal_hir::Res::Function(_) | seal_hir::Res::TraitFunction { .. },
+                        ..
+                    }
+                );
+                if function {
+                    self.error(
+                        codes::E3013,
+                        span,
+                        "a function item is already a pointer, so it cannot be borrowed",
+                    )
+                    .help("write the function name without `&`")
                     .emit();
+                } else {
+                    self.error(codes::E3013, span, "cannot borrow this expression")
+                        .help("borrow a place, such as a binding or a parameter")
+                        .emit();
+                }
             }
             return self.error_ty();
         }

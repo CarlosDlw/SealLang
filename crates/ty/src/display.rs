@@ -147,6 +147,24 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 Ok(())
             }
+            TyKind::FnPtr(id) => {
+                let definition = self.ctxt.fn_ptr_def(id);
+                if definition.is_unsafe {
+                    f.write_str("unsafe ")?;
+                }
+                f.write_str("func(")?;
+                for (index, parameter) in definition.params.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", self.display(*parameter))?;
+                }
+                f.write_str(")")?;
+                if !matches!(self.ctxt.kind(definition.ret), TyKind::Unit) {
+                    write!(f, " -> {}", self.display(definition.ret))?;
+                }
+                Ok(())
+            }
             TyKind::Unit => f.write_str("()"),
             TyKind::Never => f.write_str("!"),
             TyKind::Error => f.write_str("<error>"),
@@ -307,6 +325,32 @@ mod tests {
         );
         assert_eq!(ctxt.display(ctxt.tuple_ty(&[int])).to_string(), "(i32,)");
         assert_eq!(ctxt.display(ctxt.tuple_ty(&[])).to_string(), "()");
+    }
+
+    #[test]
+    fn function_pointers_render_with_their_signature() {
+        let ctxt = TyCtxt::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let boolean = ctxt.bool_ty();
+        let unit = ctxt.unit_ty();
+        let plain = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: vec![int, boolean],
+            ret: int,
+            is_unsafe: false,
+        });
+        assert_eq!(ctxt.display(plain).to_string(), "func(i32, bool) -> i32");
+        let unit_result = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: Vec::new(),
+            ret: unit,
+            is_unsafe: false,
+        });
+        assert_eq!(ctxt.display(unit_result).to_string(), "func()");
+        let unsafe_pointer = ctxt.fn_ptr_ty(crate::FnPtrDef {
+            params: vec![int],
+            ret: unit,
+            is_unsafe: true,
+        });
+        assert_eq!(ctxt.display(unsafe_pointer).to_string(), "unsafe func(i32)");
     }
 
     #[test]

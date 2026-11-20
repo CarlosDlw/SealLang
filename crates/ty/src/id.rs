@@ -67,3 +67,12 @@ newtype_index! {
     /// never stored by value; only a raw pointer to it has a representation.
     pub struct FnSigId;
 }
+
+newtype_index! {
+    /// Index of an interned Seal function pointer in a [`TyCtxt`](crate::TyCtxt).
+    ///
+    /// A Seal function pointer is structural: the ordered parameter list, the
+    /// return type, and the `unsafe` qualifier decide identity. Unlike a C
+    /// signature, it describes a sized value with the internal Seal ABI.
+    pub struct FnPtrId;
+}

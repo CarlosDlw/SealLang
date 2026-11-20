@@ -1,10 +1,11 @@
 //! Expression checking.
 
 use seal_ast::Literal;
+use seal_error_codes as codes;
 use seal_hir::{ExprKind, HirBlockId, HirExprId, HirPatternId, Res};
 use seal_span::Span;
 use seal_symbol::Symbol;
-use seal_ty::{TyId, TyKind};
+use seal_ty::{FnPtrDef, Instance, TyId, TyKind};
 
 use super::flow::Flow;
 use super::protocol::IndexAccess;
@@ -113,7 +114,7 @@ impl Checker<'_> {
 
         let ty = match kind {
             ExprKind::Lit(literal) => self.literal_ty(literal, expected, span, false),
-            ExprKind::Path { res, .. } => self.check_path(expr, res, span, flow, mode),
+            ExprKind::Path { res, .. } => self.check_path(expr, res, span, expected, flow, mode),
             ExprKind::Borrow { operand, kind } => {
                 self.check_borrow(expr, operand, kind, expected, flow)
             }
@@ -358,6 +359,7 @@ impl Checker<'_> {
         expr: HirExprId,
         res: Res,
         span: Span,
+        expected: Option<TyId>,
         flow: &Flow,
         mode: PlaceMode,
     ) -> TyId {
@@ -503,11 +505,125 @@ impl Checker<'_> {
                 );
                 ty
             }
-            Res::Function(_) | Res::TraitFunction { .. } => {
-                self.report_function_as_value(span);
+            Res::Function(function) => self.check_function_value(expr, function, span, expected),
+            Res::TraitFunction { .. } => {
+                self.error(
+                    codes::E3099,
+                    span,
+                    "a trait method cannot be used as a function pointer",
+                )
+                .help("call the method through a value, or use a free function")
+                .emit();
                 self.error_ty()
             }
         }
+    }
+
+    /// Types a function item used as a value.
+    ///
+    /// The item becomes a [`FnPtrDef`] with its instantiated signature. A
+    /// generic function needs explicit type arguments: the signature of a
+    /// function pointer is fixed by its type, so nothing else could select one
+    /// instantiation. The instance is recorded for MIR and code generation,
+    /// which emit the address of exactly that function.
+    fn check_function_value(
+        &mut self,
+        expr: HirExprId,
+        function: seal_def::DefId,
+        span: Span,
+        expected: Option<TyId>,
+    ) -> TyId {
+        let name = self.def_name(function).to_owned();
+        if self.hir.extern_function(function).is_some() {
+            self.error(
+                codes::E3099,
+                span,
+                format!("the external function `{name}` cannot be used as a Seal function pointer"),
+            )
+            .note("a function implemented outside Seal uses the C ABI")
+            .help("cast it to `*raw extern \"c\" func(...)` inside an `unsafe` block")
+            .emit();
+            return self.error_ty();
+        }
+        if self.hir.receiver(function).is_some() {
+            self.error(
+                codes::E3099,
+                span,
+                format!("the method `{name}` has a receiver, so it is not a function pointer"),
+            )
+            .help("use a free function, or bind the receiver inside a closure")
+            .emit();
+            return self.error_ty();
+        }
+
+        let explicit = self
+            .hir
+            .expr_args(expr)
+            .map(|substs| self.hir.ty_ctxt().substs_args(substs));
+        let all_generics = self.hir.flattened_generics(function).len();
+        let own_generics = self
+            .hir
+            .generics(function)
+            .map_or(0, |generics| generics.params.len());
+        if all_generics > 0
+            && (own_generics == 0 || explicit.as_ref().is_none_or(|args| args.is_empty()))
+        {
+            self.error(
+                codes::E3099,
+                span,
+                format!(
+                    "the address of the generic function `{name}` needs explicit type arguments"
+                ),
+            )
+            .help(format!(
+                "write the instantiation before the value, as in `{name}::<i32>`"
+            ))
+            .emit();
+            return self.error_ty();
+        }
+
+        let from_impl = self.impl_of_function(function).is_some();
+        let seed = if from_impl {
+            match self.associated_seed(function, explicit.as_deref(), None, span) {
+                Some(seed) => seed,
+                None => return self.error_ty(),
+            }
+        } else {
+            Default::default()
+        };
+        let explicit_own = (!from_impl).then_some(explicit.as_deref()).flatten();
+        let instantiated = self.instantiate_function(function, &seed, explicit_own, None);
+        let Some((params, ret, substs)) =
+            self.finish_function_instantiation(expr, function, instantiated, span)
+        else {
+            return self.error_ty();
+        };
+        let is_unsafe = self
+            .results
+            .signature(function)
+            .is_some_and(|signature| signature.is_unsafe);
+        let natural = self.hir.ty_ctxt().fn_ptr_ty(FnPtrDef {
+            params,
+            ret,
+            is_unsafe,
+        });
+        self.results
+            .record_function_address(expr, Instance::new(function, substs));
+
+        // An expected pointer type with the same signature is adopted directly,
+        // including a safe function used where an `unsafe` pointer is required.
+        // Any other difference is left to the ordinary coercion diagnostic.
+        if let Some(expected) = expected.map(|expected| self.resolve_deep(expected))
+            && let Some(expected_def) = self.hir.ty_ctxt().fn_ptr_parts(expected)
+            && let Some(natural_def) = self.hir.ty_ctxt().fn_ptr_parts(natural)
+            && expected_def.params == natural_def.params
+            && expected_def.ret == natural_def.ret
+            && (expected_def.is_unsafe == natural_def.is_unsafe
+                || (!natural_def.is_unsafe && expected_def.is_unsafe))
+        {
+            return expected;
+        }
+        natural
     }
 
     fn check_field(

@@ -13,6 +13,7 @@ mod enums;
 mod examples;
 mod ffi;
 mod flow;
+mod fn_ptrs;
 mod for_loop;
 mod generics;
 mod globals;

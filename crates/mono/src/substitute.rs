@@ -62,6 +62,9 @@ pub(crate) fn resolve_body(
                         events.push(BodyEvent::Call(ChildCall { instance, span }));
                     }
                     CallTarget::Extern { .. } => {}
+                    // The callee is a pointer value, not an instance: the
+                    // constant that produced it already enqueued its body.
+                    CallTarget::FnPtr { .. } => {}
                     CallTarget::TraitMethod {
                         instance,
                         parameters,

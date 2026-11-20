@@ -62,6 +62,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 if let CallTarget::Extern { def, .. } = target {
                     return self.call_extern(*def, args);
                 }
+                if let CallTarget::FnPtr { ty, .. } = target {
+                    return self.call_seal_function_pointer(*ty, args);
+                }
                 if target.is_trait_method() {
                     return Err(CodegenError::internal(
                         "a symbolic trait call reached code generation; monomorphization must \
@@ -916,7 +919,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         arguments: &[Operand],
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let callee_ty = self.operand_type(callee)?;
-        let (_, signature) = self.tcx.fn_ptr_parts(callee_ty).ok_or_else(|| {
+        let (_, signature) = self.tcx.c_fn_ptr_parts(callee_ty).ok_or_else(|| {
             CodegenError::internal("an indirect call has a non-function callee".to_owned())
         })?;
         let c_signature =
@@ -992,6 +995,46 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     "indirect sret load",
                 )
             }
+        }
+    }
+
+    /// Emits a call through a Seal function pointer.
+    ///
+    /// The pointer is the first argument, followed by the real arguments in
+    /// source order. The callee has the internal Seal ABI, so parameters and
+    /// the result use their language types directly; no C classification or
+    /// trampoline is involved.
+    fn call_seal_function_pointer(
+        &self,
+        pointer_ty: seal_ty::TyId,
+        arguments: &[Operand],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let definition = self.tcx.fn_ptr_parts(pointer_ty).ok_or_else(|| {
+            CodegenError::internal("a function pointer call has a non-pointer target".to_owned())
+        })?;
+        let (callee, arguments) = arguments.split_first().ok_or_else(|| {
+            CodegenError::internal(
+                "a function pointer call is missing its pointer argument".to_owned(),
+            )
+        })?;
+        let function_type = self
+            .mapper
+            .function_type(&definition.params, definition.ret)?;
+        let function = self.load_operand(callee)?.into_pointer_value();
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(BasicMetadataValueEnum::from(self.load_operand(argument)?));
+        }
+        let call = self.build(
+            self.builder
+                .build_indirect_call(function_type, function, &values, "fn pointer call"),
+            "function pointer call",
+        )?;
+        match call.try_as_basic_value() {
+            ValueKind::Basic(value) => Ok(value),
+            ValueKind::Instruction(_) => Err(CodegenError::internal(
+                "a Seal function pointer returned no LLVM value",
+            )),
         }
     }
 

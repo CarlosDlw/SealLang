@@ -727,8 +727,24 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Path {
                 res: Res::Function(_) | Res::TraitFunction { .. },
                 ..
+            } => {
+                if let Some(dest) = dest {
+                    match self.typeck.function_address(expr) {
+                        Some(instance) => {
+                            let ty = self.expr_ty(expr);
+                            self.assign_constant(
+                                dest,
+                                Constant::FunctionAddr { instance, ty },
+                                span,
+                            );
+                        }
+                        // A function item without a recorded address was already
+                        // rejected; the unit keeps the destination initialized.
+                        None => self.assign_constant(dest, Constant::Unit, span),
+                    }
+                }
             }
-            | ExprKind::Error => {
+            ExprKind::Error => {
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
@@ -932,6 +948,17 @@ impl<'a> BodyLowering<'a> {
                     return;
                 }
                 let from = self.expr_ty(operand);
+                // A Seal function pointer cast only changes the signature the
+                // address may be called with; the value is copied unchanged.
+                if self.hir.ty_ctxt().fn_ptr_parts(from).is_some()
+                    && self.hir.ty_ctxt().fn_ptr_parts(to).is_some()
+                {
+                    let operand = self.lower_operand(operand);
+                    if let Some(dest) = dest {
+                        self.assign_operand(dest, operand, span);
+                    }
+                    return;
+                }
                 let kind = self.typeck.cast_kind(expr).unwrap_or_else(|| {
                     panic!(
                         "cast expression {expr:?} has no recorded kind; \
@@ -1176,7 +1203,31 @@ impl<'a> BodyLowering<'a> {
 
         if function.is_none() {
             let callee_ty = self.expr_ty(callee);
-            if let Some((_, signature)) = self.hir.ty_ctxt().fn_ptr_parts(callee_ty) {
+            if self.hir.ty_ctxt().fn_ptr_parts(callee_ty).is_some() {
+                let callee_span = self.hir.expr(callee).span;
+                let mut arg_spans: Vec<Span> = Vec::with_capacity(args.len() + 1);
+                arg_spans.push(callee_span);
+                arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
+                let mut arguments: Vec<Operand> = Vec::with_capacity(args.len() + 1);
+                arguments.push(self.lower_operand(callee));
+                arguments.extend(args.iter().map(|arg| self.lower_operand(*arg)));
+                if let Some(dest) = dest {
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::Call {
+                            target: CallTarget::FnPtr {
+                                ty: callee_ty,
+                                receiver: None,
+                            },
+                            args: arguments,
+                            arg_spans,
+                        },
+                        span,
+                    );
+                }
+                return;
+            }
+            if let Some((_, signature)) = self.hir.ty_ctxt().c_fn_ptr_parts(callee_ty) {
                 let callee = self.lower_operand(callee);
                 let arg_spans: Vec<Span> =
                     args.iter().map(|arg| self.hir.expr(*arg).span).collect();
@@ -1896,8 +1947,14 @@ impl<'a> BodyLowering<'a> {
             ExprKind::Path {
                 res: Res::Function(_) | Res::TraitFunction { .. },
                 ..
-            }
-            | ExprKind::Error => Operand::Constant(Constant::Unit),
+            } => match self.typeck.function_address(expr) {
+                Some(instance) => {
+                    let ty = self.expr_ty(expr);
+                    Operand::Constant(Constant::FunctionAddr { instance, ty })
+                }
+                None => Operand::Constant(Constant::Unit),
+            },
+            ExprKind::Error => Operand::Constant(Constant::Unit),
             ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)

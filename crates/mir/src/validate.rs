@@ -233,6 +233,26 @@ pub enum ValidationError {
         /// The block containing the call.
         block: BasicBlockId,
     },
+    /// A function pointer call target does not name a Seal function pointer.
+    FnPtrTargetNotFunctionPointer {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A function pointer call target still contains an inference variable.
+    FnPtrTargetHasInference {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A function pointer call records a receiver this phase cannot lower.
+    FnPtrReceiverUnsupported {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// The first argument of a function pointer call is not the pointer value.
+    FnPtrCalleeTypeMismatch {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
     /// A move reads an unsized place by value.
     MoveFromUnsizedPlace {
         /// The block containing the move.
@@ -397,6 +417,22 @@ impl fmt::Display for ValidationError {
             Self::IndirectCalleeNotFunctionPointer { block } => write!(
                 f,
                 "block {block:?} calls through a value that is not a C function pointer"
+            ),
+            Self::FnPtrTargetNotFunctionPointer { block } => write!(
+                f,
+                "block {block:?} calls through a target that is not a Seal function pointer"
+            ),
+            Self::FnPtrTargetHasInference { block } => write!(
+                f,
+                "block {block:?} calls through a function pointer with an inference-variable type"
+            ),
+            Self::FnPtrReceiverUnsupported { block } => write!(
+                f,
+                "block {block:?} records a function pointer receiver that this phase cannot lower"
+            ),
+            Self::FnPtrCalleeTypeMismatch { block } => write!(
+                f,
+                "block {block:?} passes a callee whose type differs from the function pointer target"
             ),
             Self::MoveFromUnsizedPlace { block } => {
                 write!(f, "block {block:?} moves out of an unsized place")
@@ -1018,7 +1054,7 @@ fn check_rvalue(
             if let Some(hir) = hir {
                 let callee_ty = operand_ty(hir, body, callee)
                     .ok_or(ValidationError::IndirectCalleeNotFunctionPointer { block })?;
-                let Some((kind, signature)) = hir.ty_ctxt().fn_ptr_parts(callee_ty) else {
+                let Some((kind, signature)) = hir.ty_ctxt().c_fn_ptr_parts(callee_ty) else {
                     return Err(ValidationError::IndirectCalleeNotFunctionPointer { block });
                 };
                 if kind.is_mut() {
@@ -1058,33 +1094,70 @@ fn check_rvalue(
                 });
             }
             if let Some(hir) = hir {
-                let variadic = matches!(target, CallTarget::Extern { variadic: true, .. });
-                let arity_mismatch = if variadic {
-                    args.len() < target.parameters()
-                } else {
-                    args.len() != target.parameters()
-                };
-                if arity_mismatch {
-                    return Err(ValidationError::CallArityMismatch {
-                        args: args.len(),
-                        parameters: target.parameters(),
-                    });
-                }
-                if matches!(target, CallTarget::Direct { .. })
-                    && has_receiver(hir, target.instance().def)
-                    && first_argument_is_param(hir, body, args)
-                {
-                    return Err(ValidationError::ParamReceiverOnDirectCall { block });
-                }
-                if let CallTarget::TraitMethod { instance, .. } = target {
-                    let expected = hir.flattened_generics(instance.def).len();
-                    let found = hir.ty_ctxt().substs_args(instance.args).len();
-                    if found != expected {
-                        return Err(ValidationError::CallInstanceArityMismatch {
-                            def: instance.def,
-                            expected,
-                            found,
-                        });
+                match *target {
+                    CallTarget::FnPtr { ty, receiver } => {
+                        let Some(definition) = hir.ty_ctxt().fn_ptr_parts(ty) else {
+                            return Err(ValidationError::FnPtrTargetNotFunctionPointer { block });
+                        };
+                        if receiver.is_some() {
+                            return Err(ValidationError::FnPtrReceiverUnsupported { block });
+                        }
+                        if contains_infer(hir, ty) {
+                            return Err(ValidationError::FnPtrTargetHasInference { block });
+                        }
+                        // The pointer is the first argument, so the real
+                        // arguments start at index one.
+                        if args.len() != definition.params.len() + 1 {
+                            return Err(ValidationError::CallArityMismatch {
+                                args: args.len().saturating_sub(1),
+                                parameters: definition.params.len(),
+                            });
+                        }
+                        if args
+                            .first()
+                            .and_then(|callee| operand_ty(hir, body, callee))
+                            .is_none_or(|callee_ty| callee_ty != ty)
+                        {
+                            return Err(ValidationError::FnPtrCalleeTypeMismatch { block });
+                        }
+                        for (expected, argument) in definition.params.iter().zip(&args[1..]) {
+                            if operand_ty(hir, body, argument).is_some_and(|ty| ty != *expected) {
+                                return Err(ValidationError::RvalueOperandTypeMismatch { block });
+                            }
+                        }
+                    }
+                    CallTarget::Direct { .. }
+                    | CallTarget::TraitMethod { .. }
+                    | CallTarget::Extern { .. } => {
+                        let variadic = matches!(target, CallTarget::Extern { variadic: true, .. });
+                        let arity_mismatch = if variadic {
+                            args.len() < target.parameters()
+                        } else {
+                            args.len() != target.parameters()
+                        };
+                        if arity_mismatch {
+                            return Err(ValidationError::CallArityMismatch {
+                                args: args.len(),
+                                parameters: target.parameters(),
+                            });
+                        }
+                        if matches!(target, CallTarget::Direct { .. })
+                            && has_receiver(hir, target.instance().def)
+                            && first_argument_is_param(hir, body, args)
+                        {
+                            return Err(ValidationError::ParamReceiverOnDirectCall { block });
+                        }
+                        if let CallTarget::TraitMethod { instance, .. } = target {
+                            let expected = hir.flattened_generics(instance.def).len();
+                            let found = hir.ty_ctxt().substs_args(instance.args).len();
+                            if found != expected {
+                                return Err(ValidationError::CallInstanceArityMismatch {
+                                    def: instance.def,
+                                    expected,
+                                    found,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -1148,6 +1221,14 @@ fn contains_infer(hir: &Hir, ty: seal_ty::TyId) -> bool {
                 .iter()
                 .any(|parameter| contains_infer(hir, *parameter))
                 || contains_infer(hir, signature.ret)
+        }
+        TyKind::FnPtr(id) => {
+            let definition = tcx.fn_ptr_def(id);
+            definition
+                .params
+                .iter()
+                .any(|parameter| contains_infer(hir, *parameter))
+                || contains_infer(hir, definition.ret)
         }
         _ => false,
     }

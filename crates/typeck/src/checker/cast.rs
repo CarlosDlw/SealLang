@@ -33,6 +33,15 @@ impl Checker<'_> {
         flow: &mut Flow,
     ) -> TyId {
         let target = self.resolve_deep(ty);
+        if let Some(definition) = self.hir.ty_ctxt().fn_ptr_parts(target) {
+            return self.check_function_pointer_cast(
+                operand,
+                target,
+                &definition,
+                (as_span, target_span),
+                flow,
+            );
+        }
         if let Some((pointer_kind, signature)) = self.function_pointer_target(target) {
             if pointer_kind.is_mut() {
                 self.error(
@@ -139,6 +148,75 @@ impl Checker<'_> {
         }
         self.results.record_cast(expr, kind);
         target
+    }
+
+    /// Checks `operand as func(...)`.
+    ///
+    /// The operand must already be a Seal function pointer: a function item, a
+    /// binding, or another pointer type. The conversion follows the same rule
+    /// as an implicit coercion — identical parameters and result — and only the
+    /// safety qualifier may strengthen from `func` to `unsafe func`. The
+    /// address itself is unchanged, so MIR lowers the cast as a copy.
+    fn check_function_pointer_cast(
+        &mut self,
+        operand: HirExprId,
+        target: TyId,
+        definition: &seal_ty::FnPtrDef,
+        (as_span, target_span): (Span, Span),
+        flow: &mut Flow,
+    ) -> TyId {
+        let source = self.infer_expr(operand, None, flow);
+        let source = self.resolve_deep(source);
+        if self.is_error(source) {
+            return self.error_ty();
+        }
+        let Some(source_definition) = self.hir.ty_ctxt().fn_ptr_parts(source) else {
+            self.error(
+                codes::E3098,
+                as_span.cover(target_span),
+                format!(
+                    "cannot cast `{}` to the function pointer type `{}`",
+                    self.ty_text(source),
+                    self.ty_text(target)
+                ),
+            )
+            .help(
+                "only a function item or another function pointer becomes a Seal function pointer",
+            )
+            .emit();
+            return self.error_ty();
+        };
+        if source_definition.matches(definition)
+            || (source_definition.params == definition.params
+                && source_definition.ret == definition.ret
+                && !source_definition.is_unsafe
+                && definition.is_unsafe)
+        {
+            return target;
+        }
+        let (message, help) = if source_definition.is_unsafe && !definition.is_unsafe {
+            (
+                "cannot drop `unsafe` from a function pointer".to_owned(),
+                "keep the pointer as `unsafe func(...)`, or call it inside an `unsafe` block",
+            )
+        } else {
+            (
+                format!(
+                    "function pointer signatures differ: expected `{}`, found `{}`",
+                    self.ty_text(target),
+                    self.ty_text(source)
+                ),
+                "make the parameter and result types identical",
+            )
+        };
+        self.error(codes::E3098, as_span.cover(target_span), message)
+            .secondary(
+                self.hir.expr(operand).span,
+                format!("operand has type `{}`", self.ty_text(source)),
+            )
+            .help(help)
+            .emit();
+        self.error_ty()
     }
 
     /// Returns the pointer kind and signature when `ty` is a C function pointer.

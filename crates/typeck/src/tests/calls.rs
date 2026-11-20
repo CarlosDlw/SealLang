@@ -48,9 +48,9 @@ fn a_local_binding_is_not_callable() {
 }
 
 #[test]
-fn a_function_item_is_not_a_value() {
-    let (fixture, _, _) = check_errors("func f() {} func main() { let g = f; }");
-    fixture.expect("E3007", "cannot be used as a value");
+fn a_function_item_can_be_stored_as_a_value() {
+    let (fixture, _, _) = check_clean("func f() {} func main() { let g = f; }");
+    let _ = fixture;
 }
 
 #[test]

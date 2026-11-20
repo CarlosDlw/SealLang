@@ -21,6 +21,8 @@ pub(super) enum NotComparable {
     TraitObject,
     /// A type parameter has no known representation.
     Parameter,
+    /// A function pointer compares addresses, which Seal does not expose.
+    FunctionPointer,
     /// A field, array element, or slice element of this type is not comparable.
     Value(TyId),
 }
@@ -87,6 +89,7 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
+            TyKind::FnPtr(_) => Err(NotComparable::FunctionPointer),
             TyKind::Param(_) => Err(NotComparable::Parameter),
             // An unsized value cannot be an operand, so these only appear while
             // recovering from another error.
@@ -114,6 +117,9 @@ impl Checker<'_> {
             }
             NotComparable::Parameter => {
                 "a type parameter has no equality; compare a value of a concrete type"
+            }
+            NotComparable::FunctionPointer => {
+                "a function pointer has no `==`; compare the result of calling it, or store an explicit tag"
             }
             NotComparable::Value(culprit) => {
                 let name = self.ty_text(culprit);

@@ -370,9 +370,10 @@ pub struct Signature {
 /// Type information for one file.
 ///
 /// Maps are keyed by HIR IDs, so no lookup re-resolves a name or re-reads the
-/// source. The callee of a valid call has no entry: Seal has no first-class
-/// function type, and the callee is resolved directly to its function
-/// definition.
+/// source. The callee of a direct call has no entry: it is resolved to its
+/// function definition. A function item used as a value records its complete
+/// instance as a function address, so MIR emits the address of exactly that
+/// function.
 #[derive(Clone, Debug)]
 pub struct TypeckResults {
     expr_ty: FxHashMap<HirExprId, TyId>,

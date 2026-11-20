@@ -13,6 +13,7 @@ mod dyn_types;
 mod enums;
 mod examples;
 mod fn_pointers;
+mod fn_ptrs;
 mod for_loop;
 mod generics;
 mod globals;

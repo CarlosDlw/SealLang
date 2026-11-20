@@ -5,7 +5,7 @@ use std::fmt;
 use seal_def::DefId;
 use seal_symbol::Symbol;
 
-use crate::id::{AdtId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
+use crate::id::{AdtId, FnPtrId, FnSigId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
 
 /// A signed integer type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -336,6 +336,14 @@ pub enum TyKind {
     /// pointer; `*raw extern "c" func(...)` is the callable C function pointer.
     /// Its parameter and return types live in the function-signature arena.
     FnSig(FnSigId),
+    /// A Seal function pointer, written `func(A, B) -> R` or
+    /// `unsafe func(A, B) -> R`.
+    ///
+    /// The pointer is a sized, `Copy` value with the internal Seal ABI. Its
+    /// parameters and result live in the function-pointer arena. This is a
+    /// distinct type from [`TyKind::FnSig`]: a C signature never has a size and
+    /// only appears behind a raw pointer.
+    FnPtr(FnPtrId),
     /// The unit type `()`.
     Unit,
     /// The never type `!`, the type of expressions that do not return.

@@ -472,6 +472,10 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             // storage layout for an unsized type.
             TyKind::Dyn { .. } => self.basic_type(ty, "dyn", 0, encoding::UNSIGNED)?,
             TyKind::FnSig(_) => self.basic_type(ty, "func", 0, encoding::UNSIGNED)?,
+            TyKind::FnPtr(_) => {
+                let pointer_bits = u64::from(self.mapper.pointer_width());
+                self.basic_type(ty, "func", pointer_bits, encoding::UNSIGNED)?
+            }
             TyKind::Unit | TyKind::Never | TyKind::Error => {
                 self.basic_type(ty, "()", 0, encoding::UNSIGNED)?
             }
