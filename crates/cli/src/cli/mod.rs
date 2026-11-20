@@ -1,11 +1,11 @@
 //! Argument parsing and command dispatch.
 
-mod build;
+pub(crate) mod build;
 mod check;
 mod doctor;
 mod init;
-mod metadata;
-mod new;
+pub(crate) mod metadata;
+pub(crate) mod new;
 mod run;
 
 use std::ffi::OsString;

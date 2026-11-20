@@ -104,15 +104,34 @@ pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
     }
 }
 
+/// Finds a working C linker on `PATH`.
+///
+/// The Seal compiler is embedded in this binary, so a missing toolchain is not
+/// representable; a missing linker is, and it prevents every executable target
+/// from linking.
 fn find_linker() -> Option<String> {
-    ["cc", "clang", "gcc"].into_iter().find_map(|candidate| {
-        std::process::Command::new(candidate)
-            .arg("--version")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|_| candidate.to_owned())
-    })
+    let path = std::env::var_os("PATH")?;
+    let directories: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+    find_linker_in(&directories)
+}
+
+fn find_linker_in(directories: &[std::path::PathBuf]) -> Option<String> {
+    for directory in directories {
+        for candidate in ["cc", "clang", "gcc"] {
+            let path = directory.join(candidate);
+            if !path.is_file() {
+                continue;
+            }
+            let works = std::process::Command::new(&path)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success());
+            if works {
+                return Some(path.display().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn check_cache(project: &Project, fix: bool) -> Check {
@@ -170,5 +189,46 @@ fn check_lockfile(project: &Project, target: &str, fix: bool) -> Check {
         name: "lockfile".to_owned(),
         ok: false,
         detail: "missing or stale; run `seal doctor --fix`".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_linker_in;
+
+    #[test]
+    fn an_empty_search_path_has_no_linker() {
+        assert_eq!(find_linker_in(&[]), None);
+    }
+
+    #[test]
+    fn a_directory_without_a_linker_is_rejected() {
+        let directory =
+            std::env::temp_dir().join(format!("seal-doctor-no-linker-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temporary directory");
+        assert_eq!(find_linker_in(std::slice::from_ref(&directory)), None);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_working_linker_in_the_search_path_is_detected() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+
+        let directory =
+            std::env::temp_dir().join(format!("seal-doctor-linker-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temporary directory");
+        let linker = directory.join("cc");
+        std::fs::write(&linker, "#!/bin/sh\nexit 0\n").expect("fake linker");
+        let mut permissions = std::fs::metadata(&linker).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&linker, permissions).expect("executable permission");
+
+        assert_eq!(
+            find_linker_in(&[PathBuf::from(&directory)]),
+            Some(linker.display().to_string())
+        );
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

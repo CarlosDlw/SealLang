@@ -9,6 +9,7 @@
 
 mod compile;
 mod error;
+mod serialize;
 
 pub use compile::{
     BuildMode, CfgOptions, CompilePlan, FORMAT_VERSION, PlanDependency, PlanFile, PlanMetadata,

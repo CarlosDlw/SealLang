@@ -45,13 +45,14 @@ pub(crate) fn run(cli: &Cli, args: &NewArgs) -> ExitCode {
             }
         }
     }
-    if !cli.quiet {
-        println!(
+    ui::status(
+        cli,
+        &format!(
             "Created {} project `{name}` in {}",
             template_name(args.template),
             path.display()
-        );
-    }
+        ),
+    );
     ExitCode::SUCCESS
 }
 
@@ -134,7 +135,10 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
 fn scaffold_workspace(root: &Path, name: &str) -> Result<(), String> {
     write(
         root.join("seal.toml"),
-        &format!("[project]\nname = \"{name}\"\nlanguage = \"0.1\"\nmembers = [\"crates/*\"]\n"),
+        &format!(
+            "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\
+             members = [\"crates/*\"]\ndefault-members = [\"crates/app\"]\n"
+        ),
     )?;
     let app = root.join("crates").join("app");
     let greet = root.join("crates").join("greet");

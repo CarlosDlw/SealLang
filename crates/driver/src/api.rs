@@ -11,7 +11,7 @@ use seal_hir::Hir;
 use seal_session::Session;
 use serde::Serialize;
 
-use crate::plan::path_string;
+use crate::cli::plan::path_string;
 
 /// One module in the snapshot.
 #[derive(Serialize)]

@@ -92,9 +92,7 @@ pub(crate) fn run(cli: &Cli, root: &std::path::Path, args: &RunArgs) -> ExitCode
         Ok(output) => output,
         Err(code) => return code,
     };
-    if cli.verbose {
-        eprintln!("running: {}", output.display());
-    }
+    ui::verbose(cli, &format!("running: {}", output.display()));
     match Command::new(&output).args(&args.program_args).status() {
         Ok(status) => ui::exit_code(status),
         Err(error) => ui::error(

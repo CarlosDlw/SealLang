@@ -20,7 +20,7 @@ use seal_session::Session;
 use seal_target::host_triple;
 
 use crate::api;
-use crate::plan::resolve_entry;
+use crate::cli::plan::resolve_entry;
 
 use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, LinkArgs, OutputArgs, RunArgs};
 use crate::options::session_options;

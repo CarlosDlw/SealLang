@@ -16,6 +16,7 @@ mod explain;
 mod link;
 mod optimization;
 mod output;
+pub(crate) mod plan;
 mod run;
 mod target;
 #[cfg(test)]

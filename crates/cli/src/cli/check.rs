@@ -42,13 +42,14 @@ pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> Exit
             Ok(plan) => plan,
             Err(error) => return ui::error(error.code(), error.message()),
         };
-        if !cli.quiet {
-            println!(
+        ui::status(
+            cli,
+            &format!(
                 "Checking {} {}",
                 project.package(job.package).name,
                 job.target
-            );
-        }
+            ),
+        );
         if let Err(code) = crate::cli::build::run_plan(cli, &plan, Mode::Check, "obj", &[]) {
             return code;
         }

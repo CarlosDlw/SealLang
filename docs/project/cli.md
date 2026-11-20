@@ -15,9 +15,10 @@ $ seal init --template bin
 `new` refuses a non-empty directory. The `bin` template includes a root module
 and a second file joined through `module app::util;`; the generated program
 calls that module. `lib` has no `main`. `workspace` creates a root manifest and
-two members with a path dependency. Every template writes `seal.toml`,
-`seal.lock`, `src/`, `tests/`, and `.gitignore`; `--vcs git` additionally runs
-`git init`.
+two members with a path dependency; `crates/app` is the default member, so
+`seal build` at the root selects it without `--workspace`. Every template writes
+`seal.toml`, `seal.lock`, `src/`, `tests/`, and `.gitignore`; `--vcs git`
+additionally runs `git init`.
 
 ## Building and checking
 
@@ -67,9 +68,22 @@ aliases. It is enough for an editor to list modules and targets without running
 code generation.
 
 `doctor` checks the embedded toolchain, a linker on `PATH`, a writable
-`seal/target`, and a current lockfile. Manifest warnings include unknown keys
-and suggestions. `--fix` creates the cache directory and rewrites the lockfile
-when possible; `--json` emits the same checks as one object.
+`seal/target`, and a current lockfile. The compiler is embedded, so a missing
+toolchain is not possible; a missing linker makes executable targets fail and
+is reported as a failed check. Manifest warnings include unknown keys and
+suggestions. `--fix` creates the cache directory and rewrites the lockfile when
+possible; `--json` emits the same checks as one object.
+
+## Output policy
+
+Status lines go to stdout and artifact paths are indented below them. `--quiet`
+suppresses status without suppressing JSON from `metadata`, `doctor --json`, or
+a program run. `--message-format=json` also suppresses human status so stdout
+stays machine-readable.
+
+Color is automatic only when stdout is a terminal. `NO_COLOR` and `--color
+never` disable it; `--color always` keeps ANSI output even when redirected.
+Errors and warnings always go to stderr.
 
 ## Driver integration
 

@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use seal_project::{Package, Target};
+use seal_project::{Package, Project, Target};
 use seal_target::host_triple;
 use serde::Serialize;
 
@@ -56,13 +56,29 @@ pub(crate) fn metadata(_cli: &Cli, root: &Path, args: &MetadataArgs) -> ExitCode
         Ok(project) => project,
         Err(code) => return code,
     };
+    match report_json(&project, args.no_deps) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(message) => ui::error("E8011", &message),
+    }
+}
+
+/// Serializes the metadata document for a loaded project.
+///
+/// Keeping this separate from stdout makes the contract testable without
+/// capturing process output.
+pub(crate) fn report_json(project: &Project, no_deps: bool) -> Result<String, String> {
     let triple = host_triple();
     let spec = triple.spec();
-    let packages = if args.no_deps {
-        match project.default_package() {
-            Ok(index) => vec![project.package(index)],
-            Err(error) => return ui::error(error.code(), error.message()),
-        }
+    let packages = if no_deps {
+        vec![
+            project
+                .default_package()
+                .map(|index| project.package(index))
+                .map_err(|error| error.message().to_owned())?,
+        ]
     } else {
         project.packages.iter().collect()
     };
@@ -78,13 +94,8 @@ pub(crate) fn metadata(_cli: &Cli, root: &Path, args: &MetadataArgs) -> ExitCode
         },
         packages: packages.into_iter().map(package_info).collect(),
     };
-    match serde_json::to_string_pretty(&metadata) {
-        Ok(text) => {
-            println!("{text}");
-            ExitCode::SUCCESS
-        }
-        Err(error) => ui::error("E8011", &format!("cannot serialize metadata: {error}")),
-    }
+    serde_json::to_string_pretty(&metadata)
+        .map_err(|error| format!("cannot serialize metadata: {error}"))
 }
 
 fn package_info(package: &Package) -> PackageInfo {

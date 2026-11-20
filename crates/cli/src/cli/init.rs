@@ -37,8 +37,9 @@ pub(crate) fn run(cli: &Cli, args: &InitArgs) -> ExitCode {
     if let Err(error) = crate::cli::new::scaffold(&root, &name, args.template) {
         return ui::error("E8011", &error);
     }
-    if !cli.quiet {
-        println!("Initialized project `{name}` in {}", root.display());
-    }
+    ui::status(
+        cli,
+        &format!("Initialized project `{name}` in {}", root.display()),
+    );
     ExitCode::SUCCESS
 }

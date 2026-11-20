@@ -50,21 +50,20 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
             Err(error) => return ui::error(error.code(), error.message()),
         };
         let emit = if target.is_executable() { "exe" } else { "obj" };
-        if !cli.quiet {
-            println!(
+        ui::status(
+            cli,
+            &format!(
                 "Compiling {} {} ({})",
                 package.name,
                 target.name,
                 target.kind.as_str()
-            );
-        }
+            ),
+        );
         if let Err(code) = run_plan(cli, &plan, Mode::Build, emit, &args.link_args) {
             return code;
         }
-        if !cli.quiet {
-            if let Some(output) = &plan.output {
-                println!("  {}", output.display());
-            }
+        if let Some(output) = &plan.output {
+            ui::detail(cli, &output.display().to_string());
         }
     }
     ExitCode::SUCCESS
@@ -264,9 +263,7 @@ pub(crate) fn run_plan(
         arguments.push("--link-arg".to_owned());
         arguments.push(argument.clone());
     }
-    if cli.verbose {
-        eprintln!("running: {}", arguments.join(" "));
-    }
+    ui::verbose(cli, &format!("running: {}", arguments.join(" ")));
     let status = seal_driver::run_from(arguments);
     let _ = std::fs::remove_file(&path);
     if status != ExitCode::SUCCESS {

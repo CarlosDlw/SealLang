@@ -137,6 +137,103 @@ fn a_workspace_builds_every_member() {
 }
 
 #[test]
+fn all_targets_builds_tests_benches_and_examples() {
+    let fixture = fixture("all-targets");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"all-targets\"\n\n[package]\nname = \"all-targets\"\nversion = \"0.1.0\"\n\n\
+         [targets.share]\nkind = \"lib\"\n\n\
+         [targets.main]\nkind = \"bin\"\nentry = \"root::main\"\n\n\
+         [targets.checks]\nkind = \"test\"\n\n\
+         [targets.measure]\nkind = \"bench\"\n\n\
+         [targets.demo]\nkind = \"example\"\nentry = \"root::main\"\n",
+    );
+    write(
+        &fixture.root.join("src/lib.sl"),
+        "public func answer() -> i32 { 0 }\n",
+    );
+    write(
+        &fixture.root.join("tests/checks.sl"),
+        "func main() -> i32 { 0 }\n",
+    );
+    write(
+        &fixture.root.join("benches/measure.sl"),
+        "func main() -> i32 { 0 }\n",
+    );
+    write(
+        &fixture.root.join("examples/demo.sl"),
+        "func main() -> i32 { 0 }\n",
+    );
+
+    let build = output(
+        seal()
+            .arg("build")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--all-targets"),
+    );
+    assert_success(&build);
+    for artifact in ["main", "checks", "measure", "demo", "libshare.o"] {
+        assert!(
+            fixture
+                .root
+                .join("seal/target/dev")
+                .join(artifact)
+                .is_file(),
+            "--all-targets writes {artifact}"
+        );
+    }
+}
+
+#[test]
+fn quiet_suppresses_status_and_color_is_explicit() {
+    let fixture = fixture("output-policy");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+
+    let quiet = output(
+        seal()
+            .arg("build")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--quiet"),
+    );
+    assert_success(&quiet);
+    assert!(
+        quiet.stdout.is_empty(),
+        "--quiet writes no status to stdout"
+    );
+
+    let colored = output(
+        seal()
+            .arg("build")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--color")
+            .arg("always"),
+    );
+    assert_success(&colored);
+    assert!(
+        String::from_utf8_lossy(&colored.stdout).contains("\u{1b}[1m"),
+        "--color=always emits ANSI even when stdout is redirected"
+    );
+}
+
+#[test]
 fn metadata_is_parseable_and_lists_modules_and_targets() {
     let fixture = fixture("metadata");
     assert_success(&output(

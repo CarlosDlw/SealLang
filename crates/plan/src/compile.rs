@@ -1,6 +1,6 @@
 //! The compile plan itself.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use seal_target::TargetTriple;
 use serde::{Deserialize, Serialize};
@@ -163,59 +163,6 @@ pub struct CompilePlan {
 }
 
 impl CompilePlan {
-    /// Reads and validates a plan from a JSON file.
-    pub fn load(path: &Path) -> PlanResult<Self> {
-        let text = std::fs::read_to_string(path).map_err(|error| {
-            PlanError::io(format!(
-                "cannot read compile plan `{}`: {error}",
-                path.display()
-            ))
-        })?;
-        Self::from_json(&text)
-    }
-
-    /// Parses and validates a plan from JSON text.
-    pub fn from_json(text: &str) -> PlanResult<Self> {
-        let plan: Self = serde_json::from_str(text).map_err(|error| {
-            PlanError::schema(format!("the compile plan is not valid JSON: {error}"))
-        })?;
-        plan.validate()?;
-        Ok(plan)
-    }
-
-    /// Serializes the plan as stable, pretty JSON.
-    pub fn to_json(&self) -> PlanResult<String> {
-        serde_json::to_string_pretty(self).map_err(|error| {
-            PlanError::schema(format!("cannot serialize the compile plan: {error}"))
-        })
-    }
-
-    /// Writes the plan atomically, creating the parent directory when needed.
-    pub fn write(&self, path: &Path) -> PlanResult<()> {
-        let text = self.to_json()?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                PlanError::io(format!(
-                    "cannot create the plan directory `{}`: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        std::fs::write(&temporary, text).map_err(|error| {
-            PlanError::io(format!(
-                "cannot write the compile plan `{}`: {error}",
-                temporary.display()
-            ))
-        })?;
-        std::fs::rename(&temporary, path).map_err(|error| {
-            PlanError::io(format!(
-                "cannot replace the compile plan `{}`: {error}",
-                path.display()
-            ))
-        })
-    }
-
     /// Returns the primary package.
     pub fn primary_package(&self) -> &PlanPackage {
         &self.packages[self.primary]
@@ -362,16 +309,6 @@ mod tests {
             metadata: PlanMetadata::default(),
             output: None,
         }
-    }
-
-    #[test]
-    fn a_plan_round_trips_through_json() {
-        let plan = plan();
-        let text = plan.to_json().expect("the plan serializes");
-        assert_eq!(
-            CompilePlan::from_json(&text).expect("the plan parses"),
-            plan
-        );
     }
 
     #[test]

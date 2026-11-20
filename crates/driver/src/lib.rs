@@ -11,7 +11,6 @@ mod cli;
 mod options;
 mod output;
 mod pipeline;
-mod plan;
 mod report;
 mod temp;
 
