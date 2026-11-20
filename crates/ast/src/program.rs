@@ -5,16 +5,19 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::block::{Block, LetStmt, Stmt, StmtKind};
+use crate::cfg::{CfgExpr, CfgExprKind};
 use crate::expr::{Expr, ExprKind};
 use crate::generics::{Bound, GenericParamDecl};
 use crate::id::{
-    BlockId, BoundId, ExprId, FieldDeclId, GenericParamId, ItemId, ParamId, PatternId, StmtId,
-    TupleFieldDeclId, TypeId, VariantDeclId,
+    BlockId, BoundId, CfgExprId, ExprId, FieldDeclId, GenericParamId, ItemId, ParamId, PatternId,
+    StmtId, TupleFieldDeclId, TypeId, VariantDeclId,
 };
 use crate::item::{
     ConstDecl, FieldDecl, Item, ItemKind, Param, StaticDecl, TupleFieldDecl, VariantDecl,
     VariantFieldList,
 };
+use crate::modifiers::{Modifiers, Visibility};
+use crate::module::{ModuleDecl, UseDecl};
 use crate::pattern::Pattern;
 use crate::ty::{Type, TypeKind};
 
@@ -56,6 +59,7 @@ pub struct Ast {
     bounds: IndexVec<BoundId, Bound>,
     params: IndexVec<ParamId, Param>,
     fields: IndexVec<FieldDeclId, FieldDecl>,
+    cfg_exprs: IndexVec<CfgExprId, CfgExpr>,
     tuple_fields: IndexVec<TupleFieldDeclId, TupleFieldDecl>,
     variants: IndexVec<VariantDeclId, VariantDecl>,
     blocks: IndexVec<BlockId, Block>,
@@ -107,6 +111,12 @@ impl Ast {
     #[inline]
     pub fn variant(&self, id: VariantDeclId) -> &VariantDecl {
         &self.variants[id]
+    }
+
+    /// Returns a parsed `cfg(...)` expression.
+    #[inline]
+    pub fn cfg_expr(&self, id: CfgExprId) -> &CfgExpr {
+        &self.cfg_exprs[id]
     }
 
     /// Returns a positional field of an enum variant.
@@ -182,6 +192,12 @@ impl Ast {
         &self.variants
     }
 
+    /// Returns all `cfg(...)` expression nodes, indexable by [`CfgExprId`].
+    #[inline]
+    pub fn cfg_expr_arena(&self) -> &IndexVec<CfgExprId, CfgExpr> {
+        &self.cfg_exprs
+    }
+
     /// Returns all positional variant field nodes, indexable by
     /// [`TupleFieldDeclId`].
     #[inline]
@@ -238,23 +254,82 @@ impl AstBuilder {
 
     /// Adds an item and returns its ID.
     pub fn push_item(&mut self, kind: ItemKind, span: Span) -> ItemId {
-        self.ast.items.push(Item { kind, span })
+        self.push_item_with_modifiers(kind, span, Modifiers::none())
+    }
+
+    /// Adds an item with modifiers and returns its ID.
+    pub fn push_item_with_modifiers(
+        &mut self,
+        kind: ItemKind,
+        span: Span,
+        modifiers: Modifiers,
+    ) -> ItemId {
+        self.ast.items.push(Item {
+            kind,
+            modifiers,
+            span,
+        })
+    }
+
+    /// Adds a module declaration and returns its ID.
+    pub fn push_module_item(
+        &mut self,
+        span: Span,
+        declaration: ModuleDecl,
+        modifiers: Modifiers,
+    ) -> ItemId {
+        self.push_item_with_modifiers(ItemKind::Module(declaration), span, modifiers)
+    }
+
+    /// Adds an import and returns its ID.
+    pub fn push_use_item(
+        &mut self,
+        span: Span,
+        declaration: UseDecl,
+        modifiers: Modifiers,
+    ) -> ItemId {
+        self.push_item_with_modifiers(ItemKind::Use(declaration), span, modifiers)
     }
 
     /// Adds a constant declaration item and returns its ID.
     pub fn push_const_item(&mut self, span: Span, declaration: ConstDecl) -> ItemId {
-        self.ast.items.push(Item {
-            kind: ItemKind::Const(declaration),
-            span,
-        })
+        self.push_const_item_with_modifiers(span, declaration, Modifiers::none())
+    }
+
+    /// Adds a constant declaration with modifiers and returns its ID.
+    pub fn push_const_item_with_modifiers(
+        &mut self,
+        span: Span,
+        declaration: ConstDecl,
+        modifiers: Modifiers,
+    ) -> ItemId {
+        self.push_item_with_modifiers(ItemKind::Const(declaration), span, modifiers)
     }
 
     /// Adds a static declaration item and returns its ID.
     pub fn push_static_item(&mut self, span: Span, declaration: StaticDecl) -> ItemId {
-        self.ast.items.push(Item {
-            kind: ItemKind::Static(declaration),
-            span,
-        })
+        self.push_static_item_with_modifiers(span, declaration, Modifiers::none())
+    }
+
+    /// Adds a static declaration with modifiers and returns its ID.
+    pub fn push_static_item_with_modifiers(
+        &mut self,
+        span: Span,
+        declaration: StaticDecl,
+        modifiers: Modifiers,
+    ) -> ItemId {
+        self.push_item_with_modifiers(ItemKind::Static(declaration), span, modifiers)
+    }
+
+    /// Adds a parsed `cfg(...)` expression and returns its ID.
+    pub fn push_cfg_expr(&mut self, kind: CfgExprKind, span: Span) -> CfgExprId {
+        self.ast.cfg_exprs.push(CfgExpr { kind, span })
+    }
+
+    /// Returns a parsed `cfg(...)` expression.
+    #[inline]
+    pub fn cfg_expr(&self, id: CfgExprId) -> &CfgExpr {
+        self.ast.cfg_expr(id)
     }
 
     /// Adds a generic parameter declaration and returns its ID.
@@ -296,10 +371,44 @@ impl AstBuilder {
         ty: TypeId,
         span: Span,
     ) -> FieldDeclId {
+        self.push_field_with_visibility(name, name_span, ty, span, Visibility::Private)
+    }
+
+    /// Adds a struct field with a declared visibility and returns its ID.
+    pub fn push_field_with_visibility(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        ty: TypeId,
+        span: Span,
+        visibility: Visibility,
+    ) -> FieldDeclId {
         self.ast.fields.push(FieldDecl {
             name,
             name_span,
             ty,
+            visibility,
+            cfg: None,
+            span,
+        })
+    }
+
+    /// Adds a struct field with its visibility and rejected `cfg` condition.
+    pub fn push_field_with_modifiers(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        ty: TypeId,
+        span: Span,
+        visibility: Visibility,
+        cfg: Option<CfgExprId>,
+    ) -> FieldDeclId {
+        self.ast.fields.push(FieldDecl {
+            name,
+            name_span,
+            ty,
+            visibility,
+            cfg,
             span,
         })
     }
@@ -316,6 +425,25 @@ impl AstBuilder {
             name,
             name_span,
             fields,
+            cfg: None,
+            span,
+        })
+    }
+
+    /// Adds an enum variant with its rejected `cfg` condition.
+    pub fn push_variant_with_cfg(
+        &mut self,
+        name: Symbol,
+        name_span: Span,
+        fields: VariantFieldList,
+        span: Span,
+        cfg: Option<CfgExprId>,
+    ) -> VariantDeclId {
+        self.ast.variants.push(VariantDecl {
+            name,
+            name_span,
+            fields,
+            cfg,
             span,
         })
     }

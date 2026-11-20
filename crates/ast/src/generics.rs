@@ -83,6 +83,17 @@ impl TypePath {
     }
 }
 
+/// One segment of a multi-segment type or value path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathSegment {
+    /// The segment name.
+    pub name: Symbol,
+    /// The span of the name.
+    pub name_span: Span,
+    /// Explicit arguments written on this segment, if any.
+    pub args: Option<GenericArgs>,
+}
+
 /// A trait name with optional generic arguments.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraitPath {

@@ -96,6 +96,40 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
 `program`, `interpreter`, `place`, `rvalue`, `operators`, `intrinsic`,
 `dependency`, `limits`, and `error`, each with tests beside it.
 
+### Modules, imports, visibility, and configuration
+
+The parser accepts the module surface before lowering learns to resolve it. A
+file may declare one namespace with `module path::to::module;`, followed by
+absolute imports and items:
+
+```text
+module? use* item*
+use geometry::{Circle, Polygon as Poly};
+use root::geometry::shapes::Circle;
+```
+
+`module`, `use`, `public`, `internal`, `private`, `cfg`, and `test` are
+contextual names. They are recognized only in the modifier prefix of an item,
+field, method, or import, so existing bindings, functions, and types spelled
+with those names keep parsing unchanged. Visibility is a property of items,
+fields, and inherent methods; variants inherit their enum's visibility, and
+trait methods inherit their trait's. A module is always internal to its package
+and cannot take a modifier.
+
+`cfg(...)` is a typed boolean expression over `feature("name")`, `env("NAME")`,
+`target.{os,arch,env,pointer_width}`, `debug_assertions`, `test`, and `bench`,
+with comparisons, `!`, `&&`, `||`, and parentheses. The AST stores the
+expression in its own arena instead of a raw string, so a misspelled key is
+diagnosed at parse time rather than silently evaluating to false. `cfg` selects
+items and imports, not fields or variants, because the latter are part of their
+owner's layout.
+
+Expression and type paths with two or more `::` segments keep every segment in
+`PathMulti`, `StructMulti`, and `TypeKind::PathMulti`; the existing
+`Type::associated` form with one segment keeps its shape. Module and import
+resolution belongs to the multi-file lowering phase, so HIR currently reports
+`E2069` and recovers to an error node for a qualified name it cannot resolve.
+
 ### Callable values
 
 A Seal function pointer is `TyKind::FnPtr(FnPtrId)`. `FnPtrDef` stores the

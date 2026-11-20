@@ -6,7 +6,7 @@
 
 use seal_ast::{
     ExternBlockDecl, ExternFnDecl, ExternStaticDecl, ItemId, ItemKind, LinkDirective, LinkName,
-    OpaqueTypeDecl, ParamId, StructDecl, TypeId,
+    Modifiers, OpaqueTypeDecl, ParamId, StructDecl, TypeId,
 };
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
@@ -31,20 +31,24 @@ impl Parser<'_> {
 
     /// Parses one `extern` item, either a block or a single declaration.
     pub(crate) fn parse_extern_item(&mut self) -> ItemId {
+        let modifiers = std::mem::take(&mut self.item_modifiers);
         let start = self.current_span();
         self.bump();
         if self.at(TokenKind::Struct) {
+            self.item_modifiers = modifiers;
             return self.parse_extern_struct(start);
         }
         if self.at_name("type") {
+            self.item_modifiers = modifiers;
             return self.parse_extern_opaque(start);
         }
         let (abi, abi_span) = self.parse_abi();
 
         if self.at(TokenKind::LBrace) {
+            self.item_modifiers = Modifiers::none();
             let (items, links) = self.parse_extern_block_members(abi, abi_span);
             let span = start.cover(self.previous_span());
-            return self.builder.push_item(
+            return self.builder.push_item_with_modifiers(
                 ItemKind::ExternBlock(ExternBlockDecl {
                     abi,
                     abi_span,
@@ -52,12 +56,15 @@ impl Parser<'_> {
                     items,
                 }),
                 span,
+                modifiers,
             );
         }
         if self.at(TokenKind::Func) {
+            self.item_modifiers = modifiers;
             return self.parse_extern_function(abi, abi_span, start);
         }
         if self.at(TokenKind::Static) {
+            self.item_modifiers = modifiers;
             return self.parse_extern_static(abi, abi_span, start);
         }
         let found = self.describe(self.current_kind());
@@ -70,7 +77,8 @@ impl Parser<'_> {
         .emit();
         self.skip_declaration();
         let span = start.cover(self.previous_span());
-        self.builder.push_item(ItemKind::Error, span)
+        self.builder
+            .push_item_with_modifiers(ItemKind::Error, span, Modifiers::none())
     }
 
     /// Parses `extern struct Name { fields }`.
@@ -122,9 +130,10 @@ impl Parser<'_> {
             self.skip_declaration();
         }
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::OpaqueType(OpaqueTypeDecl { name, name_span }),
             span,
+            self.item_modifiers,
         )
     }
 
@@ -142,14 +151,37 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let field_modifiers = self.parse_modifiers();
+            if field_modifiers.cfg.is_some() {
+                self.error(
+                    codes::E2085,
+                    self.current_span(),
+                    "a struct field cannot have a `cfg` condition",
+                )
+                .help("place `cfg` on the struct or on the code that uses the field")
+                .emit();
+            }
+            if field_modifiers.is_test {
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    "a field cannot be a test",
+                )
+                .help("remove `test`; it applies to functions")
+                .emit();
+            }
             let (field_name, field_name_span) = self.expect_ident("a field name");
             let _ = self.expect(TokenKind::Colon, "`:` after the field name");
             let ty = self.parse_type();
             let span = field_name_span.cover(self.builder.ast().ty(ty).span);
-            fields.push(
-                self.builder
-                    .push_field(field_name, field_name_span, ty, span),
-            );
+            fields.push(self.builder.push_field_with_modifiers(
+                field_name,
+                field_name_span,
+                ty,
+                span,
+                field_modifiers.visibility,
+                field_modifiers.cfg,
+            ));
 
             if self.eat(TokenKind::Comma) {
                 continue;
@@ -173,7 +205,7 @@ impl Parser<'_> {
 
         let _ = self.expect(TokenKind::RBrace, "`}` to close the struct");
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::Struct(StructDecl {
                 name,
                 name_span,
@@ -183,6 +215,7 @@ impl Parser<'_> {
                 fields,
             }),
             span,
+            self.item_modifiers,
         )
     }
 
@@ -394,7 +427,7 @@ impl Parser<'_> {
         }
 
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::ExternFunc(ExternFnDecl {
                 abi,
                 abi_span,
@@ -407,6 +440,7 @@ impl Parser<'_> {
                 span,
             }),
             span,
+            self.item_modifiers,
         )
     }
 
@@ -454,7 +488,7 @@ impl Parser<'_> {
             self.skip_declaration();
         }
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::ExternStatic(ExternStaticDecl {
                 abi,
                 abi_span,
@@ -465,6 +499,7 @@ impl Parser<'_> {
                 span,
             }),
             span,
+            self.item_modifiers,
         )
     }
 }

@@ -2,8 +2,8 @@
 
 use seal_ast::{
     Ast, AstBuilder, ConstDecl, EnumDecl, ExprId, ExprKind, FieldDeclId, FnDecl, GenericParams,
-    ImplDecl, ItemId, ItemKind, ParamId, StaticDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId,
-    TypeId, TypeKind, VariantDeclId, VariantFieldList,
+    ImplDecl, ItemId, ItemKind, Modifiers, ParamId, StaticDecl, TraitDecl, TraitMethodDecl,
+    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -43,6 +43,16 @@ pub(crate) struct Parser<'a> {
     /// Whether a `{` after a name starts a struct literal. Conditions disable
     /// it so the condition of `if`/`while` cannot swallow the body.
     pub(crate) struct_literal_allowed: bool,
+    /// Modifiers collected for the item currently being parsed. Item parsers
+    /// consume this field and reset it; nested items parse their own prefix.
+    pub(crate) item_modifiers: Modifiers,
+    /// Whether the file already declared its module path.
+    pub(crate) module_decl: Option<Span>,
+    /// Whether any item or import has been parsed, used to reject a late
+    /// `module` or an import after the first item.
+    pub(crate) saw_any: bool,
+    /// Whether a non-import item has been parsed.
+    pub(crate) saw_item: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -64,76 +74,166 @@ impl<'a> Parser<'a> {
             items: Vec::new(),
             depth: 0,
             struct_literal_allowed: true,
+            item_modifiers: Modifiers::none(),
+            module_decl: None,
+            saw_any: false,
+            saw_item: false,
         }
     }
 
     /// Parses every item and returns the finished tree.
+    ///
+    /// The file grammar is `module? use* item*`. A module declaration is only
+    /// legal before every import and item; a late declaration is diagnosed but
+    /// still parsed so later items keep their positions.
     pub(crate) fn parse_program(mut self) -> Ast {
+        if self.at_name("module") {
+            let item = self.parse_module_decl();
+            self.items.push(item);
+        }
+
         while !self.is_eof() {
             let before = self.index;
-            if self.at(TokenKind::Func) {
-                let start = self.current_span();
-                let item = self.parse_function(false, false, start);
+            let modifiers = self.parse_modifiers();
+
+            if self.at_name("use") {
+                if self.saw_item {
+                    let span = self.current_span();
+                    self.error(codes::E1001, span, "imports must appear before every item")
+                        .help("move the `use` declaration above the first item")
+                        .emit();
+                }
+                let item = self.parse_use(modifiers);
                 self.items.push(item);
-            } else if self.at(TokenKind::Unsafe) {
-                let start = self.current_span();
-                let item = self.parse_unsafe_item(start);
-                self.items.push(item);
-            } else if self.at(TokenKind::Const) {
-                let item = self.parse_const_item();
-                self.items.push(item);
-            } else if self.at(TokenKind::Static) {
-                let item = self.parse_static_item();
-                self.items.push(item);
-            } else if self.at(TokenKind::Struct) {
-                let item = self.parse_struct();
-                self.items.push(item);
-            } else if self.at(TokenKind::Enum) {
-                let item = self.parse_enum();
-                self.items.push(item);
-            } else if self.at(TokenKind::Impl) {
-                let item = self.parse_impl();
-                self.items.push(item);
-            } else if self.at(TokenKind::Trait) {
-                let item = self.parse_trait();
-                self.items.push(item);
-            } else if self.at_name("extern") {
-                let item = self.parse_extern_item();
+            } else if self.at_name("module") {
+                if !modifiers.is_empty() {
+                    self.error(
+                        codes::E2079,
+                        self.current_span(),
+                        "a module declaration cannot have modifiers",
+                    )
+                    .help("remove the modifiers; a module is always internal to its package")
+                    .emit();
+                }
+                self.item_modifiers = modifiers;
+                let item = self.parse_module_decl();
                 self.items.push(item);
             } else {
-                let start = self.current_span();
-                let found = self.describe(self.current_kind());
-                self.error(
-                    codes::E1001,
-                    start,
-                    format!("expected an item, found {found}"),
-                )
-                .help(
-                    "top-level items start with `func`, `const`, `static`, `struct`, `enum`, \
-                     `impl`, or `trait`",
-                )
-                .emit();
-                while !self.is_eof()
-                    && !self.at(TokenKind::Func)
-                    && !self.at(TokenKind::Unsafe)
-                    && !self.at(TokenKind::Const)
-                    && !self.at(TokenKind::Static)
-                    && !self.at(TokenKind::Struct)
-                    && !self.at(TokenKind::Enum)
-                    && !self.at(TokenKind::Impl)
-                    && !self.at(TokenKind::Trait)
-                {
-                    self.bump();
-                }
-                let span = start.cover(self.previous_span());
-                let item = self.builder.push_item(ItemKind::Error, span);
+                self.item_modifiers = modifiers;
+                let item = self.parse_item();
                 self.items.push(item);
+                self.saw_item = true;
+                self.saw_any = true;
             }
             self.ensure_progress(before);
         }
 
         let items = std::mem::take(&mut self.items);
         self.builder.finish(items)
+    }
+
+    /// Parses one non-import item after its modifiers were collected.
+    fn parse_item(&mut self) -> ItemId {
+        let start = self.current_span();
+        if self.item_modifiers.is_test && !self.at_function_start() {
+            self.error(codes::E1001, start, "`test` applies only to functions")
+                .help("remove `test` from this declaration")
+                .emit();
+        }
+        if self.item_modifiers.has_visibility && self.at(TokenKind::Impl) {
+            self.error(
+                codes::E2079,
+                start,
+                "an implementation cannot have a visibility modifier",
+            )
+            .help("remove the visibility; an inherent implementation is reached through its type")
+            .emit();
+        }
+
+        let item = if self.at(TokenKind::Func) {
+            self.parse_function(false, false, start)
+        } else if self.at(TokenKind::Unsafe) {
+            self.parse_unsafe_item(start)
+        } else if self.at(TokenKind::Const) {
+            self.parse_const_item()
+        } else if self.at(TokenKind::Static) {
+            self.parse_static_item()
+        } else if self.at(TokenKind::Struct) {
+            self.parse_struct()
+        } else if self.at(TokenKind::Enum) {
+            self.parse_enum()
+        } else if self.at(TokenKind::Impl) {
+            self.parse_impl()
+        } else if self.at(TokenKind::Trait) {
+            self.parse_trait()
+        } else if self.at_name("extern") {
+            self.parse_extern_item()
+        } else {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1001,
+                start,
+                format!("expected an item, found {found}"),
+            )
+            .help(
+                "top-level items start with `func`, `const`, `static`, `struct`, `enum`, \
+                 `impl`, or `trait`",
+            )
+            .emit();
+            while !self.is_eof()
+                && !self.at(TokenKind::Func)
+                && !self.at(TokenKind::Unsafe)
+                && !self.at(TokenKind::Const)
+                && !self.at(TokenKind::Static)
+                && !self.at(TokenKind::Struct)
+                && !self.at(TokenKind::Enum)
+                && !self.at(TokenKind::Impl)
+                && !self.at(TokenKind::Trait)
+                && !self.at_name("extern")
+                && !self.at_name("use")
+                && !self.at_name("module")
+            {
+                self.bump();
+            }
+            let span = start.cover(self.previous_span());
+            self.builder
+                .push_item_with_modifiers(ItemKind::Error, span, Modifiers::none())
+        };
+        self.item_modifiers = Modifiers::none();
+        item
+    }
+
+    fn at_function_start(&self) -> bool {
+        self.at(TokenKind::Func)
+            || (self.at(TokenKind::Const) && matches!(self.peek_kind(), Some(TokenKind::Func)))
+            || (self.at(TokenKind::Const) && matches!(self.peek_kind(), Some(TokenKind::Unsafe)))
+            || (self.at(TokenKind::Unsafe) && matches!(self.peek_kind(), Some(TokenKind::Func)))
+    }
+
+    fn report_trait_method_modifiers(&mut self, modifiers: Modifiers, span: Span) {
+        if modifiers.has_visibility {
+            self.error(
+                codes::E2079,
+                span,
+                "a trait method cannot have a visibility modifier",
+            )
+            .help("remove the visibility; the trait's visibility controls its methods")
+            .emit();
+        }
+        if modifiers.cfg.is_some() {
+            self.error(
+                codes::E2085,
+                span,
+                "a trait method cannot have a `cfg` condition",
+            )
+            .help("place `cfg` on the trait or on the item that uses the method")
+            .emit();
+        }
+        if modifiers.is_test {
+            self.error(codes::E1001, span, "a trait method cannot be a test")
+                .help("remove `test`")
+                .emit();
+        }
     }
 
     /// Parses an item introduced by `unsafe`.
@@ -221,7 +321,7 @@ impl<'a> Parser<'a> {
         self.reject_const_mut();
         let declaration = self.parse_value_decl("const");
         let span = start.cover(self.previous_span());
-        self.builder.push_const_item(
+        self.builder.push_const_item_with_modifiers(
             span,
             ConstDecl {
                 name: declaration.name,
@@ -229,6 +329,7 @@ impl<'a> Parser<'a> {
                 ty: declaration.ty,
                 init: declaration.init,
             },
+            self.item_modifiers,
         )
     }
 
@@ -249,7 +350,7 @@ impl<'a> Parser<'a> {
         self.reject_extra_mut();
         let declaration = self.parse_value_decl("static");
         let span = keyword.span.cover(self.previous_span());
-        self.builder.push_static_item(
+        self.builder.push_static_item_with_modifiers(
             span,
             StaticDecl {
                 name: declaration.name,
@@ -258,6 +359,7 @@ impl<'a> Parser<'a> {
                 ty: declaration.ty,
                 init: declaration.init,
             },
+            self.item_modifiers,
         )
     }
 
@@ -419,7 +521,7 @@ impl<'a> Parser<'a> {
         };
 
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::Func(FnDecl {
                 name,
                 name_span,
@@ -432,6 +534,7 @@ impl<'a> Parser<'a> {
                 body,
             }),
             span,
+            self.item_modifiers,
         )
     }
 
@@ -521,6 +624,7 @@ impl<'a> Parser<'a> {
     /// arena; the implementation item references them, keeping the whole tree
     /// reachable without a second declaration grammar.
     fn parse_impl(&mut self) -> ItemId {
+        let modifiers = std::mem::take(&mut self.item_modifiers);
         let keyword = self.bump();
         let generics = self.parse_generic_params();
         let (trait_ref, self_ty) = if self.starts_trait_path_before_for() {
@@ -541,6 +645,7 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let method_modifiers = self.parse_modifiers();
             if self.at_extern_item() {
                 let span = self.current_span();
                 self.error(
@@ -553,9 +658,11 @@ impl<'a> Parser<'a> {
                 self.skip_declaration();
             } else if self.at(TokenKind::Func) {
                 let start = self.current_span();
+                self.item_modifiers = method_modifiers;
                 functions.push(self.parse_function(false, false, start));
             } else if self.at(TokenKind::Unsafe) {
                 let start = self.current_span();
+                self.item_modifiers = method_modifiers;
                 let marker = self.bump();
                 if self.at(TokenKind::Func) {
                     functions.push(self.parse_function(false, true, start));
@@ -587,7 +694,7 @@ impl<'a> Parser<'a> {
 
         let _ = self.expect(TokenKind::RBrace, "`}` to close the impl block");
         let span = keyword.span.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::Impl(ImplDecl {
                 generics,
                 self_ty,
@@ -596,6 +703,7 @@ impl<'a> Parser<'a> {
                 functions,
             }),
             span,
+            modifiers,
         )
     }
 
@@ -605,6 +713,7 @@ impl<'a> Parser<'a> {
     /// either `;` or a default body. They are stored as items so the arena owns
     /// them and the reachability invariant covers the whole tree.
     fn parse_trait(&mut self) -> ItemId {
+        let modifiers = std::mem::take(&mut self.item_modifiers);
         let keyword = self.bump();
         let (name, name_span) = self.expect_ident("a trait name");
         let generics = self.parse_generic_params();
@@ -623,6 +732,11 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let method_modifiers = self.parse_modifiers();
+            if !method_modifiers.is_empty() {
+                self.report_trait_method_modifiers(method_modifiers, self.current_span());
+            }
+            self.item_modifiers = method_modifiers;
             if self.at_extern_item() {
                 let span = self.current_span();
                 self.error(
@@ -679,7 +793,7 @@ impl<'a> Parser<'a> {
 
         let _ = self.expect(TokenKind::RBrace, "`}` to close the trait");
         let span = keyword.span.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::Trait(TraitDecl {
                 name,
                 name_span,
@@ -689,6 +803,7 @@ impl<'a> Parser<'a> {
                 methods,
             }),
             span,
+            modifiers,
         )
     }
 
@@ -698,6 +813,7 @@ impl<'a> Parser<'a> {
     /// supplies the body, or the same signature followed by a block when the
     /// trait provides a default.
     fn parse_trait_method(&mut self, is_unsafe: bool, start: Span) -> ItemId {
+        let modifiers = std::mem::take(&mut self.item_modifiers);
         let _keyword = self.bump();
         let (name, name_span, generics, params, ret) = self.parse_signature();
         let where_clause = self.parse_where_clause();
@@ -721,7 +837,7 @@ impl<'a> Parser<'a> {
         };
 
         let span = start.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::TraitMethod(TraitMethodDecl {
                 name,
                 name_span,
@@ -731,8 +847,10 @@ impl<'a> Parser<'a> {
                 ret,
                 where_clause,
                 body,
+                cfg: modifiers.cfg,
             }),
             span,
+            Modifiers::none(),
         )
     }
 
@@ -778,7 +896,7 @@ impl<'a> Parser<'a> {
 
         let _ = self.expect(TokenKind::RBrace, "`}` to close the enum");
         let span = keyword.span.cover(self.previous_span());
-        self.builder.push_item(
+        self.builder.push_item_with_modifiers(
             ItemKind::Enum(EnumDecl {
                 name,
                 name_span,
@@ -787,12 +905,41 @@ impl<'a> Parser<'a> {
                 variants,
             }),
             span,
+            self.item_modifiers,
         )
     }
 
     /// Parses one variant: a name, optionally followed by positional or named
     /// fields.
     fn parse_enum_variant(&mut self) -> VariantDeclId {
+        let modifiers = self.parse_modifiers();
+        if modifiers.has_visibility {
+            self.error(
+                codes::E2079,
+                self.current_span(),
+                "a variant cannot have a visibility modifier",
+            )
+            .help("variants inherit the visibility of their enum")
+            .emit();
+        }
+        if modifiers.cfg.is_some() {
+            self.error(
+                codes::E2085,
+                self.current_span(),
+                "a variant cannot have a `cfg` condition",
+            )
+            .help("place `cfg` on the enum or on the code that matches the variant")
+            .emit();
+        }
+        if modifiers.is_test {
+            self.error(
+                codes::E1001,
+                self.current_span(),
+                "a variant cannot be a test",
+            )
+            .help("remove `test`; it applies to functions")
+            .emit();
+        }
         let (name, name_span) = self.expect_ident("a variant name");
         let fields = if self.at(TokenKind::LParen) {
             let tuple_fields = self.parse_tuple_variant_fields();
@@ -818,7 +965,8 @@ impl<'a> Parser<'a> {
         };
 
         let span = name_span.cover(self.previous_span());
-        self.builder.push_variant(name, name_span, fields, span)
+        self.builder
+            .push_variant_with_cfg(name, name_span, fields, span, modifiers.cfg)
     }
 
     /// Parses a positional field list, starting at `(`.

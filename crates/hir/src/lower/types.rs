@@ -58,6 +58,18 @@ impl Lowering<'_> {
                 let element = self.lower_type_inner(element, unknown_parameter, false);
                 self.hir.ty_ctxt_mut().array_ty(element, length)
             }
+            TypeKind::PathMulti { .. } => {
+                // Qualified type paths are syntax in this phase; the module
+                // graph and resolution arrive with the multi-file lowering.
+                self.error(
+                    codes::E2069,
+                    self.ast.ty(ty).span,
+                    "a module-qualified type needs module resolution",
+                )
+                .help("module resolution is not part of this compilation phase")
+                .emit();
+                self.hir.ty_ctxt_mut().error_ty()
+            }
             TypeKind::Tuple(elements) => {
                 let elements: Vec<TyId> = elements
                     .into_iter()

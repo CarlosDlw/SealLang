@@ -5,10 +5,10 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use seal_ast::{
-    Ast, Block, BlockId, BoundId, BoundKind, Expr, ExprId, ExprKind, FieldDeclId, FnDecl,
-    GenericArgs, GenericParamId, GenericParams, ItemId, ItemKind, ParamId, PatternId, PatternKind,
-    StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
-    VariantPatternFields, WhereClause,
+    Ast, Block, BlockId, BoundId, BoundKind, CfgExprId, CfgExprKind, Expr, ExprId, ExprKind,
+    FieldDeclId, FnDecl, GenericArgs, GenericParamId, GenericParams, ItemId, ItemKind, Modifiers,
+    ParamId, PatternId, PatternKind, StmtId, StmtKind, TupleFieldDeclId, TypeId, TypeKind, UsePath,
+    UseSegment, VariantDeclId, VariantFieldList, VariantPatternFields, WhereClause,
 };
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_span::{FileName, SourceFile, SourceMap, Span};
@@ -164,6 +164,7 @@ pub(crate) fn assert_invariants(fixture: &Fixture, ast: &Ast) {
         blocks: BTreeSet::new(),
         generic_params: BTreeSet::new(),
         bounds: BTreeSet::new(),
+        cfg_exprs: BTreeSet::new(),
         fields: BTreeSet::new(),
         tuple_fields: BTreeSet::new(),
         variants: BTreeSet::new(),
@@ -183,6 +184,7 @@ struct Reachability<'a> {
     blocks: BTreeSet<BlockId>,
     generic_params: BTreeSet<GenericParamId>,
     bounds: BTreeSet<BoundId>,
+    cfg_exprs: BTreeSet<CfgExprId>,
     fields: BTreeSet<FieldDeclId>,
     tuple_fields: BTreeSet<TupleFieldDeclId>,
     variants: BTreeSet<VariantDeclId>,
@@ -253,6 +255,11 @@ impl Reachability<'_> {
             self.ast.bound_arena().len(),
             "unreachable bound nodes"
         );
+        assert_eq!(
+            self.cfg_exprs.len(),
+            self.ast.cfg_expr_arena().len(),
+            "unreachable cfg expression nodes"
+        );
     }
 
     fn check_item(&mut self, id: ItemId) {
@@ -260,8 +267,14 @@ impl Reachability<'_> {
         let item = self.ast.item(id);
         let span = item.span;
         let kind = item.kind.clone();
+        let modifiers = item.modifiers;
         self.assert_span(span);
+        self.check_modifiers(modifiers);
         match kind {
+            ItemKind::Module(declaration) => {
+                self.assert_span(declaration.path_span);
+            }
+            ItemKind::Use(declaration) => self.check_use_path(&declaration.path),
             ItemKind::Func(declaration) => self.check_function(&declaration),
             ItemKind::Struct(declaration) => {
                 self.assert_span(declaration.name_span);
@@ -304,6 +317,9 @@ impl Reachability<'_> {
             }
             ItemKind::TraitMethod(declaration) => {
                 self.assert_span(declaration.name_span);
+                if let Some(cfg) = declaration.cfg {
+                    self.check_cfg_expr(cfg);
+                }
                 self.check_generics(&declaration.generics);
                 if let Some(ret) = declaration.ret {
                     self.check_type(ret);
@@ -362,14 +378,79 @@ impl Reachability<'_> {
         }
     }
 
+    fn check_modifiers(&mut self, modifiers: Modifiers) {
+        if let Some(cfg) = modifiers.cfg {
+            self.check_cfg_expr(cfg);
+        }
+    }
+
+    fn check_use_path(&mut self, path: &UsePath) {
+        self.assert_span(path.root_span);
+        self.assert_span(path.span);
+        if let Some(span) = path.alias_span {
+            self.assert_span(span);
+        }
+        for segment in &path.segments {
+            match segment {
+                UseSegment::Name { span, .. } => self.assert_span(*span),
+                UseSegment::Group { items, span } => {
+                    self.assert_span(*span);
+                    for item in items {
+                        self.assert_span(item.name_span);
+                        self.assert_span(item.span);
+                        if let Some(span) = item.alias_span {
+                            self.assert_span(span);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_cfg_expr(&mut self, id: CfgExprId) {
+        if !self.cfg_exprs.insert(id) {
+            return;
+        }
+        let (span, kind) = {
+            let expr = self.ast.cfg_expr(id);
+            (expr.span, expr.kind.clone())
+        };
+        self.assert_span(span);
+        match kind {
+            CfgExprKind::Compare { lhs, rhs, .. }
+            | CfgExprKind::And { lhs, rhs }
+            | CfgExprKind::Or { lhs, rhs } => {
+                self.check_cfg_expr(lhs);
+                self.check_cfg_expr(rhs);
+            }
+            CfgExprKind::Not(operand) => self.check_cfg_expr(operand),
+            CfgExprKind::Feature(_)
+            | CfgExprKind::Env(_)
+            | CfgExprKind::Target(_)
+            | CfgExprKind::DebugAssertions
+            | CfgExprKind::Test
+            | CfgExprKind::Bench
+            | CfgExprKind::Literal(_)
+            | CfgExprKind::Error => {}
+        }
+    }
+
     fn check_variant(&mut self, id: VariantDeclId) {
         assert!(self.variants.insert(id), "variant {id:?} visited twice");
-        let (span, name_span, fields) = {
+        let (span, name_span, fields, cfg) = {
             let variant = self.ast.variant(id);
-            (variant.span, variant.name_span, variant.fields.clone())
+            (
+                variant.span,
+                variant.name_span,
+                variant.fields.clone(),
+                variant.cfg,
+            )
         };
         self.assert_span(span);
         self.assert_span(name_span);
+        if let Some(cfg) = cfg {
+            self.check_cfg_expr(cfg);
+        }
         match fields {
             VariantFieldList::Unit => {}
             VariantFieldList::Named(field_ids) => {
@@ -483,13 +564,16 @@ impl Reachability<'_> {
 
     fn check_field(&mut self, id: FieldDeclId) {
         assert!(self.fields.insert(id), "field {id:?} visited twice");
-        let (span, name_span, ty) = {
+        let (span, name_span, ty, cfg) = {
             let field = self.ast.field(id);
-            (field.span, field.name_span, field.ty)
+            (field.span, field.name_span, field.ty, field.cfg)
         };
         self.assert_span(span);
         self.assert_span(name_span);
         self.check_type(ty);
+        if let Some(cfg) = cfg {
+            self.check_cfg_expr(cfg);
+        }
     }
 
     fn check_block(&mut self, id: BlockId) {
@@ -774,6 +858,46 @@ impl Reachability<'_> {
                     self.check_generic_args(&args);
                 }
             }
+            ExprKind::PathMulti {
+                root_span,
+                args,
+                segments,
+                ..
+            } => {
+                self.assert_span(root_span);
+                if let Some(args) = args {
+                    self.check_generic_args(&args);
+                }
+                for segment in segments {
+                    self.assert_span(segment.name_span);
+                    if let Some(args) = &segment.args {
+                        self.check_generic_args(args);
+                    }
+                }
+            }
+            ExprKind::StructMulti {
+                root_span,
+                args,
+                segments,
+                fields,
+                ..
+            } => {
+                self.assert_span(root_span);
+                if let Some(args) = args {
+                    self.check_generic_args(&args);
+                }
+                for segment in segments {
+                    self.assert_span(segment.name_span);
+                    if let Some(args) = &segment.args {
+                        self.check_generic_args(args);
+                    }
+                }
+                for field in fields {
+                    self.assert_span(field.name_span);
+                    self.assert_span(field.span);
+                    self.check_expr(field.value);
+                }
+            }
             ExprKind::Lit(_) | ExprKind::Error => {}
         }
     }
@@ -892,6 +1016,23 @@ impl Reachability<'_> {
                 self.assert_span(path.span);
                 if let Some(args) = &path.args {
                     self.check_generic_args(args);
+                }
+            }
+            TypeKind::PathMulti {
+                root_span,
+                args,
+                segments,
+                ..
+            } => {
+                self.assert_span(root_span);
+                if let Some(args) = args {
+                    self.check_generic_args(&args);
+                }
+                for segment in segments {
+                    self.assert_span(segment.name_span);
+                    if let Some(args) = &segment.args {
+                        self.check_generic_args(args);
+                    }
                 }
             }
             TypeKind::FnSig {

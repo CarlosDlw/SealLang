@@ -1199,6 +1199,79 @@ A block-scope declaration may shadow a name from an outer scope; only a
 duplicate inside the same scope is rejected. Rename one of the two definitions.",
 };
 
+/// A module declaration is malformed, late, or duplicated.
+pub const E2069: ErrorCode = ErrorCode {
+    code: "E2069",
+    title: "invalid module declaration",
+    explanation: "\
+A file names the module it contributes to with at most one `module path;`
+declaration, and that declaration must come before every import and item. The
+path is one or more identifiers separated by `::`; an empty path has no module
+to name.\n\nMove the declaration to the top of the file, remove duplicates, and write a
+non-empty path such as `module geometry::shapes;`.\n\nA qualified name in an expression or type that needs module resolution is also
+reported here until the module graph is available.",
+};
+
+/// The name `root` is used where a module name is required.
+pub const E2075: ErrorCode = ErrorCode {
+    code: "E2075",
+    title: "reserved module name",
+    explanation: "\
+`root` is the absolute root of the current package in an import path. It is not
+a legal module name or a legal later segment, because allowing it would make
+`root::root` ambiguous with the package root.\n\nChoose a different module name, or use `root` only as the first segment of a
+`use` path.",
+};
+
+/// An import uses a glob.
+pub const E2076: ErrorCode = ErrorCode {
+    code: "E2076",
+    title: "glob imports are not supported",
+    explanation: "\
+Imports name what they bring into scope. A glob makes the set of visible names
+depend on every declaration in another module, which hides typos, makes API
+changes silently alter callers, and prevents deterministic incremental
+analysis.\n\nImport each name explicitly: `use a::b::{C, D};`.",
+};
+
+/// A visibility or test modifier is not legal on this construct.
+pub const E2079: ErrorCode = ErrorCode {
+    code: "E2079",
+    title: "modifier is not valid here",
+    explanation: "\
+Visibility describes who may name a declaration, so it only applies to items
+and fields that have a name in a namespace. Imports are private to their file,
+an implementation is reached through its type, and a trait method inherits the
+trait's visibility. `test` marks a function, not a module, import, field,
+variant, or implementation. `cfg` selects an item or import; it does not select
+a field or variant.\n\nRemove the modifier, or move it to the declaration that owns the behavior.",
+};
+
+/// A `cfg(...)` condition has an unknown key or value shape.
+pub const E2084: ErrorCode = ErrorCode {
+    code: "E2084",
+    title: "invalid configuration condition",
+    explanation: "\
+A `cfg(...)` condition is built from `feature(\"name\")`, `env(\"NAME\")`,
+`target.os`, `target.arch`, `target.env`, `target.pointer_width`,
+`debug_assertions`, `test`, and `bench`. Each key has a fixed shape, and a
+comparison needs a string, boolean, or integer literal on its right.\n\nA misspelled key or a bare string is rejected instead of silently evaluating to
+false: `cfg(\"linux\")` is not a target test, and `cfg(target.os = \"linux\")` is
+missing one `=`. Write the intended key and comparison exactly.",
+};
+
+/// A `cfg` condition is attached to a field or variant.
+pub const E2085: ErrorCode = ErrorCode {
+    code: "E2085",
+    title: "`cfg` is not valid on a field or variant",
+    explanation: "\
+`cfg` selects whole items and imports before name resolution. A field or enum
+variant is part of its owner's layout, and removing it conditionally would make
+the struct or enum shape depend on the build configuration; pattern matches,
+constructors, and ABI would then disagree across targets.\n\nPlace `cfg` on the struct, enum, or item that uses the field or variant, or
+declare separate types for the configurations.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -3413,19 +3486,20 @@ pub static ALL: &[ErrorCode] = &[
     E2026, E2027, E2028, E2029, E2030, E2031, E2032, E2033, E2034, E2035, E2036, E2037, E2038,
     E2039, E2040, E2041, E2042, E2043, E2044, E2045, E2046, E2047, E2048, E2049, E2050, E2051,
     E2052, E2053, E2054, E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064,
-    E2065, E2066, E2067, E2068, E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3008, E3009,
-    E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018, E3019, E3020, E3021, E3022,
-    E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031, E3032, E3033, E3034, E3035,
-    E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
-    E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
-    E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
-    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085, E3086, E3087, E3088, E3089,
-    E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097, E3098, E3099, E4001, E4002, E4003,
-    E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016,
-    E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030,
-    E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009,
-    E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001,
-    E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E2065, E2066, E2067, E2068, E2069, E2075, E2076, E2079, E2084, E2085, E3001, E3002, E3003,
+    E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016,
+    E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029,
+    E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042,
+    E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055,
+    E3056, E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069,
+    E3070, E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083,
+    E3084, E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096,
+    E3097, E3098, E3099, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010,
+    E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023,
+    E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003,
+    E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016,
+    E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008,
+    E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3647,7 +3721,7 @@ mod tests {
     }
 
     #[test]
-    fn name_resolution_codes_are_contiguous() {
+    fn name_resolution_codes_are_allocated_in_order() {
         let codes: Vec<&str> = ALL
             .iter()
             .map(|entry| entry.code())
@@ -3663,9 +3737,13 @@ mod tests {
                 "E2037", "E2038", "E2039", "E2040", "E2041", "E2042", "E2043", "E2044", "E2045",
                 "E2046", "E2047", "E2048", "E2049", "E2050", "E2051", "E2052", "E2053", "E2054",
                 "E2055", "E2056", "E2057", "E2058", "E2059", "E2060", "E2061", "E2062", "E2063",
-                "E2064", "E2065", "E2066", "E2067", "E2068",
+                "E2064", "E2065", "E2066", "E2067", "E2068", "E2069", "E2075", "E2076", "E2079",
+                "E2084", "E2085",
             ]
         );
+        // `E2070`-`E2074` and `E2077`-`E2078` stay unallocated: codes are
+        // never reused, so a gap is cheaper than giving an unrelated
+        // diagnostic a number out of order.
     }
 
     #[test]

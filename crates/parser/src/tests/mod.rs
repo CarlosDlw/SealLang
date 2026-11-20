@@ -2,6 +2,7 @@
 
 mod arrays;
 mod casts;
+mod cfg;
 mod closures;
 mod dyn_types;
 mod enums;
@@ -16,10 +17,12 @@ mod generics;
 mod globals;
 mod if_let;
 mod impls;
+mod imports;
 mod items;
 mod match_advanced;
 mod match_expr;
 mod methods;
+mod modules;
 mod recovery;
 mod slices;
 mod stmts;
@@ -28,4 +31,5 @@ mod support;
 mod traits;
 mod tuple_variants;
 mod tuples;
+mod visibility;
 mod while_let;

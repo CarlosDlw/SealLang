@@ -8,18 +8,29 @@
 //! # Grammar
 //!
 //! ```text
-//! program    = item*
-//! item       = "func" IDENT "(" params? ")" ("->" type)? block
+//! program    = module? use* item*
+//! module     = "module" IDENT ("::" IDENT)* ";"
+//! use        = modifiers? "use" use_path ";"
+//! use_path   = IDENT ("::" IDENT)* ("::" group)? ("as" IDENT)?
+//! group      = "{" IDENT ("as" IDENT)? ("," IDENT ("as" IDENT)?)* ","? "}"
+//! modifiers  = ("public" | "internal" | "private")?
+//!              ("cfg" "(" cfg_expr ")")? ("test")?
+//! cfg_expr   = cfg_unary (("&&" | "||") cfg_unary)*
+//! cfg_unary  = "!" cfg_unary | "(" cfg_expr ")" | cfg_atom
+//! cfg_atom   = "feature" "(" STRING ")" | "env" "(" STRING ")"
+//!            | "target" "." IDENT (("==" | "!=") literal)?
+//!            | "debug_assertions" | "test" | "bench"
+//! item       = modifiers? ("func" IDENT "(" params? ")" ("->" type)? block
 //!            | "const" "func" IDENT "(" params? ")" ("->" type)? block
 //!            | "const" IDENT ":" type "=" expr ";"
-//!            | "static" "mut"? IDENT ":" type "=" expr ";"
+//!            | "static" "mut"? IDENT ":" type "=" expr ";")
 //!            | "struct" IDENT generics? "{" fields "}"
 //!            | "enum" IDENT generics? "{" variants "}"
 //!            | "impl" generics? type ("for" type)? "{" item* "}"
 //!            | "trait" IDENT generics? (":" bound ("," bound)*)? "{" item* "}"
 //! params     = param ("," param)* ","?
 //! param      = IDENT ":" type
-//! type       = "*" type | PRIMITIVE
+//! type       = "*" type | PRIMITIVE | IDENT ("::" IDENT)* generic_args?
 //! block      = "{" statement* expr? "}"
 //! statement  = "let" "mut"? IDENT (":" type)? ("=" expr)? ";"
 //!            | "const" IDENT ":" type "=" expr ";"
@@ -33,6 +44,11 @@
 //!              calls, `if`, `unsafe` blocks, and parenthesized expressions
 //! if_expr    = "if" expr block ("else" (block | if_expr))?
 //! ```
+//!
+//! `module`, `use`, the visibility words, `cfg`, and `test` are contextual: they
+//! are reserved only in the prefix position shown above and remain ordinary
+//! identifiers in bindings, function names, and type names. A module declaration
+//! is at most one and must precede every import and item; imports are absolute.
 //!
 //! `if` is an expression whose value is the block that runs; without `else` its
 //! type is unit. `unsafe { ... }` is a prefix expression whose value is the
@@ -64,9 +80,12 @@
 
 #![warn(missing_docs)]
 
+mod cfg;
 mod expr;
 mod extern_item;
 mod generics;
+mod modifiers;
+mod module;
 mod parser;
 mod pattern;
 mod stmt;

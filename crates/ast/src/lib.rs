@@ -21,33 +21,39 @@
 #![warn(missing_docs)]
 
 mod block;
+mod cfg;
 mod expr;
 mod extern_item;
 mod generics;
 mod id;
 mod item;
+mod modifiers;
+mod module;
 mod pattern;
 mod program;
 mod ty;
 
 pub use block::{Block, ForSource, LetStmt, Stmt, StmtKind};
+pub use cfg::{CfgCmpOp, CfgExpr, CfgExprKind, CfgLiteral};
 pub use expr::{
     AssignOp, BinaryOp, ClosureParam, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp,
 };
 pub use extern_item::{ExternBlockDecl, ExternFnDecl, ExternStaticDecl, LinkDirective, LinkName};
 pub use generics::{
-    Bound, BoundKind, GenericArgs, GenericParamDecl, GenericParams, TraitPath, TypePath,
-    WhereClause, WherePredicate,
+    Bound, BoundKind, GenericArgs, GenericParamDecl, GenericParams, PathSegment, TraitPath,
+    TypePath, WhereClause, WherePredicate,
 };
 pub use id::{
-    BlockId, BoundId, ExprId, FieldDeclId, GenericParamId, ItemId, ParamId, PatternId, StmtId,
-    TupleFieldDeclId, TypeId, VariantDeclId,
+    BlockId, BoundId, CfgExprId, ExprId, FieldDeclId, GenericParamId, ItemId, ParamId, PatternId,
+    StmtId, TupleFieldDeclId, TypeId, VariantDeclId,
 };
 pub use item::{
     ConstDecl, EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, OpaqueTypeDecl, Param,
     StaticDecl, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDecl, VariantDecl,
     VariantFieldList,
 };
+pub use modifiers::{Modifiers, Visibility};
+pub use module::{ModuleDecl, UseDecl, UseItem, UsePath, UseRoot, UseSegment};
 pub use pattern::{
     MatchArm, NamedPatternField, Pattern, PatternKind, PatternLiteral, VariantPatternFields,
 };

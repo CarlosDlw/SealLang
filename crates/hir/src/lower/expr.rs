@@ -61,6 +61,31 @@ impl Lowering<'_> {
             } => {
                 self.lower_qualified_path(type_name, type_span, type_args.as_ref(), name, name_span)
             }
+            AstExprKind::PathMulti { .. } => {
+                // Module-qualified names are syntax in this phase; the module
+                // graph and resolution arrive with the multi-file lowering.
+                self.error(
+                    codes::E2069,
+                    span,
+                    "a module-qualified path needs module resolution",
+                )
+                .help("module resolution is not part of this compilation phase")
+                .emit();
+                ExprKind::Error
+            }
+            AstExprKind::StructMulti { fields, .. } => {
+                for field in fields {
+                    let _ = self.lower_expr(field.value);
+                }
+                self.error(
+                    codes::E2069,
+                    span,
+                    "a module-qualified struct literal needs module resolution",
+                )
+                .help("module resolution is not part of this compilation phase")
+                .emit();
+                ExprKind::Error
+            }
             AstExprKind::Unary { op, operand } => ExprKind::Unary {
                 op,
                 operand: self.lower_expr(operand),

@@ -6,14 +6,19 @@ use seal_symbol::Symbol;
 use crate::extern_item::{ExternBlockDecl, ExternFnDecl, ExternStaticDecl};
 use crate::generics::{GenericParams, TraitPath, WhereClause};
 use crate::id::{
-    BlockId, ExprId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId,
+    BlockId, CfgExprId, ExprId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId,
+    VariantDeclId,
 };
+use crate::modifiers::{Modifiers, Visibility};
+use crate::module::{ModuleDecl, UseDecl};
 
 /// A top-level item.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     /// What the item is.
     pub kind: ItemKind,
+    /// Visibility, `cfg`, and test modifiers written before the item.
+    pub modifiers: Modifiers,
     /// The item's full source range.
     pub span: Span,
 }
@@ -21,6 +26,10 @@ pub struct Item {
 /// The kinds of top-level item.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemKind {
+    /// A module path declaration at the start of a file.
+    Module(ModuleDecl),
+    /// An absolute, file-scoped import.
+    Use(UseDecl),
     /// A function declaration.
     Func(FnDecl),
     /// A constant declaration.
@@ -113,6 +122,9 @@ pub struct VariantDecl {
     pub name_span: Span,
     /// The declared field list.
     pub fields: VariantFieldList,
+    /// A `cfg(...)` condition written on the variant, retained so the rejected
+    /// syntax still has a reachable node.
+    pub cfg: Option<CfgExprId>,
     /// The span from the variant name through the closing delimiter.
     pub span: Span,
 }
@@ -149,6 +161,11 @@ pub struct FieldDecl {
     pub name_span: Span,
     /// The declared field type.
     pub ty: TypeId,
+    /// The field's declared visibility.
+    pub visibility: Visibility,
+    /// A `cfg(...)` condition written on the field, retained so the rejected
+    /// syntax still has a reachable node.
+    pub cfg: Option<CfgExprId>,
     /// The span from the name through the type.
     pub span: Span,
 }
@@ -222,6 +239,9 @@ pub struct TraitMethodDecl {
     pub where_clause: WhereClause,
     /// The default body, or `None` for a signature-only declaration.
     pub body: Option<BlockId>,
+    /// A `cfg(...)` condition written on the method, retained so the rejected
+    /// syntax still has a reachable node.
+    pub cfg: Option<CfgExprId>,
 }
 
 /// A function declaration.

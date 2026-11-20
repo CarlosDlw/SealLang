@@ -3,7 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
-use crate::generics::GenericArgs;
+use crate::generics::{GenericArgs, PathSegment};
 use crate::id::{BlockId, ExprId, PatternId, TypeId};
 use crate::pattern::MatchArm;
 
@@ -261,6 +261,21 @@ pub enum ExprKind {
         /// The span of the associated name.
         name_span: Span,
     },
+    /// A qualified path with two or more `::` segments.
+    ///
+    /// Resolution belongs to the module phase; the parser preserves the root,
+    /// every segment, and explicit arguments so diagnostics can point at the
+    /// exact name.
+    PathMulti {
+        /// The first segment.
+        root: Symbol,
+        /// The span of the first segment.
+        root_span: Span,
+        /// Explicit arguments on the first segment.
+        args: Option<GenericArgs>,
+        /// The remaining segments, in source order.
+        segments: Vec<PathSegment>,
+    },
     /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {
         /// The place being borrowed.
@@ -309,6 +324,20 @@ pub enum ExprKind {
         name_span: Span,
         /// Explicit type arguments written as `Name::<...>`.
         type_args: Option<GenericArgs>,
+        /// Initializers in source order.
+        fields: Vec<FieldInit>,
+    },
+    /// A struct literal whose type is a qualified path with two or more
+    /// `::` segments.
+    StructMulti {
+        /// The first segment.
+        root: Symbol,
+        /// The span of the first segment.
+        root_span: Span,
+        /// Explicit arguments on the first segment.
+        args: Option<GenericArgs>,
+        /// The remaining segments, in source order.
+        segments: Vec<PathSegment>,
         /// Initializers in source order.
         fields: Vec<FieldInit>,
     },

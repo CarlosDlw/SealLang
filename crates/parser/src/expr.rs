@@ -9,7 +9,8 @@
 //! the same spelling: prefix position decides, so `&x & y` is `(&x) & y`.
 
 use seal_ast::{
-    AssignOp, BinaryOp, ExprId, ExprKind, FieldInit, Literal, PatternId, UnaryOp, UpdateOp,
+    AssignOp, BinaryOp, ExprId, ExprKind, FieldInit, Literal, PathSegment, PatternId, UnaryOp,
+    UpdateOp,
 };
 use seal_error_codes as codes;
 use seal_lexer::{NumericSuffix, TokenKind};
@@ -672,70 +673,144 @@ impl Parser<'_> {
     }
 
     /// Parses a name, its optional turbofish, and any qualified continuation.
+    ///
+    /// One `::` keeps the existing `Type::associated` shape so every current
+    /// program lowers exactly as before. Two or more segments become a path
+    /// node for the module phase. A struct literal after a multi-segment path
+    /// has its own node, because its type is not a single name.
     fn parse_named_expr(&mut self, name: Symbol, name_span: seal_span::Span) -> ExprId {
-        if self.eat(TokenKind::ColonColon) {
-            let type_args = self.parse_optional_generic_args();
-            if type_args.is_some() {
-                if self.eat(TokenKind::ColonColon) {
-                    let (associated, associated_span) =
-                        self.expect_ident("an associated name after `::`");
-                    if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-                        return self.parse_variant_literal(
-                            name,
-                            name_span,
-                            type_args,
-                            associated,
-                            associated_span,
-                        );
-                    }
-                    let span = name_span.cover(associated_span);
-                    return self.builder.push_expr(
-                        ExprKind::PathQualified {
-                            type_name: name,
-                            type_span: name_span,
-                            type_args,
-                            name: associated,
-                            name_span: associated_span,
-                        },
-                        span,
-                    );
-                }
-                if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-                    return self.parse_struct_literal(name, name_span, type_args);
-                }
-                if self.at(TokenKind::Gt) || self.at(TokenKind::Shr) {
-                    self.error(
-                        codes::E1002,
-                        self.current_span(),
-                        "unexpected `>` after the type arguments",
-                    )
-                    .help("remove the extra `>`")
-                    .emit();
-                    let _ = self.eat_gt();
-                }
-                return self.path_expr(name, name_span, type_args);
-            }
-
-            let (associated, associated_span) = self.expect_ident("an associated name after `::`");
-            if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-                self.parse_variant_literal(name, name_span, None, associated, associated_span)
+        if !self.eat(TokenKind::ColonColon) {
+            return if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                self.parse_struct_literal(name, name_span, None)
             } else {
-                let span = name_span.cover(associated_span);
-                self.builder.push_expr(
-                    ExprKind::PathQualified {
-                        type_name: name,
-                        type_span: name_span,
-                        type_args: None,
-                        name: associated,
-                        name_span: associated_span,
-                    },
-                    span,
-                )
+                self.path_expr(name, name_span, None)
+            };
+        }
+
+        let type_args = self.parse_optional_generic_args();
+        if type_args.is_some() && !self.at(TokenKind::ColonColon) {
+            if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                return self.parse_struct_literal(name, name_span, type_args);
             }
-        } else if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
-            self.parse_struct_literal(name, name_span, None)
+            if self.at(TokenKind::Gt) || self.at(TokenKind::Shr) {
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    "unexpected `>` after the type arguments",
+                )
+                .help("remove the extra `>`")
+                .emit();
+                let _ = self.eat_gt();
+            }
+            return self.path_expr(name, name_span, type_args);
+        }
+        if type_args.is_some() {
+            self.bump();
+        }
+
+        let (first, first_span) = self.expect_ident("an associated name after `::`");
+        if first == Symbol::EMPTY {
+            let span = name_span.cover(first_span);
+            return self.builder.push_expr(
+                ExprKind::PathQualified {
+                    type_name: name,
+                    type_span: name_span,
+                    type_args,
+                    name: first,
+                    name_span: first_span,
+                },
+                span,
+            );
+        }
+        let first_args = self.parse_segment_args();
+        let mut segments = vec![PathSegment {
+            name: first,
+            name_span: first_span,
+            args: first_args,
+        }];
+        while self.eat(TokenKind::ColonColon) {
+            let (segment, segment_span) = self.expect_ident("a path segment after `::`");
+            if segment == Symbol::EMPTY {
+                break;
+            }
+            let args = self.parse_segment_args();
+            segments.push(PathSegment {
+                name: segment,
+                name_span: segment_span,
+                args,
+            });
+        }
+
+        if segments.len() == 1 && segments[0].args.is_none() {
+            let segment = &segments[0];
+            if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+                return self.parse_variant_literal(
+                    name,
+                    name_span,
+                    type_args,
+                    segment.name,
+                    segment.name_span,
+                );
+            }
+            if type_args.is_some() && (self.at(TokenKind::Gt) || self.at(TokenKind::Shr)) {
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    "unexpected `>` after the type arguments",
+                )
+                .help("remove the extra `>`")
+                .emit();
+                let _ = self.eat_gt();
+            }
+            let span = name_span.cover(segment.name_span);
+            return self.builder.push_expr(
+                ExprKind::PathQualified {
+                    type_name: name,
+                    type_span: name_span,
+                    type_args,
+                    name: segment.name,
+                    name_span: segment.name_span,
+                },
+                span,
+            );
+        }
+
+        let end = segments
+            .last()
+            .map_or(first_span, |segment| segment.name_span);
+        let span = name_span.cover(end);
+        if self.struct_literal_allowed && self.at(TokenKind::LBrace) {
+            let fields = self.parse_field_initializers(InitializerContext::Struct);
+            let span = span.cover(self.previous_span());
+            return self.builder.push_expr(
+                ExprKind::StructMulti {
+                    root: name,
+                    root_span: name_span,
+                    args: type_args,
+                    segments,
+                    fields,
+                },
+                span,
+            );
+        }
+        self.builder.push_expr(
+            ExprKind::PathMulti {
+                root: name,
+                root_span: name_span,
+                args: type_args,
+                segments,
+            },
+            span,
+        )
+    }
+
+    /// Parses `::<...>` when it applies to one path segment.
+    fn parse_segment_args(&mut self) -> Option<seal_ast::GenericArgs> {
+        if self.at(TokenKind::ColonColon) && matches!(self.peek_kind(), Some(TokenKind::Lt)) {
+            self.bump();
+            self.parse_generic_args()
         } else {
-            self.path_expr(name, name_span, None)
+            None
         }
     }
 

@@ -65,3 +65,8 @@ newtype_index! {
     /// Identifies a type.
     pub struct TypeId;
 }
+
+newtype_index! {
+    /// Identifies one parsed `cfg(...)` expression.
+    pub struct CfgExprId;
+}

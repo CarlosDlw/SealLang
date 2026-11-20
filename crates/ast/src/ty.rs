@@ -2,7 +2,7 @@
 
 use seal_span::Span;
 
-use crate::generics::{TraitPath, TypePath};
+use crate::generics::{PathSegment, TraitPath, TypePath};
 use crate::id::TypeId;
 
 /// A built-in type name.
@@ -282,6 +282,20 @@ pub enum TypeKind {
     /// The optional argument list is kept here so nested generic types and
     /// `Self` arguments retain their exact source spans.
     Path(TypePath),
+    /// A qualified type path with two or more `::` segments.
+    ///
+    /// Resolution is deferred to the module phase; the syntax tree preserves
+    /// every segment and its exact span.
+    PathMulti {
+        /// The first segment.
+        root: seal_symbol::Symbol,
+        /// The span of the first segment.
+        root_span: Span,
+        /// Explicit arguments on the first segment.
+        args: Option<crate::generics::GenericArgs>,
+        /// The remaining segments, in source order.
+        segments: Vec<PathSegment>,
+    },
     /// A trait object, written `dyn Trait` or `dyn Trait<Args>`.
     ///
     /// Trait objects are unsized and only become usable behind a pointer. The

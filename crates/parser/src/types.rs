@@ -1,6 +1,6 @@
 //! Type syntax.
 
-use seal_ast::{PrimitiveType, TraitPath, TypeId, TypeKind, TypePath};
+use seal_ast::{PathSegment, PrimitiveType, TraitPath, TypeId, TypeKind, TypePath};
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
 use seal_symbol::Symbol;
@@ -148,17 +148,47 @@ impl Parser<'_> {
                 None => {
                     // Named types are resolved during lowering, where the type
                     // namespace is known; the parser records the name and any
-                    // explicit arguments.
+                    // explicit arguments. Two or more `::` segments keep every
+                    // name for module resolution in the next phase.
                     let token = self.bump();
-                    let args = self.parse_optional_generic_args();
-                    let end = args.as_ref().map_or(token.span, |args| args.span);
-                    let path = TypePath {
-                        name: symbol,
-                        name_span: token.span,
-                        args,
-                    };
-                    self.builder
-                        .push_type(TypeKind::Path(path), token.span.cover(end))
+                    let args = self.parse_type_segment_args();
+                    let mut segments = Vec::new();
+                    let mut end = args.as_ref().map_or(token.span, |args| args.span);
+                    while self.eat(TokenKind::ColonColon) {
+                        let (name, name_span) = self.expect_ident("a type path segment");
+                        if name == Symbol::EMPTY {
+                            break;
+                        }
+                        let args = self.parse_type_segment_args();
+                        end = name_span;
+                        if let Some(args) = &args {
+                            end = args.span;
+                        }
+                        segments.push(PathSegment {
+                            name,
+                            name_span,
+                            args,
+                        });
+                    }
+                    if segments.is_empty() {
+                        let path = TypePath {
+                            name: symbol,
+                            name_span: token.span,
+                            args,
+                        };
+                        self.builder
+                            .push_type(TypeKind::Path(path), token.span.cover(end))
+                    } else {
+                        self.builder.push_type(
+                            TypeKind::PathMulti {
+                                root: symbol,
+                                root_span: token.span,
+                                args,
+                                segments,
+                            },
+                            token.span.cover(end),
+                        )
+                    }
                 }
             }
         } else {
@@ -356,6 +386,17 @@ impl Parser<'_> {
             },
             span,
         )
+    }
+
+    /// Parses type arguments on one type path segment, with or without the
+    /// expression-style `::` before `<`.
+    fn parse_type_segment_args(&mut self) -> Option<seal_ast::GenericArgs> {
+        if self.at(TokenKind::ColonColon) && matches!(self.peek_kind(), Some(TokenKind::Lt)) {
+            self.bump();
+            self.parse_generic_args()
+        } else {
+            self.parse_optional_generic_args()
+        }
     }
 
     /// Returns `true` when the current token spells the contextual keyword.

@@ -75,6 +75,9 @@ impl Lowering<'_> {
     /// `Point::new` needs the impl registry to be complete, so bodies are
     /// lowered only after every pass.
     pub(super) fn collect_items(&mut self) {
+        // `Module` and `Use` are syntax only in this phase: they carry no
+        // definitions yet, and every collection loop below skips them. The
+        // multi-file lowering phase turns them into the module graph.
         let items: Vec<ItemId> = self.ast.program().items().to_vec();
 
         for &item_id in &items {
