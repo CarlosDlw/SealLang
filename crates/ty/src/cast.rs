@@ -120,7 +120,7 @@ impl TyCtxt {
 
     /// Returns `true` when a pointer's pointee carries metadata, so the pointer
     /// occupies two words.
-    fn is_fat_pointee(&self, pointee: TyId) -> bool {
+    pub(crate) fn is_fat_pointee(&self, pointee: TyId) -> bool {
         matches!(
             self.kind(pointee),
             TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. }

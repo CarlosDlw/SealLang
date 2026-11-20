@@ -203,6 +203,66 @@ fn extern_structs_and_opaque_handles_roundtrip_by_value() {
     }
 }
 
+fn variadic_program() -> String {
+    let mut source = String::from(
+        "extern \"c\" {\n\
+         \tfunc ffi_cstr_len(text: *raw u8) -> i32;\n\
+         \tfunc ffi_sum_ints(count: i32, ...) -> i32;\n\
+         \tfunc ffi_sum_doubles(count: i32, ...) -> f64;\n\
+         \tfunc ffi_variadic_wide(count: i32, ...) -> i64;\n\
+         \tfunc ffi_variadic_kinds(count: i32, ...) -> i32;\n\
+         \tfunc ffi_variadic_first_char(count: i32, ...) -> i32;\n\
+         \tfunc snprintf(buffer: *raw mut u8, size: usize, format: *raw u8, ...) -> c_int;\n\
+         }\n\
+         const GREETING: *raw u8 = c\"Z\";\n\
+         static BANNER: *raw u8 = c\"Q\";\n",
+    );
+    source.push_str("func main() -> i32 {\n");
+    source.push_str("  unsafe {\n");
+    source.push_str("    if ffi_cstr_len(c\"hello\") != 5 { return 30; }\n");
+    source.push_str("    if ffi_cstr_len(c\"\") != 0 { return 31; }\n");
+    source.push_str("    if ffi_cstr_len(c\"é日\") != 5 { return 32; }\n");
+    source.push_str("    if ffi_cstr_len(c\"a\\nb\") != 3 { return 33; }\n");
+    source.push_str("    if ffi_sum_ints(0) != 0 { return 42; }\n");
+    source.push_str("    if ffi_sum_ints(1, -5i32) != -5 { return 43; }\n");
+    source.push_str("    if ffi_sum_ints(1, false) != 0 { return 44; }\n");
+    source.push_str("    if ffi_sum_ints(1, true) != 1 { return 45; }\n");
+    source.push_str(
+        "    if ffi_sum_ints(8, 1i32, 2i32, 3i32, 4i32, 5i32, 6i32, 7i32, 8i32) != 36 { return 46; }\n",
+    );
+    source.push_str("    if ffi_sum_ints(4, 1i8, 2u16, true, 38) != 42 { return 34; }\n");
+    source.push_str("    if ffi_sum_doubles(2, 40.5f32, 1.5f64) != 42.0 { return 35; }\n");
+    source.push_str("    if ffi_variadic_kinds(3, 1i8, 2.5f32, 3i64) != 1 { return 48; }\n");
+    source.push_str("    if ffi_variadic_wide(2, 40i64, 2i64) != 42i64 { return 36; }\n");
+    source.push_str("    if ffi_variadic_first_char(1, c\"Z\") != 90 { return 37; }\n");
+    source.push_str("    if ffi_variadic_first_char(1, GREETING) != 90 { return 38; }\n");
+    source.push_str("    if ffi_variadic_first_char(1, BANNER) != 81 { return 47; }\n");
+    source.push_str("    let mut buffer: [u8; 32] = [0u8; 32];\n");
+    source.push_str(
+        "    let written = snprintf(&mut buffer[0] as *raw mut u8, 32usize, c\"value=%d\", 7);\n",
+    );
+    source.push_str("    if written != 7 { return 39; }\n");
+    source
+        .push_str("    if buffer[0] != 118 || buffer[5] != 61 || buffer[6] != 55 { return 40; }\n");
+    source.push_str("    if buffer[7] != 0 { return 41; }\n");
+    source.push_str("  }\n");
+    source.push_str("  42\n");
+    source.push_str("}\n");
+    source
+}
+
+#[test]
+fn c_strings_and_variadic_arguments_cross_the_c_boundary() {
+    let fixture = Fixture::new();
+    for (opt_level, tag) in [
+        (OptLevel::O0, "ffi-variadic-o0"),
+        (OptLevel::O2, "ffi-variadic-o2"),
+    ] {
+        let code = compile_and_run(&variadic_program(), fixture.links(), tag, opt_level);
+        assert_eq!(code, 42, "variadic ABI failed at {opt_level:?}");
+    }
+}
+
 #[test]
 fn a_source_link_directive_names_the_library() {
     let fixture = Fixture::new();

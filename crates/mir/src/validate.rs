@@ -588,7 +588,8 @@ fn check_operand(
             return Err(ValidationError::MoveFromUnsizedPlace { block });
         }
     }
-    if let (Some(hir), Some(ty)) = (hir, constant_ty(operand))
+    if let Some(hir) = hir
+        && let Some(ty) = constant_ty(hir.ty_ctxt(), operand)
         && contains_infer(hir, ty)
     {
         return Err(ValidationError::InferredConstant { block });
@@ -759,7 +760,7 @@ fn dyn_pointer(tcx: &seal_ty::TyCtxt, ty: TyId) -> Option<(bool, TyId, TraitRef)
 fn operand_ty(hir: &Hir, body: &Body, operand: &Operand) -> Option<TyId> {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => Some(place_ty(hir, body, place)),
-        Operand::Constant(constant) => constant_ty(&Operand::Constant(*constant)),
+        Operand::Constant(constant) => constant_ty(hir.ty_ctxt(), &Operand::Constant(*constant)),
         Operand::Const(def) => Some(
             hir.body_of(*def)
                 .and_then(|body| body.ret)
@@ -815,13 +816,17 @@ pub fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
 }
 
 /// Returns the type of a literal operand, when it carries one.
-fn constant_ty(operand: &Operand) -> Option<seal_ty::TyId> {
+fn constant_ty(tcx: &seal_ty::TyCtxt, operand: &Operand) -> Option<seal_ty::TyId> {
     match operand {
         Operand::Constant(
             crate::operand::Constant::Int { ty, .. }
             | crate::operand::Constant::Float { ty, .. }
-            | crate::operand::Constant::Str { ty, .. },
+            | crate::operand::Constant::Str { ty, .. }
+            | crate::operand::Constant::CStr { ty, .. },
         ) => Some(*ty),
+        Operand::Constant(crate::operand::Constant::Bool(_)) => Some(tcx.bool_ty()),
+        Operand::Constant(crate::operand::Constant::Char(_)) => Some(tcx.char_ty()),
+        Operand::Constant(crate::operand::Constant::Unit) => Some(tcx.unit_ty()),
         _ => None,
     }
 }
@@ -852,7 +857,10 @@ fn check_cast(body: &Body, cast: &CastCheck<'_>, hir: &Hir) -> Result<(), Valida
     if place_ty(hir, body, cast.destination) != cast.to {
         return Err(ValidationError::CastDestinationTypeMismatch { block });
     }
-    if tcx.cast_kind(cast.from, cast.to) != Some(cast.kind) {
+    let expected = tcx
+        .cast_kind(cast.from, cast.to)
+        .or_else(|| tcx.variadic_cast_kind(cast.from, cast.to));
+    if expected != Some(cast.kind) {
         return Err(ValidationError::CastKindMismatch { block });
     }
     Ok(())
@@ -997,7 +1005,13 @@ fn check_rvalue(
                 });
             }
             if let Some(hir) = hir {
-                if args.len() != target.parameters() {
+                let variadic = matches!(target, CallTarget::Extern { variadic: true, .. });
+                let arity_mismatch = if variadic {
+                    args.len() < target.parameters()
+                } else {
+                    args.len() != target.parameters()
+                };
+                if arity_mismatch {
                     return Err(ValidationError::CallArityMismatch {
                         args: args.len(),
                         parameters: target.parameters(),

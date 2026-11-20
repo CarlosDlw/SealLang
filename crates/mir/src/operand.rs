@@ -34,6 +34,13 @@ pub enum Constant {
         /// The `*str` type selected by the checker.
         ty: TyId,
     },
+    /// A C string literal; the symbol holds the unescaped contents.
+    CStr {
+        /// The unescaped contents, without the terminator.
+        value: Symbol,
+        /// The `*raw u8` type selected by the checker.
+        ty: TyId,
+    },
     /// The unit value.
     Unit,
 }

@@ -295,6 +295,11 @@ impl Parser<'_> {
                 self.builder
                     .push_expr(ExprKind::Lit(Literal::Str(symbol)), token.span)
             }
+            TokenKind::CStr(symbol) => {
+                self.bump();
+                self.builder
+                    .push_expr(ExprKind::Lit(Literal::CStr(symbol)), token.span)
+            }
             TokenKind::Char(character) => {
                 self.bump();
                 self.builder

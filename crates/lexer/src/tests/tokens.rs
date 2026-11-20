@@ -60,6 +60,7 @@ fn every_operator_has_a_token() {
         (".", TokenKind::Dot),
         ("..", TokenKind::DotDot),
         ("..=", TokenKind::DotDotEq),
+        ("...", TokenKind::DotDotDot),
         ("@", TokenKind::At),
     ];
     for (source, expected) in cases {

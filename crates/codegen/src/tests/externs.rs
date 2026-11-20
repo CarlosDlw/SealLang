@@ -121,6 +121,52 @@ fn a_large_c_struct_parameter_is_passed_byval() {
 }
 
 #[test]
+fn a_variadic_declaration_and_call_use_the_c_defaults() {
+    let ir = ir_text(
+        r#"extern "c" { func printf(format: *raw u8, ...) -> i32; }
+           func main() -> i32 {
+               unsafe { printf(c"%d", 1i8, 2u16, true, 1.5f32, 3i64) }
+           }"#,
+    );
+    assert_eq!(
+        declaration(&ir, "@printf("),
+        "declare i32 @printf(ptr, ...)"
+    );
+    let call = ir
+        .lines()
+        .find(|line| line.contains("call i32") && line.contains("@printf("))
+        .unwrap_or_else(|| panic!("no call to `printf` in:\n{ir}"));
+    assert!(
+        call.contains("i32 (ptr, ...) @printf("),
+        "the call uses the variadic signature: {call}"
+    );
+    assert!(
+        call.contains("ptr @seal.str.0, i32") && call.matches(", i32").count() == 3,
+        "narrow integers and bool pass as `i32`: {call}"
+    );
+    assert!(
+        call.contains(", double ") && call.contains(", i64 3)"),
+        "`f32` widens to `f64` and `i64` keeps its width: {call}"
+    );
+}
+
+#[test]
+fn a_c_string_global_is_nul_terminated() {
+    let ir = ir_text(
+        r#"extern "c" { func ffi_cstr_len(text: *raw u8) -> i32; }
+           func main() -> i32 { unsafe { ffi_cstr_len(c"seal") } }"#,
+    );
+    let global = ir
+        .lines()
+        .find(|line| line.contains("@seal.str.") && line.contains("constant"))
+        .unwrap_or_else(|| panic!("no string global in:\n{ir}"));
+    assert!(
+        global.contains("c\"seal\\00\""),
+        "the global carries the terminator: {global}"
+    );
+}
+
+#[test]
 fn debug_information_describes_a_c_struct_with_its_layout() {
     let compiled = front_end(
         r#"extern struct Point { x: c_int, y: c_int }

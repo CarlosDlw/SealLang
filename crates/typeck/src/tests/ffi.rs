@@ -288,6 +288,94 @@ fn two_declarations_cannot_share_a_seal_name() {
 }
 
 #[test]
+fn a_c_string_literal_has_a_const_u8_pointer_type() {
+    let source = r#"
+        func main() {
+            let pointer: *raw u8 = c"hello";
+            let _ = pointer;
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn a_variadic_call_accepts_promoted_arguments() {
+    let source = r#"
+        extern "c" { func log(format: *raw u8, ...) -> i32; }
+        func main() -> i32 {
+            unsafe { log(c"%d %.1f", 1i8, 2u16, true, 1.5f32, 4i64, 2.5f64) }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn a_variadic_call_requires_every_fixed_argument() {
+    let source = r#"
+        extern "c" { func log(format: *raw u8, ...); }
+        func main() { unsafe { log(); } }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3008", "requires at least 1");
+}
+
+#[test]
+fn a_str_cannot_cross_a_variadic_boundary() {
+    let source = r#"
+        extern "c" { func log(format: *raw u8, ...); }
+        func main() {
+            let text = "hello";
+            unsafe { log(c"%s", text); }
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3088", "cannot be passed through `...`");
+}
+
+#[test]
+fn a_char_cannot_cross_a_variadic_boundary() {
+    let source = r#"
+        extern "c" { func log(format: *raw u8, ...); }
+        func main() { unsafe { log(c"%c", 'x'); } }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3088", "cannot be passed through `...`");
+}
+
+#[test]
+fn an_extern_struct_cannot_cross_a_variadic_boundary() {
+    let source = r#"
+        extern struct Point { x: c_int }
+        extern "c" { func log(format: *raw u8, ...); }
+        func main() {
+            let point = Point { x: 1 };
+            unsafe { log(c"%p", point); }
+        }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3088", "cannot be passed through `...`");
+}
+
+#[test]
+fn a_pointer_to_an_extern_struct_crosses_a_variadic_boundary() {
+    let source = r#"
+        extern struct Point { x: c_int }
+        extern "c" { func log(format: *raw u8, ...); }
+        func main() {
+            let point = Point { x: 1 };
+            let pointer = &point as *raw Point;
+            unsafe { log(c"%p", pointer); }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn conflicting_variadic_shapes_are_rejected() {
+    let source = r#"
+        extern "c" {
+            func first(format: *raw u8, ...) link_name "shared";
+            func second(format: *raw u8) link_name "shared";
+        }
+        func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3083", "two different types");
+}
+
+#[test]
 fn declaring_the_same_symbol_with_one_shape_is_accepted() {
     let source = r#"
         extern "c" {

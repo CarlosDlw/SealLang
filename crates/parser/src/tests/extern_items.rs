@@ -64,10 +64,30 @@ fn a_missing_return_type_is_void() {
 }
 
 #[test]
-fn variadic_declarations_are_rejected() {
-    let fixture = Fixture::new(r#"extern "c" { func printf(format: *raw u8, ...); }"#);
+fn a_trailing_variadic_parameter_is_parsed() {
+    let (_, ast) = parse_clean(r#"extern "c" { func printf(format: *raw u8, ...); }"#);
+    let ItemKind::ExternBlock(block) = &ast.item(ast.program().items()[0]).kind else {
+        panic!("expected an extern block");
+    };
+    let ItemKind::ExternFunc(declaration) = &ast.item(block.items[0]).kind else {
+        panic!("expected an external function");
+    };
+    assert_eq!(declaration.params.len(), 1);
+    assert!(declaration.variadic);
+}
+
+#[test]
+fn a_variadic_parameter_without_a_fixed_parameter_is_rejected() {
+    let fixture = Fixture::new(r#"extern "c" { func invalid(...); }"#);
     let _ = fixture.parse();
-    fixture.expect("E3088", "variadic");
+    fixture.expect("E3088", "named parameter");
+}
+
+#[test]
+fn a_non_trailing_variadic_parameter_is_rejected() {
+    let fixture = Fixture::new(r#"extern "c" { func invalid(format: *raw u8, ..., value: i32); }"#);
+    let _ = fixture.parse();
+    fixture.expect("E3088", "last element");
 }
 
 #[test]

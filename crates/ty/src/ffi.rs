@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use crate::{IntTy, RefKind, TyCtxt, TyId, TyKind, UintTy};
+use crate::{CastKind, IntTy, NumericCastKind, RefKind, TyCtxt, TyId, TyKind, UintTy};
 
 /// Where a type appears on a C boundary.
 ///
@@ -106,6 +106,52 @@ impl NotFfiSafe {
             Self::Never => "return a type C can represent",
             Self::Opaque => "use `*raw T` to pass C-owned storage indirectly",
             Self::EmptyArray => "use a non-empty array",
+        }
+    }
+}
+
+impl TyCtxt {
+    /// Returns the type an argument is promoted to when passed through `...`.
+    ///
+    /// C applies the default argument promotions: `bool` and integers narrower
+    /// than `int` become `int`, and `f32` becomes `f64`. Wider integers, `f64`,
+    /// and thin raw pointers keep their type. Every other type is not a valid
+    /// variadic argument and returns `None`.
+    pub fn variadic_promotion(&self, ty: TyId) -> Option<TyId> {
+        match self.kind(ty) {
+            TyKind::Bool => Some(self.int_ty(IntTy::I32)),
+            TyKind::Int(int) => match int.bits() {
+                Some(bits) if bits < 32 => Some(self.int_ty(IntTy::I32)),
+                Some(bits) if bits <= 64 => Some(ty),
+                // C has no standard variadic type for 128-bit integers.
+                _ => None,
+            },
+            TyKind::Uint(uint) => match uint.bits() {
+                // C promotes the narrow unsigned types to signed `int`.
+                Some(bits) if bits < 32 => Some(self.int_ty(IntTy::I32)),
+                Some(bits) if bits <= 64 => Some(ty),
+                _ => None,
+            },
+            TyKind::Float(crate::FloatTy::F32) => Some(self.float_ty(crate::FloatTy::F64)),
+            TyKind::Float(_) => Some(ty),
+            TyKind::RawPtr { pointee, .. } if !self.is_fat_pointee(pointee) => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// Returns the MIR conversion that performs one variadic promotion.
+    ///
+    /// C's default promotions are internal, not surface `as` casts, so `bool`
+    /// promotes to `int` through the same zero-extension as an unsigned
+    /// integer even though `bool as i32` is not part of the language. Every
+    /// other promoted pair is classified by [`TyCtxt::cast_kind`].
+    pub fn variadic_cast_kind(&self, from: TyId, to: TyId) -> Option<CastKind> {
+        if self.variadic_promotion(from) != Some(to) {
+            return None;
+        }
+        match self.kind(from) {
+            TyKind::Bool => Some(CastKind::Numeric(NumericCastKind::IntToInt)),
+            _ => self.cast_kind(from, to),
         }
     }
 }
@@ -244,6 +290,57 @@ mod tests {
                 Err(NotFfiSafe::Reference(kind))
             );
         }
+    }
+
+    #[test]
+    fn variadic_promotions_follow_the_c_defaults() {
+        let tcx = TyCtxt::new();
+        let int = tcx.int_ty(crate::IntTy::I32);
+        let float = tcx.float_ty(crate::FloatTy::F64);
+        let pointer = tcx.raw_ptr_ty_with(RawPtrKind::Const, int);
+
+        for narrow in [
+            tcx.bool_ty(),
+            tcx.int_ty(crate::IntTy::I8),
+            tcx.int_ty(crate::IntTy::I16),
+            tcx.uint_ty(crate::UintTy::U8),
+            tcx.uint_ty(crate::UintTy::U16),
+        ] {
+            assert_eq!(tcx.variadic_promotion(narrow), Some(int));
+        }
+        assert_eq!(
+            tcx.variadic_promotion(tcx.float_ty(crate::FloatTy::F32)),
+            Some(float)
+        );
+        for unchanged in [
+            int,
+            tcx.uint_ty(crate::UintTy::U32),
+            tcx.int_ty(crate::IntTy::I64),
+            tcx.uint_ty(crate::UintTy::U64),
+            float,
+            pointer,
+        ] {
+            assert_eq!(tcx.variadic_promotion(unchanged), Some(unchanged));
+        }
+    }
+
+    #[test]
+    fn types_cannot_cross_a_variadic_boundary() {
+        let tcx = TyCtxt::new();
+        let int = tcx.int_ty(crate::IntTy::I32);
+        for rejected in [
+            tcx.unit_ty(),
+            tcx.char_ty(),
+            tcx.str_ty(),
+            tcx.slice_ty(int),
+            tcx.ref_ty_with(RefKind::Shared, int),
+            tcx.int_ty(crate::IntTy::I128),
+            tcx.uint_ty(crate::UintTy::U128),
+        ] {
+            assert_eq!(tcx.variadic_promotion(rejected), None);
+        }
+        let fat = tcx.raw_ptr_ty_with(RawPtrKind::Const, tcx.str_ty());
+        assert_eq!(tcx.variadic_promotion(fat), None);
     }
 
     #[test]

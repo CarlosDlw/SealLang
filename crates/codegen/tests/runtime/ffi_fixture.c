@@ -6,6 +6,7 @@
  * the linker command line, which proves --link-arg reaches the link.
  */
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -139,3 +140,68 @@ void ffi_handle_set(ffi_handle *handle, int32_t value) { handle->value = value; 
 void ffi_handle_free(ffi_handle *handle) { free(handle); }
 
 int32_t ffi_zero_sized_probe(void) { return 0; }
+
+int32_t ffi_cstr_len(const char *text) {
+  int32_t length = 0;
+  while (text[length] != '\0') {
+    length += 1;
+  }
+  return length;
+}
+
+int32_t ffi_sum_ints(int32_t count, ...) {
+  va_list arguments;
+  va_start(arguments, count);
+  int32_t total = 0;
+  for (int32_t index = 0; index < count; index += 1) {
+    total += va_arg(arguments, int);
+  }
+  va_end(arguments);
+  return total;
+}
+
+double ffi_sum_doubles(int32_t count, ...) {
+  va_list arguments;
+  va_start(arguments, count);
+  double total = 0.0;
+  for (int32_t index = 0; index < count; index += 1) {
+    total += va_arg(arguments, double);
+  }
+  va_end(arguments);
+  return total;
+}
+
+int64_t ffi_variadic_wide(int32_t count, ...) {
+  va_list arguments;
+  va_start(arguments, count);
+  int64_t total = 0;
+  for (int32_t index = 0; index < count; index += 1) {
+    total += va_arg(arguments, int64_t);
+  }
+  va_end(arguments);
+  return total;
+}
+
+int32_t ffi_variadic_kinds(int32_t count, ...) {
+  if (count != 3) {
+    return -1;
+  }
+  va_list arguments;
+  va_start(arguments, count);
+  int first = va_arg(arguments, int);
+  double second = va_arg(arguments, double);
+  int64_t third = va_arg(arguments, int64_t);
+  va_end(arguments);
+  return first == 1 && second == 2.5 && third == 3;
+}
+
+int32_t ffi_variadic_first_char(int32_t count, ...) {
+  if (count < 1) {
+    return -1;
+  }
+  va_list arguments;
+  va_start(arguments, count);
+  const char *text = va_arg(arguments, const char *);
+  va_end(arguments);
+  return (int32_t)(unsigned char)text[0];
+}

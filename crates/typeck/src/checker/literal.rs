@@ -4,7 +4,7 @@ use seal_ast::{Literal, PrimitiveType};
 use seal_hir::primitive_kind;
 use seal_span::Span;
 use seal_symbol::Symbol;
-use seal_ty::{TyId, TyKind};
+use seal_ty::{RawPtrKind, TyId, TyKind, UintTy};
 
 use super::Checker;
 
@@ -60,6 +60,13 @@ impl Checker<'_> {
                 ty
             }
             Literal::Str(_) => self.str_ref_ty(),
+            Literal::CStr(_) => {
+                let byte = self.hir.ty_ctxt().uint_ty(UintTy::U8);
+                self.interned(TyKind::RawPtr {
+                    kind: RawPtrKind::Const,
+                    pointee: byte,
+                })
+            }
             Literal::Char(_) => self.interned(TyKind::Char),
             Literal::Bool(_) => self.bool_ty(),
         }

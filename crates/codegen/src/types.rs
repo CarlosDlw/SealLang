@@ -269,6 +269,7 @@ impl<'ctx> TypeMapper<'ctx> {
         &self,
         parameters: &[TyId],
         returns: TyId,
+        variadic: bool,
     ) -> Result<CSignature<'ctx>, CodegenError> {
         let mut llvm_parameters = Vec::with_capacity(parameters.len() + 1);
         let mut signature_params = Vec::with_capacity(parameters.len() + 1);
@@ -321,10 +322,10 @@ impl<'ctx> TypeMapper<'ctx> {
         }
         let function_type = match &return_abi {
             CReturn::Void | CReturn::Sret(_) => {
-                self.context.void_type().fn_type(&llvm_parameters, false)
+                self.context.void_type().fn_type(&llvm_parameters, variadic)
             }
-            CReturn::Direct => self.basic(returns)?.fn_type(&llvm_parameters, false),
-            CReturn::Coerced(ty) => ty.fn_type(&llvm_parameters, false),
+            CReturn::Direct => self.basic(returns)?.fn_type(&llvm_parameters, variadic),
+            CReturn::Coerced(ty) => ty.fn_type(&llvm_parameters, variadic),
         };
         Ok(CSignature {
             function_type,

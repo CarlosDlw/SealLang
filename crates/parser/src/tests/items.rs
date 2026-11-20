@@ -5,6 +5,13 @@ use seal_ast::{ItemKind, PrimitiveType, TypeKind};
 use crate::tests::support::{Fixture, body, function, parse_clean, sole_function};
 
 #[test]
+fn a_seal_function_cannot_be_variadic() {
+    let fixture = Fixture::new("func f(value: i32, ...) {}");
+    let _ = fixture.parse();
+    fixture.expect("E3088", "cannot declare a variadic parameter");
+}
+
+#[test]
 fn functions_can_take_parameters_and_return_a_type() {
     let (fixture, ast) = parse_clean("func add(a: i32, b: *f64,) -> i32 { a }");
     let declaration = sole_function(&ast);

@@ -361,6 +361,23 @@ memory. `str` itself is unsized, so it only appears behind a reference.
 
 A raw line break is not allowed inside a string literal; it must be escaped.
 
+### C strings
+
+`c"..."` is a C string literal. Its type is `*raw u8`: a thin, read-only raw
+pointer to static bytes followed by a NUL terminator. It carries no length and
+is not a `*str`, so it cannot call `str` methods or be used where `*str` is
+expected. It is the direct spelling for a C `const char *` parameter.
+
+```seal
+let text: *raw u8 = c"value=%d";
+let empty: *raw u8 = c"";
+```
+
+The same escape table applies. A NUL written inside the literal (`c"a\0b"`)
+is `E3090`, because C would stop at the first NUL and the rest of the literal
+would be unreachable; end the string instead. An empty C string is valid and
+points at one NUL byte.
+
 ## References
 
 | Kind | Spelling | Read | Write | Overlap rule | Codegen attribute |

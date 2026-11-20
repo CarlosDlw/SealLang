@@ -13,6 +13,16 @@ fn string_value(source: &str) -> String {
     }
 }
 
+fn c_string_value(source: &str) -> String {
+    let fixture = Fixture::new(source);
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    match lexed.tokens[0].kind {
+        TokenKind::CStr(symbol) => fixture.symbol(symbol),
+        other => panic!("expected a C string for {source:?}, got {other:?}"),
+    }
+}
+
 fn char_value(source: &str) -> char {
     let fixture = Fixture::new(source);
     let lexed = fixture.lex();
@@ -44,6 +54,34 @@ fn strings_cook_their_contents() {
     assert_eq!(string_value("\"\\x41\\x7F\""), "A\u{7f}");
     assert_eq!(string_value("\"\\u{41}\\u{1F600}\""), "A\u{1F600}");
     assert_eq!(string_value("\"é日\""), "é日");
+}
+
+#[test]
+fn c_strings_cook_like_strings_without_the_terminator() {
+    assert_eq!(c_string_value("c\"abc\""), "abc");
+    assert_eq!(c_string_value("c\"\""), "");
+    assert_eq!(c_string_value("c\"a\\nb\\t\\x7F\""), "a\nb\t\u{7f}");
+    assert_eq!(c_string_value("c\"é日\""), "é日");
+}
+
+#[test]
+fn c_strings_reject_an_interior_nul() {
+    expect_error("c\"a\\0b\"", "E3090", "NUL");
+    expect_error("c\"\\0\"", "E3090", "NUL");
+}
+
+#[test]
+fn unterminated_c_strings_report_e0006() {
+    expect_error("c\"abc", "E0006", "not terminated");
+}
+
+#[test]
+fn c_string_tokens_keep_their_own_kind() {
+    let fixture = Fixture::new("c\"same\" \"same\"");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    assert!(matches!(lexed.tokens[0].kind, TokenKind::CStr(_)));
+    assert!(matches!(lexed.tokens[1].kind, TokenKind::Str(_)));
 }
 
 #[test]

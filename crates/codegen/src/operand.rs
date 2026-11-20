@@ -22,7 +22,8 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             Operand::Constant(constant) => match constant {
                 Constant::Int { ty, .. }
                 | Constant::Float { ty, .. }
-                | Constant::Str { ty, .. } => *ty,
+                | Constant::Str { ty, .. }
+                | Constant::CStr { ty, .. } => *ty,
                 Constant::Bool(_) => self.tcx.bool_ty(),
                 Constant::Char(_) => self.tcx.char_ty(),
                 Constant::Unit => self.tcx.unit_ty(),

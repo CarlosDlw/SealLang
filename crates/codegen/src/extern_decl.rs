@@ -44,7 +44,7 @@ impl<'ctx> Externals<'ctx> {
             let name = interner.resolve(data.symbol);
             let parameters: Vec<TyId> = data.params.iter().map(|param| param.ty).collect();
             let returns = data.ret.unwrap_or_else(|| hir.ty_ctxt().unit_ty());
-            let signature = mapper.c_signature(&parameters, returns)?;
+            let signature = mapper.c_signature(&parameters, returns, data.variadic)?;
             let function =
                 module.add_function(name, signature.function_type, Some(Linkage::External));
             apply_signature_attributes(module, function, &signature);

@@ -82,7 +82,15 @@ impl<'a> Scanner<'a> {
                 self.block_comment();
                 None
             }
-            '"' => Some(self.string()),
+            '"' => {
+                let start = self.cursor.position();
+                Some(self.string(start, false))
+            }
+            'c' if self.cursor.second_byte() == Some(b'"') => {
+                let start = self.cursor.position();
+                self.cursor.bump_byte();
+                Some(self.string(start, true))
+            }
             '\'' => Some(self.character()),
             '0'..='9' => Some(self.number()),
             _ if is_punctuation(character) => Some(self.punctuation()),
@@ -245,6 +253,8 @@ impl<'a> Scanner<'a> {
                 if self.cursor.eat_byte(b'.') {
                     if self.cursor.eat_byte(b'=') {
                         TokenKind::DotDotEq
+                    } else if self.cursor.eat_byte(b'.') {
+                        TokenKind::DotDotDot
                     } else {
                         TokenKind::DotDot
                     }

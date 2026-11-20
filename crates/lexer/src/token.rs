@@ -159,6 +159,12 @@ pub enum TokenKind {
     /// A string literal; the symbol holds the unescaped contents.
     Str(Symbol),
 
+    /// A C string literal; the symbol holds the unescaped contents.
+    ///
+    /// The lexer rejects an interior NUL, and code generation appends the
+    /// terminator.
+    CStr(Symbol),
+
     /// A character literal.
     Char(char),
 
@@ -238,6 +244,8 @@ pub enum TokenKind {
     DotDot,
     /// `..=`
     DotDotEq,
+    /// `...`
+    DotDotDot,
     /// `@`
     At,
     /// `->`

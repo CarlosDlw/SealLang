@@ -237,6 +237,39 @@ fn equality_compares_aggregates_and_contents() {
 }
 
 #[test]
+fn c_string_literals_evaluate_to_raw_string_data() {
+    let fixture = clean(
+        "const TEXT: *raw u8 = c\"seal\"; \
+         const EMPTY: *raw u8 = c\"\"; \
+         const ESCAPED: *raw u8 = c\"a\\nb\";",
+    );
+    match fixture.value("TEXT") {
+        ConstValue::RawStrData {
+            value,
+            offset,
+            mutable,
+        } => {
+            assert_eq!(*offset, 0);
+            assert!(!mutable);
+            assert_eq!(fixture.interner.resolve(*value), "seal");
+        }
+        other => panic!("TEXT is not raw string data: {other:?}"),
+    }
+    match fixture.value("EMPTY") {
+        ConstValue::RawStrData { value, .. } => {
+            assert_eq!(fixture.interner.resolve(*value), "");
+        }
+        other => panic!("EMPTY is not raw string data: {other:?}"),
+    }
+    match fixture.value("ESCAPED") {
+        ConstValue::RawStrData { value, .. } => {
+            assert_eq!(fixture.interner.resolve(*value), "a\nb");
+        }
+        other => panic!("ESCAPED is not raw string data: {other:?}"),
+    }
+}
+
+#[test]
 fn a_trait_object_records_its_vtable_key() {
     let fixture = clean(
         "trait Shape { func area(self: *Self) -> i32; } \

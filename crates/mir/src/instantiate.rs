@@ -195,7 +195,10 @@ fn substitute_operand(tcx: &TyCtxt, substs: SubstsId, operand: &mut Operand) {
         return;
     };
     match constant {
-        Constant::Int { ty, .. } | Constant::Float { ty, .. } | Constant::Str { ty, .. } => {
+        Constant::Int { ty, .. }
+        | Constant::Float { ty, .. }
+        | Constant::Str { ty, .. }
+        | Constant::CStr { ty, .. } => {
             *ty = tcx.substitute(*ty, substs);
         }
         Constant::Bool(_) | Constant::Char(_) | Constant::Unit => {}

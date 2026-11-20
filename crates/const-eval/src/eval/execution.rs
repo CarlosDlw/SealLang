@@ -251,6 +251,11 @@ impl<'a> Interpreter<'a> {
             Constant::Bool(value) => Ok(ConstValue::Bool(value)),
             Constant::Char(value) => Ok(ConstValue::Char(value)),
             Constant::Str { value, ty } => Ok(ConstValue::Str { value, ty }),
+            Constant::CStr { value, .. } => Ok(ConstValue::RawStrData {
+                value,
+                offset: 0,
+                mutable: false,
+            }),
             Constant::Unit => Ok(ConstValue::Unit),
         }
     }

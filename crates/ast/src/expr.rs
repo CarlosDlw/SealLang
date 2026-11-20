@@ -186,6 +186,11 @@ pub enum Literal {
     },
     /// A string literal; the symbol holds the unescaped contents.
     Str(Symbol),
+    /// A C string literal; the symbol holds the unescaped contents.
+    ///
+    /// The literal evaluates to `*raw u8` and the compiler appends the NUL
+    /// terminator.
+    CStr(Symbol),
     /// A character literal.
     Char(char),
     /// A boolean literal.

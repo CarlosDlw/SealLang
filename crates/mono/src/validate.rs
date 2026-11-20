@@ -383,9 +383,10 @@ fn check_operand(
         return Ok(());
     };
     match constant {
-        Constant::Int { ty, .. } | Constant::Float { ty, .. } | Constant::Str { ty, .. } => {
-            check_type(tcx, instance, *ty)
-        }
+        Constant::Int { ty, .. }
+        | Constant::Float { ty, .. }
+        | Constant::Str { ty, .. }
+        | Constant::CStr { ty, .. } => check_type(tcx, instance, *ty),
         Constant::Bool(_) | Constant::Char(_) | Constant::Unit => Ok(()),
     }
 }

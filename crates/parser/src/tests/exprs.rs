@@ -105,6 +105,12 @@ fn literals_keep_their_payloads() {
         ref other => panic!("expected string, got {other:?}"),
     }
 
+    let (fixture, ast, id) = tail_expr("func main() { c\"hi\" }");
+    match ast.expr(id).kind {
+        ExprKind::Lit(Literal::CStr(symbol)) => assert_eq!(fixture.symbol(symbol), "hi"),
+        ref other => panic!("expected C string, got {other:?}"),
+    }
+
     let (_, ast, id) = tail_expr("func main() { 'x' }");
     assert!(matches!(
         ast.expr(id).kind,

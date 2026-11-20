@@ -11,8 +11,7 @@ use crate::scan::Scanner;
 use crate::token::TokenKind;
 
 impl Scanner<'_> {
-    pub(crate) fn string(&mut self) -> TokenKind {
-        let start = self.cursor.position();
+    pub(crate) fn string(&mut self, start: usize, c_string: bool) -> TokenKind {
         self.cursor.bump_byte();
         let mut cooked = String::new();
         let mut had_error = false;
@@ -87,8 +86,21 @@ impl Scanner<'_> {
             }
         }
 
+        if c_string && cooked.contains('\0') {
+            self.error(
+                codes::E3090,
+                self.span(start, self.cursor.position()),
+                "a C string literal cannot contain an interior NUL byte",
+            )
+            .help("remove the interior `\\0`; the compiler appends the terminator")
+            .emit();
+            had_error = true;
+        }
+
         if had_error {
             TokenKind::Error
+        } else if c_string {
+            TokenKind::CStr(self.interner.intern(&cooked))
         } else {
             TokenKind::Str(self.interner.intern(&cooked))
         }

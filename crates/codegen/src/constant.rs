@@ -17,7 +17,9 @@ use seal_mir::Constant;
 ///
 /// String literals become private, unnamed constants. The value of a `*str` is
 /// the fat pointer `{ data, length }`, so no hidden global state is needed at
-/// run time and the length never depends on scanning for a terminator.
+/// run time and the length never depends on scanning for a terminator. Every
+/// string global carries a trailing NUL so the same bytes also serve a `c\"...\"`
+/// literal; the length of a `*str` excludes that terminator.
 pub(crate) struct Constants<'a, 'ctx> {
     context: &'ctx Context,
     module: &'a Module<'ctx>,
@@ -47,10 +49,10 @@ impl<'a, 'ctx> Constants<'a, 'ctx> {
 
     /// Returns a private, deduplicated global for `text` and its byte length.
     ///
-    /// String literals and panic diagnostics share this cache, so repeated
-    /// messages or file names occupy one global. The global is constant,
-    /// unnamed-address, and has no trailing NUL; the length travels with the
-    /// pointer.
+    /// String literals, C strings, and panic diagnostics share this cache, so
+    /// repeated messages or file names occupy one global. The global is
+    /// constant, unnamed-address, and NUL-terminated; the length travels with
+    /// the pointer and excludes the terminator.
     pub(crate) fn string_global(
         &self,
         text: &str,
@@ -58,7 +60,7 @@ impl<'a, 'ctx> Constants<'a, 'ctx> {
         if let Some(value) = self.strings.borrow().get(text).copied() {
             return Ok(value);
         }
-        let data = self.context.const_string(text.as_bytes(), false);
+        let data = self.context.const_string(text.as_bytes(), true);
         let index = self.next_string.get();
         self.next_string.set(index + 1);
         let global = self
@@ -126,6 +128,10 @@ impl<'a, 'ctx> Constants<'a, 'ctx> {
                     .into_struct_type()
                     .const_named_struct(&[data.into(), length.into()]);
                 fat.into()
+            }
+            Constant::CStr { value, .. } => {
+                let (data, _) = self.string_global(self.interner.resolve(*value))?;
+                data.into()
             }
             Constant::Unit => self.mapper.empty_type().const_zero().into(),
         })

@@ -847,22 +847,27 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             sret_slot = Some(slot);
         }
         let fixed = usize::from(sret_slot.is_some());
-        for (argument, parameter) in arguments.iter().zip(signature.params.iter().skip(fixed)) {
+        for (index, argument) in arguments.iter().enumerate() {
             let value = self.load_operand(argument)?;
-            let converted = match parameter.kind {
-                CParamKind::Direct => value,
-                CParamKind::Coerced(ty) => self.coerce_aggregate(value, ty)?,
-                CParamKind::ByPointer { aggregate, .. } => {
-                    let slot = self.build(
-                        self.builder.build_alloca(aggregate, "extern.byval"),
-                        "external by-value storage",
-                    )?;
-                    self.build(
-                        self.builder.build_store(slot, value),
-                        "external by-value copy",
-                    )?;
-                    slot.into()
-                }
+            let converted = match signature.params.get(fixed + index) {
+                Some(parameter) => match parameter.kind {
+                    CParamKind::Direct => value,
+                    CParamKind::Coerced(ty) => self.coerce_aggregate(value, ty)?,
+                    CParamKind::ByPointer { aggregate, .. } => {
+                        let slot = self.build(
+                            self.builder.build_alloca(aggregate, "extern.byval"),
+                            "external by-value storage",
+                        )?;
+                        self.build(
+                            self.builder.build_store(slot, value),
+                            "external by-value copy",
+                        )?;
+                        slot.into()
+                    }
+                },
+                // A variadic argument has no declared parameter. Type checking
+                // promoted it to the ABI type C expects, so it passes directly.
+                None => value,
             };
             values.push(BasicMetadataValueEnum::from(converted));
         }

@@ -113,13 +113,30 @@ impl Checker<'_> {
         let explicit_own = (!from_impl).then_some(explicit.as_deref()).flatten();
         let instantiated = self.instantiate_function(function, &seed, explicit_own, expected);
 
-        if instantiated.params.len() != args.len() {
+        let variadic = self
+            .hir
+            .extern_function(function)
+            .is_some_and(|declaration| declaration.variadic);
+        let fixed = instantiated.params.len();
+        if variadic {
+            if args.len() < fixed {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "this variadic function requires at least {fixed} argument(s) but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help("pass every fixed parameter, then any number of variadic arguments")
+                .emit();
+            }
+        } else if fixed != args.len() {
             self.error(
                 codes::E3008,
                 span,
                 format!(
-                    "this function takes {} argument(s) but {} were supplied",
-                    instantiated.params.len(),
+                    "this function takes {fixed} argument(s) but {} were supplied",
                     args.len()
                 ),
             )
@@ -131,7 +148,22 @@ impl Checker<'_> {
             match instantiated.params.get(index) {
                 Some(expected) => self.check_expr(*arg, *expected, flow),
                 None => {
-                    self.infer_expr(*arg, None, flow);
+                    let ty = self.infer_expr(*arg, None, flow);
+                    if variadic
+                        && !self.is_error(ty)
+                        && self.hir.ty_ctxt().variadic_promotion(ty).is_none()
+                    {
+                        let text = self.ty_text(ty);
+                        self.error(
+                            codes::E3088,
+                            self.hir.expr(*arg).span,
+                            format!("`{text}` cannot be passed through `...`"),
+                        )
+                        .help(
+                            "pass an integer, `f64`, or a thin raw pointer; C applies the default argument promotions",
+                        )
+                        .emit();
+                    }
                 }
             }
         }

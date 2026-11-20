@@ -32,10 +32,10 @@ A declaration is either a block or a single item.
 ```text
 extern "ABI" {
   link "library";
-  func name(parameters) -> Return link_name "symbol";
+  func name(parameters[, ...]) -> Return link_name "symbol";
   static [mut] name: Type;
 }
-extern "ABI" func name(parameters) -> Return link_name "symbol";
+extern "ABI" func name(parameters[, ...]) -> Return link_name "symbol";
 extern "ABI" static [mut] name: Type;
 extern struct Name { field: Type, ... }
 extern type Name;
@@ -47,6 +47,11 @@ extern type Name;
 - `func` declarations have names, typed parameters, and an optional return
   type. There is no receiver, body, generic parameter list, `where` clause, or
   `unsafe` marker: an external function is implicitly unsafe to call.
+- A trailing `...` declares a C variadic function. It must follow at least one
+  named parameter, may appear once, and must be the last element of the list.
+  `func f(...);`, `func f(x: c_int, ..., y: c_int);`, and a Seal `func` with
+  `...` are `E3088`. A variadic declaration may be called with zero extra
+  arguments, which is how C's `printf`-style contract is expressed.
 - `static` declarations have a name and a type. `static mut` is the only form
   Seal may write.
 - A member of a block inherits the block's ABI. A member cannot itself be an
@@ -182,6 +187,32 @@ that the symbol exists in the final link, that the declared signature matches
 the C definition, and that every argument satisfies the C function's contract.
 The compiler cannot verify any of those.
 
+A variadic declaration checks the fixed parameters exactly as usual and accepts
+any number of extra arguments. C applies its default argument promotions to
+them, and the compiler makes each promotion explicit:
+
+- `bool`, `i8`, `u8`, `i16`, and `u16` become `c_int` (`i32`). `bool` becomes
+  `0` or `1`.
+- `f32` becomes `f64`.
+- `i32`/`u32`, `i64`/`u64`, `isize`/`usize`, `f64`, and thin raw pointers keep
+  their type.
+- An aggregate, enum, `char`, checked reference, fat pointer, slice, string,
+  or 128-bit integer is `E3088` at the argument. Passing a pointer to an
+  aggregate is fine; the pointer itself is thin.
+
+```seal
+extern "c" { func snprintf(buffer: *raw mut u8, size: usize, format: *raw u8, ...) -> c_int; }
+
+func main() -> i32 {
+  let mut buffer: [u8; 16] = [0u8; 16];
+  let written = unsafe {
+    snprintf(&mut buffer[0] as *raw mut u8, 16usize, c"value=%d", 7)
+  };
+  if written != 7 { return 1; }
+  42
+}
+```
+
 ## 3. External statics
 
 An external static names storage that C allocates. Reading it requires
@@ -227,6 +258,9 @@ are in [`../types.md`](../types.md). In particular:
   `E3087`.
 - An external static may have any declared type that a Seal static may have;
   accessing it safely is the caller's responsibility.
+- A C string literal `c"..."` has type `*raw u8` and points at NUL-terminated
+  static read-only bytes, so it can be passed directly to a `const char *`
+  parameter. It is a thin raw pointer and therefore FFI-safe.
 
 Every offending parameter, return type, or static type is reported at its own
 span, with the reason and a suggestion. One declaration can therefore produce
@@ -246,6 +280,11 @@ The unsafe block does not make the operation constant. C code runs at program
 start, not during compilation, and an external static has no value the compiler
 can inspect.
 
+A `c"..."` literal is not a call: it evaluates to a static address and may be
+used to initialize a `const` or `static` of type `*raw u8`. The bytes end in a
+NUL that is not part of the written contents, so C sees the terminator while
+Seal's string length, when a `*str` is used instead, excludes it.
+
 ## 6. Code generation and linking
 
 Each declaration produces exactly one LLVM declaration, cached by its HIR
@@ -253,8 +292,13 @@ definition:
 
 - Functions use `external` linkage, the target's C calling convention, and no
   attributes beyond the ABI-mandated `byval` and `sret` on aggregate positions.
-  The compiler does not own the body, so it cannot promise `noalias`,
-  `readonly`, `nounwind`, or any other property.
+  A variadic declaration ends its LLVM function type with `...`, and every
+  extra argument is passed at its promoted type. The compiler does not own the
+  body, so it cannot promise `noalias`, `readonly`, `nounwind`, or any other
+  property.
+- A `c"..."` literal becomes one NUL-terminated private string constant. The
+  same constant cache serves `*str` and `c"..."`; a `*str` carries its length
+  separately and ignores the terminator.
 - A C-layout struct is coerced exactly as C coerces it. On System V AMD64,
   structs up to 16 bytes become integer or SSE pieces in registers (for
   example `{i32, i32}` becomes one `i64`), while larger structs are returned
@@ -294,7 +338,8 @@ runtime archive, or partial executable is left behind.
 | `E3085` | An external struct is empty, or a field has no valid C representation |
 | `E3086` | An external static is accessed outside `unsafe`, or an immutable one is written |
 | `E3087` | An opaque type is used by value or dereferenced |
-| `E3088` | A variadic declaration was written; variadics are not implemented |
+| `E3088` | A variadic declaration or argument is malformed, or its type cannot cross `...` |
+| `E3090` | A `c"..."` literal contains an interior NUL |
 | `E3091` | A `link` directive is malformed (missing string, extra token, or missing `;`) |
 | `E3092` | An `extern` declaration is nested inside another `extern` block |
 | `E3093` | An external function, struct, or opaque type is generic |
@@ -307,7 +352,8 @@ runtime archive, or partial executable is left behind.
 
 The following are deliberately rejected, never silently miscompiled:
 
-- Variadic declarations and calls (`E3088`).
+- Seal cannot define its own variadic function; only an `extern` declaration
+  may end in `...` (`E3088`).
 - Function pointers and callbacks (rejected as a non-FFI-safe type).
 - Per-declaration attributes such as `noalias` or `noreturn` are not accepted
   on an external declaration.
@@ -322,6 +368,7 @@ extern "c" {
   func abs(value: i32) -> i32;
   func getpid() -> i32;
   func srand(seed: u32) -> ();
+  func snprintf(buffer: *raw mut u8, size: usize, format: *raw u8, ...) -> c_int;
 }
 
 func main() -> i32 {
@@ -329,6 +376,10 @@ func main() -> i32 {
     srand(7u32);
     if abs(-41) != 41 { return 1; }
     if getpid() <= 0 { return 2; }
+    let mut buffer: [u8; 16] = [0u8; 16];
+    let written = snprintf(&mut buffer[0] as *raw mut u8, 16usize, c"value=%d", 7);
+    if written != 7 { return 3; }
+    if buffer[7] != 0 { return 4; }
   }
   42
 }

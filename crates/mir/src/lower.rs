@@ -1164,7 +1164,15 @@ impl<'a> BodyLowering<'a> {
             _ => None,
         };
         let arg_spans: Vec<Span> = args.iter().map(|arg| self.hir.expr(*arg).span).collect();
-        let args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
+        let arg_types: Vec<TyId> = args
+            .iter()
+            .map(|arg| {
+                self.typeck
+                    .expr_ty(*arg)
+                    .unwrap_or_else(|| self.expr_ty(*arg))
+            })
+            .collect();
+        let mut args: Vec<Operand> = args.iter().map(|arg| self.lower_operand(*arg)).collect();
 
         let Some(function) = function else {
             if let Some(dest) = dest {
@@ -1185,13 +1193,17 @@ impl<'a> BodyLowering<'a> {
                 .map_or(args.len(), |signature| signature.params.len())
         };
         let target = if self.hir.is_extern_function(function) {
+            let variadic = self
+                .hir
+                .extern_function(function)
+                .is_some_and(|declaration| declaration.variadic);
+            if variadic {
+                self.promote_variadic_arguments(&mut args, &arg_types, parameters, span);
+            }
             CallTarget::Extern {
                 def: function,
                 parameters,
-                variadic: self
-                    .hir
-                    .extern_function(function)
-                    .is_some_and(|declaration| declaration.variadic),
+                variadic,
             }
         } else if symbolic {
             let instance = self.call_instance(expr, function);
@@ -1216,6 +1228,48 @@ impl<'a> BodyLowering<'a> {
             },
             span,
         );
+    }
+
+    /// Applies the C default argument promotions to variadic arguments.
+    ///
+    /// Type checking already rejected a type C cannot receive, so every extra
+    /// argument has a promotion. A promotion is made explicit as a cast so MIR
+    /// and code generation never have to re-derive it.
+    fn promote_variadic_arguments(
+        &mut self,
+        args: &mut [Operand],
+        types: &[TyId],
+        fixed: usize,
+        span: Span,
+    ) {
+        for index in fixed..args.len() {
+            let from = types[index];
+            let to = self
+                .hir
+                .ty_ctxt()
+                .variadic_promotion(from)
+                .expect("type checking validated the variadic argument");
+            if from == to {
+                continue;
+            }
+            let kind = self
+                .hir
+                .ty_ctxt()
+                .variadic_cast_kind(from, to)
+                .expect("a variadic promotion has a MIR conversion");
+            let temporary = self.new_temp(to, span);
+            self.assign_rvalue(
+                temporary.clone(),
+                Rvalue::Cast {
+                    kind,
+                    operand: args[index].clone(),
+                    from,
+                    to,
+                },
+                span,
+            );
+            args[index] = Operand::Move(temporary);
+        }
     }
 
     fn lower_method(
@@ -1819,6 +1873,7 @@ impl<'a> BodyLowering<'a> {
             Literal::Int { value, .. } => Constant::Int { value, ty },
             Literal::Float { value, .. } => Constant::Float { value, ty },
             Literal::Str(symbol) => Constant::Str { value: symbol, ty },
+            Literal::CStr(symbol) => Constant::CStr { value: symbol, ty },
             Literal::Char(value) => Constant::Char(value),
             Literal::Bool(value) => Constant::Bool(value),
         }

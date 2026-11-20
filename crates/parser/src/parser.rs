@@ -454,6 +454,24 @@ impl<'a> Parser<'a> {
             && !self.is_eof()
         {
             let before = self.index;
+            if self.at(TokenKind::DotDotDot) {
+                self.error(
+                    codes::E3088,
+                    self.current_span(),
+                    "a Seal function cannot declare a variadic parameter",
+                )
+                .help("`...` belongs to an `extern` declaration; Seal functions take a fixed list")
+                .emit();
+                while !self.at(TokenKind::RParen)
+                    && !self.at(TokenKind::Arrow)
+                    && !self.at(TokenKind::LBrace)
+                    && !self.at(TokenKind::Semicolon)
+                    && !self.is_eof()
+                {
+                    self.bump();
+                }
+                break;
+            }
             let (param_name, param_name_span) = self.expect_ident("a parameter name");
             let _ = self.expect(TokenKind::Colon, "`:` after the parameter name");
             let ty = self.parse_type();
@@ -1163,6 +1181,7 @@ impl<'a> Parser<'a> {
             TokenKind::Int { .. } => "a number".to_owned(),
             TokenKind::Float { .. } => "a floating-point number".to_owned(),
             TokenKind::Str(_) => "a string literal".to_owned(),
+            TokenKind::CStr(_) => "a C string literal".to_owned(),
             TokenKind::Char(_) => "a character literal".to_owned(),
             TokenKind::Eof => "end of file".to_owned(),
             TokenKind::Error => "a malformed token".to_owned(),
@@ -1209,6 +1228,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::Colon => ":",
         TokenKind::ColonColon => "::",
         TokenKind::Dot => ".",
+        TokenKind::DotDotDot => "...",
         TokenKind::Arrow => "->",
         TokenKind::FatArrow => "=>",
         TokenKind::Plus => "+",
@@ -1282,6 +1302,7 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::Int { .. }
             | TokenKind::Float { .. }
             | TokenKind::Str(_)
+            | TokenKind::CStr(_)
             | TokenKind::Char(_)
             | TokenKind::True
             | TokenKind::False

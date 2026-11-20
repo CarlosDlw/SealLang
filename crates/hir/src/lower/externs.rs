@@ -24,6 +24,7 @@ enum ExternalShape {
         abi: Abi,
         params: Vec<TyId>,
         ret: Option<TyId>,
+        variadic: bool,
     },
     Static {
         abi: Abi,
@@ -139,6 +140,7 @@ impl Lowering<'_> {
                 abi: function.abi,
                 params: function.params.iter().map(|param| param.ty).collect(),
                 ret: function.ret,
+                variadic: function.variadic,
             };
             self.record_symbol(
                 &mut symbols,

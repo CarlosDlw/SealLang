@@ -306,20 +306,14 @@ impl Parser<'_> {
         let _ = self.expect(TokenKind::LParen, "`(` after the function name");
         let mut params: Vec<ParamId> = Vec::new();
         let mut variadic = false;
+        let mut variadic_span = None;
         while !self.at(TokenKind::RParen) && !self.is_eof() {
             let before = self.index;
-            if self.at(TokenKind::DotDot) && self.peek_kind() == Some(TokenKind::Dot) {
+            if self.at(TokenKind::DotDotDot) {
                 let span = self.current_span();
                 self.bump();
-                self.bump();
-                self.error(
-                    codes::E3088,
-                    span,
-                    "variadic declarations are not supported yet",
-                )
-                .help("declare a fixed signature; variadic calls arrive in a later release")
-                .emit();
                 variadic = true;
+                variadic_span = Some(span);
                 break;
             }
 
@@ -354,6 +348,29 @@ impl Parser<'_> {
                 break;
             }
             self.ensure_progress(before);
+        }
+        if variadic && !self.at(TokenKind::RParen) {
+            self.error(
+                codes::E3088,
+                self.current_span(),
+                "`...` must be the last element of the parameter list",
+            )
+            .help("move `...` to the end, after every named parameter")
+            .emit();
+            while !self.at(TokenKind::RParen) && !self.at(TokenKind::Semicolon) && !self.is_eof() {
+                self.bump();
+            }
+        }
+        if let Some(span) = variadic_span
+            && params.is_empty()
+        {
+            self.error(
+                codes::E3088,
+                span,
+                "a variadic function needs at least one named parameter before `...`",
+            )
+            .help("declare the fixed parameters C always receives, then `...`")
+            .emit();
         }
         let _ = self.expect(TokenKind::RParen, "`)` after the parameter list");
 
