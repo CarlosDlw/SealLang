@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### C interoperability (FFI)
+
+Seal now declares and calls C code directly, without a header parser or a
+binding generator:
+
+- `extern "c" { func f(x: c_int) -> c_int; static mut value: c_int; }` declares
+  functions and storage in a block; the single-item form declares one function
+  or static. `"cdecl"` and `"system"` are accepted as the same calling
+  convention. `link "m";` names a native library, and `link_name "abs"`
+  selects the linker symbol independently of the Seal name.
+- C scalar names (`c_int`, `c_char`, `c_long`, `c_wchar`, `size_t`, and the
+  rest) resolve from the target, not the host. `c_bool` is the one-byte `_Bool`
+  field representation; a direct `bool` uses LLVM `i1` and is FFI-safe. A
+  `bool` field in an `extern struct` is rejected with a suggestion to use
+  `c_bool`.
+- `extern struct` is an ordinary aggregate with C layout: declaration-order
+  fields, C offsets and padding, nested structs and arrays, and by-value calls
+  coerced with the target ABI. On System V AMD64, small structs use
+  integer/SSE pieces, large ones use `byval`/`sret`, and exact widths such as
+  `i24` are preserved. Microsoft x64 uses its 1/2/4/8-byte rule and indirect
+  passing for every other size. `extern type` and `c_void` are opaque: they
+  exist only behind `*raw`.
+- A variadic declaration ends in `...` and applies C's default promotions
+  (`bool`, `i8`, `u8`, `i16`, `u16` to `c_int`; `f32` to `f64`). `c"..."` is a
+  read-only NUL-terminated `*raw u8`, and an interior NUL is `E3090`.
+- C function pointer types, `*raw extern "c" func(...) -> R`, accept Seal
+  functions through an explicit cast. The compiler emits a cached C-ABI
+  trampoline when the internal signature differs, and suppresses `noalias`
+  once the function's address escapes. `qsort`, `atexit`, aggregate and
+  variadic callbacks work. `with_len` and `as_str` build slice and string
+  pointers from a C buffer.
+- Every external call, external static access, and indirect call requires an
+  `unsafe` block. Constant evaluation rejects an external call (`E4033`) and
+  an external static read (`E4034`), while a `c"..."` initializer is accepted.
+- Native libraries come from a source `link` directive, `-l NAME`, or
+  `--link-arg ARG`, with `-L DIR` for search paths. The order is deterministic,
+  each value is one argv element, invalid names and paths are `E6005` before any
+  temporary file is written, and a failed link is `E6003` with the command and
+  libraries.
+- `examples/045_ffi_libc.sl` calls `abs` and `snprintf` and returns 7. The
+  complete guide, including the safety contract and the acceptance matrix, is
+  [`docs/language/ffi.md`](docs/language/ffi.md).
+
 ### Opt-in `Copy` for structs and enums
 
 Structs and enums can now opt into bitwise duplication with an explicit

@@ -57,6 +57,21 @@ fn an_external_static_is_not_constant() {
 }
 
 #[test]
+fn with_len_and_as_str_are_not_constant() {
+    let fixture = Fixture::compile(
+        r#"const P: *raw u8 = c"abc";
+           const S: *raw [u8] = unsafe { P.with_len(3) };"#,
+    );
+    fixture.expect_code("E4032");
+
+    let fixture = Fixture::compile(
+        r#"const P: *raw [u8] = &[97u8, 98, 99][..] as *raw [u8];
+           const S: *raw str = unsafe { P.as_str() };"#,
+    );
+    fixture.expect_code("E4032");
+}
+
+#[test]
 fn a_constant_cannot_read_through_an_integer_pointer() {
     let fixture = Fixture::compile(
         "const POINTER: *raw i32 = 0usize as *raw i32; \

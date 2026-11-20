@@ -14,10 +14,32 @@
 
 static int32_t fixture_stored;
 
+/* C owns this storage; the Seal program reads and writes it through an
+   `extern static mut` declaration. */
+int32_t ffi_external_counter = 7;
+
 typedef struct {
   int32_t x;
   int32_t y;
 } ffi_point;
+
+typedef struct {
+  uint8_t first;
+  uint8_t second;
+} ffi_two;
+
+typedef struct {
+  uint8_t first;
+  uint8_t second;
+  uint8_t third;
+} ffi_three;
+
+typedef struct {
+  uint8_t first;
+  uint8_t second;
+  uint8_t third;
+  uint8_t fourth;
+} ffi_four;
 
 typedef struct {
   ffi_point point;
@@ -45,6 +67,10 @@ typedef struct ffi_handle {
   int32_t value;
 } ffi_handle;
 
+typedef struct {
+  _Bool enabled;
+} ffi_flags;
+
 int32_t ffi_scalar_i32(int32_t value) { return value + 1; }
 
 uint64_t ffi_scalar_u64(uint64_t value) { return value * 2u; }
@@ -65,6 +91,17 @@ int32_t ffi_char_signed(void) {
 }
 
 int32_t ffi_long_width(void) { return (int32_t)(sizeof(long) * 8); }
+
+int32_t ffi_wchar_width(void) { return (int32_t)(sizeof(wchar_t) * 8); }
+
+int32_t ffi_wchar_signed(void) {
+  volatile wchar_t value = (wchar_t)-1;
+  return value < 0;
+}
+
+int32_t ffi_bool_value(_Bool value) { return value ? 1 : 0; }
+
+_Bool ffi_bool_identity(_Bool value) { return value; }
 
 ffi_point ffi_point_new(int32_t x, int32_t y) {
   ffi_point point = {x, y};
@@ -124,6 +161,52 @@ int32_t ffi_sizeof_array(void) { return (int32_t)sizeof(ffi_array); }
 int32_t ffi_sizeof_mixed(void) { return (int32_t)sizeof(ffi_mixed); }
 
 int32_t ffi_sizeof_wide(void) { return (int32_t)sizeof(ffi_wide); }
+
+ffi_flags ffi_flags_new(_Bool enabled) {
+  ffi_flags flags = {enabled};
+  return flags;
+}
+
+int32_t ffi_flags_check(ffi_flags flags) { return flags.enabled ? 1 : 0; }
+
+int32_t ffi_sizeof_flags(void) { return (int32_t)sizeof(ffi_flags); }
+
+ffi_two ffi_two_make(uint8_t first, uint8_t second) {
+  ffi_two value = {first, second};
+  return value;
+}
+
+int32_t ffi_two_check(ffi_two value) {
+  return value.first == 1 && value.second == 2;
+}
+
+ffi_three ffi_three_make(uint8_t first, uint8_t second, uint8_t third) {
+  ffi_three value = {first, second, third};
+  return value;
+}
+
+int32_t ffi_three_check(ffi_three value) {
+  return value.first == 1 && value.second == 2 && value.third == 3;
+}
+
+ffi_four ffi_four_make(uint8_t first, uint8_t second, uint8_t third,
+                       uint8_t fourth) {
+  ffi_four value = {first, second, third, fourth};
+  return value;
+}
+
+int32_t ffi_four_check(ffi_four value) {
+  return value.first == 1 && value.second == 2 && value.third == 3 &&
+         value.fourth == 4;
+}
+
+int32_t ffi_sizeof_two(void) { return (int32_t)sizeof(ffi_two); }
+
+int32_t ffi_sizeof_three(void) { return (int32_t)sizeof(ffi_three); }
+
+int32_t ffi_sizeof_four(void) { return (int32_t)sizeof(ffi_four); }
+
+void ffi_bump_external_counter(int32_t by) { ffi_external_counter += by; }
 
 ffi_handle *ffi_handle_new(int32_t value) {
   ffi_handle *handle = malloc(sizeof(ffi_handle));

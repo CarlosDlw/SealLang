@@ -6,6 +6,7 @@
 //! diagnostics for invalid link configuration.
 
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
 
@@ -76,6 +77,12 @@ fn declarations(with_directive: bool, extra: &str) -> String {
     source.push_str("  func ffi_null_is_null(pointer: *raw u8) -> i32;\n");
     source.push_str("  func ffi_char_signed() -> i32;\n");
     source.push_str("  func ffi_long_width() -> i32;\n");
+    source.push_str("  func ffi_wchar_width() -> i32;\n");
+    source.push_str("  func ffi_wchar_signed() -> i32;\n");
+    source.push_str("  func ffi_bool_value(value: bool) -> i32;\n");
+    source.push_str("  func ffi_bool_identity(value: bool) -> bool;\n");
+    source.push_str("  static mut ffi_external_counter: c_int;\n");
+    source.push_str("  func ffi_bump_external_counter(by: c_int);\n");
     source.push_str(extra);
     source.push_str("}\n");
     source
@@ -95,6 +102,10 @@ fn scalar_program(with_directive: bool) -> String {
     source.push_str("    ffi_set_int(42);\n");
     source.push_str("    if ffi_get_int() != 42 { return 5; }\n");
     source.push_str("    if ffi_null_is_null(0usize as *raw u8) != 1 { return 6; }\n");
+    source.push_str("    if ffi_external_counter != 7 { return 7; }\n");
+    source.push_str("    ffi_external_counter = 10;\n");
+    source.push_str("    ffi_bump_external_counter(5);\n");
+    source.push_str("    if ffi_external_counter != 15 { return 8; }\n");
     source.push_str("  }\n");
     source.push_str("  42\n");
     source.push_str("}\n");
@@ -144,6 +155,10 @@ fn aggregate_program() -> String {
          extern struct Array { values: [c_int; 3] }\n\
          extern struct Mixed { small: i8, wide: i64, real: f64 }\n\
          extern struct Wide { first: c_int, second: f64, point: Point, last: i64 }\n\
+         extern struct Flags { enabled: c_bool }\n\
+         extern struct Two { first: u8, second: u8 }\n\
+         extern struct Three { first: u8, second: u8, third: u8 }\n\
+         extern struct Four { first: u8, second: u8, third: u8, fourth: u8 }\n\
          extern \"c\" {\n",
     );
     source.push_str("  func ffi_point_new(x: c_int, y: c_int) -> Point;\n");
@@ -165,6 +180,19 @@ fn aggregate_program() -> String {
     source.push_str("  func ffi_sizeof_array() -> c_int;\n");
     source.push_str("  func ffi_sizeof_mixed() -> c_int;\n");
     source.push_str("  func ffi_sizeof_wide() -> c_int;\n");
+    source.push_str("  func ffi_flags_new(enabled: c_bool) -> Flags;\n");
+    source.push_str("  func ffi_flags_check(flags: Flags) -> c_int;\n");
+    source.push_str("  func ffi_sizeof_flags() -> c_int;\n");
+    source.push_str("  func ffi_two_make(first: u8, second: u8) -> Two;\n");
+    source.push_str("  func ffi_two_check(value: Two) -> c_int;\n");
+    source.push_str("  func ffi_three_make(first: u8, second: u8, third: u8) -> Three;\n");
+    source.push_str("  func ffi_three_check(value: Three) -> c_int;\n");
+    source
+        .push_str("  func ffi_four_make(first: u8, second: u8, third: u8, fourth: u8) -> Four;\n");
+    source.push_str("  func ffi_four_check(value: Four) -> c_int;\n");
+    source.push_str("  func ffi_sizeof_two() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_three() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_four() -> c_int;\n");
     source.push_str("  func ffi_handle_new(value: c_int) -> *raw mut Handle;\n");
     source.push_str("  func ffi_handle_get(handle: *raw mut Handle) -> c_int;\n");
     source.push_str("  func ffi_handle_set(handle: *raw mut Handle, value: c_int);\n");
@@ -193,6 +221,21 @@ fn aggregate_program() -> String {
     source.push_str("    if ffi_sizeof_array() != 12 { return 22; }\n");
     source.push_str("    if ffi_sizeof_mixed() != 24 { return 23; }\n");
     source.push_str("    if ffi_sizeof_wide() != 32 { return 24; }\n");
+    source.push_str("    let flags = ffi_flags_new(1u8);\n");
+    source.push_str("    if ffi_flags_check(flags) != 1 { return 27; }\n");
+    source.push_str("    if ffi_sizeof_flags() != 1 { return 28; }\n");
+    source.push_str("    let two = ffi_two_make(1u8, 2u8);\n");
+    source.push_str("    if two.first != 1 || two.second != 2 { return 29; }\n");
+    source.push_str("    if ffi_two_check(two) != 1 { return 30; }\n");
+    source.push_str("    let three = ffi_three_make(1u8, 2u8, 3u8);\n");
+    source.push_str("    if three.third != 3 { return 31; }\n");
+    source.push_str("    if ffi_three_check(three) != 1 { return 32; }\n");
+    source.push_str("    let four = ffi_four_make(1u8, 2u8, 3u8, 4u8);\n");
+    source.push_str("    if four.fourth != 4 { return 33; }\n");
+    source.push_str("    if ffi_four_check(four) != 1 { return 34; }\n");
+    source.push_str("    if ffi_sizeof_two() != 2 { return 35; }\n");
+    source.push_str("    if ffi_sizeof_three() != 3 { return 36; }\n");
+    source.push_str("    if ffi_sizeof_four() != 4 { return 37; }\n");
     source.push_str("    let handle = ffi_handle_new(41);\n");
     source.push_str("    if ffi_handle_get(handle) != 41 { return 25; }\n");
     source.push_str("    ffi_handle_set(handle, 42);\n");
@@ -294,11 +337,23 @@ fn the_fixture_agrees_with_the_target_c_abi() {
     let abi = seal_target::host_triple().spec().c_abi();
     let mut source = declarations(false, "");
     source.push_str("func main() -> i32 {\n");
-    source.push_str("  unsafe { ffi_char_signed() * 100 + ffi_long_width() }\n");
+    source.push_str("  unsafe {\n");
+    source.push_str("    if ffi_bool_value(true) != 1 { return 1; }\n");
+    source.push_str("    if ffi_bool_value(false) != 0 { return 2; }\n");
+    source.push_str("    if ffi_bool_identity(true) != true { return 3; }\n");
+    source.push_str("    if ffi_bool_identity(false) != false { return 4; }\n");
+    source.push_str(
+        "    ffi_char_signed() * 100 + ffi_long_width() + ffi_wchar_signed() * 10 + ffi_wchar_width() / 8\n",
+    );
+    source.push_str("  }\n");
     source.push_str("}\n");
     let code = compile_and_run(&source, fixture.links(), "ffi-abi", OptLevel::O0);
     let signed = if abi.char_signed() { 1 } else { 0 };
-    let expected = signed * 100 + i32::from(abi.long_width());
+    let wide_signed = if abi.wchar_signed() { 1 } else { 0 };
+    let expected = signed * 100
+        + i32::from(abi.long_width())
+        + wide_signed * 10
+        + i32::from(abi.wchar_width()) / 8;
     assert_eq!(
         code, expected,
         "C char signedness and long width must match CAbiProperties"
@@ -318,6 +373,97 @@ fn link_arguments_link_an_extra_object() {
     };
     let code = compile_and_run(source, links, "ffi-link-arg", OptLevel::O0);
     assert_eq!(code, 42);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_source_link_directive_can_name_the_math_library() {
+    let source = "\
+        extern \"c\" {\n\
+          link \"m\";\n\
+          func sqrt(value: f64) -> f64;\n\
+        }\n\
+        func main() -> i32 {\n\
+          unsafe { if sqrt(1764.0) == 42.0 { 42 } else { 1 } }\n\
+        }";
+    let code = compile_and_run(source, LinkOptions::default(), "ffi-libm", OptLevel::O0);
+    assert_eq!(code, 42, "`link \"m\"` reaches the linker");
+}
+
+#[test]
+fn a_link_argument_may_contain_spaces() {
+    let fixture = Fixture::new();
+    let directory = fixture.temp.path().join("with space");
+    fs::create_dir_all(&directory).expect("the directory is created");
+    let extension = fixture
+        .provider
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("o");
+    let provider = directory.join(format!("ffi external object.{extension}"));
+    fs::copy(&fixture.provider, &provider).expect("the object is copied");
+
+    let source = "\
+        extern \"c\" { func ffi_link_arg_value() -> i32; }\n\
+        func main() -> i32 { unsafe { ffi_link_arg_value() } }";
+    let links = LinkOptions {
+        libraries: Vec::new(),
+        search_paths: Vec::new(),
+        link_args: vec![OsString::from(provider.as_os_str())],
+    };
+    let code = compile_and_run(source, links, "ffi-link-arg-space", OptLevel::O0);
+    assert_eq!(code, 42, "the spaced object path reaches the linker intact");
+}
+
+#[test]
+fn libraries_are_linked_in_the_declared_order() {
+    let fixture = Fixture::new();
+    let compiler = Compiler::discover();
+    let extension = if compiler.is_msvc() { "obj" } else { "o" };
+    let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/runtime");
+    for (source, name) in [
+        ("ffi_dependent.c", "sealdependent"),
+        ("ffi_dependency.c", "sealdependency"),
+    ] {
+        let object = fixture.temp.path().join(format!("{name}.{extension}"));
+        let archive = fixture.temp.path().join(if compiler.is_msvc() {
+            format!("{name}.lib")
+        } else {
+            format!("lib{name}.a")
+        });
+        compiler.compile_object(&runtime.join(source), None, &object);
+        compiler.archive(&object, &archive);
+    }
+
+    let links = LinkOptions {
+        libraries: vec!["sealdependent".to_owned(), "sealdependency".to_owned()],
+        search_paths: vec![fixture.temp.path().to_path_buf()],
+        link_args: Vec::new(),
+    };
+    let source = "\
+        extern \"c\" { func ffi_dependent_value() -> i32; }\n\
+        func main() -> i32 { unsafe { ffi_dependent_value() } }";
+    let code = compile_and_run(source, links, "ffi-library-order", OptLevel::O0);
+    assert_eq!(code, 42, "the dependency is resolved in source order");
+}
+
+#[test]
+fn a_relative_search_path_is_accepted() {
+    let output = TempOutput::new("ffi-relative-path");
+    compile_with_links(
+        "func main() -> i32 { 0 }",
+        output.path(),
+        Emit::Executable,
+        OptLevel::O0,
+        false,
+        LinkOptions {
+            libraries: Vec::new(),
+            search_paths: vec![PathBuf::from("src")],
+            link_args: Vec::new(),
+        },
+    )
+    .expect("a relative search path is resolved from the current directory");
+    assert!(output.path().exists());
 }
 
 #[test]
@@ -405,6 +551,8 @@ fn callback_program() -> String {
 
         func double_it(value: i32) -> i32 { value * 2 }
 
+        func negate(value: i32) -> i32 { 0 - value }
+
         func add_point(point: Point) -> Point {
           Point { x: point.x + 1, y: point.y + 1 }
         }
@@ -426,6 +574,8 @@ fn callback_program() -> String {
           unsafe {
             let callback = double_it as *raw extern "c" func(i32) -> i32;
             if ffi_apply(callback, 21) != 42 { return 1; }
+            let negative = negate as *raw extern "c" func(i32) -> i32;
+            if ffi_apply(negative, 21) != -21 { return 15; }
             let external_callback = ffi_scalar_i32 as *raw extern "c" func(i32) -> i32;
             if ffi_apply(external_callback, 41) != 42 { return 14; }
             let null = 0usize as *raw extern "c" func(i32) -> i32;

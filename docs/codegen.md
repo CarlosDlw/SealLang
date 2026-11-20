@@ -280,6 +280,44 @@ The ABI is defined by the language, not by a C header:
 - The object is position independent (`RelocMode::PIC`) and uses the target's
   default code model.
 
+## C declarations and calls
+
+External declarations are emitted by `externs.rs` and classified by `c_abi.rs`:
+
+- Each `DefId` produces exactly one LLVM declaration, cached by the definition.
+  A function uses `external` linkage and `CallConv::C`; a static uses `external`
+  linkage and is never marked `constant`, because C may initialize or change it.
+- The LLVM function type comes from `CSignature`, which records both the LLVM
+  types and the meaning of each position. A `void` declaration has no return
+  value and a call to it writes no destination. A variadic declaration ends its
+  function type with `...`; the fixed parameters are exact, and every extra
+  argument is passed at its promoted type (`bool`/`i8`/`u8`/`i16`/`u16` to
+  `i32`, `f32` to `f64`).
+- A C-layout aggregate is never passed as its raw LLVM struct type. `CAbi`
+  selects System V AMD64 or Microsoft x64 per target; `classify` returns
+  `Direct`, `Small(parts)`, or `Memory`. On System V, up to 16 bytes become
+  integer/SSE pieces, a larger struct is passed with `byval`, and a large
+  result is written through a leading `sret` pointer. On Microsoft x64, 1-, 2-,
+  4-, and 8-byte structs become one integer and every other size is passed and
+  returned indirectly. The declaration, every call, and the result conversion
+  use the same cached classification.
+- A coerced integer keeps its exact width: `CoercedPart::Integer(24)` becomes
+  `i24` through `Context::custom_width_int_type`, so a 3-byte struct occupies
+  exactly three bytes in the register. The mapper accepts every width from 1
+  through 128 bits; only a value outside that range is an internal error.
+- A `c"..."` literal becomes one private, unnamed, NUL-terminated constant
+  array. The same intern cache serves `*str`, which carries its byte length
+  separately and ignores the terminator.
+- `with_len` and `as_str` assemble or reinterpret a fat pointer without an
+  integer round trip: the data word and provenance are preserved, and the
+  length or string metadata is stored beside it.
+- A function address taken for a C callback uses a cached C-ABI trampoline per
+  `(function instance, pointer type)`. The trampoline converts arguments,
+  calls the internal Seal function, and converts the result back. The internal
+  function is excluded from `noalias` because its address escapes.
+- Debug builds describe an external function with a bodyless subprogram and a
+  C struct with its real size and offsets; an opaque type has no value type.
+
 ## Global data
 
 `global.rs`, `const_value.rs`, `const_image.rs`, and `relocation.rs` lower

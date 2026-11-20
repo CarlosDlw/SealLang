@@ -41,6 +41,18 @@ fn an_extern_block_keeps_its_declarations_in_order() {
 }
 
 #[test]
+fn extern_is_an_ordinary_identifier_outside_item_position() {
+    let (fixture, ast) = parse_clean(
+        r#"func extern() -> i32 { 1 }
+           func main() -> i32 { let extern = 2; extern() + extern }"#,
+    );
+    let ItemKind::Func(function) = &ast.item(ast.program().items()[0]).kind else {
+        panic!("expected an ordinary function named `extern`");
+    };
+    assert_eq!(fixture.symbol(function.name), "extern");
+}
+
+#[test]
 fn an_extern_declaration_can_stand_alone() {
     let (fixture, ast) = parse_clean(r#"extern "c" func abs(value: i32) -> i32;"#);
     let ItemKind::ExternFunc(declaration) = &ast.item(ast.program().items()[0]).kind else {

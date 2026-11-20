@@ -736,6 +736,61 @@ handles them explicitly at every stage:
   `unsafe`; it exposes GEPs and the LLVM debug-record API. No other phase
   performs unchecked pointer construction.
 
+## C interoperability
+
+The C boundary is an explicit slice through every phase, with one owner for each
+decision:
+
+- **Parse and AST.** `extern` is contextual: in item position it introduces a
+  block or a single function, static, C struct, or opaque type; elsewhere it is
+  an ordinary identifier. The AST records the ABI string, `link_name`, `link`
+  directives, variadic markers, and C-struct declarations. `*raw extern "c"
+  func(…) -> R` is a distinct type with an interned signature.
+- **HIR.** Lowering creates `DefKind::ExternFunction` and
+  `DefKind::ExternStatic`, storing an `ExternFunction` or `ExternStatic` with
+  the resolved `Abi`, linker `Symbol`, and signature or storage type. `link`
+  directives become `LinkDirective` values in source order. A C struct reuses
+  ordinary aggregate lowering with `AdtRepr::C`; an opaque type becomes
+  `TyKind::Opaque`, has no layout, and is usable only behind `*raw`. Later
+  phases never re-read the source for any of this.
+- **Type check.** `Abi::from_name` accepts `"c"`, `"cdecl"`, and `"system"`
+  and rejects every other spelling (`E3080`). One FFI-safety predicate covers
+  parameters, results, struct fields, static types, and function-pointer
+  positions. The checker validates symbols (`E3082`), compares duplicate
+  declarations of one symbol (`E3083`), applies the `unsafe` gate (`E3070`),
+  checks variadic arguments and promotions (`E3088`), and validates function
+  address casts (`E3089`).
+- **MIR.** An external call is `Rvalue::Call` with `CallTarget::Extern`, which
+  keeps the `DefId` and instantiated signature; a callback call is
+  `Rvalue::IndirectCall`. An external static is an ordinary place whose root
+  resolves to the declaration. Variadic promotions are explicit operands, not a
+  backend decision.
+- **Code generation.** `CAbi::for_target` selects the aggregate family once per
+  target. `CAbi::classify` returns `Direct`, `Small(parts)`, or `Memory`
+  using `seal-layout` offsets; `CSignature` carries both the LLVM function type
+  and what each position means, so a declaration and every call site use one
+  cached answer. A coerced integer keeps its exact width (1 through 128 bits),
+  so a 3-byte struct is `i24`, not a padded `i32`. Declarations use `external`
+  linkage with the ABI-mandated `byval`/`sret` only. A `c"..."` literal is one
+  private NUL-terminated constant shared with the `*str` intern cache.
+- **Linking.** The driver collects source `LinkDirective`s, then `-l`
+  libraries, then `--link-arg` values, and places the runtime archive last.
+  Every value is one argv element, never shell text. Names and search paths are
+  validated before any temporary file is written (`E6005`); a failed link is
+  `E6003` and reports the command, libraries, and linker output.
+
+The section invariants are:
+
+1. One `DefId` produces exactly one external declaration, cached by definition.
+2. One aggregate classification serves the declaration and every call site; the
+   two sides cannot disagree.
+3. An external declaration carries no attribute the C ABI does not mandate:
+   never `noalias`, `readonly`, or `nounwind`.
+4. An external static is emitted as a mutable global, because C may write it.
+5. Link inputs reach the linker in a deterministic order, one argument each.
+6. A program without `extern` declarations emits no external declaration and is
+   unchanged in IR and behavior.
+
 ## Extension points
 
 - **New phase.** Add a crate that depends on the session and diagnostics, exposes
@@ -846,6 +901,13 @@ handles them explicitly at every stage:
 - **New token or keyword.** Add the variant to `TokenKind`, classify it in the
   scanner (keywords live in `seal-lexer`'s keyword table), and add a maximal
   munch test; keywords are reserved words, not identifiers with a flag.
+- **New C ABI family.** Add the family to `CAbi::for_target` and its
+  classification arm; the `CSignature`, call-site coercion, and debug paths are
+  already family-independent. A scalar-only target still compiles.
+- **New FFI surface.** A declaration form enters the AST, HIR `DefKind`, and
+  resolver, then reuses the existing FFI-safety predicate, symbol table, and
+  `CSignature`. Unions, bitfields, and `extern enum` are the intended next
+  forms; each needs a layout and classification rule, not a new boundary.
 - **New target.** Extend `seal-target` with a `TargetSpec` built from the triple;
   never consult the host at compile time.
 - **New definition kind.** Add the `DefKind` variant, create the `DefData` in

@@ -581,6 +581,42 @@ change), Swift-style default copying (same hidden cost), and an opt-out marker
 `Drop` remain mutually exclusive, and `Copy` never changes layout, ABI, or the
 value's runtime representation.
 
+### D24 — Foreign memory follows the foreign contract
+
+The C boundary is an ownership boundary, not a second memory model. A value
+that crosses into C is governed by C's contract from that point: C may keep the
+pointer, free it, or write through it, and the compiler models none of that.
+
+- **Ownership stays on its side.** C memory is released by the matching C
+  function; Seal heap memory from `seal_alloc` is released by `seal_dealloc`.
+  A large-alignment allocation over-allocates and stores its base pointer before
+  the returned address, so a C `free` would release the wrong address. Neither
+  allocator may release the other's block.
+- **Drop runs only on owned values.** A value moved into C storage has no Seal
+  owner and no drop site. An `extern struct` may implement `Drop` for values
+  Seal owns, but C does not run Seal glue, and a destructor must not assume that
+  it does. Observing C storage through `*raw` never creates an owner.
+- **Provenance survives the call.** Passing a pointer preserves its address and
+  provenance, but C arithmetic is invisible to Seal. A returned pointer is only
+  as valid as its documentation says; `with_len` and `as_str` are the supported
+  way to rebuild a fat pointer, and neither may combine an integer address with
+  a length.
+- **Nothing unwinds.** Seal panics abort. C must not `longjmp`, throw, or
+  otherwise unwind through a Seal frame, and a callback must not unwind either.
+  The compiled ABI is plain `"c"`; the compiler never emits `nounwind` for a
+  declaration it does not own.
+- **No aliasing promise is inferred.** An external declaration receives no
+  `noalias`, `readonly`, or `nounwind`. A Seal function whose address is taken
+  loses `noalias`, because C may call it through an alias the whole-program
+  proof did not see. The attribute is always a proven optimization, never a
+  promise unsafe code must uphold.
+- **C may call back at any time.** A registered callback runs on C's schedule
+  and possibly from another thread; borrowed Seal data it retains must stay
+  alive for the contract's whole lifetime.
+
+These rules are the memory-model face of the safety checklist in
+[`language/ffi.md`](language/ffi.md#7-the-safety-contract).
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -588,7 +624,11 @@ value's runtime representation.
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
   `Float`, `Ref { kind: RefKind, pointee }`, `RawPtr { kind: RawPtrKind, pointee }`,
   `Array { element, length }`, `Adt { adt, args }`, `Dyn { trait_def, args }`,
-  `Tuple(TupleId)`, `Param(ParamTyId)`, `Unit`, `Never`, `Error`, and `Infer`.
+  `Tuple(TupleId)`, `FnSig(FnSigId)`, `Opaque { def, name }`, `Param(ParamTyId)`,
+  `Unit`, `Never`, `Error`, and `Infer`. A C function signature is an interned
+  `FnSigDef` carrying its `Abi` and variadicity; it is unsized and only appears
+  behind `*raw`. An opaque type names a `DefKind::OpaqueType` and has no layout.
+  A C-layout struct is an `Adt` with `AdtRepr::C`; the default is `AdtRepr::Rust`.
   `AdtId` always names the declaration and `args` is the interned, structural
   list of type arguments; `Param` is a rigid parameter of one generic body.
   `Dyn` names one trait declaration plus its fully substituted arguments and is
@@ -784,6 +824,24 @@ value's runtime representation.
     call, a dynamic call, or an unknown pointer is excluded from `noalias`.
     The attribute remains a proven optimization, never a promise that unsafe
     code must uphold.
+34. An external declaration is emitted without `noalias`, `readonly`,
+    `nounwind`, or any other semantic attribute. A Seal function whose address
+    escapes is also excluded from `noalias`.
+35. A C-layout struct keeps declaration order and the target's C size,
+    alignment, and field offsets. Every field has a non-zero C representation;
+    a zero-sized, `bool`, or otherwise non-FFI-safe field is rejected before
+    code generation.
+36. An opaque `extern type` and `c_void` have no size, layout, or destructor
+    and never appear by value. They are usable only as a raw pointer's pointee.
+37. External storage is read and written only under `unsafe`; an immutable
+    declaration is never written. C may change the storage at any time, so a
+    read is an opaque effect and the global is emitted as mutable.
+38. A constant never calls an external function or reads an external static
+    (`E4033`/`E4034`). A `c"..."` literal is a static address and may initialize
+    a constant or a static.
+39. No value allocates or drops implicitly at the boundary: passing a value to
+    C transfers no ownership, and returning one creates no Seal owner for C
+    storage.
 
 ## Reserved syntax
 

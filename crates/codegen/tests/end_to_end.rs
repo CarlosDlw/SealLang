@@ -413,6 +413,73 @@ fn cross_target_executables_require_a_matching_runtime() {
 }
 
 #[test]
+fn cross_target_aggregates_are_e6002_until_their_abi_exists() {
+    let triple = if cfg!(target_arch = "x86_64") {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    let target = seal_target::TargetTriple::parse(triple).expect("test triple is valid");
+    let source = r#"
+        extern struct Point { x: c_int, y: c_int }
+        extern "c" { func ffi_point_sum(point: Point) -> c_int; }
+        func main() -> i32 {
+            unsafe { ffi_point_sum(Point { x: 1, y: 2 }) }
+        }"#;
+    let object = TempOutput::new("cross-aggregate.o");
+    let error = compile_for_target(
+        source,
+        object.path(),
+        Emit::Object,
+        OptLevel::O0,
+        false,
+        target,
+    )
+    .expect_err("the aggregate ABI is not implemented for this target");
+    assert_eq!(
+        error.diag_code(),
+        Some(seal_error_codes::E6002.diag_code()),
+        "an unimplemented aggregate ABI is E6002: {error}"
+    );
+    assert!(
+        error.to_string().contains("C aggregates by value"),
+        "the message explains the missing ABI: {error}"
+    );
+    assert!(!object.path().exists(), "no object is written");
+}
+
+#[test]
+fn cross_target_objects_compile_external_declarations() {
+    let triple = if cfg!(target_arch = "x86_64") {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    let target = seal_target::TargetTriple::parse(triple).expect("test triple is valid");
+    let source = r#"
+        extern "c" { func abs(value: c_int) -> c_int; }
+        func main() -> i32 {
+            unsafe { abs(-7) }
+        }"#;
+    let object = TempOutput::new("cross-extern.o");
+    compile_for_target(
+        source,
+        object.path(),
+        Emit::Object,
+        OptLevel::O0,
+        false,
+        target,
+    )
+    .expect("an external declaration does not need a cross-target runtime");
+    assert!(
+        std::fs::metadata(object.path())
+            .expect("object exists")
+            .len()
+            > 0
+    );
+}
+
+#[test]
 fn external_runtime_archives_are_read_and_validated() {
     let source = "func main() -> i32 { 0 }";
     let host = seal_target::host_triple();

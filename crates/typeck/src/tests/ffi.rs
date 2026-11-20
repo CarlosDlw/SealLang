@@ -23,6 +23,14 @@ fn a_void_external_function_produces_unit() {
 }
 
 #[test]
+fn a_direct_bool_is_ffi_safe() {
+    check_clean(
+        "extern \"c\" { func toggle(value: bool) -> bool; } \
+         func call(value: bool) -> bool { unsafe { toggle(value) } }",
+    );
+}
+
+#[test]
 fn calling_an_external_function_requires_unsafe() {
     let source = r#"
         extern "c" { func abs(value: i32) -> i32; }

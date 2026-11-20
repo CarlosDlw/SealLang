@@ -793,8 +793,10 @@ unsafe code should be the smallest possible island.
 | `copy`/`copy_nonoverlapping` | `copy`/`copy_nonoverlapping` | Same overlap split, memmove/memcpy lowering |
 | `*raw dyn Trait` | `*const dyn Trait` | Two-word data/vtable representation |
 
-Seal does not have `NonNull`, `MaybeUninit`, allocator APIs, FFI declarations,
-or first-class function pointers. Those are separate features, not alternate
+Seal does not have `NonNull`, `MaybeUninit`, or allocator APIs, and it has no
+owning wrappers such as `Box` or `CString`. C interop, including C function
+pointers (`*raw extern "c" func(...)`) and `c"..."` literals, is covered in
+[C interoperability](ffi.md); those are distinct surface forms, not alternate
 spellings of the raw pointer operations in this chapter.
 
 ## 14. Complete example

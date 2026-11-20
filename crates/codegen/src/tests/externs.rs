@@ -37,6 +37,15 @@ fn an_external_function_declares_the_c_signature_without_attributes() {
 }
 
 #[test]
+fn a_direct_bool_uses_its_llvm_representation() {
+    let ir = ir_text(
+        r#"extern "c" { func toggle(value: bool) -> bool; }
+           func main() -> i32 { unsafe { if toggle(true) { 42 } else { 0 } } }"#,
+    );
+    assert_eq!(declaration(&ir, "@toggle("), "declare i1 @toggle(i1)");
+}
+
+#[test]
 fn a_link_name_is_the_declared_symbol() {
     let ir = ir_text(
         r#"extern "c" { func absolute(value: i32) -> i32 link_name "abs"; }
@@ -46,6 +55,27 @@ fn a_link_name_is_the_declared_symbol() {
     assert!(
         !ir.contains("@absolute"),
         "the Seal name never reaches the object file:\n{ir}"
+    );
+}
+
+#[test]
+fn link_names_accept_underscores_digits_and_long_identifiers() {
+    let long = "symbol".repeat(32);
+    let source = format!(
+        r#"extern "c" {{
+               func private(value: i32) -> i32 link_name "_private42";
+               func verbose(value: i32) -> i32 link_name "{long}";
+           }}
+           func main() -> i32 {{ unsafe {{ private(20) + verbose(22) }} }}"#
+    );
+    let ir = ir_text(&source);
+    assert_eq!(
+        declaration(&ir, "@_private42("),
+        "declare i32 @_private42(i32)"
+    );
+    assert_eq!(
+        declaration(&ir, &format!("@{long}(")),
+        format!("declare i32 @{long}(i32)")
     );
 }
 

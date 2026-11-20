@@ -171,6 +171,9 @@ sealc help [COMMAND]
 | `-g` | Embed DWARF debug information |
 | `-o <PATH>` | Write the artifact to `PATH` (one input only) |
 | `--runtime-archive <PATH>` | Link a different runtime archive |
+| `-l <NAME>` | Link a native library (repeatable) |
+| `-L <DIR>` | Add a linker search directory (repeatable) |
+| `--link-arg <ARG>` | Pass one argument to the linker unchanged (repeatable) |
 
 `build` and `check` both accept `--target`, `--language-version`,
 `--allow-unstable-features`, and the diagnostic options (`--error-format`,
@@ -203,6 +206,7 @@ isolation check on its own.
 | Text | `bool`, `char`, `str`, `*str` | `char` is a Unicode scalar value; `str` is unsized and only usable behind a reference |
 | References | `*T`, `*mut T` | Non-null, non-owning, and `Copy`; shared or exclusive |
 | Raw pointers | `*raw T`, `*raw mut T` | Nullable, arithmetic, provenance-carrying, and `Copy`; one word, or two for `str`/slices/trait objects |
+| C interoperability | `extern "c"` items, `extern struct`, `extern type`, `c_int` … | Fixed C widths from the target, C-layout aggregates by value, opaque handles, variadics, callbacks, and native library linking |
 | Tuples | `(T, U)`, `(T,)`, `()` | Structural product types; fields are `.0`, `.1`, …; `Copy` when every element is |
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
@@ -235,6 +239,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |
+| [`docs/language/ffi.md`](docs/language/ffi.md) | Complete user guide to C interop: declarations, ABI, aggregates, opaques, variadics, strings, callbacks, linking, the safety contract, and diagnostics |
 | [`RELEASES.md`](RELEASES.md) | Release notes and source migration for language changes |
 
 ## Status
@@ -282,6 +287,19 @@ whole declaration and every field of every variant must be `Copy`. `Copy` and
 `Drop` are mutually exclusive, and copying a `Copy` aggregate preserves the
 loans of its reference fields without changing layout or ABI.
 `examples/044_copy_optin.sl` exercises the surface.
+
+The language also speaks C. An `extern "c"` block declares functions and
+statics, an `extern struct` has the C layout, and an `extern type` names an
+opaque handle. C scalar names (`c_int`, `c_char`, `size_t`, and the rest)
+resolve from the target, variadic declarations apply C's default promotions,
+and `c"..."` produces a NUL-terminated byte string. C-layout aggregates cross
+by value with the target's real ABI, including register coercion and
+`sret`/`byval`; C function pointers and Seal callbacks interoperate through an
+explicit cast. Every external call, static access, and indirect call requires
+`unsafe`. Native libraries come from a source `link` directive or from `-l`,
+`-L`, and `--link-arg`. `examples/045_ffi_libc.sl` calls `abs` and `snprintf`
+and returns 7; the complete guide is
+[`docs/language/ffi.md`](docs/language/ffi.md).
 
 Global data is part of the surface: `const` and `static` items may appear at
 file scope or in a block, `const func` may be called from a constant initializer,

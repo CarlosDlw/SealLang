@@ -12,7 +12,7 @@ unsafe operations.
 |---------|--------|
 | [`copy.md`](copy.md) | Opt-in `Copy` for structs and enums, generic bounds, fields and variants, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, `unsafe`, constants, provenance, diagnostics, and patterns |
-| [`extern.md`](extern.md) | `extern "c"` functions and statics, variadics and `c"..."`, `link_name`, `void`, unsafe calls, symbol rules, constant evaluation, code generation, and diagnostics |
+| [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
 
 ## Reading conventions
 

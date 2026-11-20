@@ -12,6 +12,7 @@
 //! is a one-byte `i1`.
 
 use std::cell::{Cell, RefCell};
+use std::num::NonZeroU32;
 
 use inkwell::AddressSpace;
 use inkwell::context::Context;
@@ -523,6 +524,14 @@ impl<'ctx> TypeMapper<'ctx> {
             32 => self.context.i32_type(),
             64 => self.context.i64_type(),
             128 => self.context.i128_type(),
+            other if (1..=128).contains(&other) => {
+                let bits = NonZeroU32::new(u32::from(other)).ok_or_else(|| {
+                    CodegenError::internal("an integer type cannot have zero bits")
+                })?;
+                self.context.custom_width_int_type(bits).map_err(|error| {
+                    CodegenError::internal(format!("invalid integer width `{other}`: {error}"))
+                })?
+            }
             other => {
                 return Err(CodegenError::internal(format!(
                     "unsupported integer width `{other}`"

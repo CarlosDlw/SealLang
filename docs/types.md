@@ -221,7 +221,7 @@ not a scalar; it belongs to the C interop layer.
 
 These names are type names, not literal suffixes: write `1 as c_int` or annotate
 the binding, never `1c_int`. Declaring C functions and statics that use these
-types is covered in [`language/extern.md`](language/extern.md).
+types is covered in [`language/ffi.md`](language/ffi.md).
 
 ## C interop types and layout
 
@@ -241,7 +241,7 @@ The field types form the following matrix:
 | `enum E` | `c_int`/`c_uint` plus constants | a C integer |
 | incomplete `struct T` | `extern type T` | no value type; only `ptr` |
 | `void` pointee | `c_void` | no value type; only `ptr` |
-| `_Bool` | `c_bool` (field) / `bool` (direct parameter) | `i8` / `i8` |
+| `_Bool` | `c_bool` (field) / `bool` (direct parameter or result) | `i8` / `i1` |
 | `char` | `c_char` | `i8` or `u8` per target |
 | `size_t` | `size_t` | pointer-sized integer |
 
@@ -254,7 +254,9 @@ At a C boundary, a small `extern struct` is not passed with its raw LLVM struct
 type. Code generation classifies it with the target ABI and coerces it to
 integer or floating-point pieces; a struct larger than the target's register
 limit is passed with `byval` and returned through `sret` on System V, or passed
-and returned indirectly on Microsoft x64. The complete struct remains a normal
+and returned indirectly on Microsoft x64. A coerced integer keeps its exact
+width: a 3-byte struct becomes `i24`, never a padded `i32`, so the register
+contains only the bytes C placed there. The complete struct remains a normal
 Seal aggregate inside the program, so field access, construction, pattern
 matching, and drop glue do not depend on the boundary representation.
 
@@ -470,7 +472,7 @@ and result must be FFI-safe. A Seal function converts to it with an explicit
 cast whose instantiated signature matches exactly; the compiler emits a C-ABI
 trampoline when the internal ABI differs. Taking the address, forging the
 pointer from an integer, and calling through it require `unsafe`. See
-[External functions and statics](language/extern.md#c-function-pointer-types).
+[External functions and statics](language/ffi.md#c-function-pointer-types).
 
 Dereferencing, reading, writing, copying, and non-wrapping arithmetic are unsafe
 operations and require an `unsafe { ... }` block. `*raw T` is read-only for
