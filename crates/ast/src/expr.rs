@@ -197,6 +197,21 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// One parameter of a closure expression.
+///
+/// The type is optional in the source. Type checking supplies it from the
+/// expected `func` signature or from a concrete `Fn` bound, and reports an
+/// error when neither exists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClosureParam {
+    /// The parameter name, or `_` when the source discards the value.
+    pub name: Symbol,
+    /// The span of the name.
+    pub name_span: Span,
+    /// The declared type, or `None` when the source omits it.
+    pub ty: Option<TypeId>,
+}
+
 /// One field initializer in a struct literal.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldInit {
@@ -414,6 +429,20 @@ pub enum ExprKind {
     },
     /// A parenthesized expression. Kept so formatting and spans stay faithful.
     Paren(ExprId),
+    /// A closure expression, written `|x| ...` or `move |x| ...`.
+    ///
+    /// The body is a block or a single expression. A declared result type
+    /// requires a block body, which the parser enforces.
+    Closure {
+        /// `true` for `move`, which captures every used variable by value.
+        is_move: bool,
+        /// Parameters in source order; empty for `||`.
+        params: Vec<ClosureParam>,
+        /// The declared result type, when the source writes `-> Type`.
+        ret: Option<TypeId>,
+        /// The body expression.
+        body: ExprId,
+    },
     /// A pattern-matching expression, written `match scrutinee { ... }`.
     Match {
         /// The value being matched.

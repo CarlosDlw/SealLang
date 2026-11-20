@@ -2,12 +2,14 @@
 
 mod arrays;
 mod casts;
+mod closures;
 mod dyn_types;
 mod enums;
 mod errors;
 mod examples;
 mod exprs;
 mod extern_items;
+mod fn_ptrs;
 mod fn_sigs;
 mod for_loop;
 mod generics;

@@ -142,6 +142,22 @@ fn as_is_a_keyword_but_a_prefixed_name_is_not() {
 }
 
 #[test]
+fn move_is_a_keyword_but_a_prefixed_name_is_not() {
+    let fixture = Fixture::new("move movex mover");
+    let lexed = fixture.lex();
+    fixture.assert_clean();
+    assert_eq!(
+        fixture.kinds(&lexed),
+        [
+            TokenKind::Move,
+            TokenKind::Ident(fixture.interner.intern("movex")),
+            TokenKind::Ident(fixture.interner.intern("mover")),
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn keywords_are_not_identifiers() {
     let fixture = Fixture::new(
         "func funcx struct structx enum enumx impl implx trait traitx dyn dynx for forx if iffy else elsex let mut mutx while whilex break breakx continue continuex _return return true false const constx static staticx unsafe unsafe_x",

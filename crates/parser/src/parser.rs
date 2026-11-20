@@ -1205,6 +1205,7 @@ fn token_name(kind: TokenKind) -> Option<&'static str> {
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::Let => "let",
+        TokenKind::Move => "move",
         TokenKind::Mut => "mut",
         TokenKind::While => "while",
         TokenKind::Match => "match",
@@ -1318,6 +1319,9 @@ pub(crate) fn can_start_expr(kind: TokenKind) -> bool {
             | TokenKind::If
             | TokenKind::Match
             | TokenKind::Unsafe
+            | TokenKind::Move
+            | TokenKind::Pipe
+            | TokenKind::OrOr
             | TokenKind::Error
     )
 }

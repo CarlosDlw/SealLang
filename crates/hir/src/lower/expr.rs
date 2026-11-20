@@ -336,6 +336,11 @@ impl Lowering<'_> {
                 block: self.lower_block(block),
             },
             AstExprKind::Paren(inner) => return self.lower_expr(inner),
+            // Closures are lowered by the first-class function phases. Their
+            // bodies are deliberately not walked yet: capture resolution needs
+            // the closure environment, and resolving outer names without it
+            // would bind the wrong local.
+            AstExprKind::Closure { .. } => ExprKind::Error,
             AstExprKind::Error => ExprKind::Error,
         };
 

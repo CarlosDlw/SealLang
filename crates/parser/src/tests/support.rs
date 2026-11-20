@@ -705,6 +705,20 @@ impl Reachability<'_> {
                 }
             }
             ExprKind::Paren(inner) => self.check_expr(inner),
+            ExprKind::Closure {
+                params, ret, body, ..
+            } => {
+                for param in params {
+                    self.assert_span(param.name_span);
+                    if let Some(ty) = param.ty {
+                        self.check_type(ty);
+                    }
+                }
+                if let Some(ret) = ret {
+                    self.check_type(ret);
+                }
+                self.check_expr(body);
+            }
             ExprKind::Match { scrutinee, arms } => {
                 self.check_expr(scrutinee);
                 for arm in arms {
@@ -854,6 +868,14 @@ impl Reachability<'_> {
                 self.check_type(element);
             }
             TypeKind::Slice { element } => self.check_type(element),
+            TypeKind::FnPtr { params, ret, .. } => {
+                for parameter in params {
+                    self.check_type(parameter);
+                }
+                if let Some(ret) = ret {
+                    self.check_type(ret);
+                }
+            }
             TypeKind::Tuple(elements) => {
                 for element in elements {
                     self.check_type(element);

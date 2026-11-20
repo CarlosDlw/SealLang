@@ -308,10 +308,24 @@ pub enum TypeKind {
         /// The type of each element.
         element: TypeId,
     },
+    /// A Seal function pointer type, written `func(A, B) -> R` or
+    /// `unsafe func(A, B) -> R`.
+    ///
+    /// This is a first-class value type with the internal Seal ABI. It is
+    /// distinct from [`Self::FnSig`], which only describes a C function behind
+    /// a raw pointer.
+    FnPtr {
+        /// Fixed parameter types in declaration order.
+        params: Vec<TypeId>,
+        /// The return type, or `None` when the source omits `-> T`.
+        ret: Option<TypeId>,
+        /// `true` for `unsafe func(...)`, which requires `unsafe` to call.
+        is_unsafe: bool,
+    },
     /// A C function signature, written `extern "c" func(T, ...) -> R`.
     ///
     /// The signature only appears as the pointee of a raw pointer; the parser
-    /// produces it after `*raw extern`.
+    /// produces it after `*raw extern`. It is never a value type.
     FnSig {
         /// The ABI spelling written between the quotes.
         abi: seal_symbol::Symbol,

@@ -6,6 +6,7 @@ use seal_ast::{
 };
 use seal_error_codes as codes;
 use seal_lexer::{Token, TokenKind};
+use seal_span::Span;
 use seal_symbol::Symbol;
 
 use crate::parser::Parser;
@@ -211,7 +212,11 @@ impl Parser<'_> {
             }
 
             let (name, name_span) = self.expect_ident("a bound name");
-            let args = self.parse_optional_generic_args();
+            let args = if self.is_fn_trait_name(name) && self.at(TokenKind::LParen) {
+                Some(self.parse_fn_trait_sugar(name_span))
+            } else {
+                self.parse_optional_generic_args()
+            };
             let end = args.as_ref().map_or(name_span, |args| args.span);
             let span = name_span.cover(end);
             let kind = if self.is_copy_bound(name, args.is_some()) {
@@ -242,6 +247,82 @@ impl Parser<'_> {
             break;
         }
         bounds
+    }
+
+    /// Returns `true` when `name` spells one of the built-in function traits.
+    pub(crate) fn is_fn_trait_name(&self, name: Symbol) -> bool {
+        matches!(self.interner.resolve(name), "Fn" | "FnMut" | "FnOnce")
+    }
+
+    /// Parses the `(A, B) -> R` sugar of a function-trait bound.
+    ///
+    /// The sugar is represented as the explicit form `Fn<(A, B), R>`: a
+    /// synthetic tuple type plus the result type, with `()` when the source
+    /// omits the arrow. One representation means name resolution, bounds
+    /// validation, and later phases never branch on which spelling was used.
+    ///
+    /// The caller has already read the trait name and is at `(`.
+    pub(crate) fn parse_fn_trait_sugar(&mut self, name_span: Span) -> GenericArgs {
+        let open = self.current_span();
+        self.bump();
+
+        let mut params = Vec::new();
+        let close = if self.eat(TokenKind::RParen) {
+            self.previous_span()
+        } else {
+            loop {
+                let before = self.index;
+                params.push(self.parse_type());
+                if self.eat(TokenKind::Comma) {
+                    if self.at(TokenKind::RParen) || self.is_eof() {
+                        break;
+                    }
+                    continue;
+                }
+                if self.at(TokenKind::RParen) || self.is_eof() {
+                    break;
+                }
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `,` or `)` in the function parameter list, found {found}"),
+                )
+                .help("separate parameter types with `,`")
+                .emit();
+                if !can_start_type(self.current_kind()) {
+                    break;
+                }
+                self.ensure_progress(before);
+            }
+            if self.eat(TokenKind::RParen) {
+                self.previous_span()
+            } else {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `)` to close the function parameter list, found {found}"),
+                )
+                .help("add the missing `)`")
+                .emit();
+                self.current_span()
+            }
+        };
+
+        let tuple = self
+            .builder
+            .push_type(TypeKind::Tuple(params), open.cover(close));
+        let output = if self.eat(TokenKind::Arrow) {
+            self.parse_type()
+        } else {
+            self.builder.push_type(TypeKind::Tuple(Vec::new()), close)
+        };
+        let span = name_span.cover(self.builder.ast().ty(output).span);
+        GenericArgs {
+            args: vec![tuple, output],
+            span,
+        }
     }
 
     /// Parses a trailing `where` clause, or returns an empty clause anchored at

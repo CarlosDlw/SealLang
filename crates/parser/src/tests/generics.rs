@@ -1,7 +1,8 @@
 //! Generic syntax: declarations, bounds, arguments, and recovery.
 
 use seal_ast::{
-    BoundKind, ExprKind, GenericArgs, ItemKind, StmtKind, TypeKind, TypePath, VariantFieldList,
+    BoundKind, ExprKind, GenericArgs, ItemKind, PrimitiveType, StmtKind, TypeKind, TypePath,
+    VariantFieldList,
 };
 
 use crate::tests::support::{Fixture, assert_invariants, body, parse_clean, sole_function};
@@ -631,6 +632,117 @@ fn generated_unclosed_generic_forms_recover_without_panicking() {
             );
         }
     }
+}
+
+#[test]
+fn function_trait_bounds_accept_the_call_sugar() {
+    let (fixture, ast) = parse_clean("func apply<F: Fn(i32, bool) -> u8>(f: F) {}");
+    assert_invariants(&fixture, &ast);
+
+    let declaration = sole_function(&ast);
+    let parameter = ast.generic_param(declaration.generics.params[0]);
+    let BoundKind::Trait(trait_ref) = &ast.bound(parameter.bounds[0]).kind else {
+        panic!("expected a trait bound");
+    };
+    assert_eq!(fixture.symbol(trait_ref.name), "Fn");
+    let args = trait_ref
+        .args
+        .as_ref()
+        .expect("the sugar produces explicit arguments");
+    assert_eq!(args.args.len(), 2);
+    let TypeKind::Tuple(elements) = &ast.ty(args.args[0]).kind else {
+        panic!("the first argument is the parameter tuple");
+    };
+    assert_eq!(elements.len(), 2);
+    assert!(matches!(
+        ast.ty(elements[0]).kind,
+        TypeKind::Primitive(PrimitiveType::I32)
+    ));
+    assert!(matches!(
+        ast.ty(elements[1]).kind,
+        TypeKind::Primitive(PrimitiveType::Bool)
+    ));
+    assert!(matches!(
+        ast.ty(args.args[1]).kind,
+        TypeKind::Primitive(PrimitiveType::U8)
+    ));
+    assert_eq!(fixture.text(trait_ref.span), "Fn(i32, bool) -> u8");
+}
+
+#[test]
+fn function_trait_bounds_default_to_unit_arguments_and_result() {
+    let (fixture, ast) = parse_clean("func apply<F: Fn()>(f: F) {}");
+    assert_invariants(&fixture, &ast);
+
+    let declaration = sole_function(&ast);
+    let parameter = ast.generic_param(declaration.generics.params[0]);
+    let BoundKind::Trait(trait_ref) = &ast.bound(parameter.bounds[0]).kind else {
+        panic!("expected a trait bound");
+    };
+    let args = trait_ref
+        .args
+        .as_ref()
+        .expect("the sugar produces arguments");
+    assert_eq!(args.args.len(), 2);
+    for argument in &args.args {
+        let TypeKind::Tuple(elements) = &ast.ty(*argument).kind else {
+            panic!("both arguments are tuples");
+        };
+        assert!(elements.is_empty());
+    }
+    assert_eq!(fixture.text(trait_ref.span), "Fn()");
+}
+
+#[test]
+fn function_trait_bounds_still_accept_the_explicit_arguments() {
+    let (fixture, ast) = parse_clean("func apply<F: Fn<(i32,), i32>>(f: F) {}");
+    assert_invariants(&fixture, &ast);
+
+    let declaration = sole_function(&ast);
+    let parameter = ast.generic_param(declaration.generics.params[0]);
+    let BoundKind::Trait(trait_ref) = &ast.bound(parameter.bounds[0]).kind else {
+        panic!("expected a trait bound");
+    };
+    let args = trait_ref.args.as_ref().expect("explicit arguments");
+    assert_eq!(args.args.len(), 2);
+    assert!(matches!(ast.ty(args.args[0]).kind, TypeKind::Tuple(_)));
+    assert!(matches!(
+        ast.ty(args.args[1]).kind,
+        TypeKind::Primitive(PrimitiveType::I32)
+    ));
+}
+
+#[test]
+fn where_clauses_accept_function_trait_sugar() {
+    let (fixture, ast) = parse_clean("func f<T>(value: T) where T: FnMut(i32) -> i32 {}");
+    assert_invariants(&fixture, &ast);
+
+    let declaration = sole_function(&ast);
+    let predicate = &declaration.where_clause.predicates[0];
+    let BoundKind::Trait(trait_ref) = &ast.bound(predicate.bounds[0]).kind else {
+        panic!("expected a trait bound");
+    };
+    assert_eq!(fixture.symbol(trait_ref.name), "FnMut");
+    assert_eq!(
+        trait_ref.args.as_ref().expect("sugar arguments").args.len(),
+        2
+    );
+}
+
+#[test]
+fn dyn_function_trait_sugar_reaches_the_tree() {
+    let (fixture, ast) = parse_clean("func f(callback: dyn Fn(i32) -> i32) {}");
+    assert_invariants(&fixture, &ast);
+
+    let declaration = sole_function(&ast);
+    let ty = ast.param(declaration.params[0]).ty;
+    let TypeKind::Dyn(path) = &ast.ty(ty).kind else {
+        panic!("expected a trait object type");
+    };
+    assert_eq!(fixture.symbol(path.name), "Fn");
+    let args = path.args.as_ref().expect("sugar arguments");
+    assert_eq!(args.args.len(), 2);
+    assert_eq!(fixture.text(path.span), "Fn(i32) -> i32");
 }
 
 #[test]

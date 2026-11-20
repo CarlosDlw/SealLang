@@ -315,6 +315,8 @@ impl Parser<'_> {
                 self.builder
                     .push_expr(ExprKind::Lit(Literal::Bool(false)), token.span)
             }
+            TokenKind::Move => self.parse_closure(true, token.span),
+            TokenKind::Pipe | TokenKind::OrOr => self.parse_closure(false, token.span),
             TokenKind::Ident(symbol) => {
                 self.bump();
                 self.parse_named_expr(symbol, token.span)
@@ -455,6 +457,124 @@ impl Parser<'_> {
                 self.builder.push_expr(ExprKind::Error, token.span)
             }
         }
+    }
+
+    /// Parses a closure expression starting at `start`.
+    ///
+    /// The caller consumed nothing, so the leading `move` (when `is_move`) and
+    /// the parameter list are still at the cursor. Prefix `|` and `||` are
+    /// closures; both stay binary operators everywhere else because only
+    /// prefix position reaches this function.
+    fn parse_closure(&mut self, is_move: bool, start: seal_span::Span) -> ExprId {
+        if self.depth >= MAX_DEPTH {
+            return self.depth_error_expr(start);
+        }
+        self.depth += 1;
+
+        let mut params = Vec::new();
+        if is_move {
+            self.bump();
+            if !self.at(TokenKind::Pipe) && !self.at(TokenKind::OrOr) {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `|` after `move`, found {found}"),
+                )
+                .help("write `move |x| ...` or `move || ...`")
+                .emit();
+                self.depth -= 1;
+                let span = start.cover(self.current_span());
+                return self.builder.push_expr(ExprKind::Error, span);
+            }
+        }
+
+        if self.eat(TokenKind::OrOr) {
+            // `||` is the closure without parameters.
+        } else {
+            self.bump();
+            while !self.at(TokenKind::Pipe) && !self.is_eof() {
+                let before = self.index;
+                let (name, name_span) = self.expect_ident("a closure parameter name");
+                let ty = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type())
+                } else {
+                    None
+                };
+                params.push(seal_ast::ClosureParam {
+                    name,
+                    name_span,
+                    ty,
+                });
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                if self.at(TokenKind::Pipe) || self.is_eof() {
+                    break;
+                }
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `,` or `|` in the closure parameter list, found {found}"),
+                )
+                .help("separate closure parameters with `,`")
+                .emit();
+                if !can_start_expr(self.current_kind()) {
+                    break;
+                }
+                self.ensure_progress(before);
+            }
+            if !self.eat(TokenKind::Pipe) {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `|` to close the closure parameters, found {found}"),
+                )
+                .help("add the missing `|`")
+                .emit();
+            }
+        }
+
+        let ret = if self.eat(TokenKind::Arrow) {
+            let ret = self.parse_type();
+            if !self.at(TokenKind::LBrace) {
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!(
+                        "a closure with an explicit result type needs a block body, found {found}"
+                    ),
+                )
+                .help("write the body as `{ ... }`")
+                .emit();
+            }
+            Some(ret)
+        } else {
+            None
+        };
+
+        let body = if self.at(TokenKind::LBrace) {
+            let block = self.parse_block();
+            let span = self.builder.ast().block(block).span;
+            self.builder.push_expr(ExprKind::Block(block), span)
+        } else {
+            self.parse_expr(0)
+        };
+
+        self.depth -= 1;
+        let span = start.cover(self.builder.ast().expr(body).span);
+        self.builder.push_expr(
+            ExprKind::Closure {
+                is_move,
+                params,
+                ret,
+                body,
+            },
+            span,
+        )
     }
 
     /// Parses `if condition block ("else" (block | if ...))?`.

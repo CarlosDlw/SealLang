@@ -305,6 +305,11 @@ impl Lowering<'_> {
                 }
                 self.hir.ty_ctxt_mut().error_ty()
             }
+            // The first-class function phases give this type its own
+            // representation. Until they land, a `func` annotation lowers to
+            // the error type rather than a placeholder that could leak into
+            // type checking.
+            TypeKind::FnPtr { .. } => self.hir.ty_ctxt_mut().error_ty(),
             TypeKind::Error => self.hir.ty_ctxt_mut().error_ty(),
         }
     }

@@ -117,6 +117,26 @@ impl Parser<'_> {
             let trait_path = self.parse_dyn_trait_path();
             let span = start.cover(self.previous_span());
             self.builder.push_type(TypeKind::Dyn(trait_path), span)
+        } else if self.at(TokenKind::Unsafe) && matches!(self.peek_kind(), Some(TokenKind::Func)) {
+            self.parse_seal_fn_ptr_type(true)
+        } else if self.at(TokenKind::Func) {
+            self.parse_seal_fn_ptr_type(false)
+        } else if self.at_contextual("extern")
+            && matches!(self.peek_kind(), Some(TokenKind::Str(_)))
+        {
+            // A C signature is never a value type. Recovering as the C
+            // signature keeps the rest of the declaration checkable, and the
+            // diagnostic points at the raw-pointer spelling that is valid.
+            self.error(
+                codes::E3099,
+                start,
+                "a C function signature is not a Seal value type",
+            )
+            .help(
+                "write `*raw extern \"c\" func(...)` for a C function pointer, or `func(...)` for a Seal one",
+            )
+            .emit();
+            self.parse_fn_sig_type()
         } else if let TokenKind::Ident(symbol) = self.current_kind() {
             let text = self.interner.resolve(symbol);
             match PrimitiveType::from_name(text) {
@@ -159,6 +179,82 @@ impl Parser<'_> {
 
         self.depth -= 1;
         result
+    }
+
+    /// Parses `func(T, ...) -> R` and `unsafe func(T, ...) -> R`.
+    ///
+    /// The caller leaves `unsafe` (when present) and `func` at the cursor. The
+    /// signature is structural: the same parameter and result types produce the
+    /// same function pointer type, and the list is never variadic.
+    fn parse_seal_fn_ptr_type(&mut self, is_unsafe: bool) -> TypeId {
+        let start = self.current_span();
+        if is_unsafe {
+            self.bump();
+        }
+        self.bump();
+
+        let mut params = Vec::new();
+        if self.eat(TokenKind::LParen) {
+            while !self.at(TokenKind::RParen) && !self.is_eof() {
+                let before = self.index;
+                if self.at(TokenKind::DotDotDot) {
+                    let span = self.current_span();
+                    self.error(
+                        codes::E3099,
+                        span,
+                        "a Seal function type cannot be variadic",
+                    )
+                    .help("remove `...`; Seal function pointers take a fixed parameter list")
+                    .emit();
+                    while !self.at(TokenKind::RParen) && !self.is_eof() {
+                        self.bump();
+                    }
+                    break;
+                }
+                params.push(self.parse_type());
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                if self.at(TokenKind::RParen) || self.is_eof() {
+                    break;
+                }
+                let found = self.describe(self.current_kind());
+                self.error(
+                    codes::E1002,
+                    self.current_span(),
+                    format!("expected `,` between function parameter types, found {found}"),
+                )
+                .help("separate parameter types with `,`")
+                .emit();
+                if !can_start_type(self.current_kind()) {
+                    break;
+                }
+                self.ensure_progress(before);
+            }
+            let _ = self.expect(
+                TokenKind::RParen,
+                "`)` to close the function parameter list",
+            );
+        } else {
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                "expected `(` after `func`",
+            )
+            .help("write the parameter types, as in `func(i32) -> i32`")
+            .emit();
+        }
+
+        let ret = self.eat(TokenKind::Arrow).then(|| self.parse_type());
+        let span = start.cover(self.previous_span());
+        self.builder.push_type(
+            TypeKind::FnPtr {
+                params,
+                ret,
+                is_unsafe,
+            },
+            span,
+        )
     }
 
     /// Parses `extern "c" func(T, ...) -> R` after `*raw`.
@@ -290,7 +386,14 @@ impl Parser<'_> {
             return TraitPath::new(Symbol::EMPTY, span);
         }
 
-        let path = self.parse_trait_path();
+        let mut path = self.parse_trait_path();
+        if path.args.is_none() && self.is_fn_trait_name(path.name) && self.at(TokenKind::LParen) {
+            // Accept the bound sugar so `dyn Fn(...)` reaches HIR, which
+            // rejects function-trait objects with a targeted diagnostic.
+            let sugar = self.parse_fn_trait_sugar(path.name_span);
+            path.span = path.span.cover(sugar.span);
+            path.args = Some(sugar);
+        }
         if self.at(TokenKind::Plus) {
             let span = self.current_span();
             self.error(codes::E1002, span, "a `dyn` type takes exactly one trait")
@@ -341,6 +444,8 @@ pub(crate) fn can_start_type(kind: TokenKind) -> bool {
             | TokenKind::LBracket
             | TokenKind::LParen
             | TokenKind::Dyn
+            | TokenKind::Func
+            | TokenKind::Unsafe
             | TokenKind::Ident(_)
     )
 }
@@ -361,5 +466,6 @@ fn is_type_stop(kind: TokenKind) -> bool {
             | TokenKind::Plus
             | TokenKind::Gt
             | TokenKind::Shr
+            | TokenKind::Pipe
     )
 }

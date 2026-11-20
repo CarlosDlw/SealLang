@@ -190,6 +190,11 @@ pub enum TokenKind {
     Else,
     /// `let`
     Let,
+    /// `move`
+    ///
+    /// A closure modifier, never an identifier. Reserving it keeps
+    /// `move |x| ...` unambiguous with the bitwise-or operator.
+    Move,
     /// `mut`
     Mut,
     /// `while`
