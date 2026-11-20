@@ -96,6 +96,42 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
 `program`, `interpreter`, `place`, `rvalue`, `operators`, `intrinsic`,
 `dependency`, `limits`, and `error`, each with tests beside it.
 
+### Callable values
+
+A Seal function pointer is `TyKind::FnPtr(FnPtrId)`. `FnPtrDef` stores the
+ordered parameter types, result, and `is_unsafe`; the type is `Sized`, `Copy`,
+and one word, and it never carries a C ABI or a variadic tail. A function item
+in a value position has the pointer type of its signature, so lowering, MIR,
+and monomorphization use the existing call path instead of a second callable
+representation.
+
+A closure has two linked HIR products: a `BodyKind::Closure` body whose first
+parameter is the environment, and an `AdtKind::Closure` environment with one
+field per capture in first-mention order. Each capture records whether it comes
+from the creating frame or an enclosing closure. Type checking records the
+lifted signature, the capture storage (`Shared`, `Exclusive`, or `Value`), and
+the closure kind. MIR lowers a closure call to `CallTarget::Closure`, a
+function-trait call to `CallTarget::FnTrait`, and a function pointer value to
+the matching `FnPtr` type.
+
+Monomorphization substitutes the closure's arguments, resolves a symbolic
+`FnTrait` target to the concrete closure or pointer, and keeps the receiver
+shape the bound requires: a borrow for `Fn`/`FnMut`, the value for `FnOnce`.
+A pointer receiver introduced as a borrow is dereferenced back to the pointer
+value. The closure body keeps its environment parameter, so a weak-bound call
+adapts it at code generation: `*Env` and `*mut Env` share a representation,
+and a by-value `Env` is materialized in a local slot so an `Fn`/`FnMut` body can
+borrow it.
+
+Code generation emits one internal function per closure instance, named from
+the parent and stable instance hash, with `<closure>` debug information and
+one formal parameter per capture. A capture-free closure converted to `func`
+uses one internal trampoline per `(closure instance, pointer type)`; the
+trampoline allocates the empty environment, calls the lifted body, and returns
+its result. A C callback still uses the separate C-ABI trampoline. Function
+pointers and closures never allocate, and no callable value introduces a
+vtable, heap object, or runtime lookup.
+
 ## Invariants
 
 1. **No global mutable state.** Two sessions in one process are independent.
@@ -678,6 +714,15 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     walks the fields with a `(AdtId, SubstsId)` guard, and never loops on a
     recursive declaration. A `Copy` implementation creates no monomorphization
     or code-generation item.
+92. **Callable values keep one representation from HIR to machine code.** A
+    `func` type is an interned `FnPtrDef`; a closure is a `BodyKind::Closure`
+    body plus an `AdtKind::Closure` environment. Capture storage and closure
+    kind are recorded once by type checking. MIR carries
+    `CallTarget::Closure`/`CallTarget::FnTrait`, monomorphization resolves them
+    to concrete instances or pointers, and code generation never re-infers a
+    kind or reconstructs an environment. Capture-free closures cross to `func`
+    only through the internal trampoline, which preserves the internal Seal ABI;
+    the C trampoline remains a separate path for `*raw extern "c" func`.
 
 ## Global data and constant evaluation
 

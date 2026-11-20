@@ -44,6 +44,8 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Raw trait-object pointer | `*raw dyn Trait`, `*raw mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
 | C function signature | not written alone | unsized | unsized | no | no | no |
 | C function pointer | `*raw extern "c" func(...) -> R` | pointer | pointer | yes | yes | no |
+| Seal function pointer | `func(...) -> R`, `unsafe func(...) -> R` | pointer | pointer | yes | yes | no |
+| Closure | inferred, not nameable | computed | computed | structural | yes | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
 | C-layout aggregate | `extern struct S` | computed | computed | opt-in | yes, if every field is | opt-in |
 | Opaque type | `extern type T`, `c_void` | unsized | unsized | no | no | no |
@@ -150,6 +152,37 @@ output; no instance suffix is added and no extra MIR body or LLVM function is
 emitted. A generic definition that is never instantiated is not emitted at all.
 Existing non-generic code needs no migration; adding a type parameter changes
 only that item's symbol, which is internal to one compilation.
+
+## Function types and closures
+
+A Seal function pointer is written `func(A, B) -> R`; the result may be omitted
+for `()`. It is a sized, `Copy`, one-word value with no destructor, no null
+value, no equality, and no casts to or from integers or raw pointers. `unsafe`
+is part of the type, and calling an `unsafe func` value requires an `unsafe`
+block. These are the internal Seal ABI, never the C ABI; a C signature is a
+separate `FnSig` type behind `*raw`.
+
+`FnPtrDef` is interned by its ordered parameters, result, and safety marker, so
+two spellings of the same signature share one `TyId`. Function items coerce to
+the matching pointer type. A capture-free closure coerces too, through an
+internal trampoline; a closure with captures is rejected (`E3098`). Safe
+functions convert to safe or unsafe pointers, but unsafe pointers never convert
+back to safe ones.
+
+A closure is represented as a synthetic nominal aggregate whose fields are its
+captures, plus a lifted body. The type is anonymous and cannot be written, but
+it behaves like any other `Adt`: it is `Sized`, it is `Copy` exactly when every
+field is, and it needs no destructor of its own because the environment drops
+its fields. A shared capture stores `*T`; an exclusive capture stores `*mut T`
+and makes the closure non-`Copy`; a `move` capture stores the value. The kind
+(`Fn`, `FnMut`, or `FnOnce`) is a property of the closure, not of its layout.
+
+The trait bounds `Fn(A, B) -> R`, `FnMut(A)`, and `FnOnce() -> R` are callable
+contracts, not storable trait objects. A value satisfying them is either a
+closure or a safe function pointer; `dyn Fn` and `impl Fn` are not part of the
+type surface. See
+[`language/first-class-functions.md`](language/first-class-functions.md) for the
+full rules.
 
 ## Scalar types
 
@@ -1555,6 +1588,8 @@ not `Copy`.
 | `*[T]` and `*mut [T]` | Length, then elements; `T` must itself be comparable |
 | `*T`, `*mut T` | Rejected: only the address could differ, which is not value equality |
 | `*dyn Trait` | Rejected: the concrete type is erased, so there is no structural comparison |
+| `func(...)` | Rejected: there is no value equality for a function pointer |
+| closures | Rejected: a closure type is not part of the comparable surface |
 
 A struct, tuple, or array is comparable only when every field or element is. A
 nested aggregate recurses with the same rules, so a struct holding a `*[i32]`
@@ -1602,6 +1637,10 @@ alignment, no reordering, and trailing padding rounded to its alignment.
 8. An array has the element's alignment and `length × size(element)` bytes. It
    adds no padding between elements beyond the element's own size, which already
    includes its trailing padding.
+9. A Seal function pointer is one pointer-sized word with pointer alignment.
+10. A closure is laid out exactly like a struct whose fields are its captures in
+    first-mention order, with natural alignment and trailing padding. An empty
+    environment is a zero-sized value with alignment 1.
 
 | Type | Size | Align | Offsets |
 |------|-----:|------:|---------|
@@ -1616,6 +1655,9 @@ alignment, no reordering, and trailing padding rounded to its alignment.
 | `*i32` on a 64-bit target | 8 | 8 | none |
 | `*str` on a 64-bit target | 16 | 8 | data at 0, length at 8 |
 | `*dyn Shape` on a 64-bit target | 16 | 8 | data at 0, vtable at 8 |
+| `func(i32) -> i32` on a 64-bit target | 8 | 8 | none |
+| `\|x: i32\| x + 1` with no captures | 0 | 1 | none |
+| `move \|\| token` holding `Token { value: i32 }` | 4 | 4 | capture at 0 |
 
 Code generation materializes one stack slot per local, uses struct GEPs for
 struct fields and tuple elements, indexes arrays with a bounds-checked byte
@@ -1676,8 +1718,9 @@ Every new type kind must define its layout, its `Copy`/`Sized`/`Drop` answers,
 and its interning key before it can appear in a signature. Slices reuse the
 element stride and add a runtime length; enum variants reuse the field, query,
 and layout rules per variant; generic instantiations apply the same rules per
-concrete argument; trait objects reuse the reference layout and add a vtable
-address; owning heap types will add field-derived destructors. None of these
-requires changing the identity, layout, or ownership model above: `TyId`
-equality, declaration-order layout, and the move/borrow
-rules stay the same.
+concrete argument;trait objects reuse the reference layout and add a vtable address; function
+pointers reuse the pointer layout; closures reuse the aggregate layout over
+their capture fields; owning heap types will add field-derived destructors.
+None of these requires changing the identity, layout, or ownership model above:
+`TyId` equality, declaration-order layout, and the move/borrow rules stay the
+same.

@@ -113,6 +113,25 @@ The ABI is defined by the language, not by a C header:
 - `Copy` is a typing and MIR decision only. It does not change layout or ABI,
   add a field, or emit a function, global, vtable, or drop glue. Lowering reads
   a `Copy` place with `Operand::Copy` instead of moving it.
+- A Seal function pointer is one LLVM pointer to a function with the internal
+  Seal ABI. Calling it is an indirect call with the pointer's exact parameter
+  and result types; there is no sret/byval C classification. A function item
+  used as a value is the address of its declared function, and a generic
+  instance is the address of that monomorphized function. Function pointers are
+  `Copy` values stored in ordinary slots and aggregates.
+- A closure has one LLVM function per concrete instance and one environment
+  type per `(closure definition, arguments)`. The body's first parameter is
+  `*Env` for `Fn`, `*mut Env` for `FnMut`, or `Env` by value for `FnOnce`.
+  Constructing a closure stores its captures in declaration order into the
+  environment aggregate. A call through a weaker bound adapts the environment:
+  pointer representations pass through, and a by-value environment for an
+  `Fn`/`FnMut` body is spilled to a local slot so the body can borrow it. A
+  capture-free closure cast to `func` gets an internal trampoline with the
+  empty environment; the trampoline has internal linkage and is cached per
+  `(instance, pointer type)`. A closure with captures never reaches this path.
+- A closure's drop glue releases its environment fields in capture order. A
+  value moved out of an `FnOnce` environment is cleared by MIR drop
+  elaboration, so it is not dropped again when the environment is released.
 - Structs and tuples are LLVM structs with fields or elements in declaration
   order, natural alignment, and no reordering. Arrays are LLVM arrays of their
   element type: the element size already includes its trailing padding, so the
@@ -371,7 +390,10 @@ sections and for the absence of constructors and thread-local storage.
 
 - one compile unit per input file, with the displayed (possibly remapped) path;
 - one `DW_TAG_subprogram` per monomorphized instance, named with readable type
-  arguments (`identity<i32>`) and linked to the instance's LLVM function;
+  arguments (`identity<i32>`) and linked to the instance's LLVM function; a
+  closure body is named `<closure>` under its parent and its environment
+  parameter plus one formal parameter per capture are described in the same
+  way;
 - `DW_TAG_formal_parameter` for parameters and `DW_TAG_variable` for bindings,
   declared at their stack slots with source line and column;
 - `DW_TAG_structure_type` for every struct instantiation, named with its type

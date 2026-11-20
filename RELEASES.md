@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### First-class functions and closures
+
+Functions are now values, and closures are part of the language:
+
+- `func(A, B) -> R` is a one-word, `Sized`, `Copy` function pointer with the
+  internal Seal ABI. `unsafe func(...)` carries the caller contract in the type.
+  A safe function converts to a safe or unsafe pointer; unsafe never converts
+  back, and no signature or ABI may change silently (`E3098`). Function pointers
+  have no null value, equality, arithmetic, or implicit C conversion.
+- Closures are written `|x| ...`, `|| ...`, and `|x: i32| -> i32 { ... }`, with
+  optional `move`. They capture whole variables by reference by default and by
+  value with `move`. Captures live inline; there is no boxing, reference
+  counting, or allocation.
+- The body's use of a capture selects the callable kind: `Fn` reads, `FnMut`
+  writes, and `FnOnce` consumes. `Fn: FnMut: FnOnce`, and generic bounds accept
+  closures and safe function pointers without a dictionary or runtime search.
+  An explicit `f.call(...)` is rejected; the call operator is the surface.
+- A capture-free closure converts to a matching `func` through an internal
+  trampoline. A closure with captures is `E3098`; `dyn Fn`/`impl Fn`, explicit
+  capture lists, closure patterns, and implicit C interop are out of scope.
+- Closures follow the ordinary ownership rules: an exclusive capture makes the
+  closure non-`Copy`, a non-`move` body cannot move a capture out (`E3095`), a
+  borrowed capture keeps its loan live (`E5001`), and an `FnOnce` environment
+  drops each field once. Function addresses and indirect calls are `E4033` in a
+  constant context.
+- `move` is a reserved keyword. `Fn`, `FnMut`, and `FnOnce` are compiler traits
+  that cannot be declared or implemented (`E3097`).
+- `examples/046_function_pointers.sl`, `examples/047_closures.sl`, and
+  `examples/048_function_traits.sl` exercise the surface. The complete guide is
+  [`docs/language/first-class-functions.md`](docs/language/first-class-functions.md).
+
 ### C interoperability (FFI)
 
 Seal now declares and calls C code directly, without a header parser or a

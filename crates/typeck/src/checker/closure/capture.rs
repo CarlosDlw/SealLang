@@ -288,6 +288,13 @@ impl Checker<'_> {
             });
         }
 
+        let copy = captures.iter().all(|capture| match capture.storage {
+            CaptureStorage::Shared => true,
+            CaptureStorage::Exclusive => false,
+            CaptureStorage::Value => self.is_copy(capture.value_ty),
+        });
+        self.hir.ty_ctxt().set_closure_copy(definition.adt, copy);
+
         for (index, capture) in captures.iter().enumerate() {
             let field_ty = match capture.storage {
                 CaptureStorage::Value => capture.value_ty,

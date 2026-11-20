@@ -617,6 +617,44 @@ pointer, free it, or write through it, and the compiler models none of that.
 These rules are the memory-model face of the safety checklist in
 [`language/ffi.md`](language/ffi.md#7-the-safety-contract).
 
+### D25 — Closures capture places, not hidden boxes
+
+A closure owns a synthetic environment with one field per captured variable,
+stored inline. Capturing is by whole variable and in first-mention order. The
+default mode stores a reference: a shared `*T` for a read, an exclusive `*mut T`
+for a write or an exclusive borrow. `move` stores the value instead, copying a
+`Copy` capture and moving a non-`Copy` one. There is no boxing, reference
+counting, or allocation on capture, and the environment's address is stable
+only while the closure value itself is not moved.
+
+The capture mode and the call kind are separate. The kind comes from what the
+body does with the captures: reading is `Fn`, writing is `FnMut`, and moving a
+capture out is `FnOnce`. `Fn: FnMut: FnOnce` is the receiver hierarchy, so a
+shared call borrows the environment, an exclusive call borrows it mutably, and a
+consuming call takes it by value. A `move || x + 1` over a `Copy` value is still
+`Fn`; `move` only changes where the value lives.
+
+A closure is `Copy` exactly when every environment field is. Shared captures
+are references and therefore `Copy`; value captures follow the captured type;
+an exclusive capture makes the closure non-`Copy` even though a raw pointer is
+copyable, because duplicating the closure would duplicate one exclusive loan.
+This is the closure-specific application of D8 and D23, not a second ownership
+rule.
+
+The environment follows D20. Fields drop in capture order, and a value moved
+out of an `FnOnce` environment is consumed there and is not dropped a second
+time by the environment. A non-`move` closure that tries to move a non-`Copy`
+capture out is rejected (`E3095`) because the enclosing frame still owns the
+storage; `move` transfers it. A `move` closure can outlive the frame, while a
+borrowing closure keeps its loans live until its last use.
+
+A function pointer is one pointer and carries no environment. A capture-free
+closure may be converted to one through an internal trampoline; a closure with
+captures cannot, because the pointer has nowhere to store them (`E3098`).
+Function pointers have no null value, no equality, no arithmetic, and no
+implicit C conversion, so they never become a source of provenance that the
+memory model cannot track.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -624,10 +662,12 @@ These rules are the memory-model face of the safety checklist in
 - `TyKind` has `Bool`, `Char`, `Str`, `Slice { element }`, `Int`, `Uint`,
   `Float`, `Ref { kind: RefKind, pointee }`, `RawPtr { kind: RawPtrKind, pointee }`,
   `Array { element, length }`, `Adt { adt, args }`, `Dyn { trait_def, args }`,
-  `Tuple(TupleId)`, `FnSig(FnSigId)`, `Opaque { def, name }`, `Param(ParamTyId)`,
-  `Unit`, `Never`, `Error`, and `Infer`. A C function signature is an interned
-  `FnSigDef` carrying its `Abi` and variadicity; it is unsized and only appears
-  behind `*raw`. An opaque type names a `DefKind::OpaqueType` and has no layout.
+  `Tuple(TupleId)`, `FnSig(FnSigId)`, `FnPtr(FnPtrId)`, `Opaque { def, name }`,
+  `Param(ParamTyId)`, `Unit`, `Never`, `Error`, and `Infer`. A C function
+  signature is an interned `FnSigDef` carrying its `Abi` and variadicity; it is
+  unsized and only appears behind `*raw`. `FnPtrDef` is interned by its ordered
+  parameter types, result, and safety marker, and a closure is an `Adt` with
+  `AdtKind::Closure` whose fields are its captures. An opaque type names a `DefKind::OpaqueType` and has no layout.
   A C-layout struct is an `Adt` with `AdtRepr::C`; the default is `AdtRepr::Rust`.
   `AdtId` always names the declaration and `args` is the interned, structural
   list of type arguments; `Param` is a rigid parameter of one generic body.

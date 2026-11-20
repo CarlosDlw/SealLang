@@ -8,6 +8,8 @@
 mod borrowing;
 #[path = "acceptance/codegen.rs"]
 mod codegen;
+#[path = "acceptance/first_class_functions.rs"]
+mod first_class_functions;
 #[path = "acceptance/functions.rs"]
 mod functions;
 #[path = "acceptance/methods.rs"]

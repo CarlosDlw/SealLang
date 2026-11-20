@@ -138,6 +138,12 @@ pub struct TyCtxt {
     /// [`crate::copy`]. A query on a type never observes a half-filled registry,
     /// because lowering finishes before type checking starts.
     copy_impls: RefCell<CopyImpls>,
+    /// Whether each checked closure environment is `Copy`.
+    ///
+    /// A closure has no user `impl Copy`; type checking records the answer from
+    /// the capture storage so later phases (MIR moves, generic `Copy` bounds)
+    /// query one source of truth. A missing entry is conservatively not `Copy`.
+    closure_copy: RefCell<FxHashMap<AdtId, bool>>,
     /// The `impl Drop` destructor of every aggregate that declares one.
     ///
     /// Lowering fills this after validating the implementation; see
@@ -991,6 +997,16 @@ impl TyCtxt {
                 .all(|element| self.is_copy_inner(*element, env, visiting)),
             TyKind::Param(param) => env.has_copy(param),
             TyKind::Adt { adt, args } => {
+                // A closure is not a user aggregate: its environment is Copy
+                // exactly when type checking recorded that every capture is.
+                if self.adts.borrow()[adt].kind == AdtKind::Closure {
+                    return self
+                        .closure_copy
+                        .borrow()
+                        .get(&adt)
+                        .copied()
+                        .unwrap_or(false);
+                }
                 // The opt-in is the first gate: fields alone never make a
                 // nominal aggregate `Copy`.
                 if self.copy_impl(adt).is_none() {
@@ -1083,6 +1099,15 @@ impl TyCtxt {
     #[must_use]
     pub fn set_copy_impl(&self, adt: AdtId, implementation: DefId) -> Option<DefId> {
         self.copy_impls.borrow_mut().insert(adt, implementation)
+    }
+
+    /// Records whether the checked closure environment `adt` is `Copy`.
+    ///
+    /// Type checking calls this once per closure after the capture storage has
+    /// been classified. The answer is derived from the captures, not from a
+    /// user implementation, and later queries never recompute it.
+    pub fn set_closure_copy(&self, adt: AdtId, copy: bool) {
+        self.closure_copy.borrow_mut().insert(adt, copy);
     }
 
     /// Returns the `impl Copy` declaration of `adt`, if the aggregate opted in.

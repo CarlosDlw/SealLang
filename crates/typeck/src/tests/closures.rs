@@ -75,6 +75,34 @@ fn moving_a_non_copy_capture_out_makes_the_closure_fn_once() {
 }
 
 #[test]
+fn a_closure_with_a_shared_capture_is_copy() {
+    let source = "\
+        func main() -> i32 { \
+            let x = 1; \
+            let f = || x + 1; \
+            let g = f; \
+            f() + g() \
+        }";
+    let (_, hir, results) = check_clean(source);
+    let (expr, _) = first_closure(&hir);
+    let ty = results.expr_ty(expr).expect("the closure has a type");
+    assert!(hir.ty_ctxt().is_copy(ty));
+}
+
+#[test]
+fn an_exclusive_capture_makes_the_closure_non_copy() {
+    let source = "\
+        func main() { \
+            let mut total = 0; \
+            let bump = || { total = total + 1; }; \
+        }";
+    let (_, hir, results) = check_clean(source);
+    let (expr, _) = first_closure(&hir);
+    let ty = results.expr_ty(expr).expect("the closure has a type");
+    assert!(!hir.ty_ctxt().is_copy(ty));
+}
+
+#[test]
 fn a_closure_without_captures_coerces_to_a_function_pointer() {
     let source = "\
         func main() -> i32 { \

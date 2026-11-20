@@ -65,6 +65,15 @@ safe code into undefined behavior. `*raw T` and `*raw mut T` are the nullable,
 arithmetic, provenance-carrying pointers used inside `unsafe`; they never unify
 with references, and every dereference or write states its contract explicitly.
 
+Functions are values. `func(A, B) -> R` is a one-word, `Copy`, internal-ABI
+function pointer; `unsafe func(...)` adds the caller contract to the type, and
+a safe function converts to it but never back. A closure `|x| x + 1` stores
+its captures inline: by reference by default, by value with `move`. The body's
+use of the captures decides its kind: `Fn` reads, `FnMut` writes, and `FnOnce`
+consumes. A generic `F: Fn(i32) -> i32` bound accepts closures and function
+pointers with no boxing or dictionary. A capture-free closure converts to
+`func`, while a closure with captures does not (`E3098`).
+
 A type may declare `impl Drop` and own the release of what it holds. The
 destructor runs when the value leaves its scope, when a function returns early,
 or when a loop body leaves, and fields, the active enum variant, and array
@@ -207,6 +216,7 @@ isolation check on its own.
 | References | `*T`, `*mut T` | Non-null, non-owning, and `Copy`; shared or exclusive |
 | Raw pointers | `*raw T`, `*raw mut T` | Nullable, arithmetic, provenance-carrying, and `Copy`; one word, or two for `str`/slices/trait objects |
 | C interoperability | `extern "c"` items, `extern struct`, `extern type`, `c_int` … | Fixed C widths from the target, C-layout aggregates by value, opaque handles, variadics, callbacks, and native library linking |
+| Callables | `func(A) -> R`, `unsafe func(A) -> R`, `\|x\| …`, `move \|\| …`, `Fn`/`FnMut`/`FnOnce` | Internal-ABI function pointers and inline closures with explicit capture and call-kind rules |
 | Tuples | `(T, U)`, `(T,)`, `()` | Structural product types; fields are `.0`, `.1`, …; `Copy` when every element is |
 | Arrays | `[T; N]` | Fixed length, owns its elements, and is `Copy` when `T` is |
 | Slices | `[T]`, `*[T]`, `*mut [T]` | Borrowed views over contiguous elements; references carry data and length |
@@ -240,6 +250,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |
 | [`docs/language/ffi.md`](docs/language/ffi.md) | Complete user guide to C interop: declarations, ABI, aggregates, opaques, variadics, strings, callbacks, linking, the safety contract, and diagnostics |
+| [`docs/language/first-class-functions.md`](docs/language/first-class-functions.md) | Complete user guide to `func` types, closures, capture and `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop rules, ABI, and diagnostics |
 | [`RELEASES.md`](RELEASES.md) | Release notes and source migration for language changes |
 
 ## Status
@@ -286,7 +297,17 @@ into bitwise `Copy` with an explicit `impl Copy`; the implementation covers the
 whole declaration and every field of every variant must be `Copy`. `Copy` and
 `Drop` are mutually exclusive, and copying a `Copy` aggregate preserves the
 loans of its reference fields without changing layout or ABI.
-`examples/044_copy_optin.sl` exercises the surface.
+`examples/044_copy_optin.sl` exercises the surface. Functions are first-class
+values: a `func(A, B) -> R` pointer is one `Copy` word with the internal Seal
+ABI, and `unsafe func(...)` keeps its caller contract in the type. Closures
+capture their environment inline, borrow by default, and own with `move`; the
+body's use of a capture selects `Fn`, `FnMut`, or `FnOnce`, and a generic
+`F: Fn(...)` bound accepts closures and function pointers without boxing or a
+dictionary. `examples/046_function_pointers.sl` exercises function pointers,
+`examples/047_closures.sl` shows capture and `move`, and
+`examples/048_function_traits.sl` exercises all three bounds;
+[`docs/language/first-class-functions.md`](docs/language/first-class-functions.md)
+is the complete guide.
 
 The language also speaks C. An `extern "c"` block declares functions and
 statics, an `extern struct` has the C layout, and an `extern type` names an
