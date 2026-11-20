@@ -129,7 +129,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             &context,
             &module,
             input.source_map,
-            input.hir.definitions(),
+            input.hir,
             input.hir.ty_ctxt(),
             &mapper,
             input.interner,

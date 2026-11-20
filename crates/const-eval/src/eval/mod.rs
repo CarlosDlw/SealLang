@@ -305,11 +305,14 @@ impl<'a> Interpreter<'a> {
         let (mutable, source) = match mir_body.kind {
             BodyKind::Static { mutable } => (mutable, AllocSource::Static(def)),
             BodyKind::Const => (false, AllocSource::Const(def)),
-            BodyKind::Function | BodyKind::Closure => {
+            BodyKind::Function => {
                 return self.internal(
-                    "const evaluation received an executable body",
+                    "const evaluation received a function body",
                     self.def_span(def),
                 );
+            }
+            BodyKind::Closure => {
+                return Err(self.error(EvalErrorKind::FunctionPointerCall, self.def_span(def)));
             }
         };
         if matches!(mir_body.kind, BodyKind::Static { .. }) {

@@ -161,7 +161,7 @@ impl<'a> LayoutCtxt<'a> {
         adt: AdtId,
         args: SubstsId,
     ) -> Result<Vec<FieldLayout>, LayoutError> {
-        if !self.tcx.adt(adt).is_struct() {
+        if !matches!(self.tcx.adt(adt).kind, AdtKind::Struct | AdtKind::Closure) {
             return Err(LayoutError::NotAStruct(adt));
         }
         self.aggregate_fields(adt, args, &mut vec![(adt, args)])
@@ -1012,6 +1012,56 @@ mod tests {
             layout
                 .field_layouts(structure)
                 .expect("an empty struct")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn function_pointers_and_closure_environments_are_sized() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let int = ctxt.int_ty(IntTy::I32);
+        let boolean = ctxt.bool_ty();
+        let function = ctxt.fn_ptr_ty(seal_ty::FnPtrDef {
+            params: vec![int],
+            ret: boolean,
+            is_unsafe: false,
+        });
+        let layouts = LayoutCtxt::new(&ctxt, 64);
+        assert_eq!(layouts.layout_of(function), Ok(Layout::new(8, 8)));
+
+        let environment = ctxt.push_adt(def(1), interner.intern("closure"), AdtKind::Closure);
+        ctxt.fill_adt(
+            environment,
+            vec![
+                FieldDef {
+                    def: def(2),
+                    name: None,
+                    ty: int,
+                },
+                FieldDef {
+                    def: def(3),
+                    name: None,
+                    ty: boolean,
+                },
+            ],
+        );
+        let fields = layouts
+            .field_layouts(environment)
+            .expect("a closure environment lays out like a struct");
+        assert_eq!(fields[0].offset, 0);
+        assert_eq!(fields[1].offset, 4);
+        assert_eq!(
+            layouts.layout_of(ctxt.adt_ty(environment)),
+            Ok(Layout::new(8, 4))
+        );
+
+        let empty = ctxt.push_adt(def(4), interner.intern("empty"), AdtKind::Closure);
+        ctxt.fill_adt(empty, Vec::new());
+        assert!(
+            layouts
+                .field_layouts(empty)
+                .expect("an empty environment")
                 .is_empty()
         );
     }

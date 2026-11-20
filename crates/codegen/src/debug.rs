@@ -23,9 +23,10 @@ use inkwell::debug_info::{
 };
 use inkwell::module::Module;
 use inkwell::values::{GlobalValue, PointerValue};
-use seal_def::{DefId, Definitions};
+use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
-use seal_mir::{Body, LocalDecl};
+use seal_hir::Hir;
+use seal_mir::{Body, BodyKind, LocalDecl};
 use seal_span::{FileId, SourceMap, Span};
 use seal_symbol::Interner;
 use seal_ty::{AdtId, AdtKind, SubstsId, TyCtxt, TyId, TyKind};
@@ -56,7 +57,7 @@ pub(crate) struct DebugContext<'a, 'ctx> {
     unit: DICompileUnit<'ctx>,
     unit_file: DIFile<'ctx>,
     source_map: &'a SourceMap,
-    definitions: &'a Definitions,
+    hir: &'a Hir,
     tcx: &'a TyCtxt,
     mapper: &'a TypeMapper<'ctx>,
     interner: &'a Interner,
@@ -75,7 +76,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         context: &'ctx Context,
         module: &Module<'ctx>,
         source_map: &'a SourceMap,
-        definitions: &'a Definitions,
+        hir: &'a Hir,
         tcx: &'a TyCtxt,
         mapper: &'a TypeMapper<'ctx>,
         interner: &'a Interner,
@@ -110,7 +111,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             unit,
             unit_file,
             source_map,
-            definitions,
+            hir,
             tcx,
             mapper,
             interner,
@@ -135,6 +136,11 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         linkage_name: &str,
     ) -> Result<DISubprogram<'ctx>, CodegenError> {
         let (file, line, _) = self.definition_location(body.owner);
+        let name = if body.kind == BodyKind::Closure {
+            "<closure>"
+        } else {
+            name
+        };
 
         let return_type = body.local(Body::return_local()).ty;
         let return_type = if self.mapper.is_unit_like(return_type) {
@@ -193,7 +199,10 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             &parameter_types,
             DIFlags::ZERO,
         );
-        let name = self.interner.resolve(self.definitions.name(def)).to_owned();
+        let name = self
+            .interner
+            .resolve(self.hir.definitions().name(def))
+            .to_owned();
         let scope = self.builder.create_function(
             self.unit.as_debug_info_scope(),
             &name,
@@ -279,7 +288,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         global: GlobalValue<'ctx>,
         ty: TyId,
     ) -> Result<(), CodegenError> {
-        let definition = self.definitions.get(def);
+        let definition = self.hir.definitions().get(def);
         let name = self.interner.resolve(definition.name);
         let linkage = global.get_name().to_str().unwrap_or(name).to_owned();
         let (file, line, _) = self.definition_location(def);
@@ -681,6 +690,9 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
                     let member_type = self.di_type(self.tcx.substitute(field.ty, args))?;
                     let field_name = match field.name {
                         Some(name) => self.interner.resolve(name).to_owned(),
+                        None if definition.is_closure() => self
+                            .closure_capture_name(adt, field.def)
+                            .unwrap_or_else(|| index.to_string()),
                         None => index.to_string(),
                     };
                     let member = self.builder.create_member_type(
@@ -722,12 +734,31 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         Ok(created)
     }
 
+    /// Returns the source name of one closure capture.
+    ///
+    /// A closure environment field has no declared name; it stores the value
+    /// captured from a local or from the parent environment. The source name
+    /// makes a debugger show the capture the programmer wrote rather than a
+    /// positional index.
+    fn closure_capture_name(&self, adt: AdtId, field: DefId) -> Option<String> {
+        let closure = self.hir.closure(self.tcx.adt(adt).def)?;
+        let capture = closure
+            .captures
+            .iter()
+            .find(|capture| capture.field == field)?;
+        let definition = self.hir.definitions().get(capture.origin);
+        Some(self.interner.resolve(definition.name).to_owned())
+    }
+
     /// Returns the readable debug name of one aggregate instantiation.
     ///
     /// Non-generic aggregates keep their declared name. Generic instantiations
     /// render their arguments (`Pair<i32, bool>`), which makes a debugger's type
     /// list tell instances apart.
     fn aggregate_name(&self, adt: AdtId, args: SubstsId) -> String {
+        if self.tcx.adt(adt).is_closure() {
+            return "<closure>".to_owned();
+        }
         self.tcx
             .display_with(self.tcx.adt_ty_with(adt, args), self.interner)
             .to_string()
@@ -856,7 +887,7 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
     }
 
     fn definition_location(&self, def: seal_def::DefId) -> (DIFile<'ctx>, u32, u32) {
-        self.definition_location_for_span(self.definitions.get(def).span)
+        self.definition_location_for_span(self.hir.definitions().get(def).span)
     }
 
     fn definition_location_for_span(&self, span: Span) -> (DIFile<'ctx>, u32, u32) {

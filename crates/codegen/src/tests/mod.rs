@@ -1,6 +1,7 @@
 //! In-crate code generation tests.
 
 mod casts;
+mod closures;
 mod defaults;
 mod drop_glue;
 mod dyn_types;

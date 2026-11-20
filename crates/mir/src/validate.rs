@@ -946,9 +946,18 @@ fn operand_ty(hir: &Hir, body: &Body, operand: &Operand) -> Option<TyId> {
 /// Drop elaboration walks the same place a statement names, so it resolves the
 /// type through this function instead of duplicating the projection rules.
 pub fn place_ty(hir: &Hir, body: &Body, place: &Place) -> TyId {
+    place_ty_with(hir, place, |local| body.local(local).ty)
+}
+
+/// Returns the type of a place before the body that owns it is built.
+///
+/// Lowering tracks the type of every local it declares, so it resolves a
+/// place's type through the same projection rules as [`place_ty`] without an
+/// assembled [`Body`].
+pub(crate) fn place_ty_with(hir: &Hir, place: &Place, local_ty: impl Fn(LocalId) -> TyId) -> TyId {
     let tcx = hir.ty_ctxt();
     let mut ty = match place.root {
-        crate::place::PlaceRoot::Local(local) => body.local(local).ty,
+        crate::place::PlaceRoot::Local(local) => local_ty(local),
         crate::place::PlaceRoot::Static(def) | crate::place::PlaceRoot::Const(def) => hir
             .body_of(def)
             .and_then(|body| body.ret)

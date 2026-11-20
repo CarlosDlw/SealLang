@@ -48,6 +48,40 @@ fn an_external_call_is_not_constant() {
 }
 
 #[test]
+fn a_function_value_is_not_constant() {
+    let fixture = Fixture::compile(
+        "func double(value: i32) -> i32 { value * 2 } \
+         const F: func(i32) -> i32 = double;",
+    );
+    fixture.expect_code("E4033");
+}
+
+#[test]
+fn a_closure_value_is_not_constant() {
+    let fixture = Fixture::compile("const F: func() -> i32 = || 1;");
+    fixture.expect_code("E4033");
+}
+
+#[test]
+fn a_call_through_a_function_pointer_is_not_constant() {
+    let fixture = Fixture::compile(
+        "func double(value: i32) -> i32 { value * 2 } \
+         const VALUE: i32 = { \
+             let f: func(i32) -> i32 = double; \
+             f(21) \
+         };",
+    );
+    fixture.expect_code("E4033");
+}
+
+#[test]
+fn a_closure_call_is_not_constant() {
+    let fixture =
+        Fixture::compile("const VALUE: i32 = { let base = 40; let add = || base + 2; add() };");
+    fixture.expect_code("E4033");
+}
+
+#[test]
 fn an_external_static_is_not_constant() {
     let fixture = Fixture::compile(
         "extern \"c\" { static errno: i32; } \

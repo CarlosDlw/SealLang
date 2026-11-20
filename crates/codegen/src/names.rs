@@ -36,6 +36,28 @@ pub(crate) fn instance(base: &str, fingerprint: Fingerprint) -> String {
     format!("{base}.{fingerprint}")
 }
 
+/// Returns the linker symbol for a capture-free closure trampoline.
+///
+/// The parent names the item that owns the closure. The fingerprint identifies
+/// the lifted body and its concrete type arguments, so nested closures and
+/// generic instantiations never share a trampoline.
+pub(crate) fn closure(parent: &str, fingerprint: Fingerprint) -> String {
+    format!("seal.closure.{}.{fingerprint}", sanitize(parent))
+}
+
+/// Replaces characters that are not valid in a linker symbol with `_`.
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// Returns the linker symbol for the C-ABI callback wrapper of one function.
 ///
 /// `instance` identifies the Seal function and `signature` its concrete C

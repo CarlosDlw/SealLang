@@ -33,6 +33,13 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         instance: seal_ty::Instance,
         pointer_ty: TyId,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        // A closure body has an environment parameter, while a Seal function
+        // pointer does not. The internal trampoline supplies the empty
+        // environment for a capture-free closure.
+        if self.hir.is_closure(instance.def) {
+            let trampoline = self.closure_trampoline(instance, pointer_ty)?;
+            return Ok(trampoline.as_global_value().as_pointer_value().into());
+        }
         // A Seal function pointer calls the internal body directly: both sides
         // use the internal ABI, so no C trampoline is involved.
         if self.tcx.fn_ptr_parts(pointer_ty).is_some() {

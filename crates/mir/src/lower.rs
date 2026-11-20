@@ -757,9 +757,11 @@ impl<'a> BodyLowering<'a> {
             let value_ty = info.captures[index].value_ty;
             let source = match capture.source {
                 CaptureSource::Local(origin) => self.place_of_local(origin),
-                CaptureSource::Outer(slot) => self.capture_place(self.owner, slot).0,
+                CaptureSource::Outer(slot) => self.capture_environment_field(self.owner, slot),
             };
-            let operand = self.lower_capture_operand(source, value_ty, storage, span);
+            let source_ty =
+                crate::validate::place_ty_with(self.hir, &source, |local| self.locals[local].ty);
+            let operand = self.lower_capture_operand(source, source_ty, value_ty, storage, span);
             fields.push((capture.field, operand));
         }
 
@@ -778,9 +780,18 @@ impl<'a> BodyLowering<'a> {
     }
 
     /// Reads one captured value into the environment field.
+    ///
+    /// A shared capture whose source is already a shared reference to the same
+    /// value copies that reference instead of reborrowing its pointee. The
+    /// environment field has exactly the reference's type, so the body still
+    /// reads through the field the same way, and the copy takes no new loan. A
+    /// nested closure such as `|| value` inside another closure captures the
+    /// parent's `&T` field this way, which keeps the parent environment's fields
+    /// readable while the child is alive.
     fn lower_capture_operand(
         &mut self,
         place: Place,
+        source_ty: TyId,
         value_ty: TyId,
         storage: CaptureStorage,
         span: Span,
@@ -788,6 +799,15 @@ impl<'a> BodyLowering<'a> {
         match storage {
             CaptureStorage::Value => self.place_operand(place, value_ty),
             CaptureStorage::Shared | CaptureStorage::Exclusive => {
+                if storage == CaptureStorage::Shared
+                    && let TyKind::Ref {
+                        kind: RefKind::Shared,
+                        pointee,
+                    } = self.hir.ty_ctxt().kind(source_ty)
+                    && pointee == value_ty
+                {
+                    return Operand::Copy(place);
+                }
                 let kind = if storage == CaptureStorage::Shared {
                     RefKind::Shared
                 } else {
@@ -2323,6 +2343,24 @@ impl<'a> BodyLowering<'a> {
     /// dereferenced first, then the capture field is selected, and a field that
     /// stores a borrow is dereferenced to the captured value.
     fn capture_place(&self, closure: DefId, index: u32) -> (Place, TyId) {
+        let Some(info) = self.typeck.closure_info(closure) else {
+            panic!("closure {closure:?} has no checked environment; this is a compiler bug");
+        };
+        let Some(capture_info) = info.captures.get(index as usize) else {
+            panic!("closure {closure:?} has no checked capture {index}; this is a compiler bug");
+        };
+        let mut place = self.capture_environment_field(closure, index);
+        if capture_info.storage != CaptureStorage::Value {
+            place.projections.push(Projection::Deref);
+        }
+        (place, capture_info.value_ty)
+    }
+
+    /// Returns the place of one capture's storage inside its environment.
+    ///
+    /// A field holds either the captured value or a reference to it; the
+    /// caller decides whether reading the capture needs a dereference.
+    fn capture_environment_field(&self, closure: DefId, index: u32) -> Place {
         let Some(environment) = self.closure_env else {
             panic!(
                 "capture {index} of {closure:?} was lowered outside its environment; \
@@ -2339,12 +2377,6 @@ impl<'a> BodyLowering<'a> {
         let Some(capture) = definition.captures.get(index as usize) else {
             panic!("closure {closure:?} has no capture {index}; this is a compiler bug");
         };
-        let Some(info) = self.typeck.closure_info(closure) else {
-            panic!("closure {closure:?} has no checked environment; this is a compiler bug");
-        };
-        let Some(capture_info) = info.captures.get(index as usize) else {
-            panic!("closure {closure:?} has no checked capture {index}; this is a compiler bug");
-        };
 
         let mut place = Place::local(environment);
         let environment_ty = self.locals[environment].ty;
@@ -2352,11 +2384,7 @@ impl<'a> BodyLowering<'a> {
             place.projections.push(Projection::Deref);
         }
         place.projections.push(Projection::Field(capture.field));
-        if capture_info.storage != CaptureStorage::Value {
-            place.projections.push(Projection::Deref);
-        }
-        let ty = capture_info.value_ty;
-        (place, ty)
+        place
     }
 
     /// Converts a place resolved by type checking into a MIR place.

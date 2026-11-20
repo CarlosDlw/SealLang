@@ -71,6 +71,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                          resolve it first",
                     ));
                 }
+                if let CallTarget::Closure { instance } = target {
+                    return self.call_closure(*instance, args);
+                }
                 self.call(target.instance(), args)
             }
             Rvalue::Aggregate { kind, fields } => self.aggregate(*kind, fields),
@@ -1060,6 +1063,78 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             self.builder.build_load(target, slot, "extern.coerce.value"),
             "external coercion load",
         )
+    }
+
+    /// Emits a direct closure call, adapting the environment argument to the
+    /// representation the closure body expects.
+    ///
+    /// A call through a weaker function-trait bound passes the environment in
+    /// the form that bound requires. An `FnOnce` bound on an `Fn` closure moves
+    /// the environment by value, but the body still reads it through a shared
+    /// borrow; an `FnMut` bound on an `Fn` closure passes an exclusive borrow
+    /// where the body expects a shared one. Both pointers have the same LLVM
+    /// representation, and a by-value environment is materialized in a local
+    /// slot so the body can borrow it. Calls whose kinds agree pass through
+    /// unchanged.
+    fn call_closure(
+        &self,
+        instance: Instance,
+        arguments: &[seal_mir::Operand],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let function = self.functions.get(&instance).copied().ok_or_else(|| {
+            CodegenError::internal(format!("closure {instance:?} was not declared"))
+        })?;
+        let (environment, rest) = arguments.split_first().ok_or_else(|| {
+            CodegenError::internal("a closure call is missing its environment".to_owned())
+        })?;
+        let expected = function.get_type().get_param_types().first().copied();
+        let environment = self.adapt_environment(self.load_operand(environment)?, expected)?;
+        let mut values = Vec::with_capacity(arguments.len());
+        values.push(BasicMetadataValueEnum::from(environment));
+        for argument in rest {
+            values.push(BasicMetadataValueEnum::from(self.load_operand(argument)?));
+        }
+        let call = self.build(
+            self.builder.build_call(function, &values, "closure call"),
+            "closure call",
+        )?;
+        match call.try_as_basic_value() {
+            ValueKind::Basic(value) => Ok(value),
+            ValueKind::Instruction(_) => {
+                Err(CodegenError::internal("a closure returned no LLVM value"))
+            }
+        }
+    }
+
+    fn adapt_environment(
+        &self,
+        environment: BasicValueEnum<'ctx>,
+        expected: Option<inkwell::types::BasicMetadataTypeEnum<'ctx>>,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        use inkwell::types::BasicMetadataTypeEnum;
+
+        match (environment, expected) {
+            (
+                BasicValueEnum::PointerValue(pointer),
+                Some(BasicMetadataTypeEnum::StructType(ty)),
+            ) => self.build(
+                self.builder
+                    .build_load(ty, pointer, "closure.environment.value"),
+                "closure environment load",
+            ),
+            (value, Some(BasicMetadataTypeEnum::PointerType(_))) if value.is_pointer_value() => {
+                Ok(value)
+            }
+            (value, Some(BasicMetadataTypeEnum::PointerType(_))) => {
+                let slot = self.entry_alloca(value.get_type(), "closure.environment")?;
+                self.build(
+                    self.builder.build_store(slot, value),
+                    "closure environment store",
+                )?;
+                Ok(slot.into())
+            }
+            (value, _) => Ok(value),
+        }
     }
 
     fn call(

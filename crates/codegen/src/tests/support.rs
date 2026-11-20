@@ -213,7 +213,7 @@ pub(crate) fn build_module<'ctx>(
                 context,
                 &module,
                 compiled.session.source_map(),
-                compiled.hir.definitions(),
+                &compiled.hir,
                 compiled.hir.ty_ctxt(),
                 &mapper,
                 compiled.session.interner(),

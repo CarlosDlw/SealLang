@@ -188,10 +188,10 @@ impl EvalErrorKind {
                 "a constant context cannot call a function implemented outside Seal".to_owned()
             }
             Self::FunctionAddress => {
-                "a constant context cannot take the address of a function as a C pointer".to_owned()
+                "a constant context cannot use a function as a value".to_owned()
             }
             Self::FunctionPointerCall => {
-                "a constant context cannot call through a C function pointer".to_owned()
+                "a constant context cannot call through a function pointer or closure".to_owned()
             }
             Self::ExternStatic => "a constant context cannot read an external static".to_owned(),
             Self::Panic(message) => format!("constant evaluation panicked: {message}"),

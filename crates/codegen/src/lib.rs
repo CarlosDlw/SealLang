@@ -61,6 +61,7 @@ mod backend;
 mod c_abi;
 mod callback;
 mod cast;
+mod closure;
 mod const_image;
 mod const_value;
 mod constant;
