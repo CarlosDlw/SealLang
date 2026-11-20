@@ -1,5 +1,6 @@
 //! Options for one code generation request.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use seal_session::OptLevel;
@@ -51,6 +52,12 @@ pub struct CodegenOptions {
     /// or operating system differs from the compiler host. The caller is
     /// responsible for supplying an archive built for that target.
     pub runtime_archive: Option<PathBuf>,
+    /// Native libraries named on the command line, in request order.
+    pub libraries: Vec<String>,
+    /// Directories searched for native libraries.
+    pub search_paths: Vec<PathBuf>,
+    /// Arguments passed to the linker unchanged.
+    pub link_args: Vec<OsString>,
 }
 
 impl CodegenOptions {
@@ -63,6 +70,9 @@ impl CodegenOptions {
             debug_info: false,
             crate_name: None,
             runtime_archive: None,
+            libraries: Vec::new(),
+            search_paths: Vec::new(),
+            link_args: Vec::new(),
         }
     }
 }

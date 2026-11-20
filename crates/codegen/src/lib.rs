@@ -47,6 +47,9 @@
 //!     debug_info: true,
 //!     crate_name: Some("program".to_owned()),
 //!     runtime_archive: None,
+//!     libraries: Vec::new(),
+//!     search_paths: Vec::new(),
+//!     link_args: Vec::new(),
 //! };
 //! seal_codegen::emit(input, &options)?;
 //! ```

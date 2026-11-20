@@ -139,6 +139,36 @@ fn build_requires_an_input() {
 }
 
 #[test]
+fn link_options_are_repeatable_and_accept_leading_hyphens() {
+    let args = build_args(&[
+        "build",
+        "-l",
+        "sealfixture",
+        "-lmath",
+        "-L",
+        "/tmp/lib",
+        "-L/tmp/lib2",
+        "--link-arg",
+        "-Wl,--as-needed",
+        "--link-arg",
+        "extra.o",
+        "main.sl",
+    ]);
+    assert_eq!(args.link.libraries, ["sealfixture", "math"]);
+    assert_eq!(
+        args.link.search_paths,
+        [PathBuf::from("/tmp/lib"), PathBuf::from("/tmp/lib2")]
+    );
+    assert_eq!(
+        args.link.link_args,
+        [
+            std::ffi::OsString::from("-Wl,--as-needed"),
+            std::ffi::OsString::from("extra.o"),
+        ]
+    );
+}
+
+#[test]
 fn runtime_archive_is_a_build_option() {
     let args = build_args(&["build", "--runtime-archive=seal_rt.a", "main.sl"]);
     assert_eq!(args.runtime_archive, Some(PathBuf::from("seal_rt.a")));
@@ -223,8 +253,11 @@ fn build_help_groups_options_by_concern() {
         "Diagnostics:",
         "Target:",
         "Runtime:",
+        "Link:",
         "--remap-path-prefix",
         "--runtime-archive",
+        "--link-arg",
+        "--library-path",
     ] {
         assert!(
             help.contains(expected),

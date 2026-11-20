@@ -10,6 +10,15 @@ use seal_symbol::Symbol;
 
 use crate::id::{ItemId, ParamId, TypeId};
 
+/// A `link "name";` directive inside an external block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkDirective {
+    /// The library name passed to the linker.
+    pub name: Symbol,
+    /// The complete directive range.
+    pub span: Span,
+}
+
 /// A block of declarations sharing one ABI.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternBlockDecl {
@@ -17,6 +26,8 @@ pub struct ExternBlockDecl {
     pub abi: Symbol,
     /// The span of the ABI string, for diagnostics.
     pub abi_span: Span,
+    /// The library directives in source order.
+    pub links: Vec<LinkDirective>,
     /// The declarations in source order.
     pub items: Vec<ItemId>,
 }

@@ -1,9 +1,10 @@
 # External functions and statics
 
-Status: declared functions, calls, and static storage are implemented in the
-current language version. Variadic declarations, external aggregates, opaque
-types, `link` directives, and function pointers belong to later phases and are
-rejected with a diagnostic instead of being silently accepted.
+Status: declared functions, calls, static storage, and native library
+resolution are implemented in the current language version. Variadic
+declarations, external aggregates, opaque types, and function pointers belong
+to later phases and are rejected with a diagnostic instead of being silently
+accepted.
 
 An `extern` declaration names code or storage that C defines and the linker
 resolves. Seal does not own the body or the storage: it emits a declaration,
@@ -29,7 +30,11 @@ needed for a symbol the platform's C library already exports.
 A declaration is either a block or a single item.
 
 ```text
-extern "ABI" { item* }
+extern "ABI" {
+  link "library";
+  func name(parameters) -> Return link_name "symbol";
+  static [mut] name: Type;
+}
 extern "ABI" func name(parameters) -> Return link_name "symbol";
 extern "ABI" static [mut] name: Type;
 ```
@@ -44,6 +49,10 @@ extern "ABI" static [mut] name: Type;
   Seal may write.
 - A member of a block inherits the block's ABI. A member cannot itself be an
   `extern` block (`E3092`).
+- `link "name";` inside a block asks the linker for a native library. The name
+  is a library name, not a path: pass the directory separately with `-L` and
+  the library with `-l` on the command line. Link directives may appear in any
+  order among the declarations and are resolved in source order.
 - `extern` is contextual. Outside item position it is an ordinary identifier,
   and a function or binding may be named `extern`.
 
@@ -59,6 +68,33 @@ extern "c" {
   func getpid() -> i32;
 }
 ```
+
+### Linking a library
+
+A library is named either in the source or on the command line:
+
+```seal
+extern "c" {
+  link "sealfixture";
+  func ffi_scalar_i32(value: i32) -> i32;
+}
+```
+
+```text
+sealc build -L /path/to/libs -l sealfixture program.sl
+```
+
+`-l NAME` and `-L DIR` are repeatable, and `--link-arg ARG` passes one argument
+straight to the linker (repeat it for several arguments; values beginning with
+`-` are accepted). Libraries named in the source come first, then `-l`
+libraries, then `--link-arg` values, and the Seal runtime archive is last. The
+linker program is selected by `SEAL_LINKER`, then `CC`, then the platform
+default.
+
+A library name may not be empty or contain whitespace, control characters, or a
+path separator; every `-L` must be an existing directory. These rules are
+checked before any temporary file is written and reported as `E6005`. Object
+and assembly output do not link, so they ignore libraries and search paths.
 
 ### Linker symbols and `link_name`
 
@@ -180,9 +216,15 @@ definition:
 - Debug builds describe the declaration with a subprogram that has no body.
 
 The program fails at link time, not at compile time, when the symbol is missing
-from every linked library. Resolving libraries explicitly (`link` directives
-and `-l`/`-L`) belongs to a later phase; the C runtime's own symbols are
-available without flags on the supported targets.
+from every linked library. Native libraries named by `link` directives or by
+`-l`, their search paths from `-L`, and raw linker arguments from `--link-arg`
+all reach the linker in a deterministic order. The C runtime's own symbols are
+available without any flag on the supported targets.
+
+A failed link is `E6003`; its message includes the linker status, the full
+argument vector, and the libraries that were requested. Invalid configuration
+is `E6005` and is rejected before the linker runs, so no temporary object,
+runtime archive, or partial executable is left behind.
 
 ## 7. Diagnostics
 
@@ -198,11 +240,13 @@ available without flags on the supported targets.
 | `E3084` | A parameter, return type, or static type is not FFI-safe |
 | `E3086` | An external static is accessed outside `unsafe`, or an immutable one is written |
 | `E3088` | A variadic declaration was written; variadics are not implemented |
-| `E3091` | A `link` directive was written; explicit libraries are not implemented |
+| `E3091` | A `link` directive is malformed (missing string, extra token, or missing `;`) |
 | `E3092` | An `extern` declaration is nested inside another `extern` block |
 | `E3093` | An external function declares generic parameters |
 | `E4033` | A constant calls an external function |
 | `E4034` | A constant reads an external static |
+| `E6003` | The linker failed; the message names the command and libraries |
+| `E6005` | A library name or `-L` search path is invalid |
 
 ## 8. Current limits
 
@@ -211,9 +255,9 @@ The following are deliberately rejected, never silently miscompiled:
 - Variadic declarations and calls (`E3088`).
 - `extern struct`, `extern type`, and `c_void` (`E3081`; opaque C types arrive
   with the aggregate phase).
-- `link` directives and per-library linker flags (`E3091`).
 - Function pointers and callbacks (rejected as a non-FFI-safe type).
-- Per-declaration attributes such as `noalias` or `noreturn`.
+- Per-declaration attributes such as `noalias` or `noreturn` are not accepted
+  on an external declaration.
 
 ## 9. Complete example
 

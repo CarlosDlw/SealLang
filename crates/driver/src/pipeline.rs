@@ -16,7 +16,7 @@ use seal_codegen::{CodegenInput, CodegenOptions, Emit};
 use seal_session::Session;
 use seal_target::host_triple;
 
-use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, OutputArgs, RunArgs};
+use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, LinkArgs, OutputArgs, RunArgs};
 use crate::options::session_options;
 use crate::output::artifact_path;
 use crate::report;
@@ -32,6 +32,7 @@ enum Request<'a> {
         emit: Emit,
         output: &'a OutputArgs,
         runtime_archive: Option<&'a Path>,
+        link: &'a LinkArgs,
     },
 }
 
@@ -79,6 +80,7 @@ pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
             emit: args.output.artifact(),
             output: &args.output,
             runtime_archive: args.runtime_archive.as_deref(),
+            link: &args.link,
         },
     )
     .map(Outcome::code)
@@ -107,6 +109,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         emit: Emit::Executable,
         output: &output,
         runtime_archive: args.runtime_archive.as_deref(),
+        link: &args.link,
     };
 
     match compile(&compile_arguments, request)? {
@@ -333,6 +336,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         emit,
         output,
         runtime_archive,
+        link,
     } = request
     else {
         return;
@@ -346,6 +350,9 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned()),
         runtime_archive: runtime_archive.map(Path::to_path_buf),
+        libraries: link.libraries.clone(),
+        search_paths: link.search_paths.clone(),
+        link_args: link.link_args.clone(),
     };
     let codegen_input = CodegenInput {
         mono: &mono,

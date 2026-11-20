@@ -32,7 +32,7 @@ mod ty;
 
 pub use block::{Block, ForSource, LetStmt, Stmt, StmtKind};
 pub use expr::{AssignOp, BinaryOp, Expr, ExprKind, FieldInit, Literal, UnaryOp, UpdateOp};
-pub use extern_item::{ExternBlockDecl, ExternFnDecl, ExternStaticDecl, LinkName};
+pub use extern_item::{ExternBlockDecl, ExternFnDecl, ExternStaticDecl, LinkDirective, LinkName};
 pub use generics::{
     Bound, BoundKind, GenericArgs, GenericParamDecl, GenericParams, TraitPath, TypePath,
     WhereClause, WherePredicate,

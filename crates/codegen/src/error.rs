@@ -65,6 +65,11 @@ pub enum CodegenError {
         /// The underlying reason.
         detail: String,
     },
+    /// A library name or link search path is invalid.
+    LinkInput {
+        /// The invalid configuration, ready for the diagnostic.
+        detail: String,
+    },
     /// Writing or linking the requested artifact failed.
     Artifact {
         /// The output that could not be produced.
@@ -90,6 +95,13 @@ impl CodegenError {
         }
     }
 
+    /// Creates an invalid-link-input error.
+    pub(crate) fn link_input(detail: impl Into<String>) -> Self {
+        Self::LinkInput {
+            detail: detail.into(),
+        }
+    }
+
     /// Creates an artifact error.
     pub(crate) fn artifact(path: impl Into<PathBuf>, detail: impl Into<String>) -> Self {
         Self::Artifact {
@@ -106,6 +118,7 @@ impl CodegenError {
         match self {
             Self::EntryPoint(_) => Some(codes::E6001.diag_code()),
             Self::UnsupportedTarget { .. } => Some(codes::E6002.diag_code()),
+            Self::LinkInput { .. } => Some(codes::E6005.diag_code()),
             Self::Artifact { .. } => Some(codes::E6003.diag_code()),
             Self::Internal(_) => None,
         }
@@ -119,6 +132,7 @@ impl fmt::Display for CodegenError {
             Self::UnsupportedTarget { triple, detail } => {
                 write!(f, "cannot generate code for target `{triple}`: {detail}")
             }
+            Self::LinkInput { detail } => write!(f, "invalid link input: {detail}"),
             Self::Artifact { path, detail } => {
                 write!(f, "could not emit `{}`: {detail}", path.display())
             }

@@ -288,12 +288,18 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             })?;
     }
 
+    let source_libraries: Vec<String> = input
+        .hir
+        .link_directives()
+        .iter()
+        .map(|directive| input.interner.resolve(directive.name).to_owned())
+        .collect();
     artifact::emit_artifact(
         &module,
         &machine,
-        options.emit,
-        &options.output,
+        options,
         runtime.as_deref().unwrap_or(&[]),
+        &source_libraries,
     )?;
     Ok(Artifact {
         path: options.output.clone(),

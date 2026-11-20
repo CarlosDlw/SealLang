@@ -1921,6 +1921,21 @@ The message names the item and the offending type. This is usually an internal
 compiler error, unless the program uses a construct the target cannot represent.",
 };
 
+/// A native library or link search path is invalid.
+pub const E6005: ErrorCode = ErrorCode {
+    code: "E6005",
+    title: "invalid link input",
+    explanation: "\
+            A native library name or a link search path cannot be handed to the linker as
+            written. Library names may not be empty, contain whitespace or control
+            characters, or contain a path separator; write the directory in `-L <DIR>` and
+            the library in `-l <NAME>` instead. Every `-L` must name an existing directory.
+
+            The check runs before any temporary file is written, so an invalid request
+            leaves no artifact behind. Object and assembly output never link and therefore
+            ignore libraries and search paths.",
+};
+
 /// Monomorphization exceeded its recursion depth.
 pub const E7001: ErrorCode = ErrorCode {
     code: "E7001",
@@ -2712,11 +2727,12 @@ pub const E3091: ErrorCode = ErrorCode {
     title: "invalid link directive",
     explanation: "\
 A `link` directive names a library the final executable must link. It may only
-appear inside an `extern` block, and its name must be a non-empty library name
-without path separators or whitespace.
+appear inside an `extern` block and is written as `link \"name\";`, with one
+string and a semicolon.
 
-Remove the directive, or write it as `link \"name\";` inside the block. Link
-directives are not supported yet.",
+This code reports a malformed directive: a missing library string, an extra
+token, or a missing semicolon. A well-formed name that the linker cannot accept
+is rejected later with `E6005`.",
 };
 
 /// An external declaration appears in an invalid position.
@@ -3216,7 +3232,7 @@ pub static ALL: &[ErrorCode] = &[
     E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
     E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006,
     E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003,
-    E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3510,7 +3526,7 @@ mod tests {
             .map(|entry| entry.code())
             .filter(|code| code.starts_with("E60"))
             .collect();
-        assert_eq!(codes, ["E6001", "E6002", "E6003", "E6004"]);
+        assert_eq!(codes, ["E6001", "E6002", "E6003", "E6004", "E6005"]);
     }
 
     #[test]

@@ -8,6 +8,9 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod cc;
+
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -42,6 +45,47 @@ impl Drop for TempOutput {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
+}
+
+/// Native libraries and linker arguments for one code generation request.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LinkOptions {
+    pub(crate) libraries: Vec<String>,
+    pub(crate) search_paths: Vec<PathBuf>,
+    pub(crate) link_args: Vec<OsString>,
+}
+
+/// One code generation request for the test harness.
+struct CompileRequest<'a> {
+    source: &'a str,
+    output: &'a Path,
+    emit: Emit,
+    opt_level: OptLevel,
+    debug_info: bool,
+    target: seal_target::TargetTriple,
+    runtime_archive: Option<PathBuf>,
+    links: LinkOptions,
+}
+
+/// Compiles `source` for the host target with native link inputs.
+pub(crate) fn compile_with_links(
+    source: &str,
+    output: &Path,
+    emit: Emit,
+    opt_level: OptLevel,
+    debug_info: bool,
+    links: LinkOptions,
+) -> Result<(), CodegenError> {
+    compile_for_target_with_runtime_and_links(CompileRequest {
+        source,
+        output,
+        emit,
+        opt_level,
+        debug_info,
+        target: seal_target::host_triple(),
+        runtime_archive: None,
+        links,
+    })
 }
 
 /// Compiles `source` for the host target.
@@ -84,6 +128,31 @@ pub(crate) fn compile_for_target_with_runtime(
     target: seal_target::TargetTriple,
     runtime_archive: Option<PathBuf>,
 ) -> Result<(), CodegenError> {
+    compile_for_target_with_runtime_and_links(CompileRequest {
+        source,
+        output,
+        emit,
+        opt_level,
+        debug_info,
+        target,
+        runtime_archive,
+        links: LinkOptions::default(),
+    })
+}
+
+fn compile_for_target_with_runtime_and_links(
+    request: CompileRequest<'_>,
+) -> Result<(), CodegenError> {
+    let CompileRequest {
+        source,
+        output,
+        emit,
+        opt_level,
+        debug_info,
+        target,
+        runtime_archive,
+        links,
+    } = request;
     let session = Session::new(Options {
         target,
         ..Options::default()
@@ -165,6 +234,9 @@ pub(crate) fn compile_for_target_with_runtime(
             debug_info,
             crate_name: Some("test".to_owned()),
             runtime_archive,
+            libraries: links.libraries,
+            search_paths: links.search_paths,
+            link_args: links.link_args,
         },
     )
     .map(|_| ())

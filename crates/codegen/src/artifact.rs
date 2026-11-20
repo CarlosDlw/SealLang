@@ -16,20 +16,20 @@ use inkwell::targets::{FileType, TargetMachine};
 
 use crate::error::CodegenError;
 use crate::linker;
-use crate::options::Emit;
+use crate::options::{CodegenOptions, Emit};
 
 /// Produces the requested artifact for `module`.
 pub(crate) fn emit_artifact(
     module: &Module<'_>,
     machine: &TargetMachine,
-    emit: Emit,
-    output: &Path,
+    options: &CodegenOptions,
     runtime: &[u8],
+    source_libraries: &[String],
 ) -> Result<(), CodegenError> {
-    match emit {
-        Emit::Object => write_buffer(module, machine, FileType::Object, output),
-        Emit::Assembly => write_buffer(module, machine, FileType::Assembly, output),
-        Emit::Executable => link_executable(module, machine, output, runtime),
+    match options.emit {
+        Emit::Object => write_buffer(module, machine, FileType::Object, &options.output),
+        Emit::Assembly => write_buffer(module, machine, FileType::Assembly, &options.output),
+        Emit::Executable => link_executable(module, machine, options, runtime, source_libraries),
     }
 }
 
@@ -55,9 +55,11 @@ fn write_buffer(
 fn link_executable(
     module: &Module<'_>,
     machine: &TargetMachine,
-    output: &Path,
+    options: &CodegenOptions,
     runtime: &[u8],
+    source_libraries: &[String],
 ) -> Result<(), CodegenError> {
+    let output = options.output.as_path();
     let object = machine
         .write_to_memory_buffer(module, FileType::Object)
         .map_err(|error| {
@@ -78,6 +80,26 @@ fn link_executable(
         file_name.to_string_lossy(),
         std::process::id()
     ));
+    let runtime_path = directory.join(format!(
+        ".{}.{}.seal_rt{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        if cfg!(windows) { ".lib" } else { ".a" }
+    ));
+    let temporary_path = temporary_executable(output)?;
+    let inputs = linker::LinkInputs {
+        object: &object_path,
+        runtime: &runtime_path,
+        output: &temporary_path,
+        source_libraries,
+        libraries: &options.libraries,
+        search_paths: &options.search_paths,
+        link_args: &options.link_args,
+    };
+    // Validate before any temporary file is written: a bad `-l` or `-L` must
+    // not leave an object, a runtime archive, or a partial executable behind.
+    linker::validate(&inputs)?;
+
     let _object_guard = TempFile(object_path.clone());
     seal_fs::write_atomic(&object_path, object.as_slice()).map_err(|error| {
         CodegenError::artifact(
@@ -85,13 +107,6 @@ fn link_executable(
             format!("cannot write the temporary object file: {error}"),
         )
     })?;
-
-    let runtime_path = directory.join(format!(
-        ".{}.{}.seal_rt{}",
-        file_name.to_string_lossy(),
-        std::process::id(),
-        if cfg!(windows) { ".lib" } else { ".a" }
-    ));
     let _runtime_guard = TempFile(runtime_path.clone());
     seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
         CodegenError::artifact(
@@ -99,15 +114,8 @@ fn link_executable(
             format!("cannot write the temporary runtime archive: {error}"),
         )
     })?;
-
-    let temporary_path = temporary_executable(output)?;
     let _temporary_guard = TempFile(temporary_path.clone());
-    let invocation = linker::invocation(
-        linker::default_program(),
-        &object_path,
-        &runtime_path,
-        &temporary_path,
-    );
+    let invocation = linker::invocation(linker::default_program(), &inputs);
     let result = Command::new(invocation.program())
         .args(invocation.arguments())
         .output();
@@ -125,19 +133,35 @@ fn link_executable(
         Ok(result) => Err(CodegenError::artifact(
             output,
             format!(
-                "linker `{}` failed ({}): {}",
+                "linker `{}` failed ({}): {}\ncommand: {}\nlibraries: {}",
                 invocation.program().to_string_lossy(),
                 result.status,
-                String::from_utf8_lossy(&result.stderr).trim()
+                String::from_utf8_lossy(&result.stderr).trim(),
+                invocation.command_line(),
+                libraries_text(&inputs),
             ),
         )),
         Err(error) => Err(CodegenError::artifact(
             output,
             format!(
-                "cannot run linker `{}`: {error}",
-                invocation.program().to_string_lossy()
+                "cannot run linker `{}`: {error}\ncommand: {}\nlibraries: {}",
+                invocation.program().to_string_lossy(),
+                invocation.command_line(),
+                libraries_text(&inputs),
             ),
         )),
+    }
+}
+
+/// Returns the libraries named in a link request, for diagnostics.
+fn libraries_text(inputs: &linker::LinkInputs<'_>) -> String {
+    let mut names = Vec::new();
+    names.extend(inputs.source_libraries.iter().cloned());
+    names.extend(inputs.libraries.iter().cloned());
+    if names.is_empty() {
+        "none (only the Seal runtime)".to_owned()
+    } else {
+        names.join(", ")
     }
 }
 

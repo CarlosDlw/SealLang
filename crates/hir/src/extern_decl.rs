@@ -10,6 +10,15 @@ use seal_ty::{Abi, TyId};
 
 use crate::body::ParamData;
 
+/// One library named by a `link "...";` directive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkDirective {
+    /// The library name passed to the linker.
+    pub name: Symbol,
+    /// The span of the directive, for diagnostics.
+    pub span: Span,
+}
+
 /// One external function declaration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternFunction {

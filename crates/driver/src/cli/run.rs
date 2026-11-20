@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use super::diagnostics::DiagnosticArgs;
+use super::link::LinkArgs;
 use super::optimization::OptimizationArgs;
 use super::target::TargetArgs;
 
@@ -30,6 +31,9 @@ pub(crate) struct RunArgs {
 
     #[command(flatten)]
     pub(crate) optimization: OptimizationArgs,
+
+    #[command(flatten)]
+    pub(crate) link: LinkArgs,
 
     /// Link executables with this runtime archive instead of the embedded one.
     #[arg(long, value_name = "PATH", help_heading = "Runtime")]

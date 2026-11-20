@@ -71,10 +71,26 @@ fn variadic_declarations_are_rejected() {
 }
 
 #[test]
-fn link_directives_are_rejected() {
-    let fixture = Fixture::new(r#"extern "c" { link "m"; }"#);
+fn link_directives_name_libraries_in_source_order() {
+    let (fixture, ast) =
+        parse_clean(r#"extern "c" { link "m"; func abs(value: i32) -> i32; link "pthread"; }"#);
+    let ItemKind::ExternBlock(block) = &ast.item(ast.program().items()[0]).kind else {
+        panic!("expected an extern block");
+    };
+    assert_eq!(block.items.len(), 1);
+    let names: Vec<String> = block
+        .links
+        .iter()
+        .map(|link| fixture.symbol(link.name))
+        .collect();
+    assert_eq!(names, ["m", "pthread"]);
+}
+
+#[test]
+fn a_malformed_link_directive_is_rejected() {
+    let fixture = Fixture::new(r#"extern "c" { link m; }"#);
     let _ = fixture.parse();
-    fixture.expect("E3091", "`link` directives");
+    fixture.expect("E3091", "library name string");
 }
 
 #[test]

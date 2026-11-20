@@ -46,6 +46,25 @@ fn run_accepts_build_options_and_forwarded_arguments() {
 }
 
 #[test]
+fn run_accepts_link_options_before_forwarded_arguments() {
+    let args = run_args(&[
+        "run",
+        "-l",
+        "sealfixture",
+        "-L/tmp/lib",
+        "--link-arg",
+        "-Wl,--as-needed",
+        "main.sl",
+        "--",
+        "--program-flag",
+    ]);
+    assert_eq!(args.link.libraries, ["sealfixture"]);
+    assert_eq!(args.link.search_paths, [PathBuf::from("/tmp/lib")]);
+    assert_eq!(args.link.link_args, [OsString::from("-Wl,--as-needed")]);
+    assert_eq!(args.program_args, [OsString::from("--program-flag")]);
+}
+
+#[test]
 fn run_requires_one_input() {
     let error = parse(&["run", "a.sl", "b.sl"]).expect_err("run accepts one program");
     assert_eq!(error.kind(), ErrorKind::UnknownArgument);
@@ -71,7 +90,15 @@ fn run_help_lists_forwarded_arguments_and_build_options() {
         .render_long_help()
         .to_string();
 
-    for expected in ["Optimization:", "Target:", "Runtime:", "ARGS", "--"] {
+    for expected in [
+        "Optimization:",
+        "Target:",
+        "Runtime:",
+        "Link:",
+        "ARGS",
+        "--",
+        "--link-arg",
+    ] {
         assert!(help.contains(expected), "run help is missing `{expected}`");
     }
 }

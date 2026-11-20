@@ -328,6 +328,9 @@ impl Reachability<'_> {
             }
             ItemKind::ExternBlock(declaration) => {
                 self.assert_span(declaration.abi_span);
+                for link in &declaration.links {
+                    self.assert_span(link.span);
+                }
                 for item in &declaration.items {
                     self.check_item(*item);
                 }

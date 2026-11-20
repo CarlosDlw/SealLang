@@ -44,7 +44,7 @@ mod tests;
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use expr::{Expr, ExprKind, Place, Projection};
-pub use extern_decl::{ExternFunction, ExternStatic};
+pub use extern_decl::{ExternFunction, ExternStatic, LinkDirective};
 pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};
@@ -116,6 +116,7 @@ pub struct Hir {
     extern_function_order: Vec<DefId>,
     extern_statics: FxHashMap<DefId, extern_decl::ExternStatic>,
     extern_static_order: Vec<DefId>,
+    link_directives: Vec<extern_decl::LinkDirective>,
 }
 
 impl Hir {
@@ -435,6 +436,11 @@ impl Hir {
         &self.extern_static_order
     }
 
+    /// Returns every `link` directive, in source order.
+    pub fn link_directives(&self) -> &[extern_decl::LinkDirective] {
+        &self.link_directives
+    }
+
     /// Returns `true` when `def` is an external function declaration.
     pub fn is_extern_function(&self, def: DefId) -> bool {
         self.definitions.get(def).kind == DefKind::ExternFunction
@@ -453,6 +459,10 @@ impl Hir {
     pub(crate) fn insert_extern_static(&mut self, def: DefId, data: extern_decl::ExternStatic) {
         self.extern_static_order.push(def);
         self.extern_statics.insert(def, data);
+    }
+
+    pub(crate) fn push_link_directive(&mut self, directive: extern_decl::LinkDirective) {
+        self.link_directives.push(directive);
     }
 
     /// Returns every inherent implementation in declaration order.
@@ -590,6 +600,7 @@ impl Hir {
             extern_function_order: Vec::new(),
             extern_statics: FxHashMap::default(),
             extern_static_order: Vec::new(),
+            link_directives: Vec::new(),
         };
         hir.builtin = Some(builtin::install(&mut hir, interner));
         hir

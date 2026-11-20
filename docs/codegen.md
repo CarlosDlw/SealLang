@@ -520,13 +520,44 @@ references one of its symbols:
 
 Executables use the linker selected by `SEAL_LINKER`, then `CC`, then the
 platform default (`cl` on Windows, `cc` elsewhere). The argument style follows
-the program name: `cl` and `clang-cl` use `/Fe:`, the standalone `link` uses
-`/OUT:`, and every other toolchain uses `-o`. On Windows the driver appends
-`.exe` to executable output paths that have no extension.
+the program name: `cl` and `clang-cl` use `/Fe:` and pass linker-only options
+after `/link`; the standalone `link` uses `/OUT:`; every other toolchain uses
+`-o`. On Windows the driver appends `.exe` to executable output paths that have
+no extension.
+
+### Link inputs
+
+An executable can name native libraries in three ways:
+
+- `link "name";` inside an `extern` block, in source order;
+- `-l NAME` on `build` and `run`, repeatable;
+- `--link-arg ARG` for one raw linker argument, repeatable and accepting values
+  that start with `-`.
+
+`-L DIR` adds one search directory, repeatable. The argument order is
+object, source libraries, command-line libraries, `--link-arg` values, then the
+Seal runtime archive; `-L`/`/LIBPATH:` entries precede the libraries. The order
+is deterministic and preserved from the source and command line, and every
+value is passed as one argument vector element, never through a shell.
+
+```text
+sealc build -L ./lib -l sealfixture -l m --link-arg -Wl,--as-needed app.sl
+```
+
+### Validation
+
+Library names may not be empty or contain whitespace, control characters, or a
+path separator; write the directory in `-L` and the bare name in `-l` or
+`link`. Every search path must name an existing directory. These constraints
+are checked before any temporary file is written, so an invalid request is
+`E6005` and leaves nothing behind. Object and assembly output never invoke the
+linker and therefore ignore libraries and search paths.
 
 The linker writes to a temporary path in the output directory, which replaces
-the destination only after a successful link. A failed link leaves an existing
-executable from an earlier build untouched and never leaves a truncated one.
+the destination only after a successful link. A failed link is `E6003` and
+includes the linker status, the full argument vector, and the requested
+libraries. It leaves an existing executable from an earlier build untouched and
+never leaves a truncated one.
 
 ## Failures
 
@@ -534,7 +565,8 @@ executable from an earlier build untouched and never leaves a truncated one.
 |------|---------|
 | `E6001` | The executable has no usable `main`, or `main` has parameters or a return type other than `i32`/`()`. |
 | `E6002` | LLVM has no backend for the requested triple or cannot create a target machine. |
-| `E6003` | The artifact could not be written, the linker could not run, linking failed, an external runtime archive could not be read, or an executable was requested for a target that does not match the embedded runtime and no replacement was supplied. |
+| `E6003` | The artifact could not be written, the linker could not run, linking failed, an external runtime archive could not be read, or an executable was requested for a target that does not match the embedded runtime and no replacement was supplied. A link failure names the command and libraries. |
+| `E6005` | A library name is empty or contains whitespace, control characters, or a path separator, or a `-L` search path is missing or not a directory. |
 
 Broken compiler invariants (invalid MIR reaching codegen, an unresolved inference
 type, invalid generated IR, or a failed optimization pipeline) are internal

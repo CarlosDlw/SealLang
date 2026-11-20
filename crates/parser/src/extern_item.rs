@@ -5,7 +5,8 @@
 //! so an external signature is never a second kind of type syntax.
 
 use seal_ast::{
-    ExternBlockDecl, ExternFnDecl, ExternStaticDecl, ItemId, ItemKind, LinkName, ParamId, TypeId,
+    ExternBlockDecl, ExternFnDecl, ExternStaticDecl, ItemId, ItemKind, LinkDirective, LinkName,
+    ParamId, TypeId,
 };
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
@@ -30,12 +31,13 @@ impl Parser<'_> {
         let (abi, abi_span) = self.parse_abi();
 
         if self.at(TokenKind::LBrace) {
-            let items = self.parse_extern_block_members(abi, abi_span);
+            let (items, links) = self.parse_extern_block_members(abi, abi_span);
             let span = start.cover(self.previous_span());
             return self.builder.push_item(
                 ItemKind::ExternBlock(ExternBlockDecl {
                     abi,
                     abi_span,
+                    links,
                     items,
                 }),
                 span,
@@ -92,9 +94,14 @@ impl Parser<'_> {
     }
 
     /// Parses the braced member list of an external block.
-    fn parse_extern_block_members(&mut self, abi: Symbol, abi_span: Span) -> Vec<ItemId> {
+    fn parse_extern_block_members(
+        &mut self,
+        abi: Symbol,
+        abi_span: Span,
+    ) -> (Vec<ItemId>, Vec<LinkDirective>) {
         self.bump();
         let mut items = Vec::new();
+        let mut links = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
             if self.at(TokenKind::Func) {
@@ -114,17 +121,9 @@ impl Parser<'_> {
                 .emit();
                 self.skip_declaration();
             } else if self.at_name("link") {
-                let span = self.current_span();
-                self.error(
-                    codes::E3091,
-                    span,
-                    "`link` directives are not supported yet",
-                )
-                .help(
-                    "remove the directive; linking a library will be available in a later release",
-                )
-                .emit();
-                self.skip_declaration();
+                if let Some(directive) = self.parse_link_directive() {
+                    links.push(directive);
+                }
             } else {
                 let found = self.describe(self.current_kind());
                 self.error(
@@ -139,7 +138,42 @@ impl Parser<'_> {
             self.ensure_progress(before);
         }
         let _ = self.expect(TokenKind::RBrace, "`}` to close the `extern` block");
-        items
+        (items, links)
+    }
+
+    /// Parses `link "name";` inside an external block.
+    fn parse_link_directive(&mut self) -> Option<LinkDirective> {
+        let start = self.current_span();
+        self.bump();
+        let token = self.current();
+        let TokenKind::Str(name) = token.kind else {
+            let found = self.describe(token.kind);
+            self.error(
+                codes::E3091,
+                token.span,
+                format!("expected a library name string after `link`, found {found}"),
+            )
+            .help("write the library name as a string, such as `link \"m\"`")
+            .emit();
+            self.skip_declaration();
+            return None;
+        };
+        self.bump();
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E3091,
+                self.current_span(),
+                format!("a `link` directive ends with `;`, found {found}"),
+            )
+            .emit();
+            self.skip_declaration();
+            return None;
+        }
+        Some(LinkDirective {
+            name,
+            span: start.cover(self.previous_span()),
+        })
     }
 
     /// Parses one external function declaration.

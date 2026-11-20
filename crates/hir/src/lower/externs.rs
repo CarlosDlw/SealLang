@@ -44,6 +44,13 @@ impl Lowering<'_> {
                     self.collect_extern_static(item_id, &declaration);
                 }
                 ItemKind::ExternBlock(block) => {
+                    for link in &block.links {
+                        self.hir
+                            .push_link_directive(crate::extern_decl::LinkDirective {
+                                name: link.name,
+                                span: link.span,
+                            });
+                    }
                     for member in block.items {
                         match self.ast.item(member).kind.clone() {
                             ItemKind::ExternFunc(declaration) => {
