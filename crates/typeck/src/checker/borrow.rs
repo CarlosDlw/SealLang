@@ -281,6 +281,19 @@ impl Checker<'_> {
                     .help("wrap the dereference in `unsafe { ... }`")
                     .emit();
                 }
+                if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Opaque { .. }) {
+                    self.error(
+                        codes::E3087,
+                        span,
+                        format!(
+                            "cannot dereference the opaque type `{}`; Seal does not know its layout",
+                            self.ty_text(pointee)
+                        ),
+                    )
+                    .help("keep the pointer and pass it back to C")
+                    .emit();
+                    return self.error_ty();
+                }
                 if matches!(self.hir.ty_ctxt().kind(pointee), TyKind::Slice { .. })
                     && !self.checking_place_base
                 {

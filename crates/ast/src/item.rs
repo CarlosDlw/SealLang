@@ -29,6 +29,8 @@ pub enum ItemKind {
     Static(StaticDecl),
     /// A struct declaration.
     Struct(StructDecl),
+    /// An opaque type declared by `extern type Name;`.
+    OpaqueType(OpaqueTypeDecl),
     /// An enum declaration.
     Enum(EnumDecl),
     /// An inherent implementation block for a nominal struct, or a trait
@@ -55,12 +57,30 @@ pub struct StructDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+    /// Whether the declaration was written with `extern struct`.
+    ///
+    /// An external struct has the C representation: fields keep declaration
+    /// order and C alignment, and the type is only a valid FFI boundary type
+    /// when every field is FFI-safe.
+    pub is_extern: bool,
     /// Declared type parameters.
     pub generics: GenericParams,
     /// Bounds written after the header.
     pub where_clause: WhereClause,
     /// Fields in declaration order.
     pub fields: Vec<FieldDeclId>,
+}
+
+/// An opaque type declared by `extern type Name;`.
+///
+/// The type has no size, alignment, fields, or destructor. It only appears
+/// behind a raw pointer, where it names storage that C owns.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpaqueTypeDecl {
+    /// The type name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
 }
 
 /// An enum declaration.

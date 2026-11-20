@@ -6,7 +6,7 @@
 
 use inkwell::context::Context;
 
-use crate::tests::support::{build_module, front_end};
+use crate::tests::support::{build_module, front_end, lowered_debug_module_ir};
 
 /// Lowers `source` and returns the IR text of the resulting module.
 fn ir_text(source: &str) -> String {
@@ -66,6 +66,75 @@ fn an_external_static_is_an_external_mutable_global() {
     assert!(
         !global.contains("constant"),
         "C owns the storage, so the global is not constant: {global}"
+    );
+}
+
+#[test]
+fn a_small_c_struct_is_coerced_to_its_abi_pieces() {
+    let ir = ir_text(
+        r#"extern struct Point { x: c_int, y: c_int }
+           extern "c" { func ffi_point_new(x: c_int, y: c_int) -> Point; }
+           func main() -> i32 { unsafe { let p = ffi_point_new(1, 2); p.x } }"#,
+    );
+    assert_eq!(
+        declaration(&ir, "@ffi_point_new("),
+        "declare i64 @ffi_point_new(i32, i32)"
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.contains("call i64 @ffi_point_new(")),
+        "the call uses the coerced return:\n{ir}"
+    );
+}
+
+#[test]
+fn a_large_c_struct_is_returned_through_hidden_storage() {
+    let ir = ir_text(
+        r#"extern struct Wide { first: c_int, second: f64, third: i64 }
+           extern "c" { func ffi_wide() -> Wide; }
+           func main() -> i32 { unsafe { let wide = ffi_wide(); wide.first } }"#,
+    );
+    let declaration = declaration(&ir, "@ffi_wide(");
+    assert_eq!(
+        declaration,
+        "declare void @ffi_wide(ptr sret(%seal.adt.0.Wide))"
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.contains("call void @ffi_wide(ptr")),
+        "the call passes the hidden storage pointer:\n{ir}"
+    );
+}
+
+#[test]
+fn a_large_c_struct_parameter_is_passed_byval() {
+    let ir = ir_text(
+        r#"extern struct Wide { first: c_int, second: f64, third: i64 }
+           extern "c" { func ffi_take(wide: Wide); }
+           func main() { unsafe { let wide = Wide { first: 1, second: 2.0, third: 3 }; ffi_take(wide); } }"#,
+    );
+    let declaration = declaration(&ir, "@ffi_take(");
+    assert!(
+        declaration.contains("byval(%seal.adt.0.Wide)"),
+        "the parameter is copied to the stack: {declaration}"
+    );
+}
+
+#[test]
+fn debug_information_describes_a_c_struct_with_its_layout() {
+    let compiled = front_end(
+        r#"extern struct Point { x: c_int, y: c_int }
+           extern "c" { func ffi_take(point: Point); }
+           func main() { unsafe { ffi_take(Point { x: 1, y: 2 }); } }"#,
+    );
+    let ir = lowered_debug_module_ir(&compiled);
+    let aggregate = ir
+        .lines()
+        .find(|line| line.contains("DICompositeType") && line.contains("name: \"Point\""))
+        .unwrap_or_else(|| panic!("no debug record for Point:\n{ir}"));
+    assert!(
+        aggregate.contains("size: 64"),
+        "the debug record carries the C size: {aggregate}"
     );
 }
 

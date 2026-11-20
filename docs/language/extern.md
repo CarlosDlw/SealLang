@@ -1,10 +1,10 @@
 # External functions and statics
 
-Status: declared functions, calls, static storage, and native library
-resolution are implemented in the current language version. Variadic
-declarations, external aggregates, opaque types, and function pointers belong
-to later phases and are rejected with a diagnostic instead of being silently
-accepted.
+Status: declared functions, calls, static storage, native library resolution,
+C-layout structs passed and returned by value, opaque types, and `c_void` are
+implemented in the current language version. Variadic declarations and function
+pointers belong to later phases and are rejected with a diagnostic instead of
+being silently accepted.
 
 An `extern` declaration names code or storage that C defines and the linker
 resolves. Seal does not own the body or the storage: it emits a declaration,
@@ -37,6 +37,8 @@ extern "ABI" {
 }
 extern "ABI" func name(parameters) -> Return link_name "symbol";
 extern "ABI" static [mut] name: Type;
+extern struct Name { field: Type, ... }
+extern type Name;
 ```
 
 - The ABI is always a string. `"c"`, `"cdecl"`, and `"system"` are accepted and
@@ -55,6 +57,45 @@ extern "ABI" static [mut] name: Type;
   order among the declarations and are resolved in source order.
 - `extern` is contextual. Outside item position it is an ordinary identifier,
   and a function or binding may be named `extern`.
+
+### C structs and opaque types
+
+An `extern struct` is a struct with the C layout. It is a normal Seal type
+otherwise: it has fields, literals, methods, patterns, `Copy` opt-in, and it may
+implement `Drop`. The declaration has no type parameters and no `where` clause;
+writing either is `E3093`.
+
+```seal
+extern struct Point { x: c_int, y: c_int }
+
+extern "c" {
+  func ffi_point_new(x: c_int, y: c_int) -> Point;
+  func ffi_point_sum(point: Point) -> c_int;
+}
+```
+
+Every field must have a non-zero C representation. `()` and another zero-sized
+field are `E3085`, `bool` is `E3085` with the suggestion to use `c_bool`, and a
+non-FFI-safe field such as `*T`, `str`, or a Seal-layout struct is `E3084`. A
+nested `extern struct` and an array of C-safe elements are accepted. This is
+what makes the layout of the whole aggregate provable against the C compiler.
+
+An `extern type` names storage whose size and layout only C knows:
+
+```seal
+extern type FILE;
+
+extern "c" {
+  func fopen(path: *raw u8, mode: *raw u8) -> *raw mut FILE;
+  func fclose(file: *raw mut FILE) -> c_int;
+}
+```
+
+An opaque type is `!Sized`, has no fields, no layout, and no destructor. It may
+only appear as the pointee of a raw pointer. Writing it by value in a binding, a
+field, an array, a parameter, or a return type is `E3087`; dereferencing a raw
+pointer to it is also `E3087`. The built-in `c_void` follows the same rule and is
+the intended pointee for an untyped C pointer.
 
 ### Return types and `void`
 
@@ -180,6 +221,10 @@ are in [`../types.md`](../types.md). In particular:
 - Checked references (`*T`, `*mut T`), `char`, `i128`/`u128`, fat raw pointers,
   slices, strings, trait objects, tuples, payload enums, and structs without
   C layout are rejected with `E3084`.
+- An `extern struct` is FFI-safe by value when every field is; its layout is
+  the target's C layout and its fields keep declaration order.
+- An `extern type` (and `c_void`) is only FFI-safe behind `*raw`; by value it is
+  `E3087`.
 - An external static may have any declared type that a Seal static may have;
   accessing it safely is the caller's responsibility.
 
@@ -207,8 +252,16 @@ Each declaration produces exactly one LLVM declaration, cached by its HIR
 definition:
 
 - Functions use `external` linkage, the target's C calling convention, and no
-  attributes. The compiler does not own the body, so it cannot promise
-  `noalias`, `readonly`, `nounwind`, or any other property.
+  attributes beyond the ABI-mandated `byval` and `sret` on aggregate positions.
+  The compiler does not own the body, so it cannot promise `noalias`,
+  `readonly`, `nounwind`, or any other property.
+- A C-layout struct is coerced exactly as C coerces it. On System V AMD64,
+  structs up to 16 bytes become integer or SSE pieces in registers (for
+  example `{i32, i32}` becomes one `i64`), while larger structs are returned
+  through a hidden `sret` pointer and passed with `byval`. On Microsoft x64,
+  structs of 1, 2, 4, or 8 bytes become one integer and every other size is
+  passed and returned indirectly. The declaration, every call, and the result
+  conversion use one cached classification, so the two sides cannot disagree.
 - Statics use `external` linkage and are never marked `constant`, because C may
   initialize them at load time. A `static mut` declaration produces writable
   storage; an immutable one is still emitted as a mutable global.
@@ -237,12 +290,14 @@ runtime archive, or partial executable is left behind.
 | `E3081` | The declaration is malformed, or uses an unsupported member |
 | `E3082` | The linker symbol is empty, reserved, or contains invalid characters |
 | `E3083` | One symbol is declared with two different shapes |
-| `E3084` | A parameter, return type, or static type is not FFI-safe |
+| `E3084` | A parameter, return type, field, or static type is not FFI-safe |
+| `E3085` | An external struct is empty, or a field has no valid C representation |
 | `E3086` | An external static is accessed outside `unsafe`, or an immutable one is written |
+| `E3087` | An opaque type is used by value or dereferenced |
 | `E3088` | A variadic declaration was written; variadics are not implemented |
 | `E3091` | A `link` directive is malformed (missing string, extra token, or missing `;`) |
 | `E3092` | An `extern` declaration is nested inside another `extern` block |
-| `E3093` | An external function declares generic parameters |
+| `E3093` | An external function, struct, or opaque type is generic |
 | `E4033` | A constant calls an external function |
 | `E4034` | A constant reads an external static |
 | `E6003` | The linker failed; the message names the command and libraries |
@@ -253,11 +308,12 @@ runtime archive, or partial executable is left behind.
 The following are deliberately rejected, never silently miscompiled:
 
 - Variadic declarations and calls (`E3088`).
-- `extern struct`, `extern type`, and `c_void` (`E3081`; opaque C types arrive
-  with the aggregate phase).
 - Function pointers and callbacks (rejected as a non-FFI-safe type).
 - Per-declaration attributes such as `noalias` or `noreturn` are not accepted
   on an external declaration.
+- C aggregates by value on an architecture without an implemented aggregate
+  ABI are rejected with `E6002`; x86_64 System V and Microsoft x64 are
+  implemented.
 
 ## 9. Complete example
 

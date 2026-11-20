@@ -22,6 +22,7 @@ use seal_layout::{Layout, LayoutCtxt, LayoutError};
 use seal_symbol::Interner;
 use seal_ty::{AdtId, AdtKind, FloatTy, IntTy, SubstsId, TupleId, TyCtxt, TyId, TyKind, UintTy};
 
+use crate::c_abi::{CAbi, CAggregate, CParam, CParamKind, CReturn, CSignature, CoercedPart};
 use crate::error::CodegenError;
 
 /// Maps interned Seal types to LLVM types.
@@ -36,6 +37,7 @@ pub(crate) struct TypeMapper<'ctx> {
     tcx: &'ctx TyCtxt,
     interner: &'ctx Interner,
     layouts: LayoutCtxt<'ctx>,
+    c_abi: CAbi,
     pointer_width: u8,
     empty: StructType<'ctx>,
     fat_pointer: StructType<'ctx>,
@@ -47,12 +49,46 @@ pub(crate) struct TypeMapper<'ctx> {
 }
 
 impl<'ctx> TypeMapper<'ctx> {
-    /// Creates the mapper and builds every aggregate type.
+    /// Creates the mapper for the host and an explicit pointer width.
+    #[cfg(test)]
     pub(crate) fn new(
         context: &'ctx Context,
         tcx: &'ctx TyCtxt,
         interner: &'ctx Interner,
         pointer_width: u8,
+    ) -> Result<Self, CodegenError> {
+        let target = seal_target::host_triple();
+        Self::with_abi(
+            context,
+            tcx,
+            interner,
+            pointer_width,
+            CAbi::for_target(&target.spec()),
+        )
+    }
+
+    /// Creates the mapper for one target, selecting its C aggregate ABI.
+    pub(crate) fn new_for_target(
+        context: &'ctx Context,
+        tcx: &'ctx TyCtxt,
+        interner: &'ctx Interner,
+        target: &seal_target::TargetSpec,
+    ) -> Result<Self, CodegenError> {
+        Self::with_abi(
+            context,
+            tcx,
+            interner,
+            target.pointer_width(),
+            CAbi::for_target(target),
+        )
+    }
+
+    fn with_abi(
+        context: &'ctx Context,
+        tcx: &'ctx TyCtxt,
+        interner: &'ctx Interner,
+        pointer_width: u8,
+        c_abi: CAbi,
     ) -> Result<Self, CodegenError> {
         let empty = context.struct_type(&[], false);
         let byte_ptr = context.ptr_type(AddressSpace::default());
@@ -77,6 +113,7 @@ impl<'ctx> TypeMapper<'ctx> {
             tcx,
             interner,
             layouts,
+            c_abi,
             pointer_width,
             empty,
             fat_pointer,
@@ -178,7 +215,7 @@ impl<'ctx> TypeMapper<'ctx> {
                 BasicTypeEnum::StructType(tuple_type)
             }
             TyKind::Unit | TyKind::Never | TyKind::Error => BasicTypeEnum::StructType(self.empty),
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Opaque { .. } => {
                 return Err(CodegenError::internal(
                     "an unsized type has no LLVM value type; only its reference is representable",
                 ));
@@ -223,23 +260,101 @@ impl<'ctx> TypeMapper<'ctx> {
         Ok(self.basic(returns)?.fn_type(&llvm_parameters, false))
     }
 
-    /// Returns the C function type with the given parameter and return types.
+    /// Returns the C signature with the given parameter and return types.
     ///
     /// A Seal `()` return is C `void`, not the zero-sized struct a Seal
     /// function returns, so an external declaration maps the two differently.
-    pub(crate) fn c_function_type(
+    /// Aggregate parameters and results are coerced by the target's C ABI.
+    pub(crate) fn c_signature(
         &self,
         parameters: &[TyId],
         returns: TyId,
-    ) -> Result<FunctionType<'ctx>, CodegenError> {
-        let mut llvm_parameters = Vec::with_capacity(parameters.len());
-        for parameter in parameters {
-            llvm_parameters.push(BasicMetadataTypeEnum::from(self.basic(*parameter)?));
-        }
-        if self.is_unit_like(returns) {
-            Ok(self.context.void_type().fn_type(&llvm_parameters, false))
+    ) -> Result<CSignature<'ctx>, CodegenError> {
+        let mut llvm_parameters = Vec::with_capacity(parameters.len() + 1);
+        let mut signature_params = Vec::with_capacity(parameters.len() + 1);
+        let return_abi = if self.is_unit_like(returns) {
+            CReturn::Void
         } else {
-            Ok(self.basic(returns)?.fn_type(&llvm_parameters, false))
+            match self.c_abi.classify(self.tcx, &self.layouts, returns)? {
+                CAggregate::Direct => CReturn::Direct,
+                CAggregate::Small(parts) => CReturn::Coerced(self.c_parts_type(&parts)?),
+                CAggregate::Memory { .. } => {
+                    let aggregate = self.basic(returns)?;
+                    llvm_parameters.push(self.pointer().into());
+                    signature_params.push(CParam {
+                        kind: CParamKind::ByPointer {
+                            byval: false,
+                            aggregate,
+                        },
+                    });
+                    CReturn::Sret(aggregate)
+                }
+            }
+        };
+        for parameter in parameters {
+            match self.c_abi.classify(self.tcx, &self.layouts, *parameter)? {
+                CAggregate::Direct => {
+                    let ty = self.basic(*parameter)?;
+                    llvm_parameters.push(ty.into());
+                    signature_params.push(CParam {
+                        kind: CParamKind::Direct,
+                    });
+                }
+                CAggregate::Small(parts) => {
+                    let ty = self.c_parts_type(&parts)?;
+                    llvm_parameters.push(ty.into());
+                    signature_params.push(CParam {
+                        kind: CParamKind::Coerced(ty),
+                    });
+                }
+                CAggregate::Memory { byval } => {
+                    let ty = self.pointer();
+                    llvm_parameters.push(ty.into());
+                    signature_params.push(CParam {
+                        kind: CParamKind::ByPointer {
+                            byval,
+                            aggregate: self.basic(*parameter)?,
+                        },
+                    });
+                }
+            }
+        }
+        let function_type = match &return_abi {
+            CReturn::Void | CReturn::Sret(_) => {
+                self.context.void_type().fn_type(&llvm_parameters, false)
+            }
+            CReturn::Direct => self.basic(returns)?.fn_type(&llvm_parameters, false),
+            CReturn::Coerced(ty) => ty.fn_type(&llvm_parameters, false),
+        };
+        Ok(CSignature {
+            function_type,
+            params: signature_params,
+            ret: return_abi,
+        })
+    }
+
+    /// Returns the LLVM type of a coerced aggregate.
+    pub(crate) fn c_parts_type(
+        &self,
+        parts: &[CoercedPart],
+    ) -> Result<BasicTypeEnum<'ctx>, CodegenError> {
+        let mut types = Vec::with_capacity(parts.len());
+        for part in parts {
+            types.push(match part {
+                CoercedPart::Integer(bits) => self.integer_type(*bits)?.into(),
+                CoercedPart::Float(FloatTy::F32) => self.context.f32_type().into(),
+                CoercedPart::Float(FloatTy::F64) => self.context.f64_type().into(),
+                CoercedPart::Vector(FloatTy::F32, lanes) => {
+                    self.context.f32_type().vec_type(*lanes).into()
+                }
+                CoercedPart::Vector(FloatTy::F64, lanes) => {
+                    self.context.f64_type().vec_type(*lanes).into()
+                }
+            });
+        }
+        match types.as_slice() {
+            [only] => Ok(*only),
+            _ => Ok(self.context.struct_type(&types, false).into()),
         }
     }
 

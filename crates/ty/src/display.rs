@@ -62,6 +62,10 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Array { element, length } => {
                 write!(f, "[{}; {length}]", self.display(element))
             }
+            TyKind::Opaque { name, .. } => match self.interner {
+                Some(interner) => f.write_str(interner.resolve(name)),
+                None => f.write_str("<opaque>"),
+            },
             TyKind::Adt { adt, args } => {
                 match self.interner {
                     Some(interner) => f.write_str(interner.resolve(self.ctxt.adt(adt).name))?,

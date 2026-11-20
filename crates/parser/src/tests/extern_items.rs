@@ -101,10 +101,28 @@ fn generic_external_functions_are_rejected() {
 }
 
 #[test]
-fn external_aggregates_are_rejected() {
-    let fixture = Fixture::new(r#"extern "c" type opaque;"#);
+fn an_extern_struct_keeps_its_fields_in_order() {
+    let (fixture, ast) =
+        parse_clean(r#"extern struct Point { x: c_int, y: c_int } extern type FILE;"#);
+    let ItemKind::Struct(point) = &ast.item(ast.program().items()[0]).kind else {
+        panic!("expected an external struct");
+    };
+    assert_eq!(fixture.symbol(point.name), "Point");
+    assert!(point.is_extern);
+    assert!(point.generics.is_empty());
+    assert_eq!(point.fields.len(), 2);
+
+    let ItemKind::OpaqueType(file) = &ast.item(ast.program().items()[1]).kind else {
+        panic!("expected an opaque type");
+    };
+    assert_eq!(fixture.symbol(file.name), "FILE");
+}
+
+#[test]
+fn a_generic_extern_struct_is_rejected() {
+    let fixture = Fixture::new(r#"extern struct Pair<T> { first: T }"#);
     let _ = fixture.parse();
-    fixture.expect("E3081", "external aggregate");
+    fixture.expect("E3093", "external struct");
 }
 
 #[test]

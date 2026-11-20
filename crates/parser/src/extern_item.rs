@@ -6,7 +6,7 @@
 
 use seal_ast::{
     ExternBlockDecl, ExternFnDecl, ExternStaticDecl, ItemId, ItemKind, LinkDirective, LinkName,
-    ParamId, TypeId,
+    OpaqueTypeDecl, ParamId, StructDecl, TypeId,
 };
 use seal_error_codes as codes;
 use seal_lexer::TokenKind;
@@ -16,18 +16,29 @@ use seal_symbol::Symbol;
 use crate::parser::Parser;
 
 impl Parser<'_> {
-    /// Returns `true` at the start of an `extern "..."` item.
+    /// Returns `true` at the start of an external item.
     ///
-    /// `extern` is contextual: it is a name everywhere else, so only the pair
-    /// `extern` followed by a string starts a declaration.
+    /// `extern` is contextual: it is a name everywhere else, so only a string,
+    /// `struct`, or `type` after it starts a declaration.
     pub(crate) fn at_extern_item(&self) -> bool {
-        self.at_name("extern") && matches!(self.peek_kind(), Some(TokenKind::Str(_)))
+        self.at_name("extern")
+            && match self.peek_kind() {
+                Some(TokenKind::Str(_)) | Some(TokenKind::Struct) => true,
+                Some(TokenKind::Ident(name)) => self.interner.resolve(name) == "type",
+                _ => false,
+            }
     }
 
     /// Parses one `extern` item, either a block or a single declaration.
     pub(crate) fn parse_extern_item(&mut self) -> ItemId {
         let start = self.current_span();
         self.bump();
+        if self.at(TokenKind::Struct) {
+            return self.parse_extern_struct(start);
+        }
+        if self.at_name("type") {
+            return self.parse_extern_opaque(start);
+        }
         let (abi, abi_span) = self.parse_abi();
 
         if self.at(TokenKind::LBrace) {
@@ -49,19 +60,6 @@ impl Parser<'_> {
         if self.at(TokenKind::Static) {
             return self.parse_extern_static(abi, abi_span, start);
         }
-        if self.at(TokenKind::Struct) || self.at_name("type") {
-            self.error(
-                codes::E3081,
-                self.current_span(),
-                "an external aggregate is not supported yet",
-            )
-            .help("declare only `func` and `static` items in an `extern` block")
-            .emit();
-            self.skip_declaration();
-            let span = start.cover(self.previous_span());
-            return self.builder.push_item(ItemKind::Error, span);
-        }
-
         let found = self.describe(self.current_kind());
         self.error(
             codes::E3081,
@@ -73,6 +71,119 @@ impl Parser<'_> {
         self.skip_declaration();
         let span = start.cover(self.previous_span());
         self.builder.push_item(ItemKind::Error, span)
+    }
+
+    /// Parses `extern struct Name { fields }`.
+    fn parse_extern_struct(&mut self, start: Span) -> ItemId {
+        let _keyword = self.bump();
+        let (name, name_span) = self.expect_ident("a struct name");
+        let generics = self.parse_generic_params();
+        let where_clause = self.parse_where_clause();
+        if !generics.is_empty() || !where_clause.predicates.is_empty() {
+            let span = if !generics.is_empty() {
+                generics.span
+            } else {
+                where_clause.span
+            };
+            self.error(
+                codes::E3093,
+                span,
+                "an external struct cannot declare generic parameters",
+            )
+            .help("remove the parameters and bounds; a C struct has one concrete layout")
+            .emit();
+        }
+        self.parse_struct_body(start, name, name_span, generics, where_clause, true)
+    }
+
+    /// Parses `extern type Name;`.
+    fn parse_extern_opaque(&mut self, start: Span) -> ItemId {
+        let _keyword = self.bump();
+        let (name, name_span) = self.expect_ident("an opaque type name");
+        if self.at(TokenKind::Lt) {
+            let generics = self.parse_generic_params();
+            self.error(
+                codes::E3093,
+                generics.span,
+                "an opaque type cannot declare generic parameters",
+            )
+            .help("remove the parameters; an external type names one C type")
+            .emit();
+        }
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E3081,
+                self.current_span(),
+                format!("an opaque type declaration ends with `;`, found {found}"),
+            )
+            .help("write `extern type Name;`")
+            .emit();
+            self.skip_declaration();
+        }
+        let span = start.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::OpaqueType(OpaqueTypeDecl { name, name_span }),
+            span,
+        )
+    }
+
+    /// Parses the braced field list shared by `struct` and `extern struct`.
+    pub(crate) fn parse_struct_body(
+        &mut self,
+        start: Span,
+        name: Symbol,
+        name_span: Span,
+        generics: seal_ast::GenericParams,
+        where_clause: seal_ast::WhereClause,
+        is_extern: bool,
+    ) -> ItemId {
+        let _ = self.expect(TokenKind::LBrace, "`{` after the struct name");
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.is_eof() {
+            let before = self.index;
+            let (field_name, field_name_span) = self.expect_ident("a field name");
+            let _ = self.expect(TokenKind::Colon, "`:` after the field name");
+            let ty = self.parse_type();
+            let span = field_name_span.cover(self.builder.ast().ty(ty).span);
+            fields.push(
+                self.builder
+                    .push_field(field_name, field_name_span, ty, span),
+            );
+
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            if self.at(TokenKind::RBrace) || self.is_eof() {
+                break;
+            }
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("expected `,` between fields, found {found}"),
+            )
+            .help("separate fields with `,`")
+            .emit();
+            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
+                break;
+            }
+            self.ensure_progress(before);
+        }
+
+        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct");
+        let span = start.cover(self.previous_span());
+        self.builder.push_item(
+            ItemKind::Struct(StructDecl {
+                name,
+                name_span,
+                is_extern,
+                generics,
+                where_clause,
+                fields,
+            }),
+            span,
+        )
     }
 
     /// Parses the ABI string after `extern`.

@@ -2,8 +2,8 @@
 
 use seal_ast::{
     Ast, AstBuilder, ConstDecl, EnumDecl, ExprId, ExprKind, FieldDeclId, FnDecl, GenericParams,
-    ImplDecl, ItemId, ItemKind, ParamId, StaticDecl, StructDecl, TraitDecl, TraitMethodDecl,
-    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
+    ImplDecl, ItemId, ItemKind, ParamId, StaticDecl, TraitDecl, TraitMethodDecl, TupleFieldDeclId,
+    TypeId, TypeKind, VariantDeclId, VariantFieldList,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -723,52 +723,7 @@ impl<'a> Parser<'a> {
         let (name, name_span) = self.expect_ident("a struct name");
         let generics = self.parse_generic_params();
         let where_clause = self.parse_where_clause();
-        let _ = self.expect(TokenKind::LBrace, "`{` after the struct name");
-
-        let mut fields = Vec::new();
-        while !self.at(TokenKind::RBrace) && !self.is_eof() {
-            let before = self.index;
-            let (field_name, field_name_span) = self.expect_ident("a field name");
-            let _ = self.expect(TokenKind::Colon, "`:` after the field name");
-            let ty = self.parse_type();
-            let span = field_name_span.cover(self.builder.ast().ty(ty).span);
-            fields.push(
-                self.builder
-                    .push_field(field_name, field_name_span, ty, span),
-            );
-
-            if self.eat(TokenKind::Comma) {
-                continue;
-            }
-            if self.at(TokenKind::RBrace) || self.is_eof() {
-                break;
-            }
-            let found = self.describe(self.current_kind());
-            self.error(
-                codes::E1002,
-                self.current_span(),
-                format!("expected `,` between fields, found {found}"),
-            )
-            .help("separate fields with `,`")
-            .emit();
-            if !matches!(self.current_kind(), TokenKind::Ident(_)) {
-                break;
-            }
-            self.ensure_progress(before);
-        }
-
-        let _ = self.expect(TokenKind::RBrace, "`}` to close the struct");
-        let span = keyword.span.cover(self.previous_span());
-        self.builder.push_item(
-            ItemKind::Struct(StructDecl {
-                name,
-                name_span,
-                generics,
-                where_clause,
-                fields,
-            }),
-            span,
-        )
+        self.parse_struct_body(keyword.span, name, name_span, generics, where_clause, false)
     }
 
     fn parse_enum(&mut self) -> ItemId {

@@ -122,12 +122,8 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         .unwrap_or_else(|| "seal-input".to_owned());
     module.set_source_file_name(&source_name);
 
-    let mapper = TypeMapper::new(
-        &context,
-        input.hir.ty_ctxt(),
-        input.interner,
-        input.target.pointer_width(),
-    )?;
+    let mapper =
+        TypeMapper::new_for_target(&context, input.hir.ty_ctxt(), input.interner, input.target)?;
     let debug = if options.debug_info {
         Some(DebugContext::new(
             &context,

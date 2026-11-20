@@ -355,6 +355,9 @@ impl Reachability<'_> {
                 self.assert_span(declaration.span);
                 self.check_type(declaration.ty);
             }
+            ItemKind::OpaqueType(declaration) => {
+                self.assert_span(declaration.name_span);
+            }
             ItemKind::Error => {}
         }
     }

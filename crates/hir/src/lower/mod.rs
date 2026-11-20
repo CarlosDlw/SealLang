@@ -29,6 +29,7 @@ mod externs;
 mod generics;
 mod items;
 mod object_safety;
+mod opaque;
 mod paths;
 mod patterns;
 mod scope;
@@ -65,6 +66,7 @@ pub(crate) struct Lowering<'a> {
     pub(super) extern_function_items: Vec<(ItemId, DefId)>,
     pub(super) extern_static_items: Vec<(ItemId, DefId)>,
     struct_items: Vec<(ItemId, DefId)>,
+    opaque_items: Vec<(ItemId, DefId)>,
     enum_items: Vec<(ItemId, DefId)>,
     traits: FxHashMap<Symbol, DefId>,
     trait_methods: FxHashMap<(DefId, Symbol), items::TraitMethodSig>,
@@ -121,6 +123,10 @@ impl<'a> Lowering<'a> {
         traits.insert(hir.definitions().name(drop_trait), drop_trait);
         let copy_trait = hir.copy_trait();
         traits.insert(hir.definitions().name(copy_trait), copy_trait);
+        let c_void = hir.c_void();
+        let c_void_name = hir.definitions().name(c_void);
+        let mut types = FxHashMap::default();
+        types.insert(c_void_name, c_void);
         Self {
             ast,
             dcx,
@@ -128,7 +134,7 @@ impl<'a> Lowering<'a> {
             hir,
             scopes: scope::Scopes::default(),
             globals: FxHashMap::default(),
-            types: FxHashMap::default(),
+            types,
             function_defs: FxHashMap::default(),
             function_item_of: FxHashMap::default(),
             function_items: Vec::new(),
@@ -136,6 +142,7 @@ impl<'a> Lowering<'a> {
             extern_function_items: Vec::new(),
             extern_static_items: Vec::new(),
             struct_items: Vec::new(),
+            opaque_items: Vec::new(),
             enum_items: Vec::new(),
             traits,
             trait_methods: FxHashMap::default(),
@@ -162,6 +169,7 @@ impl<'a> Lowering<'a> {
         self.collect_extern_items();
         self.lower_pending_bounds();
         self.lower_structs();
+        self.lower_opaque_types();
         self.lower_enums();
         self.lower_extern_declarations();
         self.validate_aggregates();

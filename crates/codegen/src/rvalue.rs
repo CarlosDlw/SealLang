@@ -13,6 +13,7 @@ use seal_mir::{AggregateKind, BinOp, CallTarget, Operand, Rvalue, UnOp};
 use seal_span::Span;
 use seal_ty::{Instance, SubstsId, TyKind, VariantIdx};
 
+use crate::c_abi::{CParamKind, CReturn};
 use crate::error::CodegenError;
 use crate::function::FunctionLowerer;
 
@@ -827,32 +828,99 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         let function = self.externals.function(def).ok_or_else(|| {
             CodegenError::internal(format!("external function {def:?} was not declared"))
         })?;
-        let mut values = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            values.push(BasicMetadataValueEnum::from(self.load_operand(argument)?));
+        let signature = self.externals.signature(def).ok_or_else(|| {
+            CodegenError::internal(format!("external function {def:?} has no C signature"))
+        })?;
+        let declaration = self.hir.extern_function(def).ok_or_else(|| {
+            CodegenError::internal(format!("external function {def:?} has no HIR declaration"))
+        })?;
+        let returns = declaration.ret.unwrap_or_else(|| self.tcx.unit_ty());
+
+        let mut values = Vec::with_capacity(signature.params.len());
+        let mut sret_slot = None;
+        if let CReturn::Sret(aggregate) = signature.ret {
+            let slot = self.build(
+                self.builder.build_alloca(aggregate, "extern.sret"),
+                "external sret storage",
+            )?;
+            values.push(slot.into());
+            sret_slot = Some(slot);
+        }
+        let fixed = usize::from(sret_slot.is_some());
+        for (argument, parameter) in arguments.iter().zip(signature.params.iter().skip(fixed)) {
+            let value = self.load_operand(argument)?;
+            let converted = match parameter.kind {
+                CParamKind::Direct => value,
+                CParamKind::Coerced(ty) => self.coerce_aggregate(value, ty)?,
+                CParamKind::ByPointer { aggregate, .. } => {
+                    let slot = self.build(
+                        self.builder.build_alloca(aggregate, "extern.byval"),
+                        "external by-value storage",
+                    )?;
+                    self.build(
+                        self.builder.build_store(slot, value),
+                        "external by-value copy",
+                    )?;
+                    slot.into()
+                }
+            };
+            values.push(BasicMetadataValueEnum::from(converted));
         }
         let call = self.build(
             self.builder.build_call(function, &values, "extern call"),
             "external call",
         )?;
-        match call.try_as_basic_value() {
-            ValueKind::Basic(value) => Ok(value),
-            ValueKind::Instruction(_) => {
-                let declaration = self.hir.extern_function(def).ok_or_else(|| {
-                    CodegenError::internal(format!(
-                        "external function {def:?} has no HIR declaration"
-                    ))
+        match signature.ret {
+            CReturn::Void => Ok(self.mapper.empty_type().const_zero().into()),
+            CReturn::Direct => match call.try_as_basic_value() {
+                ValueKind::Basic(value) => Ok(value),
+                ValueKind::Instruction(_) => Err(CodegenError::internal(
+                    "an external function returned no LLVM value",
+                )),
+            },
+            CReturn::Coerced(_) => {
+                let ValueKind::Basic(value) = call.try_as_basic_value() else {
+                    return Err(CodegenError::internal(
+                        "a coerced external result returned no LLVM value",
+                    ));
+                };
+                self.coerce_aggregate(value, self.mapper.basic(returns)?)
+            }
+            CReturn::Sret(aggregate) => {
+                let slot = sret_slot.ok_or_else(|| {
+                    CodegenError::internal("an sret call has no destination storage")
                 })?;
-                let returns = declaration.ret.unwrap_or_else(|| self.tcx.unit_ty());
-                if self.mapper.is_unit_like(returns) {
-                    Ok(self.mapper.empty_type().const_zero().into())
-                } else {
-                    Err(CodegenError::internal(
-                        "an external function returned no LLVM value",
-                    ))
-                }
+                self.build(
+                    self.builder
+                        .build_load(aggregate, slot, "extern.sret.result"),
+                    "external sret load",
+                )
             }
         }
+    }
+
+    /// Reinterprets a value through stack storage of `target` type.
+    ///
+    /// The two LLVM types have the same size (or the source is smaller and the
+    /// remaining bytes are padding), so a store followed by a load performs the
+    /// C ABI coercion without a pointer-integer cast.
+    fn coerce_aggregate(
+        &self,
+        value: BasicValueEnum<'ctx>,
+        target: inkwell::types::BasicTypeEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let slot = self.build(
+            self.builder.build_alloca(target, "extern.coerce"),
+            "external coercion storage",
+        )?;
+        self.build(
+            self.builder.build_store(slot, value),
+            "external coercion store",
+        )?;
+        self.build(
+            self.builder.build_load(target, slot, "extern.coerce.value"),
+            "external coercion load",
+        )
     }
 
     fn call(

@@ -152,6 +152,10 @@ fn hash_type(tcx: &TyCtxt, ty: TyId, hasher: &mut StableHasher) {
                 hash_type(tcx, argument, hasher);
             }
         }
+        TyKind::Opaque { def, .. } => {
+            hasher.write_u8(18);
+            hasher.write_usize(def.index() as usize);
+        }
         TyKind::Param(param) => {
             hasher.write_u8(14);
             hasher.write_usize(param.index() as usize);

@@ -33,7 +33,7 @@ mod substs;
 mod template;
 
 pub use abi::{Abi, CallConv};
-pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
+pub use adt::{AdtDef, AdtKind, AdtRepr, FieldDef, VariantDef};
 pub use cast::{CastKind, NumericCastKind};
 pub use ctxt::{ImplHead, TyCtxt};
 pub use display::TyDisplay;

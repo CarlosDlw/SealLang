@@ -30,6 +30,8 @@ pub(crate) struct BuiltinTraits {
     pub(crate) drop: drop::DropDefs,
     /// The `Copy` marker trait.
     pub(crate) copy: copy::CopyDefs,
+    /// The built-in opaque `c_void` type.
+    pub(crate) c_void: DefId,
 }
 
 /// Installs every compiler-provided trait into an empty HIR.
@@ -37,11 +39,29 @@ pub(crate) fn install(hir: &mut Hir, interner: &Interner) -> BuiltinTraits {
     let protocols = protocols::install(hir, interner);
     let drop = drop::install(hir, interner);
     let copy = copy::install(hir, interner);
+    let c_void = install_c_void(hir, interner);
     BuiltinTraits {
         protocols,
         drop,
         copy,
+        c_void,
     }
+}
+
+/// Installs the built-in `c_void` opaque type.
+///
+/// C uses `void` as the pointee of an untyped pointer. The type has no size and
+/// only appears behind a raw pointer, exactly like a user `extern type`.
+fn install_c_void(hir: &mut Hir, interner: &Interner) -> DefId {
+    let name = interner.intern("c_void");
+    hir.define(DefData {
+        kind: DefKind::OpaqueType,
+        name,
+        name_span: Span::default(),
+        span: Span::default(),
+        parent: None,
+        mutable: false,
+    })
 }
 
 /// Creates a reserved trait, its implicit `Self`, and its declared parameters.

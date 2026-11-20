@@ -63,6 +63,8 @@ pub enum NotFfiSafe {
     UnitParameter,
     /// The never type, which has no C return type.
     Never,
+    /// An opaque type, which has no size or layout.
+    Opaque,
     /// A zero-length array, which has no portable C representation.
     EmptyArray,
 }
@@ -83,6 +85,7 @@ impl NotFfiSafe {
             Self::Unresolved => "an unresolved type cannot cross a C boundary",
             Self::UnitParameter => "`()` is only valid as a return type",
             Self::Never => "the never type has no C return type",
+            Self::Opaque => "an opaque type has no size or C layout",
             Self::EmptyArray => "a zero-length array has no C representation",
         }
     }
@@ -101,6 +104,7 @@ impl NotFfiSafe {
             Self::Unresolved => "write the concrete type",
             Self::UnitParameter => "return `()` only from a function that returns `void`",
             Self::Never => "return a type C can represent",
+            Self::Opaque => "use `*raw T` to pass C-owned storage indirectly",
             Self::EmptyArray => "use a non-empty array",
         }
     }
@@ -127,6 +131,7 @@ pub fn safety(tcx: &TyCtxt, ty: TyId, position: FfiPosition) -> Result<(), NotFf
         TyKind::Unit if position == FfiPosition::Return => Ok(()),
         TyKind::Unit => Err(NotFfiSafe::UnitParameter),
         TyKind::Never => Err(NotFfiSafe::Never),
+        TyKind::Opaque { .. } => Err(NotFfiSafe::Opaque),
         TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => Err(NotFfiSafe::Unsized),
         TyKind::Ref { kind, .. } => Err(NotFfiSafe::Reference(kind)),
         TyKind::RawPtr { pointee, .. } => match tcx.kind(pointee) {
@@ -140,7 +145,13 @@ pub fn safety(tcx: &TyCtxt, ty: TyId, position: FfiPosition) -> Result<(), NotFf
             safety(tcx, element, position)
         }
         TyKind::Tuple(_) => Err(NotFfiSafe::Tuple),
-        TyKind::Adt { .. } => Err(NotFfiSafe::Aggregate),
+        TyKind::Adt { adt, .. } => {
+            if tcx.adt(adt).is_c_repr() {
+                Ok(())
+            } else {
+                Err(NotFfiSafe::Aggregate)
+            }
+        }
         TyKind::Param(_) => Err(NotFfiSafe::Generic),
         TyKind::Infer(_) | TyKind::Error => Err(NotFfiSafe::Unresolved),
     }

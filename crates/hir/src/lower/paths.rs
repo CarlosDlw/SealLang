@@ -37,7 +37,7 @@ impl Lowering<'_> {
             }
             if let Some(args) = &path.args {
                 for argument in &args.args {
-                    let _ = self.lower_type_inner(*argument, true);
+                    let _ = self.lower_type_inner(*argument, true, false);
                 }
             }
             return None;

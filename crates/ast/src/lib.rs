@@ -42,8 +42,9 @@ pub use id::{
     TupleFieldDeclId, TypeId, VariantDeclId,
 };
 pub use item::{
-    ConstDecl, EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, Param, StaticDecl,
-    StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDecl, VariantDecl, VariantFieldList,
+    ConstDecl, EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, OpaqueTypeDecl, Param,
+    StaticDecl, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDecl, VariantDecl,
+    VariantFieldList,
 };
 pub use pattern::{
     MatchArm, NamedPatternField, Pattern, PatternKind, PatternLiteral, VariantPatternFields,

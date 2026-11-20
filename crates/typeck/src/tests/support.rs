@@ -117,6 +117,24 @@ impl Fixture {
         );
     }
 
+    pub(crate) fn expect_help(&self, code: &str, message_fragment: &str) {
+        let diagnostics = self.diagnostics();
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code().map(|code| code.as_str()) == Some(code)
+                    && diagnostic
+                        .helps()
+                        .iter()
+                        .any(|help| help.contains(message_fragment))
+            }),
+            "expected {code} with help containing {message_fragment:?}, got {:?}",
+            diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code(), diagnostic.helps()))
+                .collect::<Vec<_>>()
+        );
+    }
+
     pub(crate) fn symbol(&self, symbol: Symbol) -> String {
         self.interner.resolve(symbol).to_owned()
     }

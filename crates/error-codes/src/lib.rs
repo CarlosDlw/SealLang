@@ -2695,6 +2695,41 @@ a wide value, and a C-layout aggregate for a struct. The diagnostic names the
 reason for the rejected type.",
 };
 
+/// A field of an external struct has no valid C representation.
+///
+/// `extern struct` describes memory C owns or receives, so its fields must have
+/// a fixed C layout. An empty struct and a zero-sized field occupy no C storage,
+/// and `bool` has a C++/C99 meaning that varies across compilers; `c_bool` is
+/// the explicit one-byte type.
+pub const E3085: ErrorCode = ErrorCode {
+    code: "E3085",
+    title: "invalid field in an external struct",
+    explanation: "\
+An `extern struct` describes a C struct. Every field must have a non-zero C
+representation: an empty external struct, `()`, a zero-length array, and an
+opaque type by value all occupy no storage C can describe. `bool` is rejected
+because its width is not portable across C compilers; use `c_bool` for one byte.
+
+Remove the field or give it a sized C type. Use `extern struct` for a nested C
+aggregate, and a raw pointer for storage C owns.",
+};
+
+/// An opaque type is used by value or dereferenced.
+///
+/// An `extern type` names a C type whose size and layout Seal does not know. It
+/// has no storage, so it may only appear behind a raw pointer that C fills in.
+pub const E3087: ErrorCode = ErrorCode {
+    code: "E3087",
+    title: "opaque type used by value",
+    explanation: "\
+An opaque type declared with `extern type`, including the built-in `c_void`,
+has no size, alignment, fields, or destructor. Seal cannot allocate, copy, pass
+by value, or dereference it; only C knows the object's layout.
+
+Use a raw pointer such as `*raw mut FILE`. Passing the pointer to C is safe;
+dereferencing it in Seal is not, because Seal has no layout to interpret.",
+};
+
 /// An external static is accessed outside `unsafe`.
 pub const E3086: ErrorCode = ErrorCode {
     code: "E3086",
@@ -3227,12 +3262,13 @@ pub static ALL: &[ErrorCode] = &[
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
-    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3086, E3088, E3091, E3092, E3093,
-    E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013,
-    E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
-    E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006,
-    E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003,
-    E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085, E3086, E3087, E3088, E3091,
+    E3092, E3093, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011,
+    E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024,
+    E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004,
+    E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001,
+    E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001,
+    E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3494,13 +3530,13 @@ mod tests {
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
-                "E3084", "E3086", "E3088", "E3091", "E3092", "E3093",
+                "E3084", "E3085", "E3086", "E3087", "E3088", "E3091", "E3092", "E3093",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is
         // cheaper than giving an unrelated diagnostic a number out of order.
-        // The FFI block reserves `E3079`, `E3085`, `E3087`, `E3089`, and
-        // `E3090` for later phases, which is why the list is not contiguous.
+        // The FFI block reserves `E3079`, `E3089`, and `E3090` for later
+        // phases, which is why the list is not contiguous.
     }
 
     #[test]

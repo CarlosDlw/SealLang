@@ -123,6 +123,86 @@ fn fixture_scalars_roundtrip_through_a_cli_library() {
     }
 }
 
+fn aggregate_program() -> String {
+    let mut source = String::from(
+        "extern type Handle;\n\
+         extern struct Point { x: c_int, y: c_int }\n\
+         extern struct Nested { point: Point, scale: f64 }\n\
+         extern struct Array { values: [c_int; 3] }\n\
+         extern struct Mixed { small: i8, wide: i64, real: f64 }\n\
+         extern struct Wide { first: c_int, second: f64, point: Point, last: i64 }\n\
+         extern \"c\" {\n",
+    );
+    source.push_str("  func ffi_point_new(x: c_int, y: c_int) -> Point;\n");
+    source.push_str("  func ffi_point_sum(point: Point) -> c_int;\n");
+    source.push_str("  func ffi_point_make(x: c_int, y: c_int) -> Point;\n");
+    source.push_str("  func ffi_nested_make(x: c_int, y: c_int, scale: f64) -> Nested;\n");
+    source.push_str("  func ffi_nested_sum(nested: Nested) -> f64;\n");
+    source.push_str("  func ffi_array_make(first: c_int, second: c_int, third: c_int) -> Array;\n");
+    source.push_str("  func ffi_array_sum(array: Array) -> c_int;\n");
+    source.push_str("  func ffi_mixed_make(small: i8, wide: i64, real: f64) -> Mixed;\n");
+    source.push_str("  func ffi_mixed_check(mixed: Mixed) -> c_int;\n");
+    source.push_str(
+        "  func ffi_wide_make(first: c_int, second: f64, x: c_int, y: c_int, last: i64) -> Wide;\n",
+    );
+    source.push_str("  func ffi_wide_check(wide: Wide) -> c_int;\n");
+    source.push_str("  func ffi_sizeof_point() -> c_int;\n");
+    source.push_str("  func ffi_offsetof_point_y() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_nested() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_array() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_mixed() -> c_int;\n");
+    source.push_str("  func ffi_sizeof_wide() -> c_int;\n");
+    source.push_str("  func ffi_handle_new(value: c_int) -> *raw mut Handle;\n");
+    source.push_str("  func ffi_handle_get(handle: *raw mut Handle) -> c_int;\n");
+    source.push_str("  func ffi_handle_set(handle: *raw mut Handle, value: c_int);\n");
+    source.push_str("  func ffi_handle_free(handle: *raw mut Handle);\n");
+    source.push_str("}\n");
+    source.push_str("func main() -> i32 {\n");
+    source.push_str("  unsafe {\n");
+    source.push_str("    let point = ffi_point_new(40, 2);\n");
+    source.push_str("    if point.x != 40 || point.y != 2 { return 10; }\n");
+    source.push_str("    if ffi_point_sum(point) != 42 { return 11; }\n");
+    source.push_str("    let made = ffi_point_make(20, 22);\n");
+    source.push_str("    if made.x + made.y != 42 { return 12; }\n");
+    source.push_str("    let nested = ffi_nested_make(1, 2, 3.0);\n");
+    source.push_str("    if nested.point.x != 1 || nested.point.y != 2 { return 13; }\n");
+    source.push_str("    if ffi_nested_sum(nested) != 9.0 { return 14; }\n");
+    source.push_str("    let array = ffi_array_make(1, 2, 39);\n");
+    source.push_str("    if array.values[0] != 1 { return 16; }\n");
+    source.push_str("    if ffi_array_sum(array) != 42 { return 15; }\n");
+    source.push_str("    let mixed = ffi_mixed_make(7i8, 35i64, 2.5);\n");
+    source.push_str("    if ffi_mixed_check(mixed) != 1 { return 17; }\n");
+    source.push_str("    let wide = ffi_wide_make(1, 2.5, 3, 4, 5i64);\n");
+    source.push_str("    if ffi_wide_check(wide) != 1 { return 18; }\n");
+    source.push_str("    if ffi_sizeof_point() != 8 { return 19; }\n");
+    source.push_str("    if ffi_offsetof_point_y() != 4 { return 20; }\n");
+    source.push_str("    if ffi_sizeof_nested() != 16 { return 21; }\n");
+    source.push_str("    if ffi_sizeof_array() != 12 { return 22; }\n");
+    source.push_str("    if ffi_sizeof_mixed() != 24 { return 23; }\n");
+    source.push_str("    if ffi_sizeof_wide() != 32 { return 24; }\n");
+    source.push_str("    let handle = ffi_handle_new(41);\n");
+    source.push_str("    if ffi_handle_get(handle) != 41 { return 25; }\n");
+    source.push_str("    ffi_handle_set(handle, 42);\n");
+    source.push_str("    if ffi_handle_get(handle) != 42 { return 26; }\n");
+    source.push_str("    ffi_handle_free(handle);\n");
+    source.push_str("  }\n");
+    source.push_str("  42\n");
+    source.push_str("}\n");
+    source
+}
+
+#[test]
+fn extern_structs_and_opaque_handles_roundtrip_by_value() {
+    let fixture = Fixture::new();
+    for (opt_level, tag) in [
+        (OptLevel::O0, "ffi-aggregate-o0"),
+        (OptLevel::O2, "ffi-aggregate-o2"),
+    ] {
+        let code = compile_and_run(&aggregate_program(), fixture.links(), tag, opt_level);
+        assert_eq!(code, 42, "aggregate ABI failed at {opt_level:?}");
+    }
+}
+
 #[test]
 fn a_source_link_directive_names_the_library() {
     let fixture = Fixture::new();

@@ -15,14 +15,19 @@ impl Lowering<'_> {
     /// resolved here; an omitted argument list on a generic type is an arity
     /// error because an annotation has nothing to infer from.
     pub(super) fn lower_type(&mut self, ty: TypeId) -> TyId {
-        self.lower_type_inner(ty, false)
+        self.lower_type_inner(ty, false, false)
     }
 
     /// Lowers a type, choosing the diagnostic for an unknown parameter name.
     ///
     /// Bound arguments use `E2054` because an unknown name there is most often a
     /// missing type parameter; ordinary annotations keep `E2002`.
-    pub(super) fn lower_type_inner(&mut self, ty: TypeId, unknown_parameter: bool) -> TyId {
+    pub(super) fn lower_type_inner(
+        &mut self,
+        ty: TypeId,
+        unknown_parameter: bool,
+        behind_raw_pointer: bool,
+    ) -> TyId {
         match self.ast.ty(ty).kind.clone() {
             TypeKind::Primitive(primitive) => {
                 let c_abi = self.hir.ty_ctxt().c_abi();
@@ -31,7 +36,7 @@ impl Lowering<'_> {
                     .intern(primitive_kind(primitive, c_abi))
             }
             TypeKind::Pointer { pointee, mutable } => {
-                let pointee = self.lower_type_inner(pointee, unknown_parameter);
+                let pointee = self.lower_type_inner(pointee, unknown_parameter, false);
                 if mutable {
                     self.hir.ty_ctxt_mut().mut_ref_ty(pointee)
                 } else {
@@ -39,7 +44,7 @@ impl Lowering<'_> {
                 }
             }
             TypeKind::RawPointer { pointee, mutable } => {
-                let pointee = self.lower_type_inner(pointee, unknown_parameter);
+                let pointee = self.lower_type_inner(pointee, unknown_parameter, true);
                 let kind = if mutable {
                     RawPtrKind::Mut
                 } else {
@@ -50,18 +55,18 @@ impl Lowering<'_> {
             TypeKind::Array {
                 element, length, ..
             } => {
-                let element = self.lower_type_inner(element, unknown_parameter);
+                let element = self.lower_type_inner(element, unknown_parameter, false);
                 self.hir.ty_ctxt_mut().array_ty(element, length)
             }
             TypeKind::Tuple(elements) => {
                 let elements: Vec<TyId> = elements
                     .into_iter()
-                    .map(|element| self.lower_type_inner(element, unknown_parameter))
+                    .map(|element| self.lower_type_inner(element, unknown_parameter, false))
                     .collect();
                 self.hir.ty_ctxt_mut().tuple_ty(&elements)
             }
             TypeKind::Slice { element } => {
-                let element = self.lower_type_inner(element, unknown_parameter);
+                let element = self.lower_type_inner(element, unknown_parameter, false);
                 self.hir.ty_ctxt_mut().slice_ty(element)
             }
             TypeKind::Dyn(path) => {
@@ -148,6 +153,25 @@ impl Lowering<'_> {
                 }
 
                 if let Some(definition) = self.types.get(&symbol).copied() {
+                    if self.hir.definitions().kind(definition) == seal_def::DefKind::OpaqueType {
+                        let span = self.ast.ty(ty).span;
+                        let name = self.hir.definitions().name(definition);
+                        let opaque = self.hir.ty_ctxt().opaque_ty(definition, name);
+                        if behind_raw_pointer {
+                            return opaque;
+                        }
+                        let display = self.interner.resolve(name).to_owned();
+                        self.error(
+                            codes::E3087,
+                            span,
+                            format!(
+                                "the opaque type `{display}` can only appear behind a raw pointer"
+                            ),
+                        )
+                        .help("write `*raw {display}` or `*raw mut {display}` and let C own the storage")
+                        .emit();
+                        return self.hir.ty_ctxt_mut().error_ty();
+                    }
                     let adt = self
                         .hir
                         .adt(definition)

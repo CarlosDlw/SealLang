@@ -43,6 +43,8 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Raw slice pointer | `*raw [T]`, `*raw mut [T]` | 2 × pointer | pointer | yes | yes | no |
 | Raw trait-object pointer | `*raw dyn Trait`, `*raw mut dyn Trait` | 2 × pointer | pointer | yes | yes | no |
 | Aggregate | `S` | computed | computed | no | yes, if every field is | no |
+| C-layout aggregate | `extern struct S` | computed | computed | opt-in | yes, if every field is | opt-in |
+| Opaque type | `extern type T`, `c_void` | unsized | unsized | no | no | no |
 | Enum | `E` | computed | computed | no | yes, if every variant field is | no |
 | Tuple | `(T, U)`, `(T,)` | computed | computed | yes, if every element is | yes, if every element is | no |
 | Array | `[T; N]` | N × size(T) | align(T) | yes, if `T` is | yes, if `T` is | no |
@@ -218,6 +220,47 @@ not a scalar; it belongs to the C interop layer.
 These names are type names, not literal suffixes: write `1 as c_int` or annotate
 the binding, never `1c_int`. Declaring C functions and statics that use these
 types is covered in [`language/extern.md`](language/extern.md).
+
+## C interop types and layout
+
+`extern struct` produces an ordinary aggregate with `AdtRepr::C`. Its fields
+keep declaration order, each starts at the C alignment of its type, and the
+whole struct is padded to its maximum alignment. Those are the same offsets the
+host C compiler computes, so the language layout and the C layout are checked by
+the fixture instead of being assumed. A nested `extern struct` and a fixed-size
+array of C-safe elements are laid out recursively.
+
+The field types form the following matrix:
+
+| C declaration | Seal spelling | LLVM representation |
+|---------------|---------------|---------------------|
+| `struct S { ... }` | `extern struct S { ... }` | named struct in declaration order |
+| `union U` | none | rejected: no union layout |
+| `enum E` | `c_int`/`c_uint` plus constants | a C integer |
+| incomplete `struct T` | `extern type T` | no value type; only `ptr` |
+| `void` pointee | `c_void` | no value type; only `ptr` |
+| `_Bool` | `c_bool` (field) / `bool` (direct parameter) | `i8` / `i8` |
+| `char` | `c_char` | `i8` or `u8` per target |
+| `size_t` | `size_t` | pointer-sized integer |
+
+An `extern type` and `c_void` are unsized: they have no fields, no layout, no
+`Copy`, no destructor, and no by-value use. They appear only behind `*raw` and
+`*raw mut`; the pointer is one word and is FFI-safe. A by-value use or a
+dereference is `E3087`.
+
+At a C boundary, a small `extern struct` is not passed with its raw LLVM struct
+type. Code generation classifies it with the target ABI and coerces it to
+integer or floating-point pieces; a struct larger than the target's register
+limit is passed with `byval` and returned through `sret` on System V, or passed
+and returned indirectly on Microsoft x64. The complete struct remains a normal
+Seal aggregate inside the program, so field access, construction, pattern
+matching, and drop glue do not depend on the boundary representation.
+
+A Seal struct without `extern` keeps `AdtRepr::Rust`, is still rejected at the
+boundary with `E3084`, and the diagnostic suggests declaring it with
+`extern struct`. A struct field that is `bool`, zero-sized, or not FFI-safe is
+rejected in the declaration (`E3085`/`E3084`), so an invalid C layout can never
+reach code generation.
 
 ### Explicit numeric casts
 

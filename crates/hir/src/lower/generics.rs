@@ -289,7 +289,7 @@ impl Lowering<'_> {
             }
             if let Some(args) = &path.args {
                 for argument in &args.args {
-                    let _ = self.lower_type_inner(*argument, true);
+                    let _ = self.lower_type_inner(*argument, true, false);
                 }
             }
             return None;
@@ -486,14 +486,14 @@ impl Lowering<'_> {
         if args.args.len() != expected {
             self.report_argument_count(args, expected);
             for argument in &args.args {
-                let _ = self.lower_type_inner(*argument, unknown_parameter);
+                let _ = self.lower_type_inner(*argument, unknown_parameter, false);
             }
             return None;
         }
         let lowered: Vec<TyId> = args
             .args
             .iter()
-            .map(|argument| self.lower_type_inner(*argument, unknown_parameter))
+            .map(|argument| self.lower_type_inner(*argument, unknown_parameter, false))
             .collect();
         Some(self.hir.ty_ctxt().substs(&lowered))
     }
@@ -514,7 +514,7 @@ impl Lowering<'_> {
         let lowered: Vec<TyId> = args
             .args
             .iter()
-            .map(|argument| self.lower_type_inner(*argument, false))
+            .map(|argument| self.lower_type_inner(*argument, false, false))
             .collect();
         valid.then(|| self.hir.ty_ctxt().substs(&lowered))
     }

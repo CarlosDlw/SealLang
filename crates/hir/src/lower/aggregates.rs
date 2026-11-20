@@ -80,7 +80,8 @@ impl Lowering<'_> {
                 self.check_aggregate(inner, visiting, checked);
             }
 
-            if !self.hir.ty_ctxt().is_sized(field.ty) {
+            let c_repr = self.hir.ty_ctxt().adt(adt).is_c_repr();
+            if !c_repr && !self.hir.ty_ctxt().is_sized(field.ty) {
                 let ty = self
                     .hir
                     .ty_ctxt()

@@ -3,6 +3,7 @@
 use std::fmt;
 
 use seal_def::DefId;
+use seal_symbol::Symbol;
 
 use crate::id::{AdtId, InferTyId, ParamTyId, SubstsId, TupleId, TyId};
 
@@ -282,6 +283,17 @@ pub enum TyKind {
         element: TyId,
         /// The number of elements.
         length: u64,
+    },
+    /// An opaque type with no size, alignment, fields, or destructor.
+    ///
+    /// Declared by `extern type Name;` or named by the built-in `c_void`. The
+    /// type only appears behind a raw pointer; `C` owns the storage and its
+    /// layout, so Seal never computes either.
+    Opaque {
+        /// The definition that introduced the type, for diagnostics and identity.
+        def: DefId,
+        /// The declared name, used by type display.
+        name: Symbol,
     },
     /// A nominal aggregate type with its type arguments, such as `Pair<i32, bool>`.
     ///

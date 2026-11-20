@@ -335,6 +335,10 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         }
         let kind = self.tcx.kind(ty);
         let created = match kind {
+            TyKind::Opaque { .. } => {
+                let name = self.tcx.display_with(ty, self.interner).to_string();
+                self.basic_type(ty, &name, 0, encoding::UNSIGNED)?
+            }
             TyKind::Bool => self.basic_type(ty, "bool", 8, encoding::BOOLEAN)?,
             TyKind::Char => self.basic_type(ty, "char", 32, encoding::UTF)?,
             TyKind::Int(int) => {

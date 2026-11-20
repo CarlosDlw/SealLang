@@ -117,6 +117,7 @@ pub struct Hir {
     extern_statics: FxHashMap<DefId, extern_decl::ExternStatic>,
     extern_static_order: Vec<DefId>,
     link_directives: Vec<extern_decl::LinkDirective>,
+    extern_structs: Vec<AdtId>,
 }
 
 impl Hir {
@@ -352,6 +353,21 @@ impl Hir {
         self.copy_trait() == def
     }
 
+    /// Returns the definition of the built-in opaque `c_void` type.
+    pub fn c_void(&self) -> DefId {
+        self.builtin_traits().c_void
+    }
+
+    /// Returns `true` when `def` is the built-in `c_void` type.
+    pub fn is_c_void(&self, def: DefId) -> bool {
+        self.c_void() == def
+    }
+
+    /// Returns every `extern struct` aggregate, in declaration order.
+    pub fn extern_structs(&self) -> &[AdtId] {
+        &self.extern_structs
+    }
+
     fn builtin_traits(&self) -> &builtin::BuiltinTraits {
         self.builtin
             .as_ref()
@@ -379,6 +395,7 @@ impl Hir {
         if self.protocol_of_trait(def).is_some()
             || self.is_drop_trait(def)
             || self.is_copy_trait(def)
+            || self.is_c_void(def)
         {
             return true;
         }
@@ -529,6 +546,10 @@ impl Hir {
         self.adts.insert(def, adt);
     }
 
+    pub(crate) fn push_extern_struct(&mut self, adt: AdtId) {
+        self.extern_structs.push(adt);
+    }
+
     pub(crate) fn insert_variant(&mut self, type_def: DefId, name: Symbol, variant: VariantIdx) {
         self.variants.insert((type_def, name), variant);
     }
@@ -601,6 +622,7 @@ impl Hir {
             extern_statics: FxHashMap::default(),
             extern_static_order: Vec::new(),
             link_directives: Vec::new(),
+            extern_structs: Vec::new(),
         };
         hir.builtin = Some(builtin::install(&mut hir, interner));
         hir

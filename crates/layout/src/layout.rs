@@ -269,7 +269,7 @@ impl<'a> LayoutCtxt<'a> {
                 }
                 Layout::new(round_up(offset, align), align)
             }
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } => {
+            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Opaque { .. } => {
                 return Err(LayoutError::Unsized(ty));
             }
             TyKind::Infer(_) => return Err(LayoutError::Unknown(ty)),
@@ -430,7 +430,7 @@ mod tests {
     use seal_symbol::Interner;
 
     use super::{Layout, LayoutCtxt, LayoutError, tag_layout};
-    use seal_ty::{AdtId, AdtKind, FieldDef, IntTy, TyCtxt, TyKind, VariantDef};
+    use seal_ty::{AdtId, AdtKind, AdtRepr, FieldDef, IntTy, TyCtxt, TyKind, VariantDef};
 
     fn def(index: u32) -> DefId {
         DefId::from_u32(index).expect("test definitions are small")
@@ -1206,5 +1206,47 @@ mod tests {
         assert_eq!(layout.variants[0].fields[1].offset, 8);
         assert_eq!(layout.payload_size, 5);
         assert_eq!(layout.layout, Layout::new(12, 4));
+    }
+
+    #[test]
+    fn a_c_repr_struct_uses_the_c_field_offsets() {
+        let ctxt = TyCtxt::new();
+        let interner = Interner::new();
+        let adt = ctxt.push_adt_with_repr(
+            def(0),
+            interner.intern("Mixed"),
+            AdtKind::Struct,
+            AdtRepr::C,
+        );
+        let small = ctxt.int_ty(IntTy::I8);
+        let wide = ctxt.int_ty(IntTy::I64);
+        let real = ctxt.float_ty(seal_ty::FloatTy::F64);
+        ctxt.fill_adt(
+            adt,
+            vec![
+                FieldDef {
+                    def: def(1),
+                    name: Some(interner.intern("small")),
+                    ty: small,
+                },
+                FieldDef {
+                    def: def(2),
+                    name: Some(interner.intern("wide")),
+                    ty: wide,
+                },
+                FieldDef {
+                    def: def(3),
+                    name: Some(interner.intern("real")),
+                    ty: real,
+                },
+            ],
+        );
+        let ty = ctxt.adt_ty(adt);
+        let layouts = LayoutCtxt::new(&ctxt, 64);
+        let fields = layouts.field_layouts(adt).expect("fields lay out");
+        assert_eq!(fields[0].offset, 0);
+        assert_eq!(fields[1].offset, 8);
+        assert_eq!(fields[2].offset, 16);
+        assert_eq!(layouts.layout_of(ty), Ok(Layout::new(24, 8)));
     }
 }

@@ -61,6 +61,8 @@ pub enum ImplHead {
     Infer,
     /// The error recovery type.
     Error,
+    /// An opaque type.
+    Opaque,
 }
 
 impl TyCtxt {
@@ -80,6 +82,7 @@ impl TyCtxt {
             TyKind::Array { .. } => ImplHead::Array,
             TyKind::Slice { .. } => ImplHead::Slice,
             TyKind::Dyn { .. } => ImplHead::Dyn,
+            TyKind::Opaque { .. } => ImplHead::Opaque,
             TyKind::Tuple(tuple) => ImplHead::Tuple(self.tuple_elements(tuple).len()),
             TyKind::Param(_) => ImplHead::Param,
             TyKind::Infer(_) => ImplHead::Infer,
@@ -406,14 +409,37 @@ impl TyCtxt {
     /// another one declared after it. Reserving first lets member types name the
     /// aggregate before its declaration is complete.
     pub fn push_adt(&self, def: DefId, name: Symbol, kind: AdtKind) -> AdtId {
+        self.push_adt_with_repr(def, name, kind, crate::AdtRepr::Rust)
+    }
+
+    /// Reserves an aggregate slot with an explicit layout representation.
+    ///
+    /// `extern struct` declarations use [`AdtRepr::C`]; every other aggregate
+    /// keeps the default Seal representation.
+    pub fn push_adt_with_repr(
+        &self,
+        def: DefId,
+        name: Symbol,
+        kind: AdtKind,
+        repr: crate::AdtRepr,
+    ) -> AdtId {
         self.adts.borrow_mut().push(AdtDef {
             def,
             name,
             kind,
+            repr,
             generic_count: 0,
             fields: Vec::new(),
             variants: Vec::new(),
         })
+    }
+
+    /// Returns the opaque type introduced by `def`.
+    ///
+    /// Opaque types are nominal: two declarations with the same name are still
+    /// different types, and the built-in `c_void` is one canonical declaration.
+    pub fn opaque_ty(&self, def: DefId, name: Symbol) -> TyId {
+        self.intern(TyKind::Opaque { def, name })
     }
 
     /// Records how many type parameters an aggregate declaration takes.
@@ -894,7 +920,11 @@ impl TyCtxt {
                 visiting.remove(&key);
                 copy
             }
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Infer(_) => false,
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Opaque { .. }
+            | TyKind::Infer(_) => false,
         }
     }
 
@@ -910,7 +940,11 @@ impl TyCtxt {
 
     fn is_sized_inner(&self, ty: TyId, visiting: &mut FxHashSet<(AdtId, SubstsId)>) -> bool {
         match self.kind(ty) {
-            TyKind::Str | TyKind::Slice { .. } | TyKind::Dyn { .. } | TyKind::Infer(_) => false,
+            TyKind::Str
+            | TyKind::Slice { .. }
+            | TyKind::Dyn { .. }
+            | TyKind::Opaque { .. }
+            | TyKind::Infer(_) => false,
             TyKind::Param(_) => true,
             TyKind::Array { element, .. } => self.is_sized_inner(element, visiting),
             TyKind::Tuple(tuple) => self

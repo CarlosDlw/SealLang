@@ -86,6 +86,14 @@ impl Lowering<'_> {
         }
 
         for &item_id in &items {
+            let ItemKind::OpaqueType(declaration) = &self.ast.item(item_id).kind else {
+                continue;
+            };
+            let span = self.ast.item(item_id).span;
+            self.collect_opaque_type(item_id, declaration.name, declaration.name_span, span);
+        }
+
+        for &item_id in &items {
             let ItemKind::Enum(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -1372,11 +1380,23 @@ impl Lowering<'_> {
             parent: None,
             mutable: false,
         });
+        let is_extern = matches!(
+            &self.ast.item(item_id).kind,
+            ItemKind::Struct(declaration) if declaration.is_extern
+        );
+        let repr = if is_extern {
+            seal_ty::AdtRepr::C
+        } else {
+            seal_ty::AdtRepr::Rust
+        };
         let adt = self
             .hir
             .ty_ctxt()
-            .push_adt(definition, name, AdtKind::Struct);
+            .push_adt_with_repr(definition, name, AdtKind::Struct, repr);
         self.hir.insert_adt(definition, adt);
+        if is_extern {
+            self.hir.push_extern_struct(adt);
+        }
         self.struct_items.push((item_id, definition));
         if let ItemKind::Struct(declaration) = &self.ast.item(item_id).kind {
             self.register_generics(definition, &declaration.generics, None, false);
@@ -1403,6 +1423,34 @@ impl Lowering<'_> {
             )
             .secondary(first_span, "first defined here")
             .help("give each struct, enum, and trait a distinct name")
+            .emit();
+        } else {
+            self.types.insert(name, definition);
+        }
+    }
+
+    fn collect_opaque_type(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        let definition = self.define(DefData {
+            kind: DefKind::OpaqueType,
+            name,
+            name_span,
+            span,
+            parent: None,
+            mutable: false,
+        });
+        self.opaque_items.push((item_id, definition));
+        if let Some(first) = self.types.get(&name).copied() {
+            let first_span = self.hir.definitions().get(first).name_span;
+            self.error(
+                codes::E2005,
+                name_span,
+                format!(
+                    "the type `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+            )
+            .secondary(first_span, "first defined here")
+            .help("give each struct, enum, opaque type, and trait a distinct name")
             .emit();
         } else {
             self.types.insert(name, definition);

@@ -263,6 +263,19 @@ pub(crate) fn build_module<'ctx>(
         compiled.session.interner(),
     )
     .expect("externals declare");
+    if let Some(debug) = &debug {
+        for &def in compiled.hir.extern_functions() {
+            let Some(declaration) = compiled.hir.extern_function(def) else {
+                continue;
+            };
+            let function = externals.function(def).expect("the external is declared");
+            let parameters: Vec<seal_ty::TyId> =
+                declaration.params.iter().map(|param| param.ty).collect();
+            debug
+                .declare_extern_function(def, function, &parameters, declaration.ret)
+                .expect("the external subprogram is described");
+        }
+    }
     for mono in compiled.mono.instances().iter() {
         let scope = debug.as_ref().map(|debug| {
             let name =

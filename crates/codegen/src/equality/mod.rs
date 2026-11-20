@@ -64,6 +64,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     ) -> Result<IntValue<'ctx>, CodegenError> {
         match self.tcx.kind(ty) {
             TyKind::Unit | TyKind::Never | TyKind::Error => Ok(self.true_value()),
+            TyKind::Opaque { .. } => Err(CodegenError::internal(
+                "an opaque type has no value to compare in code generation",
+            )),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) => {
                 let value_type = self.mapper.basic(ty)?;
                 let lhs = self.build(

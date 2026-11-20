@@ -90,6 +90,154 @@ fn a_non_ffi_safe_parameter_is_rejected() {
         func main() {}"#;
     let (fixture, _, _) = check_errors(source);
     fixture.expect("E3084", "not FFI-safe");
+    fixture.expect_help("E3084", "extern struct");
+}
+
+#[test]
+fn an_extern_struct_crosses_the_boundary_by_value() {
+    let source = r#"
+        extern struct Point { x: c_int, y: c_int }
+        extern "c" {
+            func make(x: c_int, y: c_int) -> Point;
+            func sum(point: Point) -> c_int;
+        }
+        func main() -> i32 {
+            unsafe {
+                let point = make(40, 2);
+                sum(point)
+            }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn an_empty_extern_struct_is_rejected() {
+    let source = r#"extern struct Empty {} func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3085", "has no fields");
+}
+
+#[test]
+fn a_unit_field_is_rejected() {
+    let source = r#"extern struct Empty { value: () } func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3085", "has no storage");
+}
+
+#[test]
+fn a_bool_field_is_rejected_with_the_explicit_c_type() {
+    let source = r#"extern struct Flags { enabled: bool } func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3085", "cannot be `bool`");
+    fixture.expect_help("E3085", "c_bool");
+}
+
+#[test]
+fn a_checked_reference_field_is_rejected() {
+    let source = r#"extern struct Holder { pointer: *mut c_int } func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3084", "exclusive reference is not a C pointer");
+}
+
+#[test]
+fn an_unsized_field_is_rejected() {
+    let source = r#"extern struct Holder { text: str } func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3084", "unsized");
+}
+
+#[test]
+fn an_opaque_type_is_usable_behind_a_raw_pointer() {
+    let source = r#"
+        extern type FILE;
+        extern "c" {
+            func open(path: *raw u8) -> *raw mut FILE;
+            func close(file: *raw mut FILE);
+        }
+        func main() {
+            unsafe {
+                let file = open(0usize as *raw u8);
+                close(file);
+            }
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn c_void_is_an_opaque_pointee() {
+    let source = r#"
+        extern "c" { func allocation() -> *raw mut c_void; }
+        func main() { unsafe { let pointer = allocation(); } }"#;
+    check_clean(source);
+}
+
+#[test]
+fn an_opaque_parameter_and_return_are_rejected() {
+    let source = r#"
+        extern type FILE;
+        func take(file: FILE) -> FILE { file }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3087", "only appear behind a raw pointer");
+}
+
+#[test]
+fn an_opaque_type_cannot_be_stored_by_value() {
+    let source = r#"
+        extern type FILE;
+        func main() { let file: FILE; }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3087", "only appear behind a raw pointer");
+}
+
+#[test]
+fn c_void_cannot_be_stored_by_value() {
+    let source = r#"func main() { let value: c_void; }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3087", "only appear behind a raw pointer");
+}
+
+#[test]
+fn an_opaque_field_is_rejected() {
+    let source = r#"
+        extern type FILE;
+        extern struct Holder { file: FILE }
+        func main() {}"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3087", "only appear behind a raw pointer");
+}
+
+#[test]
+fn an_opaque_pointer_cannot_be_dereferenced() {
+    let source = r#"
+        extern type FILE;
+        func read(file: *raw mut FILE) -> i32 { unsafe { *file } }"#;
+    let (fixture, _, _) = check_errors(source);
+    fixture.expect("E3087", "cannot dereference the opaque type");
+}
+
+#[test]
+fn an_extern_struct_can_implement_drop() {
+    let source = r#"
+        extern struct Buffer { data: *raw mut u8 }
+        impl Drop for Buffer { func drop(self: *mut Buffer) {} }
+        func main() {
+            let buffer = Buffer { data: 0usize as *raw mut u8 };
+            drop(buffer);
+        }"#;
+    check_clean(source);
+}
+
+#[test]
+fn an_extern_struct_can_opt_into_copy() {
+    let source = r#"
+        extern struct Point { x: c_int, y: c_int }
+        impl Copy for Point {}
+        func main() {
+            let point = Point { x: 1, y: 2 };
+            let copy = point;
+            let total = point.x + copy.y;
+        }"#;
+    check_clean(source);
 }
 
 #[test]

@@ -6,6 +6,22 @@ use seal_symbol::Symbol;
 
 use crate::id::{TyId, VariantIdx};
 
+/// The layout representation of an aggregate.
+///
+/// A `Rust` aggregate uses the language's own layout. A `C` aggregate is
+/// declared with `extern struct` and uses the C representation of the target:
+/// fields keep declaration order and C alignment, which is the layout the
+/// language already assigns, but only a `C` aggregate may cross an FFI boundary
+/// by value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AdtRepr {
+    /// The default Seal representation.
+    #[default]
+    Rust,
+    /// The C representation declared by `extern struct`.
+    C,
+}
+
 /// What kind of aggregate an [`AdtId`](crate::AdtId) names.
 ///
 /// Tuples and other product or sum kinds grow here without adding new
@@ -82,6 +98,8 @@ pub struct AdtDef {
     pub name: Symbol,
     /// What kind of aggregate this is.
     pub kind: AdtKind,
+    /// The aggregate's layout representation.
+    pub repr: AdtRepr,
     /// The number of type parameters the declaration takes.
     ///
     /// Every instantiation must supply exactly this many arguments. Lowering
@@ -139,6 +157,12 @@ impl AdtDef {
                 .iter()
                 .flat_map(|variant| variant.fields.iter()),
         )
+    }
+
+    /// Returns `true` when the aggregate uses the C representation.
+    #[inline]
+    pub fn is_c_repr(&self) -> bool {
+        self.repr == AdtRepr::C
     }
 
     /// Returns `true` for a struct declaration.
