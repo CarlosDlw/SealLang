@@ -32,6 +32,12 @@ pub enum AdtKind {
     Struct,
     /// A named sum type declared with `enum`.
     Enum,
+    /// The synthetic environment of a closure.
+    ///
+    /// A closure value is a product of its captures, so its environment is
+    /// laid out like a struct. The fields are filled by type checking, which is
+    /// the first phase that knows the type of each capture.
+    Closure,
 }
 
 /// One field of an aggregate.
@@ -175,5 +181,11 @@ impl AdtDef {
     #[inline]
     pub fn is_enum(&self) -> bool {
         matches!(self.kind, AdtKind::Enum)
+    }
+
+    /// Returns `true` for a closure environment.
+    #[inline]
+    pub fn is_closure(&self) -> bool {
+        matches!(self.kind, AdtKind::Closure)
     }
 }

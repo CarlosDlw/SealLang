@@ -34,6 +34,7 @@ impl Lowering<'_> {
                 StmtKind::Let { local, ty, init }
             }
             AstStmtKind::Const(declaration) => {
+                let barrier = self.capture_context();
                 let definition = self.define_local_value(
                     DefKind::Const,
                     declaration.name,
@@ -46,12 +47,13 @@ impl Lowering<'_> {
                     declaration.ty,
                     declaration.init,
                     BodyKind::Const,
-                    self.function,
+                    Some(barrier),
                 );
                 self.declare_local_value(definition, declaration.name, declaration.name_span);
                 StmtKind::Const { def: definition }
             }
             AstStmtKind::Static(declaration) => {
+                let barrier = self.capture_context();
                 let definition = self.define_local_value(
                     DefKind::Static,
                     declaration.name,
@@ -66,7 +68,7 @@ impl Lowering<'_> {
                     BodyKind::Static {
                         mutable: declaration.mutable,
                     },
-                    self.function,
+                    Some(barrier),
                 );
                 self.declare_local_value(definition, declaration.name, declaration.name_span);
                 StmtKind::Static { def: definition }

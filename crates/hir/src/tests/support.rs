@@ -226,6 +226,11 @@ impl Reachability<'_> {
                     assert_eq!(owner.mutable, mutable, "the body records static mutability");
                     assert!(body.params.is_empty(), "a static body has no parameters");
                 }
+                BodyKind::Closure => assert_eq!(
+                    owner.kind,
+                    DefKind::Closure,
+                    "a closure body is owned by its closure"
+                ),
             }
             assert_eq!(
                 self.hir.body_id_of(body.owner),
@@ -407,10 +412,30 @@ impl Reachability<'_> {
         };
         self.assert_span(span);
 
+        // A local name inside a closure body must belong to that closure. An
+        // outer local that leaked through resolution would be an orphan path
+        // instead of an `ExprKind::Capture`.
+        if let ExprKind::Path {
+            res: Res::Local(def),
+            ..
+        } = &kind
+            && let Some(owner) = self.owner
+            && self.hir.is_closure(owner)
+        {
+            assert_eq!(
+                self.hir.definitions().get(*def).parent,
+                Some(owner),
+                "a closure body cannot name an outer local directly"
+            );
+        }
+
         if let Some(place) = self.hir.place(id) {
             let data = self.hir.definitions().get(place.local_def());
             match data.kind {
                 DefKind::Binding | DefKind::Param => assert_eq!(data.parent, self.owner),
+                DefKind::Capture => {
+                    assert_eq!(data.parent, self.owner, "a capture belongs to its closure")
+                }
                 DefKind::Const | DefKind::Static => assert!(
                     data.parent.is_none() || data.parent == self.owner,
                     "a value root belongs to file scope or to this body's owner"
@@ -575,6 +600,79 @@ impl Reachability<'_> {
                 if let Some(else_branch) = else_branch {
                     self.check_block(else_branch);
                 }
+            }
+            ExprKind::Closure { closure, captures } => {
+                let data = self.hir.definitions().get(closure);
+                assert_eq!(data.kind, DefKind::Closure);
+                let definition = self
+                    .hir
+                    .closure(closure)
+                    .expect("a closure expression has closure data");
+                assert_eq!(definition.captures, captures);
+                assert!(self.hir.is_closure(closure));
+                let adt = self
+                    .hir
+                    .adt(closure)
+                    .expect("a closure reserves an aggregate");
+                assert_eq!(definition.adt, adt);
+                assert_eq!(self.hir.closure_for_adt(adt), Some(closure));
+                let aggregate = self.hir.ty_ctxt().adt(adt);
+                assert!(aggregate.is_closure());
+                assert_eq!(aggregate.fields.len(), captures.len());
+                assert_eq!(
+                    aggregate.generic_count as usize,
+                    self.hir.flattened_generics(closure).len(),
+                    "the environment is generic over the enclosing parameters"
+                );
+                let body = self.hir.body_of(closure).expect("a closure owns a body");
+                assert_eq!(body.kind, BodyKind::Closure);
+                for (index, capture) in captures.iter().enumerate() {
+                    let field = self.hir.definitions().get(capture.field);
+                    assert_eq!(field.kind, DefKind::Field);
+                    assert_eq!(field.parent, Some(closure));
+                    let binding = self.hir.definitions().get(capture.binding);
+                    assert_eq!(binding.kind, DefKind::Capture);
+                    assert_eq!(binding.parent, Some(closure));
+                    assert_eq!(aggregate.fields[index].def, capture.field);
+                    match capture.source {
+                        crate::CaptureSource::Local(origin) => {
+                            assert_eq!(origin, capture.origin)
+                        }
+                        crate::CaptureSource::Outer(slot) => {
+                            let parent = self
+                                .hir
+                                .definitions()
+                                .get(closure)
+                                .parent
+                                .and_then(|parent| self.hir.closure(parent))
+                                .expect("an outer capture comes from an enclosing closure");
+                            assert_eq!(
+                                parent.captures[slot as usize].origin, capture.origin,
+                                "an outer slot holds the same origin"
+                            );
+                        }
+                    }
+                }
+            }
+            ExprKind::Capture { closure, index } => {
+                assert_eq!(
+                    self.owner,
+                    Some(closure),
+                    "a capture is used in its closure"
+                );
+                let definition = self
+                    .hir
+                    .closure(closure)
+                    .expect("a capture names an existing closure");
+                let capture = definition
+                    .captures
+                    .get(index as usize)
+                    .expect("a capture index is in range");
+                assert_eq!(
+                    self.hir.place(id).map(|place| place.local_def()),
+                    Some(capture.binding),
+                    "a capture is a place rooted at its binding"
+                );
             }
             ExprKind::Path { args, .. } => self.check_optional_substs(args),
             ExprKind::Lit(_) | ExprKind::Error => {}

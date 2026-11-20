@@ -1,8 +1,7 @@
 //! Function bodies and trait default bodies.
 
 use seal_ast::{BlockId as AstBlockId, ItemKind, ParamId, TypeId as AstTypeId};
-use seal_def::{DefData, DefId, DefKind};
-use seal_error_codes as codes;
+use seal_def::DefId;
 use seal_ty::TyId;
 
 use super::Lowering;
@@ -104,6 +103,9 @@ impl Lowering<'_> {
         self_ty: Option<TyId>,
         flags: BodyFlags,
     ) {
+        // Bodies are independent: a closure frame left behind by the enclosing
+        // body must not reach the next one.
+        let saved_closures = std::mem::take(&mut self.closure_env);
         self.function = Some(owner);
         self.loop_depth = 0;
         let generic_levels = self.push_generic_scope(owner);
@@ -119,6 +121,7 @@ impl Lowering<'_> {
         self.scopes.pop();
         self.self_ty = saved_self;
         self.pop_generic_scope(generic_levels);
+        self.closure_env = saved_closures;
 
         let body = self.hir.push_body(Body {
             owner,
@@ -138,35 +141,6 @@ impl Lowering<'_> {
             (param.name, param.name_span, param.ty, param.span)
         };
         let ty = self.lower_type(ty);
-        let definition = self.define(DefData {
-            kind: DefKind::Param,
-            name,
-            name_span,
-            span,
-            parent: Some(function),
-            mutable: false,
-        });
-
-        if let Some(first) = self.scopes.current(name) {
-            let first_span = self.hir.definitions().get(first).name_span;
-            self.error(
-                codes::E2001,
-                name_span,
-                format!(
-                    "the parameter `{}` is declared twice",
-                    self.interner.resolve(name)
-                ),
-            )
-            .secondary(first_span, "first declared here")
-            .help("rename one of the parameters")
-            .emit();
-        } else {
-            self.scopes.insert(name, definition);
-        }
-
-        ParamData {
-            def: definition,
-            ty,
-        }
+        self.define_param(function, name, name_span, span, ty)
     }
 }

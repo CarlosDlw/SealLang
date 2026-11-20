@@ -86,6 +86,9 @@ impl Checker<'_> {
                             }
                         }
                     }
+                    // A closure has no equality operation of its own; type
+                    // checking rejects the comparison before code generation.
+                    AdtKind::Closure => return Err(NotComparable::Value(ty)),
                 }
                 Ok(())
             }

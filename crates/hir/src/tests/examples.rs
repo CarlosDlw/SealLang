@@ -220,7 +220,11 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
                 collect_block(hir, *else_branch, stmts, exprs);
             }
         }
-        ExprKind::Lit(_) | ExprKind::Path { .. } | ExprKind::Error => {}
+        ExprKind::Lit(_)
+        | ExprKind::Path { .. }
+        | ExprKind::Closure { .. }
+        | ExprKind::Capture { .. }
+        | ExprKind::Error => {}
     }
     exprs.push(kind);
 }

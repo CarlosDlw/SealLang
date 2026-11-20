@@ -176,7 +176,13 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
 24. **HIR is total and owner-partitioned.** Every function owns exactly one
     body, every ID resolves, every node is reachable from its body, and every
     parameter or binding definition records the function that owns it. A body
-    is never shared or orphaned.
+    is never shared or orphaned. A closure is owner-partitioned the same way:
+    it owns a `BodyKind::Closure` body and a synthetic `AdtKind::Closure`
+    aggregate whose fields are its captures, and each capture records its
+    final `origin` plus whether the environment reads it from the creating
+    body (`CaptureSource::Local`) or from the immediately enclosing closure
+    (`CaptureSource::Outer`). A name from an enclosing body never resolves to
+    `Res::Local` inside a closure: it becomes `Res::Capture`.
 25. **Loop control is checked.** `break` and `continue` may appear only inside a
     loop. Lowering tracks loop depth, reports `E2003`/`E2004` outside one, and
     keeps the statement so later phases still see the shape that was written.
@@ -188,14 +194,16 @@ values instead of re-evaluating source. Its modules are `value`, `allocation`,
     the loop body.
 27. **Types are assigned under one coercion rule.** Checked types are exactly
     equal, or one side is `!`/`Error`, or a thin pointer to a sized concrete
-    value coerces to a trait-object pointer of the same reference kind. There is
-    no implicit numeric conversion (D12). A literal adopts the expected type
+    value coerces to a trait-object pointer of the same reference kind, or a
+    function item coerces to a Seal `func` pointer with the same signature. There
+    is no implicit numeric conversion (D12). A literal adopts the expected type
     only when that type belongs to the same numeric family, and a suffix always
     wins.
 28. **Every value expression has a type.** The results map covers every HIR
-    expression except the callee of a valid call, which is not a value because
-    the language has no first-class function type. Every local has a type and
-    every function has a signature.
+    expression except the callee of a valid direct call, which is not read as a
+    value. Every local has a type and every function has a signature. A function
+    item used in a value position has the `func` pointer type its signature
+    names.
 29. **Plain conditions are boolean.** `if` and `while` conditions are checked
     against `bool`; there is no truthiness. `if let` and `while let` replace the
     condition with a pattern match instead.

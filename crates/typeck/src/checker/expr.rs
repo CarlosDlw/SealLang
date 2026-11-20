@@ -294,6 +294,9 @@ impl Checker<'_> {
                 flow,
                 span,
             ),
+            // Closure values are typed at the creating expression in a later
+            // phase; until then the recovery type keeps checking total.
+            ExprKind::Closure { .. } | ExprKind::Capture { .. } => self.error_ty(),
             ExprKind::Error => self.error_ty(),
         };
 
@@ -506,6 +509,9 @@ impl Checker<'_> {
                 ty
             }
             Res::Function(function) => self.check_function_value(expr, function, span, expected),
+            // A capture is reached through `ExprKind::Capture`; a path that
+            // still resolves to one is recovery from another error.
+            Res::Capture { .. } => self.error_ty(),
             Res::TraitFunction { .. } => {
                 self.error(
                     codes::E3099,

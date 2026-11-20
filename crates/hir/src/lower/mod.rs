@@ -15,12 +15,14 @@ use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{CAbiProperties, TyCtxt, TyId};
 
+use crate::closure::ClosureEnv;
 use crate::generics::GenericScopes;
 use crate::res::Res;
 use crate::{Block, Hir, HirBlockId, Protocol};
 
 mod aggregates;
 mod bodies;
+mod closure;
 mod coherence;
 mod copy;
 mod enums;
@@ -30,6 +32,7 @@ mod generics;
 mod items;
 mod object_safety;
 mod opaque;
+mod params;
 mod paths;
 mod patterns;
 mod scope;
@@ -39,6 +42,7 @@ mod supertraits;
 mod types;
 mod values;
 
+pub(crate) use closure::CaptureContext;
 pub(crate) use types::intern_primitives;
 
 pub(crate) fn lower_ast(
@@ -87,19 +91,17 @@ pub(crate) struct Lowering<'a> {
     self_ty: Option<TyId>,
     function: Option<DefId>,
     loop_depth: usize,
-    /// The enclosing function while a local static initializer is lowered.
+    /// The closures whose bodies are currently being lowered, outermost first.
+    ///
+    /// One frame is pushed per closure. The top frame receives every capture the
+    /// body mentions; outer frames receive a value too when a nested closure
+    /// needs to read it through them.
+    closure_env: Vec<ClosureEnv>,
+    /// The enclosing frame while a local static initializer is lowered.
     ///
     /// Resolution reports `E3060` instead of silently binding a name from the
     /// frame, because the static outlives every call to that function.
     capture: Option<CaptureContext>,
-}
-
-/// One local static's capture barrier.
-#[derive(Clone, Copy)]
-struct CaptureContext {
-    /// The function whose parameters, bindings, and generic parameters cannot
-    /// be named from the initializer.
-    function: DefId,
 }
 
 /// One owner's bounds waiting for every type definition to be collected.
@@ -160,6 +162,7 @@ impl<'a> Lowering<'a> {
             self_ty: None,
             function: None,
             loop_depth: 0,
+            closure_env: Vec::new(),
             capture: None,
         }
     }
@@ -187,26 +190,35 @@ impl<'a> Lowering<'a> {
     }
 
     /// Resolves a name against the local scopes, then the function namespace.
-    pub(super) fn resolve(&self, name: Symbol, span: Span) -> Option<Res> {
+    ///
+    /// Inside a closure body, a name that belongs to an enclosing body becomes a
+    /// capture. The innermost closure always receives the capture; outer closures
+    /// receive it too when the value has to travel through their environments.
+    pub(super) fn resolve(&mut self, name: Symbol, span: Span) -> Option<Res> {
         if let Some(definition) = self.scopes.lookup(name) {
-            if let Some(capture) = self.capture
-                && self.hir.definitions().get(definition).parent == Some(capture.function)
-            {
-                self.error(
-                    codes::E3060,
-                    span,
-                    format!(
-                        "a local value initializer cannot capture `{}` from the enclosing function",
-                        self.interner.resolve(name)
-                    ),
-                )
-                .help("move the value into the declaration, or use a file-scope item")
-                .emit();
-                return None;
+            if let Some(barrier) = &self.capture {
+                let parent = self.hir.definitions().get(definition).parent;
+                if parent.is_some_and(|parent| barrier.forbids(parent)) {
+                    self.error(
+                        codes::E3060,
+                        span,
+                        format!(
+                            "a local value initializer cannot capture `{}` from the enclosing function",
+                            self.interner.resolve(name)
+                        ),
+                    )
+                    .help("move the value into the declaration, or use a file-scope item")
+                    .emit();
+                    return None;
+                }
             }
             let res = match self.hir.definitions().kind(definition) {
                 DefKind::Const => Res::Const(definition),
                 DefKind::Static => Res::Static(definition),
+                DefKind::Param | DefKind::Binding => match self.capture_value(definition, span) {
+                    Some((closure, index)) => Res::Capture { closure, index },
+                    None => Res::Local(definition),
+                },
                 _ => Res::Local(definition),
             };
             return Some(res);

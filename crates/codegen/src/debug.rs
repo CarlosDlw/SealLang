@@ -670,17 +670,22 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
         let layout = self.mapper.layout(self.tcx.adt_ty_with(adt, args))?;
         let scope = self.unit.as_debug_info_scope();
         let members = match definition.kind {
-            AdtKind::Struct => {
+            // A closure environment is a product; its captures are positional,
+            // so a capture without a source name is numbered.
+            AdtKind::Struct | AdtKind::Closure => {
                 let field_layouts = self.mapper.field_layouts(adt, args)?;
                 let mut members = Vec::with_capacity(definition.fields.len());
-                for (field, field_layout) in definition.fields.iter().zip(&field_layouts) {
+                for (index, (field, field_layout)) in
+                    definition.fields.iter().zip(&field_layouts).enumerate()
+                {
                     let member_type = self.di_type(self.tcx.substitute(field.ty, args))?;
-                    let field_name = field.name.ok_or_else(|| {
-                        CodegenError::internal(format!("struct field {field:?} has no name"))
-                    })?;
+                    let field_name = match field.name {
+                        Some(name) => self.interner.resolve(name).to_owned(),
+                        None => index.to_string(),
+                    };
                     let member = self.builder.create_member_type(
                         scope,
-                        self.interner.resolve(field_name),
+                        &field_name,
                         file,
                         line,
                         field_layout.layout.size() * 8,

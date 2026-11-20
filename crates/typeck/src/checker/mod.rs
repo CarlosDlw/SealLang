@@ -142,6 +142,11 @@ impl<'a> Checker<'a> {
     pub(crate) fn run(mut self) -> TypeckResults {
         let bodies: Vec<Body> = self.hir.bodies().iter().cloned().collect();
         for body in bodies {
+            // A closure body is checked from its creating expression, where the
+            // expected signature is known. Checking it here would run it twice.
+            if body.kind == BodyKind::Closure {
+                continue;
+            }
             self.check_body(&body);
         }
         self.results
@@ -152,6 +157,11 @@ impl<'a> Checker<'a> {
     fn build_signatures(&mut self) {
         let bodies: Vec<Body> = self.hir.bodies().iter().cloned().collect();
         for body in bodies {
+            // Closure signatures come from the expected type at the creating
+            // expression, not from the body list.
+            if body.kind == BodyKind::Closure {
+                continue;
+            }
             self.mut_ref_reported = false;
             let owner_span = self.hir.definitions().get(body.owner).span;
             let is_value = !matches!(body.kind, BodyKind::Function);

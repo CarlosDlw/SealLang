@@ -41,6 +41,12 @@ impl Lowering<'_> {
         visiting.push(adt);
 
         let definition = self.hir.ty_ctxt().adt(adt);
+        // A closure environment holds capture types that only type checking
+        // computes, so there is nothing to validate at lowering time.
+        if definition.is_closure() {
+            visiting.pop();
+            return;
+        }
         if definition.is_struct() {
             self.check_fields(adt, None, &definition.fields, visiting, checked);
         } else {

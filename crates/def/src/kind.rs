@@ -29,7 +29,11 @@ pub enum DefKind {
     Impl,
     /// A generic type parameter declaration.
     GenericParam,
-    /// A struct field declaration.
+    /// A closure expression.
+    Closure,
+    /// The environment slot and place root of one captured value.
+    Capture,
+    /// A struct field declaration or one field of a closure environment.
     Field,
     /// A function parameter.
     Param,
@@ -61,6 +65,8 @@ impl DefKind {
             Self::TraitMethod => "trait method",
             Self::Impl => "implementation",
             Self::GenericParam => "type parameter",
+            Self::Closure => "closure",
+            Self::Capture => "capture",
             Self::Field => "field",
             Self::Param => "parameter",
             Self::Binding => "binding",
@@ -83,6 +89,8 @@ mod tests {
         assert!(!DefKind::Static.is_local());
         assert!(!DefKind::ExternFunction.is_local());
         assert!(!DefKind::ExternStatic.is_local());
+        assert!(!DefKind::Closure.is_local());
+        assert!(!DefKind::Capture.is_local());
         assert!(DefKind::Param.is_local());
         assert!(DefKind::Binding.is_local());
     }
@@ -103,6 +111,8 @@ mod tests {
             DefKind::TraitMethod.description(),
             DefKind::Impl.description(),
             DefKind::GenericParam.description(),
+            DefKind::Closure.description(),
+            DefKind::Capture.description(),
             DefKind::Field.description(),
             DefKind::Param.description(),
             DefKind::Binding.description(),

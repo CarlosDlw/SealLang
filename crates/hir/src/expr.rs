@@ -226,6 +226,24 @@ pub enum ExprKind {
         /// The `*[T]` or `*mut [T]` value whose length is read.
         operand: HirExprId,
     },
+    /// A closure expression.
+    ///
+    /// The closure's body, parameters, and environment live behind its
+    /// definition; this node is the value that stores the environment.
+    Closure {
+        /// The closure's definition.
+        closure: DefId,
+        /// Captures in first-mention order, copied from the definition so
+        /// consumers can read the environment without a second lookup.
+        captures: Vec<crate::closure::CaptureDef>,
+    },
+    /// A use of a value captured by the enclosing closure.
+    Capture {
+        /// The closure whose environment stores the value.
+        closure: DefId,
+        /// The environment slot.
+        index: u32,
+    },
     /// The built-in `drop(value)`, which releases a value before its scope
     /// ends.
     ///

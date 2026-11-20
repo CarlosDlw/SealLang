@@ -2,7 +2,9 @@
 //!
 //! Lowering turns the parser's [`Ast`](seal_ast::Ast) into a tree where every
 //! name is resolved and every syntactic convenience is gone: parentheses are
-//! dropped, and each function owns exactly one [`Body`].
+//! dropped, and each function owns exactly one [`Body`]. A closure owns its own
+//! [`BodyKind::Closure`] body and a synthetic environment aggregate whose fields
+//! are its captures.
 //!
 //! The result is total. A name that does not resolve, or a `break` outside a
 //! loop, produces a diagnostic (`E2xxx`) and an `Error` node, so consumers can
@@ -15,7 +17,9 @@
 //! the innermost block wins, `let` bindings shadow parameters and outer
 //! bindings, and a binding is not visible in its own initializer. Parameters and
 //! bindings become [`DefId`](seal_def::DefId)s carrying their mutability, which
-//! later phases use instead of re-reading the source.
+//! later phases use instead of re-reading the source. Inside a closure body, a
+//! name from an enclosing body resolves to [`ExprKind::Capture`], so no consumer
+//! ever binds an outer local through the scope stack.
 //!
 //! # Example
 //!
@@ -28,6 +32,7 @@
 
 mod body;
 mod builtin;
+mod closure;
 mod expr;
 mod extern_decl;
 mod generics;
@@ -43,6 +48,7 @@ mod tests;
 
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
+pub use closure::{CaptureDef, CaptureSource, ClosureDef};
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use extern_decl::{ExternFunction, ExternStatic, LinkDirective};
 pub use generics::InherentImpl;
@@ -132,6 +138,8 @@ pub struct Hir {
     extern_static_order: Vec<DefId>,
     link_directives: Vec<extern_decl::LinkDirective>,
     extern_structs: Vec<AdtId>,
+    closures: FxHashMap<DefId, ClosureDef>,
+    closure_adt: FxHashMap<AdtId, DefId>,
 }
 
 impl Hir {
@@ -260,9 +268,10 @@ impl Hir {
 
     /// Returns the place denoted by `expr`, when it denotes storage.
     ///
-    /// A local path is a place rooted at its definition; `*reference` is the
-    /// place reached by one dereference; a field access projects from its base
-    /// place. Borrows, calls, and literals are not places. Assignment and update
+    /// A local path is a place rooted at its definition; a capture is a place
+    /// rooted at its synthetic environment binding; `*reference` is the place
+    /// reached by one dereference; a field access projects from its base place.
+    /// Borrows, calls, and literals are not places. Assignment and update
     /// targets are expressions, so this is how a consumer asks whether the
     /// target is assignable without matching on the tree.
     pub fn place(&self, expr: HirExprId) -> Option<Place> {
@@ -277,6 +286,14 @@ impl Hir {
                 .place(base)
                 .map(|place| place.tuple_field(index as usize)),
             ExprKind::Index { base, index } => self.place(base).map(|place| place.index(index)),
+            // A capture is a place rooted at the synthetic binding that names
+            // its environment slot, so field and index projections work without
+            // a new place root.
+            ExprKind::Capture { closure, index } => self
+                .closures
+                .get(&closure)
+                .and_then(|closure| closure.captures.get(index as usize))
+                .map(|capture| Place::local(capture.binding)),
             _ => None,
         }
     }
@@ -380,6 +397,26 @@ impl Hir {
     /// Returns every `extern struct` aggregate, in declaration order.
     pub fn extern_structs(&self) -> &[AdtId] {
         &self.extern_structs
+    }
+
+    /// Returns the semantic data of the closure `def`, if it is a closure.
+    pub fn closure(&self, def: DefId) -> Option<&ClosureDef> {
+        self.closures.get(&def)
+    }
+
+    /// Returns every closure in the file, keyed by its definition.
+    pub fn closures(&self) -> &FxHashMap<DefId, ClosureDef> {
+        &self.closures
+    }
+
+    /// Returns the closure whose environment is the aggregate `adt`.
+    pub fn closure_for_adt(&self, adt: AdtId) -> Option<DefId> {
+        self.closure_adt.get(&adt).copied()
+    }
+
+    /// Returns `true` when `def` is a closure expression.
+    pub fn is_closure(&self, def: DefId) -> bool {
+        self.definitions.kind(def) == DefKind::Closure
     }
 
     fn builtin_traits(&self) -> &builtin::BuiltinTraits {
@@ -605,6 +642,26 @@ impl Hir {
         self.fn_sigs.push(usage);
     }
 
+    pub(crate) fn insert_closure(&mut self, closure: ClosureDef) {
+        self.closure_adt.insert(closure.adt, closure.def);
+        self.closures.insert(closure.def, closure);
+    }
+
+    /// Appends one capture to a closure and returns its environment slot.
+    ///
+    /// The closure exists before its body is lowered, so the slot is available
+    /// to every expression that mentions the captured value, including the
+    /// `Hir::place` lookups performed while that body is still being built.
+    pub(crate) fn push_closure_capture(&mut self, closure: DefId, capture: CaptureDef) -> u32 {
+        let definition = self
+            .closures
+            .get_mut(&closure)
+            .expect("captures belong to an inserted closure");
+        let index = definition.captures.len() as u32;
+        definition.captures.push(capture);
+        index
+    }
+
     /// Returns all blocks, indexable by [`HirBlockId`].
     pub fn block_arena(&self) -> &IndexVec<HirBlockId, Block> {
         &self.blocks
@@ -647,6 +704,8 @@ impl Hir {
             extern_static_order: Vec::new(),
             link_directives: Vec::new(),
             extern_structs: Vec::new(),
+            closures: FxHashMap::default(),
+            closure_adt: FxHashMap::default(),
         };
         hir.builtin = Some(builtin::install(&mut hir, interner));
         hir

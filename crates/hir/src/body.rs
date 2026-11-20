@@ -18,9 +18,14 @@ pub enum BodyKind {
         /// Whether the static is declared `mut`.
         mutable: bool,
     },
+    /// A closure body.
+    ///
+    /// The parameters are the closure's own, without a receiver. The body is an
+    /// ordinary block whose value is the closure's result.
+    Closure,
 }
 
-/// An executable body, owned by a function, constant, or static.
+/// An executable body, owned by a function, constant, static, or closure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
     /// The definition this body implements.
@@ -40,6 +45,10 @@ pub struct Body {
     /// context: every unsafe operation inside still needs an `unsafe` block.
     pub is_unsafe: bool,
     /// Parameters in source order.
+    ///
+    /// A closure parameter without a type annotation keeps the error type as a
+    /// placeholder: its real type comes from the expected signature, which only
+    /// type checking knows.
     pub params: Vec<ParamData>,
     /// The root block.
     pub root: HirBlockId,

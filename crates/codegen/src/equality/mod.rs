@@ -126,6 +126,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                         self.equal_fields(&fields, lhs, rhs, span)
                     }
                     seal_ty::AdtKind::Enum => self.equal_enum(adt, args, lhs, rhs, span),
+                    seal_ty::AdtKind::Closure => Err(CodegenError::internal(
+                        "a closure environment has no equality operation",
+                    )),
                 }
             }
             TyKind::RawPtr { pointee, .. } => {

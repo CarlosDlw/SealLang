@@ -284,7 +284,9 @@ impl<'a> LayoutCtxt<'a> {
             TyKind::Adt { adt, args } => {
                 let definition = self.tcx.adt(adt);
                 match definition.kind {
-                    AdtKind::Struct => {
+                    // A closure environment is the product of its captures, so it
+                    // is laid out exactly like a struct.
+                    AdtKind::Struct | AdtKind::Closure => {
                         let key = (adt, args);
                         if stack.contains(&key) {
                             return Err(LayoutError::Recursive(adt));

@@ -29,15 +29,30 @@ pub enum Res {
     Static(DefId),
     /// A parameter or `let` binding.
     Local(DefId),
+    /// A value the enclosing closure captures.
+    ///
+    /// The index selects the environment slot; the closure definition owns the
+    /// synthetic field and binding, and the origin of the captured value.
+    Capture {
+        /// The closure whose environment stores the value.
+        closure: DefId,
+        /// The environment slot.
+        index: u32,
+    },
 }
 
 impl Res {
     /// Returns the definition this resolution refers to.
+    ///
+    /// A capture reports its closure, because the environment slot is the
+    /// closure's, not a standalone definition. Use the closure definition for
+    /// the capture's field and binding.
     #[inline]
     pub const fn def(self) -> DefId {
         match self {
             Self::Function(def) | Self::Const(def) | Self::Static(def) | Self::Local(def) => def,
             Self::TraitFunction { function, .. } => function,
+            Self::Capture { closure, .. } => closure,
         }
     }
 }

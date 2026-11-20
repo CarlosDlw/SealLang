@@ -398,7 +398,8 @@ impl<'ctx> TypeMapper<'ctx> {
         self.adts.borrow_mut().insert(key, created);
 
         let field_types = match definition.kind {
-            AdtKind::Struct => {
+            // A closure environment is a product of its captures.
+            AdtKind::Struct | AdtKind::Closure => {
                 let mut field_types = Vec::with_capacity(definition.fields.len());
                 for field in &definition.fields {
                     let field_ty = self.tcx.substitute(field.ty, args);

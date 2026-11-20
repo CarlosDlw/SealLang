@@ -32,6 +32,9 @@ fn body_kind(kind: seal_hir::BodyKind) -> BodyKind {
         seal_hir::BodyKind::Function => BodyKind::Function,
         seal_hir::BodyKind::Const => BodyKind::Const,
         seal_hir::BodyKind::Static { mutable } => BodyKind::Static { mutable },
+        seal_hir::BodyKind::Closure => {
+            unreachable!("closure bodies are not lowered to MIR yet")
+        }
     }
 }
 
@@ -43,6 +46,11 @@ fn body_kind(kind: seal_hir::BodyKind) -> BodyKind {
 pub fn lower(hir: &Hir, typeck: &TypeckResults) -> Mir {
     let mut mir = Mir::new();
     for body in hir.bodies().iter() {
+        // A closure body becomes a value of its creating function in a later
+        // phase; it has no standalone MIR entry yet.
+        if body.kind == seal_hir::BodyKind::Closure {
+            continue;
+        }
         mir.push_body(BodyLowering::new(hir, typeck, body).run(body));
     }
     mir
@@ -744,7 +752,13 @@ impl<'a> BodyLowering<'a> {
                     }
                 }
             }
-            ExprKind::Error => {
+            ExprKind::Path {
+                res: Res::Capture { .. },
+                ..
+            }
+            | ExprKind::Error
+            | ExprKind::Closure { .. }
+            | ExprKind::Capture { .. } => {
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
@@ -1954,7 +1968,9 @@ impl<'a> BodyLowering<'a> {
                 }
                 None => Operand::Constant(Constant::Unit),
             },
-            ExprKind::Error => Operand::Constant(Constant::Unit),
+            ExprKind::Error | ExprKind::Closure { .. } | ExprKind::Capture { .. } => {
+                Operand::Constant(Constant::Unit)
+            }
             ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)

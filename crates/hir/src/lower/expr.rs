@@ -35,10 +35,20 @@ impl Lowering<'_> {
                         | crate::Res::TraitFunction { function, .. } => {
                             self.own_generic_count(function)
                         }
-                        crate::Res::Const(_) | crate::Res::Static(_) | crate::Res::Local(_) => 0,
+                        crate::Res::Const(_)
+                        | crate::Res::Static(_)
+                        | crate::Res::Local(_)
+                        | crate::Res::Capture { .. } => 0,
                     };
                     let args = self.lower_expr_arguments(args.as_ref(), expected);
-                    ExprKind::Path { res, args }
+                    match res {
+                        // A captured value is not a path into a scope: the
+                        // environment slot is the only way to reach it.
+                        crate::Res::Capture { closure, index } => {
+                            ExprKind::Capture { closure, index }
+                        }
+                        res => ExprKind::Path { res, args },
+                    }
                 }
                 None => ExprKind::Error,
             },
@@ -336,11 +346,12 @@ impl Lowering<'_> {
                 block: self.lower_block(block),
             },
             AstExprKind::Paren(inner) => return self.lower_expr(inner),
-            // Closures are lowered by the first-class function phases. Their
-            // bodies are deliberately not walked yet: capture resolution needs
-            // the closure environment, and resolving outer names without it
-            // would bind the wrong local.
-            AstExprKind::Closure { .. } => ExprKind::Error,
+            AstExprKind::Closure {
+                is_move,
+                params,
+                ret,
+                body,
+            } => self.lower_closure(span, is_move, &params, ret, body),
             AstExprKind::Error => ExprKind::Error,
         };
 

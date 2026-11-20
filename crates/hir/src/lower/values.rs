@@ -126,25 +126,25 @@ impl Lowering<'_> {
 
     /// Lowers one constant or static initializer into its own body.
     ///
-    /// `capture` is the enclosing function for a local static. The initializer
-    /// runs outside that frame, so resolution rejects names owned by the
-    /// function, its generic parameters, and `Self`.
+    /// `capture` is the barrier of the enclosing body for a local static. The
+    /// initializer runs outside that frame, so resolution rejects names owned
+    /// by the function or closures around it, their generic parameters, and
+    /// `Self`. The closure environment stack is cleared for the same reason: a
+    /// static initializer never captures.
     pub(super) fn lower_value_body(
         &mut self,
         owner: DefId,
         ty: AstTypeId,
         init: AstExprId,
         kind: BodyKind,
-        capture: Option<DefId>,
+        capture: Option<CaptureContext>,
     ) -> BodyId {
         let saved_function = self.function.replace(owner);
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_generics = std::mem::take(&mut self.generic_scopes);
         let saved_self = self.self_ty.take();
-        let saved_capture = std::mem::replace(
-            &mut self.capture,
-            capture.map(|function| CaptureContext { function }),
-        );
+        let saved_capture = std::mem::replace(&mut self.capture, capture);
+        let saved_closures = std::mem::take(&mut self.closure_env);
 
         let levels = self.push_generic_scope(owner);
         self.scopes.push();
@@ -159,6 +159,7 @@ impl Lowering<'_> {
         self.scopes.pop();
         self.pop_generic_scope(levels);
 
+        self.closure_env = saved_closures;
         self.capture = saved_capture;
         self.self_ty = saved_self;
         self.generic_scopes = saved_generics;
