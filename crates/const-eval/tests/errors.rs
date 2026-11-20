@@ -39,6 +39,24 @@ fn a_constant_cannot_write_through_a_raw_pointer() {
 }
 
 #[test]
+fn an_external_call_is_not_constant() {
+    let fixture = Fixture::compile(
+        "extern \"c\" { func abs(value: i32) -> i32; } \
+         const VALUE: i32 = unsafe { abs(-1) };",
+    );
+    fixture.expect_code("E4033");
+}
+
+#[test]
+fn an_external_static_is_not_constant() {
+    let fixture = Fixture::compile(
+        "extern \"c\" { static errno: i32; } \
+         const VALUE: i32 = unsafe { errno };",
+    );
+    fixture.expect_code("E4034");
+}
+
+#[test]
 fn a_constant_cannot_read_through_an_integer_pointer() {
     let fixture = Fixture::compile(
         "const POINTER: *raw i32 = 0usize as *raw i32; \

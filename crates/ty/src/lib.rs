@@ -16,6 +16,7 @@
 
 #![warn(missing_docs)]
 
+mod abi;
 mod adt;
 mod cast;
 mod copy;
@@ -31,6 +32,7 @@ mod kind;
 mod substs;
 mod template;
 
+pub use abi::{Abi, CallConv};
 pub use adt::{AdtDef, AdtKind, FieldDef, VariantDef};
 pub use cast::{CastKind, NumericCastKind};
 pub use ctxt::{ImplHead, TyCtxt};

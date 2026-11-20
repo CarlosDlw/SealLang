@@ -25,6 +25,7 @@ mod coherence;
 mod copy;
 mod enums;
 mod expr;
+mod externs;
 mod generics;
 mod items;
 mod object_safety;
@@ -61,6 +62,8 @@ pub(crate) struct Lowering<'a> {
     function_item_of: FxHashMap<DefId, ItemId>,
     function_items: Vec<ItemId>,
     value_items: Vec<(ItemId, DefId)>,
+    pub(super) extern_function_items: Vec<(ItemId, DefId)>,
+    pub(super) extern_static_items: Vec<(ItemId, DefId)>,
     struct_items: Vec<(ItemId, DefId)>,
     enum_items: Vec<(ItemId, DefId)>,
     traits: FxHashMap<Symbol, DefId>,
@@ -130,6 +133,8 @@ impl<'a> Lowering<'a> {
             function_item_of: FxHashMap::default(),
             function_items: Vec::new(),
             value_items: Vec::new(),
+            extern_function_items: Vec::new(),
+            extern_static_items: Vec::new(),
             struct_items: Vec::new(),
             enum_items: Vec::new(),
             traits,
@@ -154,9 +159,11 @@ impl<'a> Lowering<'a> {
 
     fn run(mut self) -> Hir {
         self.collect_items();
+        self.collect_extern_items();
         self.lower_pending_bounds();
         self.lower_structs();
         self.lower_enums();
+        self.lower_extern_declarations();
         self.validate_aggregates();
         self.build_trait_definitions();
         self.validate_supertraits();
@@ -199,7 +206,7 @@ impl<'a> Lowering<'a> {
         if let Some(&definition) = self.globals.get(&name) {
             let res = match self.hir.definitions().kind(definition) {
                 DefKind::Const => Res::Const(definition),
-                DefKind::Static => Res::Static(definition),
+                DefKind::Static | DefKind::ExternStatic => Res::Static(definition),
                 _ => Res::Function(definition),
             };
             return Some(res);

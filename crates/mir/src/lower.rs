@@ -1172,7 +1172,6 @@ impl<'a> BodyLowering<'a> {
             }
             return;
         };
-        let instance = self.call_instance(expr, function);
         // A trait method reached through a type parameter has no concrete
         // function yet, so monomorphization receives the symbolic target. The
         // same syntax on a concrete type names a trait implementation and is a
@@ -1185,12 +1184,23 @@ impl<'a> BodyLowering<'a> {
                 .signature(function)
                 .map_or(args.len(), |signature| signature.params.len())
         };
-        let target = if symbolic {
+        let target = if self.hir.is_extern_function(function) {
+            CallTarget::Extern {
+                def: function,
+                parameters,
+                variadic: self
+                    .hir
+                    .extern_function(function)
+                    .is_some_and(|declaration| declaration.variadic),
+            }
+        } else if symbolic {
+            let instance = self.call_instance(expr, function);
             CallTarget::TraitMethod {
                 instance,
                 parameters,
             }
         } else {
+            let instance = self.call_instance(expr, function);
             CallTarget::Direct {
                 instance,
                 parameters,

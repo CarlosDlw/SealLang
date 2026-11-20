@@ -2,8 +2,8 @@ use seal_def::DefId;
 use seal_hash::FxHashMap;
 use seal_hir::Hir;
 use seal_mir::{
-    Body, CallTarget, IntrinsicReceiver, Operand, Place, Projection, Rvalue, StatementKind,
-    TerminatorKind,
+    Body, CallTarget, IntrinsicReceiver, Operand, Place, PlaceRoot, Projection, Rvalue,
+    StatementKind, TerminatorKind,
 };
 
 use super::{BodyEffects, GlobalEffects, GlobalPath};
@@ -22,6 +22,12 @@ pub(super) fn collect(
             match &statement.kind {
                 StatementKind::Assign { place, rvalue } => {
                     mark_raw_place(place, &mut direct);
+                    // A write to an external static is a write C observes: the
+                    // checker owns neither the storage nor the value read back.
+                    if matches!(place.root, PlaceRoot::Static(def) if hir.is_extern_static(def)) {
+                        direct.unknown = true;
+                        direct.touches_raw = true;
+                    }
                     if let Some(path) = GlobalPath::from_place(hir, place) {
                         direct.write(path);
                     }
@@ -182,6 +188,10 @@ pub(super) fn collect_rvalue(
                         direct.touches_raw = true;
                     }
                 }
+                CallTarget::Extern { .. } => {
+                    direct.unknown = true;
+                    direct.touches_raw = true;
+                }
             }
             let candidates = match target {
                 CallTarget::Direct { instance, .. } => {
@@ -195,6 +205,7 @@ pub(super) fn collect_rvalue(
                     .get(&instance.def)
                     .cloned()
                     .unwrap_or_default(),
+                CallTarget::Extern { .. } => Vec::new(),
             };
             calls.push(candidates);
         }
@@ -216,6 +227,13 @@ pub(super) fn collect_rvalue(
 fn collect_operand(hir: &Hir, operand: &Operand, direct: &mut GlobalEffects) {
     if let Some(place) = operand.place() {
         mark_raw_place(&place, direct);
+        // An external static is storage the checker does not own: it may be
+        // changed by C between any two Seal operations.
+        if matches!(place.root, PlaceRoot::Static(def) if hir.is_extern_static(def)) {
+            direct.unknown = true;
+            direct.touches_raw = true;
+            return;
+        }
         if let Some(path) = GlobalPath::from_place(hir, &place) {
             direct.read(path);
         }

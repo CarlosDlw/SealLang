@@ -3,6 +3,7 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
+use crate::extern_item::{ExternBlockDecl, ExternFnDecl, ExternStaticDecl};
 use crate::generics::{GenericParams, TraitPath, WhereClause};
 use crate::id::{
     BlockId, ExprId, FieldDeclId, ItemId, ParamId, TupleFieldDeclId, TypeId, VariantDeclId,
@@ -37,6 +38,12 @@ pub enum ItemKind {
     Trait(TraitDecl),
     /// One method signature inside a trait declaration.
     TraitMethod(TraitMethodDecl),
+    /// A block of declarations sharing one ABI.
+    ExternBlock(ExternBlockDecl),
+    /// An external function declaration.
+    ExternFunc(ExternFnDecl),
+    /// An external static declaration.
+    ExternStatic(ExternStaticDecl),
     /// Syntax the parser could not turn into an item.
     Error,
 }

@@ -10,6 +10,7 @@ mod dynamic;
 mod equality;
 mod exhaustive;
 mod expr;
+mod ffi;
 mod flow;
 mod for_loop;
 mod generics;
@@ -134,6 +135,7 @@ impl<'a> Checker<'a> {
         };
         checker.validate_bound_arguments();
         checker.build_signatures();
+        checker.build_externs();
         checker
     }
 
@@ -251,6 +253,27 @@ impl<'a> Checker<'a> {
                 self.interner.resolve(name)
             ),
         )
+        .help("wrap the call in `unsafe { ... }` and establish its preconditions")
+        .emit();
+    }
+
+    /// Reports a call to an external function outside `unsafe`.
+    ///
+    /// The declaration, not only the signature, is what makes the call unsafe,
+    /// so the diagnostic names the `extern` block explicitly.
+    pub(super) fn require_unsafe_extern_call(&mut self, span: Span, is_unsafe: bool, name: Symbol) {
+        if !is_unsafe || self.unsafe_depth > 0 {
+            return;
+        }
+        self.error(
+            codes::E3070,
+            span,
+            format!(
+                "calling `{}` requires an `unsafe` block",
+                self.interner.resolve(name)
+            ),
+        )
+        .note("functions declared in an `extern` block are unsafe to call")
         .help("wrap the call in `unsafe { ... }` and establish its preconditions")
         .emit();
     }

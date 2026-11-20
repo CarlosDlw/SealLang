@@ -9,6 +9,10 @@ pub enum DefKind {
     Const,
     /// A static item or block-scope static declaration.
     Static,
+    /// A function declared in an `extern` declaration.
+    ExternFunction,
+    /// A static declared in an `extern` declaration.
+    ExternStatic,
     /// A struct item.
     Struct,
     /// An enum item.
@@ -45,6 +49,8 @@ impl DefKind {
             Self::Function => "function",
             Self::Const => "constant",
             Self::Static => "static",
+            Self::ExternFunction => "external function",
+            Self::ExternStatic => "external static",
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Variant => "variant",
@@ -71,6 +77,8 @@ mod tests {
         assert!(!DefKind::Trait.is_local());
         assert!(!DefKind::Const.is_local());
         assert!(!DefKind::Static.is_local());
+        assert!(!DefKind::ExternFunction.is_local());
+        assert!(!DefKind::ExternStatic.is_local());
         assert!(DefKind::Param.is_local());
         assert!(DefKind::Binding.is_local());
     }
@@ -81,6 +89,8 @@ mod tests {
             DefKind::Function.description(),
             DefKind::Const.description(),
             DefKind::Static.description(),
+            DefKind::ExternFunction.description(),
+            DefKind::ExternStatic.description(),
             DefKind::Struct.description(),
             DefKind::Enum.description(),
             DefKind::Variant.description(),

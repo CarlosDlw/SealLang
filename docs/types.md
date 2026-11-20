@@ -216,7 +216,8 @@ type on Windows and a 32-bit signed type elsewhere. The opaque `c_void` type is
 not a scalar; it belongs to the C interop layer.
 
 These names are type names, not literal suffixes: write `1 as c_int` or annotate
-the binding, never `1c_int`.
+the binding, never `1c_int`. Declaring C functions and statics that use these
+types is covered in [`language/extern.md`](language/extern.md).
 
 ### Explicit numeric casts
 

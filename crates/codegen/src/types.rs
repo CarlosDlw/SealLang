@@ -223,6 +223,26 @@ impl<'ctx> TypeMapper<'ctx> {
         Ok(self.basic(returns)?.fn_type(&llvm_parameters, false))
     }
 
+    /// Returns the C function type with the given parameter and return types.
+    ///
+    /// A Seal `()` return is C `void`, not the zero-sized struct a Seal
+    /// function returns, so an external declaration maps the two differently.
+    pub(crate) fn c_function_type(
+        &self,
+        parameters: &[TyId],
+        returns: TyId,
+    ) -> Result<FunctionType<'ctx>, CodegenError> {
+        let mut llvm_parameters = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            llvm_parameters.push(BasicMetadataTypeEnum::from(self.basic(*parameter)?));
+        }
+        if self.is_unit_like(returns) {
+            Ok(self.context.void_type().fn_type(&llvm_parameters, false))
+        } else {
+            Ok(self.basic(returns)?.fn_type(&llvm_parameters, false))
+        }
+    }
+
     /// Returns the LLVM struct of `adt` instantiated with `args`.
     ///
     /// The struct is created on first use, reserved as opaque, then filled from

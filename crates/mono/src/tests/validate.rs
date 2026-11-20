@@ -18,6 +18,7 @@ fn program_with(mono: MonoMir) -> MonoProgram {
         ids,
         items: vec![MonoItem::Function(instance)],
         statics: Vec::new(),
+        extern_statics: Vec::new(),
         const_allocations: Vec::new(),
         vtables: IndexVec::new(),
         vtable_ids: FxHashMap::default(),

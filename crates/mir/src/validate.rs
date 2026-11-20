@@ -514,7 +514,10 @@ fn check_place(
         }
         crate::place::PlaceRoot::Static(def) => {
             if let Some(hir) = hir
-                && hir.definitions().kind(def) != DefKind::Static
+                && !matches!(
+                    hir.definitions().kind(def),
+                    DefKind::Static | DefKind::ExternStatic
+                )
             {
                 return Err(ValidationError::PlaceRootKindMismatch { block, def });
             }

@@ -19,12 +19,16 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         let (mut pointer, mut ty) = match place.root {
             seal_mir::PlaceRoot::Local(local) => (self.alloca(local), self.local_type(local)),
             seal_mir::PlaceRoot::Static(def) => {
-                let ty = self.globals.static_type(def).ok_or_else(|| {
-                    CodegenError::internal(format!(
-                        "static {def:?} has no declared global during code generation"
-                    ))
-                })?;
-                (self.globals.static_pointer(def)?, ty)
+                if let Some((global, ty)) = self.externals.static_global(def) {
+                    (global.as_pointer_value(), ty)
+                } else {
+                    let ty = self.globals.static_type(def).ok_or_else(|| {
+                        CodegenError::internal(format!(
+                            "static {def:?} has no declared global during code generation"
+                        ))
+                    })?;
+                    (self.globals.static_pointer(def)?, ty)
+                }
             }
             seal_mir::PlaceRoot::Const(def) => {
                 return Err(CodegenError::internal(format!(
@@ -223,11 +227,17 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             // A static's storage is the authoritative source of its type, so a
             // missing global is an invariant violation. A const root still
             // resolves through HIR even though MIR should have materialized it.
-            seal_mir::PlaceRoot::Static(def) => self.globals.static_type(def).ok_or_else(|| {
-                CodegenError::internal(format!(
-                    "static {def:?} has no declared global during code generation"
-                ))
-            })?,
+            seal_mir::PlaceRoot::Static(def) => {
+                if let Some((_, ty)) = self.externals.static_global(def) {
+                    ty
+                } else {
+                    self.globals.static_type(def).ok_or_else(|| {
+                        CodegenError::internal(format!(
+                            "static {def:?} has no declared global during code generation"
+                        ))
+                    })?
+                }
+            }
             seal_mir::PlaceRoot::Const(def) => self
                 .hir
                 .body_of(def)

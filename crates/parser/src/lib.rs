@@ -65,6 +65,7 @@
 #![warn(missing_docs)]
 
 mod expr;
+mod extern_item;
 mod generics;
 mod parser;
 mod pattern;

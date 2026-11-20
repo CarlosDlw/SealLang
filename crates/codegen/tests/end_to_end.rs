@@ -1962,6 +1962,65 @@ fn overlapping_raw_copy_uses_move_semantics() {
 }
 
 #[test]
+fn an_external_c_function_runs_with_the_c_abi() {
+    let source = r#"
+        extern "c" { func abs(value: i32) -> i32; }
+        func main() -> i32 {
+            unsafe { abs(-41) }
+        }"#;
+    assert_exit_at_both_levels(source, 41, "extern-abs");
+}
+
+#[test]
+fn an_external_link_name_selects_the_symbol() {
+    let source = r#"
+        extern "c" {
+            func absolute(value: i32) -> i32 link_name "abs";
+        }
+        func main() -> i32 {
+            unsafe { absolute(-41) }
+        }"#;
+    assert_exit_at_both_levels(source, 41, "extern-link-name");
+}
+
+#[test]
+fn an_external_function_with_side_effects_runs() {
+    let source = r#"
+        extern "c" { func getpid() -> i32; }
+        func main() -> i32 {
+            let pid = unsafe { getpid() };
+            if pid <= 0 { return 1; }
+            42
+        }"#;
+    assert_exit_at_both_levels(source, 42, "extern-getpid");
+}
+
+#[test]
+fn a_void_external_function_is_callable() {
+    let source = r#"
+        extern "c" { func srand(seed: u32) -> (); }
+        func main() -> i32 {
+            unsafe { srand(7u32); }
+            42
+        }"#;
+    assert_exit_at_both_levels(source, 42, "extern-void");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_external_static_is_resolved_by_the_linker() {
+    let source = r#"
+        extern "c" { static mut environ: *raw mut *raw mut c_char; }
+        func main() -> i32 {
+            unsafe {
+                if environ as usize == 0 { return 1; }
+            }
+            42
+        }"#;
+    assert_exit_at_both_levels(source, 42, "extern-environ");
+}
+
+#[test]
 fn a_reference_unsizes_into_a_raw_trait_object() {
     let source = "\
         trait Shape { func area(self: *Self) -> i32; }

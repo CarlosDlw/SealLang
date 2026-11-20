@@ -351,7 +351,9 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             });
             unknown |= outcome.unknown;
             let summary = context.effects.call(*target);
-            context.apply_effects(target.instance().def, summary, args, statement.span);
+            if let Some(instance) = target.try_instance() {
+                context.apply_effects(instance.def, summary, args, statement.span);
+            }
             // A symbolic trait call has no concrete callee whose `noalias`
             // contract could be proven here; monomorphization checks each
             // selected implementation at its own call sites.

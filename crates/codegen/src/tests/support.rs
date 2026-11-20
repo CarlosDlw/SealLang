@@ -256,6 +256,13 @@ pub(crate) fn build_module<'ctx>(
                 .expect("a static is described");
         }
     }
+    let externals = crate::extern_decl::Externals::declare(
+        &module,
+        &compiled.hir,
+        &mapper,
+        compiled.session.interner(),
+    )
+    .expect("externals declare");
     for mono in compiled.mono.instances().iter() {
         let scope = debug.as_ref().map(|debug| {
             let name =
@@ -281,6 +288,7 @@ pub(crate) fn build_module<'ctx>(
             values: &values,
             pointers: &pointers,
             globals: &globals,
+            externals: &externals,
             functions: &functions,
             vtables: &vtables,
             drop_glues: &glues,

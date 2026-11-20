@@ -133,22 +133,49 @@ pub enum CallTarget {
         /// methods.
         parameters: usize,
     },
+    /// A function implemented outside Seal.
+    ///
+    /// The declaration has no body and no type arguments; the linker symbol is
+    /// fixed by its HIR declaration.
+    Extern {
+        /// The external function declaration.
+        def: DefId,
+        /// The parameter count the declaration expects.
+        parameters: usize,
+        /// Whether the declaration is variadic.
+        variadic: bool,
+    },
 }
 
 impl CallTarget {
+    /// Returns the callee instance, or `None` for an external call.
+    #[inline]
+    pub fn try_instance(self) -> Option<Instance> {
+        match self {
+            Self::Direct { instance, .. } | Self::TraitMethod { instance, .. } => Some(instance),
+            Self::Extern { .. } => None,
+        }
+    }
+
     /// Returns the callee instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics for an external call. Callers that may see one use
+    /// [`CallTarget::try_instance`].
     #[inline]
     pub fn instance(self) -> Instance {
-        match self {
-            Self::Direct { instance, .. } | Self::TraitMethod { instance, .. } => instance,
-        }
+        self.try_instance()
+            .expect("an external call has no Seal instance")
     }
 
     /// Returns the expected parameter count.
     #[inline]
     pub fn parameters(self) -> usize {
         match self {
-            Self::Direct { parameters, .. } | Self::TraitMethod { parameters, .. } => parameters,
+            Self::Direct { parameters, .. }
+            | Self::TraitMethod { parameters, .. }
+            | Self::Extern { parameters, .. } => parameters,
         }
     }
 
@@ -156,6 +183,12 @@ impl CallTarget {
     #[inline]
     pub fn is_trait_method(self) -> bool {
         matches!(self, Self::TraitMethod { .. })
+    }
+
+    /// Returns `true` for a call implemented outside Seal.
+    #[inline]
+    pub fn is_extern(self) -> bool {
+        matches!(self, Self::Extern { .. })
     }
 }
 

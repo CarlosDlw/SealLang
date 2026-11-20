@@ -326,6 +326,32 @@ impl Reachability<'_> {
                 self.check_type(declaration.ty);
                 self.check_expr(declaration.init);
             }
+            ItemKind::ExternBlock(declaration) => {
+                self.assert_span(declaration.abi_span);
+                for item in &declaration.items {
+                    self.check_item(*item);
+                }
+            }
+            ItemKind::ExternFunc(declaration) => {
+                self.assert_span(declaration.abi_span);
+                self.assert_span(declaration.name_span);
+                self.assert_span(declaration.span);
+                for param in &declaration.params {
+                    self.check_param(*param);
+                }
+                if let Some(ret) = declaration.ret {
+                    self.check_type(ret);
+                }
+                if let Some(link_name) = &declaration.link_name {
+                    self.assert_span(link_name.span);
+                }
+            }
+            ItemKind::ExternStatic(declaration) => {
+                self.assert_span(declaration.abi_span);
+                self.assert_span(declaration.name_span);
+                self.assert_span(declaration.span);
+                self.check_type(declaration.ty);
+            }
             ItemKind::Error => {}
         }
     }

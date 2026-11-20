@@ -2613,6 +2613,137 @@ Use `Copy` as a bound such as `T: Copy` instead, or remove it from the
 supertrait list.",
 };
 
+/// An ABI is unknown or unavailable on the target.
+pub const E3080: ErrorCode = ErrorCode {
+    code: "E3080",
+    title: "unknown or unavailable ABI",
+    explanation: "\
+An `extern` declaration names its calling convention as a string. The compiler
+supports the C family (`\"c\"`, `\"cdecl\"`, and `\"system\"`); a spelling it does
+not implement, or one that does not exist on the selected target, cannot be
+used for a declaration.
+
+Use `\"c\"` for the target's default C convention. Other conventions arrive as
+the compiler learns to emit them.",
+};
+
+/// An `extern` item is malformed.
+pub const E3081: ErrorCode = ErrorCode {
+    code: "E3081",
+    title: "malformed external declaration",
+    explanation: "\
+An external declaration names one C function or one C static. It has no body,
+no initializer, and no generic parameters, and it may only appear at file scope
+or inside an `extern` block.
+
+Write `extern \"c\" func name(parameter: Type) -> Type;` or
+`extern \"c\" static name: Type;`, and keep the ABI string on the declaration or
+on its enclosing block.",
+};
+
+/// An external declaration names an invalid linker symbol.
+pub const E3082: ErrorCode = ErrorCode {
+    code: "E3082",
+    title: "invalid external symbol name",
+    explanation: "\
+Every external declaration names a linker symbol. The symbol must be non-empty,
+must not contain whitespace or a NUL byte, and must not be `main`: the entry
+point belongs to the Seal program and cannot be imported from C.
+
+Rename the declaration, or give it a valid `link_name` string.",
+};
+
+/// Two external declarations use one symbol with different types.
+pub const E3083: ErrorCode = ErrorCode {
+    code: "E3083",
+    title: "conflicting external symbol declarations",
+    explanation: "\
+Several declarations may name the same C symbol, but they must agree on the
+ABI, the kind of item, and every type in the signature. The linker has one
+symbol, so two incompatible views of it would make calls depend on which
+declaration the compiler happened to see.
+
+Remove one declaration, or make the signatures identical.",
+};
+
+/// A type at a C boundary is not FFI-safe.
+pub const E3084: ErrorCode = ErrorCode {
+    code: "E3084",
+    title: "type is not FFI-safe",
+    explanation: "\
+A type crossing a C boundary must have a representation C can describe. Checked
+references, fat pointers, `char`, 128-bit integers, tuples, and aggregates
+without a declared C layout have no portable C equivalent.
+
+Use raw pointers for pointers, `c_char` for a C character, a 64-bit integer for
+a wide value, and a C-layout aggregate for a struct. The diagnostic names the
+reason for the rejected type.",
+};
+
+/// An external static is accessed outside `unsafe`.
+pub const E3086: ErrorCode = ErrorCode {
+    code: "E3086",
+    title: "external static access requires unsafe",
+    explanation: "\
+An external static is storage owned by C. Its address, lifetime, and concurrent
+accesses are outside the Seal memory model, and a `static mut` may change
+without any Seal code observing the change. Every read and write therefore
+requires an `unsafe` block.
+
+Wrap the access in `unsafe { ... }`. Only an external `static mut` may be
+written; an immutable external static is read-only in Seal.",
+};
+
+/// A variadic declaration or call is invalid.
+pub const E3088: ErrorCode = ErrorCode {
+    code: "E3088",
+    title: "invalid variadic declaration",
+    explanation: "\
+A variadic declaration needs at least one named parameter before `...`, and the
+variadic syntax is only meaningful on an external C function. Arguments after
+the fixed parameters are promoted to a type C can receive.
+
+Declare a fixed signature for now; variadic calls are not supported yet.",
+};
+
+/// A `link` directive is invalid.
+pub const E3091: ErrorCode = ErrorCode {
+    code: "E3091",
+    title: "invalid link directive",
+    explanation: "\
+A `link` directive names a library the final executable must link. It may only
+appear inside an `extern` block, and its name must be a non-empty library name
+without path separators or whitespace.
+
+Remove the directive, or write it as `link \"name\";` inside the block. Link
+directives are not supported yet.",
+};
+
+/// An external declaration appears in an invalid position.
+pub const E3092: ErrorCode = ErrorCode {
+    code: "E3092",
+    title: "external declaration in an invalid position",
+    explanation: "\
+External declarations describe the program's link interface, which is fixed
+before any function runs. They cannot be nested in an impl block or a trait,
+and they cannot be declared as statements inside a body.
+
+Move the declaration to file scope, or into an `extern` block at file scope.",
+};
+
+/// An external declaration is generic.
+pub const E3093: ErrorCode = ErrorCode {
+    code: "E3093",
+    title: "an external declaration cannot be generic",
+    explanation: "\
+A C function has one concrete signature. Generic parameters would make the
+imported signature depend on each instantiation, but the linker symbol names a
+single function with a single ABI.
+
+Remove the type parameters and declare the concrete signature the C function
+exports.",
+};
+
 /// A cast between pointer types is not supported.
 pub const E3074: ErrorCode = ErrorCode {
     code: "E3074",
@@ -2656,6 +2787,34 @@ uses, so it is rejected.
 Build the value in the initializer instead, or perform the write in a runtime
 function. Reading through a constant pointer remains available when the pointer
 names allocation storage known at compile time.",
+};
+
+/// A constant calls an external function.
+pub const E4033: ErrorCode = ErrorCode {
+    code: "E4033",
+    title: "an external function cannot run at compile time",
+    explanation: "\
+Constant evaluation only runs Seal functions marked `const func`. An external
+function is implemented by C and may read the environment, allocate memory, or
+have effects the compiler cannot reproduce or verify, so its value is not a
+compile-time constant.
+
+Call the function at run time, or replace it with a `const func` that computes
+the required value from its arguments.",
+};
+
+/// A constant reads an external static.
+pub const E4034: ErrorCode = ErrorCode {
+    code: "E4034",
+    title: "an external static cannot be read at compile time",
+    explanation: "\
+An external static is storage defined by C. Its initial value is chosen by the
+linked program, not by the Seal compiler, so constant evaluation cannot know
+it. Even an immutable external static may be initialized at run time by the C
+library that owns it.
+
+Read the static in a runtime function, or pass its value into the constant as
+an explicit argument.",
 };
 
 /// A constant reads through a pointer that names no constant allocation.
@@ -3052,11 +3211,12 @@ pub static ALL: &[ErrorCode] = &[
     E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044, E3045, E3046, E3047, E3048,
     E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057, E3058, E3059, E3060, E3062,
     E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071, E3072, E3073, E3074, E3075,
-    E3076, E3077, E3078, E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010,
-    E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023,
-    E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E5001, E5002, E5003, E5004, E5005,
-    E5006, E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002,
-    E6003, E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
+    E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3086, E3088, E3091, E3092, E3093,
+    E4001, E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013,
+    E4014, E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026,
+    E4027, E4028, E4030, E4031, E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006,
+    E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003,
+    E6004, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -3317,11 +3477,14 @@ mod tests {
                 "E3046", "E3047", "E3048", "E3049", "E3050", "E3051", "E3052", "E3053", "E3054",
                 "E3055", "E3056", "E3057", "E3058", "E3059", "E3060", "E3062", "E3063", "E3064",
                 "E3065", "E3066", "E3067", "E3068", "E3069", "E3070", "E3071", "E3072", "E3073",
-                "E3074", "E3075", "E3076", "E3077", "E3078",
+                "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
+                "E3084", "E3086", "E3088", "E3091", "E3092", "E3093",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is
         // cheaper than giving an unrelated diagnostic a number out of order.
+        // The FFI block reserves `E3079`, `E3085`, `E3087`, `E3089`, and
+        // `E3090` for later phases, which is why the list is not contiguous.
     }
 
     #[test]

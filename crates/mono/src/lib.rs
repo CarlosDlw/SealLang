@@ -85,6 +85,7 @@ pub struct MonoProgram {
     ids: FxHashMap<Instance, InstanceId>,
     items: Vec<MonoItem>,
     statics: Vec<DefId>,
+    extern_statics: Vec<DefId>,
     const_allocations: Vec<AllocId>,
     vtables: IndexVec<VtableId, MonoVTable>,
     vtable_ids: FxHashMap<VtableKey, VtableId>,
@@ -101,6 +102,7 @@ pub(crate) struct Collected {
     pub(crate) ids: FxHashMap<Instance, InstanceId>,
     pub(crate) items: Vec<MonoItem>,
     pub(crate) statics: Vec<DefId>,
+    pub(crate) extern_statics: Vec<DefId>,
     pub(crate) const_allocations: Vec<AllocId>,
     pub(crate) vtables: IndexVec<VtableId, MonoVTable>,
     pub(crate) vtable_ids: FxHashMap<VtableKey, VtableId>,
@@ -115,6 +117,7 @@ impl MonoProgram {
             ids: collected.ids,
             items: collected.items,
             statics: collected.statics,
+            extern_statics: collected.extern_statics,
             const_allocations: collected.const_allocations,
             vtables: collected.vtables,
             vtable_ids: collected.vtable_ids,
@@ -149,6 +152,16 @@ impl MonoProgram {
     #[inline]
     pub fn statics(&self) -> &[DefId] {
         &self.statics
+    }
+
+    /// Returns every external static referenced by a collected body.
+    ///
+    /// External statics have no Seal allocation: the linker resolves the
+    /// symbol, so they are recorded for validation but never collected as
+    /// items.
+    #[inline]
+    pub fn extern_statics(&self) -> &[DefId] {
+        &self.extern_statics
     }
 
     /// Returns every reachable non-static const allocation, in discovery order.

@@ -22,6 +22,11 @@ impl<'a> Interpreter<'a> {
                 (alloc, self.memory[alloc].ty)
             }
             PlaceRoot::Static(def) => {
+                // An external static has no initializer in this program; its
+                // value is chosen by the linked C code.
+                if self.hir.is_extern_static(def) {
+                    return Err(self.error(EvalErrorKind::ExternStatic, span));
+                }
                 let alloc = self.ensure_static(def, span)?;
                 (alloc, self.memory[alloc].ty)
             }

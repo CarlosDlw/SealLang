@@ -11,6 +11,7 @@ mod drop_calls;
 mod dyn_types;
 mod enums;
 mod examples;
+mod ffi;
 mod flow;
 mod for_loop;
 mod generics;

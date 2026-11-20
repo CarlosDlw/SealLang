@@ -117,6 +117,8 @@ pub(crate) fn collect_with(
         items: Vec::new(),
         statics: Vec::new(),
         static_ids: FxHashSet::default(),
+        extern_statics: Vec::new(),
+        extern_static_ids: FxHashSet::default(),
         const_allocations: Vec::new(),
         alloc_ids: FxHashSet::default(),
         scanned_allocs: FxHashSet::default(),
@@ -146,6 +148,8 @@ struct Collector<'a> {
     items: Vec<MonoItem>,
     statics: Vec<seal_def::DefId>,
     static_ids: FxHashSet<seal_def::DefId>,
+    extern_statics: Vec<seal_def::DefId>,
+    extern_static_ids: FxHashSet<seal_def::DefId>,
     const_allocations: Vec<AllocId>,
     alloc_ids: FxHashSet<AllocId>,
     scanned_allocs: FxHashSet<AllocId>,
@@ -534,7 +538,17 @@ impl Collector<'_> {
     fn scan_place(&mut self, place: &Place, span: Span) {
         match place.root {
             PlaceRoot::Local(_) => {}
-            PlaceRoot::Static(def) => self.add_static(def),
+            // An external static is defined by C: there is no Seal allocation
+            // to collect, and the linker resolves the symbol.
+            PlaceRoot::Static(def) => {
+                if self.hir.is_extern_static(def) {
+                    if self.extern_static_ids.insert(def) {
+                        self.extern_statics.push(def);
+                    }
+                } else {
+                    self.add_static(def);
+                }
+            }
             PlaceRoot::Const(def) => {
                 if let Some(alloc) = self.constants.const_allocation(def) {
                     self.scan_allocation(alloc);
@@ -654,6 +668,7 @@ impl Collector<'_> {
             bodies,
             items,
             statics,
+            extern_statics,
             const_allocations,
             vtables,
             vtable_ids,
@@ -670,6 +685,7 @@ impl Collector<'_> {
             ids,
             items,
             statics,
+            extern_statics,
             const_allocations,
             vtables,
             vtable_ids,

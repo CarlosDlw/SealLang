@@ -398,16 +398,51 @@ impl Checker<'_> {
                 ty
             }
             Res::Const(def) | Res::Static(def) => {
-                let ty = self
-                    .hir
-                    .body_of(def)
-                    .and_then(|body| body.ret)
-                    .unwrap_or_else(|| self.error_ty());
+                let external = self.hir.extern_static(def).cloned();
+                let ty = match &external {
+                    Some(data) => data.ty,
+                    None => self
+                        .hir
+                        .body_of(def)
+                        .and_then(|body| body.ret)
+                        .unwrap_or_else(|| self.error_ty()),
+                };
                 let is_static = matches!(res, Res::Static(_));
                 let mutable = is_static && self.hir.definitions().is_mutable(def);
                 let assignment = mode == PlaceMode::Write;
                 let writes = assignment || mode == PlaceMode::BorrowExclusive;
-                if mutable {
+                if external.is_some() {
+                    if self.in_const_context() {
+                        let access = if writes {
+                            super::const_context::StaticAccess::Write
+                        } else {
+                            super::const_context::StaticAccess::Read
+                        };
+                        self.report_const_static_access(access, span);
+                    } else if self.unsafe_depth == 0 {
+                        self.error(
+                            seal_error_codes::E3086,
+                            span,
+                            format!(
+                                "access to the external static `{}` requires an `unsafe` block",
+                                self.def_name(def)
+                            ),
+                        )
+                        .help("wrap the access in `unsafe { ... }`")
+                        .emit();
+                    } else if assignment && !mutable {
+                        self.error(
+                            seal_error_codes::E3086,
+                            span,
+                            format!(
+                                "cannot assign to the external static `{}`",
+                                self.def_name(def)
+                            ),
+                        )
+                        .help("declare it as `extern \"c\" static mut` to allow writes")
+                        .emit();
+                    }
+                } else if mutable {
                     if self.in_const_context() {
                         let access = if writes {
                             super::const_context::StaticAccess::Write

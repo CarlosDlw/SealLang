@@ -53,6 +53,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) pointers: &'a Pointers<'a, 'ctx>,
     /// Static and const-allocation storage.
     pub(crate) globals: &'a Globals<'ctx>,
+    /// Declarations of functions and statics implemented by C.
+    pub(crate) externals: &'a crate::extern_decl::Externals<'ctx>,
     /// Declared functions, keyed by instance.
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     /// Emitted vtable globals, keyed by coercion.
@@ -83,6 +85,8 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) values: &'a ConstValues<'a, 'ctx>,
     pub(crate) pointers: &'a Pointers<'a, 'ctx>,
     pub(crate) globals: &'a Globals<'ctx>,
+    /// Declarations of functions and statics implemented by C.
+    pub(crate) externals: &'a crate::extern_decl::Externals<'ctx>,
     pub(crate) functions: &'a FxHashMap<Instance, FunctionValue<'ctx>>,
     pub(crate) vtables: &'a Vtables<'ctx>,
     pub(crate) drop_glues: &'a DropGlues<'ctx>,
@@ -122,6 +126,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             values: self.values,
             pointers: self.pointers,
             globals: self.globals,
+            externals: self.externals,
             functions: self.functions,
             vtables: self.vtables,
             drop_glues: self.drop_glues,
@@ -157,6 +162,19 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     }
                 };
                 let value = self.emit_rvalue(rvalue)?;
+                // A C function returning `void` produces no value. The MIR call
+                // still has a unit destination, but storing the empty struct
+                // would add a write the source never asked for.
+                if matches!(
+                    rvalue,
+                    seal_mir::Rvalue::Call {
+                        target: seal_mir::CallTarget::Extern { .. },
+                        ..
+                    }
+                ) && self.mapper.is_unit_like(self.place_type(place)?)
+                {
+                    continue;
+                }
                 let destination = self.place_ptr(place)?;
                 self.build(self.builder.build_store(destination, value), "assignment")?;
             }

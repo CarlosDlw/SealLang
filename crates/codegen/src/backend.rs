@@ -154,6 +154,20 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     // method reachable through a vtable is excluded before declarations are
     // annotated. The input set stays untouched.
     let noalias = crate::vtable::filtered_noalias(input.mono, input.noalias_functions);
+    let externals =
+        crate::extern_decl::Externals::declare(&module, input.hir, &mapper, input.interner)?;
+    if let Some(debug) = &debug {
+        for &def in input.hir.extern_functions() {
+            let Some(declaration) = input.hir.extern_function(def) else {
+                continue;
+            };
+            let function = externals.function(def).ok_or_else(|| {
+                CodegenError::internal(format!("external function {def:?} was not declared"))
+            })?;
+            let parameters: Vec<TyId> = declaration.params.iter().map(|param| param.ty).collect();
+            debug.declare_extern_function(def, function, &parameters, declaration.ret)?;
+        }
+    }
     let functions = declare_functions(
         &context,
         &module,
@@ -234,6 +248,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             values: &values,
             pointers: &pointers,
             globals: &globals,
+            externals: &externals,
             functions: &functions,
             vtables: &vtables,
             drop_glues: &drop_glues,

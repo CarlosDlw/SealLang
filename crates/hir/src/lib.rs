@@ -29,6 +29,7 @@
 mod body;
 mod builtin;
 mod expr;
+mod extern_decl;
 mod generics;
 mod id;
 mod lower;
@@ -43,6 +44,7 @@ mod tests;
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use expr::{Expr, ExprKind, Place, Projection};
+pub use extern_decl::{ExternFunction, ExternStatic};
 pub use generics::InherentImpl;
 pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use pattern::{MatchArm, Pattern, PatternKind};
@@ -110,6 +112,10 @@ pub struct Hir {
     receivers: FxHashMap<DefId, ReceiverKind>,
     inherent_impls: Vec<InherentImpl>,
     dyn_types: Vec<DynTypeUse>,
+    extern_functions: FxHashMap<DefId, extern_decl::ExternFunction>,
+    extern_function_order: Vec<DefId>,
+    extern_statics: FxHashMap<DefId, extern_decl::ExternStatic>,
+    extern_static_order: Vec<DefId>,
 }
 
 impl Hir {
@@ -174,6 +180,9 @@ impl Hir {
     /// without a body has no body of its own, so its declaration supplies the
     /// marker instead.
     pub fn is_unsafe_function(&self, function: DefId) -> bool {
+        if self.definitions.get(function).kind == DefKind::ExternFunction {
+            return true;
+        }
         if let Some(body) = self.body_of(function) {
             return body.is_unsafe;
         }
@@ -406,6 +415,46 @@ impl Hir {
         &self.dyn_types
     }
 
+    /// Returns the external declaration for `def`, if it is an external function.
+    pub fn extern_function(&self, def: DefId) -> Option<&extern_decl::ExternFunction> {
+        self.extern_functions.get(&def)
+    }
+
+    /// Returns the external declaration for `def`, if it is an external static.
+    pub fn extern_static(&self, def: DefId) -> Option<&extern_decl::ExternStatic> {
+        self.extern_statics.get(&def)
+    }
+
+    /// Returns every external function definition, in declaration order.
+    pub fn extern_functions(&self) -> &[DefId] {
+        &self.extern_function_order
+    }
+
+    /// Returns every external static definition, in declaration order.
+    pub fn extern_statics(&self) -> &[DefId] {
+        &self.extern_static_order
+    }
+
+    /// Returns `true` when `def` is an external function declaration.
+    pub fn is_extern_function(&self, def: DefId) -> bool {
+        self.definitions.get(def).kind == DefKind::ExternFunction
+    }
+
+    /// Returns `true` when `def` is an external static declaration.
+    pub fn is_extern_static(&self, def: DefId) -> bool {
+        self.definitions.get(def).kind == DefKind::ExternStatic
+    }
+
+    pub(crate) fn insert_extern_function(&mut self, def: DefId, data: extern_decl::ExternFunction) {
+        self.extern_function_order.push(def);
+        self.extern_functions.insert(def, data);
+    }
+
+    pub(crate) fn insert_extern_static(&mut self, def: DefId, data: extern_decl::ExternStatic) {
+        self.extern_static_order.push(def);
+        self.extern_statics.insert(def, data);
+    }
+
     /// Returns every inherent implementation in declaration order.
     pub fn inherent_impls(&self) -> &[InherentImpl] {
         &self.inherent_impls
@@ -537,6 +586,10 @@ impl Hir {
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
             dyn_types: Vec::new(),
+            extern_functions: FxHashMap::default(),
+            extern_function_order: Vec::new(),
+            extern_statics: FxHashMap::default(),
+            extern_static_order: Vec::new(),
         };
         hir.builtin = Some(builtin::install(&mut hir, interner));
         hir

@@ -51,6 +51,18 @@ impl Parser<'_> {
             } else if self.at(TokenKind::Continue) {
                 let statement = self.parse_continue();
                 statements.push(statement);
+            } else if self.at_extern_item() {
+                let start = self.current_span();
+                self.error(
+                    codes::E3092,
+                    start,
+                    "an `extern` declaration cannot be a statement",
+                )
+                .help("declare external items at file scope")
+                .emit();
+                self.skip_declaration();
+                let span = start.cover(self.previous_span());
+                statements.push(self.builder.push_error_stmt(span));
             } else {
                 // A block-like expression in statement position stands alone: a
                 // token on the next line starts a new statement, so `if c { }`

@@ -72,6 +72,10 @@ pub enum EvalErrorKind {
     DestructorInConstant,
     /// A compile-time call kept a symbolic type argument.
     NonConcreteArguments,
+    /// A constant calls an external function.
+    ExternCall,
+    /// A constant reads an external static.
+    ExternStatic,
     /// A constant panicked, or a compile-time call had an invalid body.
     Panic(String),
     /// An internal evaluator invariant failed.
@@ -106,6 +110,8 @@ impl EvalErrorKind {
             Self::IntrinsicNotWhitelisted => codes::E4022,
             Self::DestructorInConstant => codes::E4028,
             Self::NonConcreteArguments | Self::Panic(_) => codes::E4027,
+            Self::ExternCall => codes::E4033,
+            Self::ExternStatic => codes::E4034,
             Self::Internal(_) => return None,
         })
     }
@@ -174,6 +180,10 @@ impl EvalErrorKind {
             Self::NonConcreteArguments => {
                 "a compile-time call has non-concrete type arguments".to_owned()
             }
+            Self::ExternCall => {
+                "a constant context cannot call a function implemented outside Seal".to_owned()
+            }
+            Self::ExternStatic => "a constant context cannot read an external static".to_owned(),
             Self::Panic(message) => format!("constant evaluation panicked: {message}"),
             Self::Internal(message) => {
                 format!("internal const-evaluator invariant failed: {message}")
@@ -274,6 +284,8 @@ mod tests {
             (EvalErrorKind::IntrinsicNotWhitelisted, Some("E4022")),
             (EvalErrorKind::DestructorInConstant, Some("E4028")),
             (EvalErrorKind::NonConcreteArguments, Some("E4027")),
+            (EvalErrorKind::ExternCall, Some("E4033")),
+            (EvalErrorKind::ExternStatic, Some("E4034")),
             (EvalErrorKind::Panic("boom".to_owned()), Some("E4027")),
             (EvalErrorKind::Internal("bug".to_owned()), None),
         ];

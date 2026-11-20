@@ -23,7 +23,7 @@ use inkwell::debug_info::{
 };
 use inkwell::module::Module;
 use inkwell::values::{GlobalValue, PointerValue};
-use seal_def::Definitions;
+use seal_def::{DefId, Definitions};
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_mir::{Body, LocalDecl};
 use seal_span::{FileId, SourceMap, Span};
@@ -165,6 +165,50 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             DIFlags::ZERO,
             self.optimized,
         ))
+    }
+
+    /// Creates the debug subprogram of an external function declaration.
+    ///
+    /// The declaration has no body, so the subprogram is marked as a
+    /// declaration and no scope is opened for it.
+    pub(crate) fn declare_extern_function(
+        &self,
+        def: DefId,
+        function: inkwell::values::FunctionValue<'ctx>,
+        parameters: &[TyId],
+        returns: Option<TyId>,
+    ) -> Result<(), CodegenError> {
+        let (file, line, _) = self.definition_location(def);
+        let return_type = match returns {
+            Some(ty) if !self.mapper.is_unit_like(ty) => Some(self.di_type(ty)?),
+            _ => None,
+        };
+        let mut parameter_types = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            parameter_types.push(self.di_type(*parameter)?);
+        }
+        let subroutine = self.builder.create_subroutine_type(
+            self.unit_file,
+            return_type,
+            &parameter_types,
+            DIFlags::ZERO,
+        );
+        let name = self.interner.resolve(self.definitions.name(def)).to_owned();
+        let scope = self.builder.create_function(
+            self.unit.as_debug_info_scope(),
+            &name,
+            None,
+            file,
+            line,
+            subroutine,
+            false,
+            false,
+            line,
+            DIFlags::ZERO,
+            self.optimized,
+        );
+        function.set_subprogram(scope);
+        Ok(())
     }
 
     /// Declares a source-level local at its storage.

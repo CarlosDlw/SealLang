@@ -165,6 +165,9 @@ impl Effects {
             CallTarget::TraitMethod { instance, .. } => {
                 self.candidates(&self.trait_candidates, instance.def)
             }
+            // An external function has no Seal body: it may read or write any
+            // static and exercise raw-memory contracts the checker cannot see.
+            CallTarget::Extern { .. } => GlobalEffects::unknown(),
         }
     }
 

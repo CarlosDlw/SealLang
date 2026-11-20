@@ -64,6 +64,7 @@ mod drop_glue;
 mod entry;
 mod equality;
 mod error;
+mod extern_decl;
 mod function;
 mod global;
 mod intrinsic;

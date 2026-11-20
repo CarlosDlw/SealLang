@@ -341,6 +341,7 @@ fn check_rvalue(
                 CallTarget::TraitMethod { .. } => {
                     return Err(MonoValidationError::SymbolicCall { instance, span });
                 }
+                CallTarget::Extern { .. } => {}
             }
             for argument in args {
                 check_operand(tcx, instance, argument)?;
@@ -616,7 +617,7 @@ fn check_place_global(
     match place.root {
         seal_mir::PlaceRoot::Local(_) => Ok(()),
         seal_mir::PlaceRoot::Static(def) => {
-            if program.statics().contains(&def) {
+            if program.statics().contains(&def) || program.extern_statics().contains(&def) {
                 Ok(())
             } else {
                 Err(MonoValidationError::MissingStatic { def })

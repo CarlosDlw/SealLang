@@ -97,6 +97,9 @@ impl<'a> Parser<'a> {
             } else if self.at(TokenKind::Trait) {
                 let item = self.parse_trait();
                 self.items.push(item);
+            } else if self.at_name("extern") {
+                let item = self.parse_extern_item();
+                self.items.push(item);
             } else {
                 let start = self.current_span();
                 let found = self.describe(self.current_kind());
@@ -363,7 +366,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Skips a declaration after a diagnostic, including any balanced body.
-    fn skip_declaration(&mut self) {
+    pub(crate) fn skip_declaration(&mut self) {
         let mut depth = 0usize;
         while !self.is_eof() {
             match self.current_kind() {
@@ -520,7 +523,17 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
-            if self.at(TokenKind::Func) {
+            if self.at_extern_item() {
+                let span = self.current_span();
+                self.error(
+                    codes::E3092,
+                    span,
+                    "an `extern` declaration cannot be nested in an impl block",
+                )
+                .help("declare external items at file scope")
+                .emit();
+                self.skip_declaration();
+            } else if self.at(TokenKind::Func) {
                 let start = self.current_span();
                 functions.push(self.parse_function(false, false, start));
             } else if self.at(TokenKind::Unsafe) {
@@ -592,7 +605,17 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
-            if self.at(TokenKind::Func) {
+            if self.at_extern_item() {
+                let span = self.current_span();
+                self.error(
+                    codes::E3092,
+                    span,
+                    "an `extern` declaration cannot be nested in a trait",
+                )
+                .help("declare external items at file scope")
+                .emit();
+                self.skip_declaration();
+            } else if self.at(TokenKind::Func) {
                 methods.push(self.parse_trait_method(false, self.current_span()));
             } else if self.at(TokenKind::Unsafe) {
                 let start = self.current_span();
@@ -1000,6 +1023,17 @@ impl<'a> Parser<'a> {
     #[inline]
     pub(crate) fn at(&self, kind: TokenKind) -> bool {
         self.current_kind() == kind
+    }
+
+    /// Returns `true` when the current token is the identifier `name`.
+    ///
+    /// Contextual keywords are spellings, not token kinds, so a parser position
+    /// asks for the spelling and leaves the name usable everywhere else.
+    pub(crate) fn at_name(&self, name: &str) -> bool {
+        match self.current_kind() {
+            TokenKind::Ident(symbol) => self.interner.resolve(symbol) == name,
+            _ => false,
+        }
     }
 
     /// Consumes and returns the current token. `Eof` is never consumed.

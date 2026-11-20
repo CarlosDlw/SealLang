@@ -15,6 +15,10 @@ impl<'a> Interpreter<'a> {
     ) -> Result<ConstValue, EvalError> {
         let instance = match target {
             CallTarget::Direct { instance, .. } => instance,
+            // The body lives in C, not in the MIR the evaluator can execute.
+            CallTarget::Extern { .. } => {
+                return Err(self.error(EvalErrorKind::ExternCall, span));
+            }
             CallTarget::TraitMethod { .. } => {
                 return Err(self.error(
                     EvalErrorKind::DynamicDispatch {

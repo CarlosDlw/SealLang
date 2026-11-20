@@ -9,7 +9,7 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, IntVal
 use inkwell::{FloatPredicate, IntPredicate};
 use seal_def::DefId;
 use seal_hash::FxHashMap;
-use seal_mir::{AggregateKind, BinOp, Rvalue, UnOp};
+use seal_mir::{AggregateKind, BinOp, CallTarget, Operand, Rvalue, UnOp};
 use seal_span::Span;
 use seal_ty::{Instance, SubstsId, TyKind, VariantIdx};
 
@@ -57,6 +57,9 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 span,
             } => self.emit_intrinsic(*method, receiver, args, *span),
             Rvalue::Call { target, args, .. } => {
+                if let CallTarget::Extern { def, .. } = target {
+                    return self.call_extern(*def, args);
+                }
                 if target.is_trait_method() {
                     return Err(CodegenError::internal(
                         "a symbolic trait call reached code generation; monomorphization must \
@@ -810,6 +813,46 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         }
         self.builder.position_at_end(continuation);
         Ok(())
+    }
+
+    /// Emits a call to an external function.
+    ///
+    /// A `void` function produces no LLVM value, so the destination receives
+    /// the empty struct the language uses for `()`. The caller skips the store.
+    fn call_extern(
+        &self,
+        def: DefId,
+        arguments: &[Operand],
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let function = self.externals.function(def).ok_or_else(|| {
+            CodegenError::internal(format!("external function {def:?} was not declared"))
+        })?;
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(BasicMetadataValueEnum::from(self.load_operand(argument)?));
+        }
+        let call = self.build(
+            self.builder.build_call(function, &values, "extern call"),
+            "external call",
+        )?;
+        match call.try_as_basic_value() {
+            ValueKind::Basic(value) => Ok(value),
+            ValueKind::Instruction(_) => {
+                let declaration = self.hir.extern_function(def).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "external function {def:?} has no HIR declaration"
+                    ))
+                })?;
+                let returns = declaration.ret.unwrap_or_else(|| self.tcx.unit_ty());
+                if self.mapper.is_unit_like(returns) {
+                    Ok(self.mapper.empty_type().const_zero().into())
+                } else {
+                    Err(CodegenError::internal(
+                        "an external function returned no LLVM value",
+                    ))
+                }
+            }
+        }
     }
 
     fn call(

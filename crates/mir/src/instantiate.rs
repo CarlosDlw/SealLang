@@ -168,6 +168,16 @@ fn substitute_target(tcx: &TyCtxt, substs: SubstsId, target: CallTarget) -> Call
             instance: Instance::new(instance.def, substitute_substs(tcx, substs, instance.args)),
             parameters,
         },
+        // An external declaration has no type arguments to substitute.
+        CallTarget::Extern {
+            def,
+            parameters,
+            variadic,
+        } => CallTarget::Extern {
+            def,
+            parameters,
+            variadic,
+        },
     }
 }
 

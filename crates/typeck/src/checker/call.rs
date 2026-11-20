@@ -70,7 +70,12 @@ impl Checker<'_> {
                 .results
                 .signature(function)
                 .is_some_and(|signature| signature.is_unsafe);
-            self.require_unsafe_call(span, is_unsafe, self.hir.definitions().name(function));
+            let name = self.hir.definitions().name(function);
+            if self.hir.extern_function(function).is_some() {
+                self.require_unsafe_extern_call(span, is_unsafe, name);
+            } else {
+                self.require_unsafe_call(span, is_unsafe, name);
+            }
         }
 
         let explicit = self

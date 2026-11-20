@@ -61,6 +61,7 @@ pub(crate) fn resolve_body(
                     CallTarget::Direct { instance, .. } => {
                         events.push(BodyEvent::Call(ChildCall { instance, span }));
                     }
+                    CallTarget::Extern { .. } => {}
                     CallTarget::TraitMethod {
                         instance,
                         parameters,
