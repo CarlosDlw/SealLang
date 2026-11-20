@@ -57,6 +57,26 @@ impl Checker<'_> {
         let mut receiver_ty = self.infer_expr_mode(receiver, None, flow, PlaceMode::Borrow);
         let mut receiver_place = self.results.place(receiver).cloned();
 
+        if self.closure_of_ty(receiver_ty).is_some()
+            && matches!(
+                self.interner.resolve(name),
+                "call" | "call_mut" | "call_once"
+            )
+        {
+            for arg in args {
+                self.infer_expr(*arg, None, flow);
+            }
+            let name = self.interner.resolve(name).to_owned();
+            self.error(
+                codes::E3096,
+                name_span,
+                format!("a closure is not called through the method `{name}`"),
+            )
+            .help("write `f(...)` instead of `f.call(...)`")
+            .emit();
+            return self.error_ty();
+        }
+
         if let Some(ty) = self.check_dynamic_method_call(
             DynamicCall {
                 expr,

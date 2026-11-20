@@ -5,7 +5,10 @@ use seal_hash::FxHashMap;
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
-use seal_ty::{CastKind, GenericParamDef, Instance, PathElem, RawPtrKind, RefKind, TraitRef, TyId};
+use seal_ty::{
+    AdtId, CastKind, ClosureKind, GenericParamDef, Instance, PathElem, RawPtrKind, RefKind,
+    TraitRef, TyId,
+};
 
 /// One step from a place to a sub-place, with the field resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -49,6 +52,15 @@ pub enum PlaceRoot {
     Const(DefId),
     /// A static item, whose single allocation has program lifetime.
     Static(DefId),
+    /// A value captured by the closure whose body is being checked.
+    Capture {
+        /// The closure whose environment stores the value.
+        closure: DefId,
+        /// The environment slot.
+        index: u32,
+        /// The synthetic definition that names the capture in the body.
+        binding: DefId,
+    },
 }
 
 impl PlaceRoot {
@@ -56,10 +68,14 @@ impl PlaceRoot {
     pub const fn def(self) -> DefId {
         match self {
             Self::Local(def) | Self::Const(def) | Self::Static(def) => def,
+            Self::Capture { binding, .. } => binding,
         }
     }
 
-    /// Returns `true` when the root is a binding or parameter.
+    /// Returns `true` when the root is a binding or parameter of the body.
+    ///
+    /// A capture is storage owned by the closure environment, not by the body
+    /// being checked, so it is not a local for initialization purposes.
     pub const fn is_local(self) -> bool {
         matches!(self, Self::Local(_))
     }
@@ -184,6 +200,83 @@ pub enum Coercion {
         source: TyId,
         /// The resulting reference type.
         target: TyId,
+    },
+    /// A closure without captures becomes a function pointer.
+    ClosureToFnPtr {
+        /// The closure whose body provides the function.
+        closure: DefId,
+        /// The function pointer type after the coercion.
+        target: TyId,
+    },
+}
+
+/// How a closure environment stores one captured value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CaptureStorage {
+    /// The environment owns the value, because the closure is `move`.
+    Value,
+    /// The environment stores `*T`, captured by shared borrow.
+    Shared,
+    /// The environment stores `*mut T`, captured by exclusive borrow.
+    Exclusive,
+}
+
+/// Type-checking facts about one captured value.
+///
+/// The usage flags are collected while the body is checked and decide the
+/// storage and the closure kind once the whole body has been seen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureInfo {
+    /// The type of the captured value before any borrow is taken.
+    pub value_ty: TyId,
+    /// How the environment stores the value.
+    pub storage: CaptureStorage,
+    /// Whether the body reads the value without writing it.
+    pub shared: bool,
+    /// Whether the body writes or exclusively borrows the value.
+    pub exclusive: bool,
+    /// Whether the body moves the value out of the environment.
+    pub moved: bool,
+    /// Whether the move out of a reference was already reported, so one
+    /// diagnostic covers every read of the same capture.
+    pub move_reported: bool,
+}
+
+/// The checked signature and environment of one closure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClosureInfo {
+    /// The callable signature callers use.
+    pub signature: Signature,
+    /// The strongest way the closure may be called.
+    pub kind: ClosureKind,
+    /// Whether the source wrote `move` before the parameter list.
+    pub is_move: bool,
+    /// Facts about each capture, in environment order.
+    pub captures: Vec<CaptureInfo>,
+}
+
+/// The callable signature an expected type supplies to a closure literal.
+///
+/// Phase 5 extends this with the signature of an instantiated `Fn` bound; a
+/// function pointer already fixes both lists, so it is the only source in
+/// phase 4.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClosureHint {
+    /// Parameter types the closure must accept.
+    pub(crate) params: Vec<TyId>,
+    /// The result type the closure must produce.
+    pub(crate) ret: TyId,
+}
+
+/// The callable a call expression reaches through a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolvedCall {
+    /// A call of a concrete closure value.
+    Closure {
+        /// The closure being called.
+        closure: DefId,
+        /// The closure kind, which decides the receiver adjustment.
+        kind: ClosureKind,
     },
 }
 
@@ -387,6 +480,9 @@ pub struct TypeckResults {
     function_addresses: FxHashMap<HirExprId, Instance>,
     coercions: FxHashMap<HirExprId, Coercion>,
     casts: FxHashMap<HirExprId, CastKind>,
+    closure_info: FxHashMap<DefId, ClosureInfo>,
+    closure_adt_owner: FxHashMap<AdtId, DefId>,
+    calls: FxHashMap<HirExprId, ResolvedCall>,
 }
 
 impl TypeckResults {
@@ -453,6 +549,22 @@ impl TypeckResults {
         self.casts.get(&expr).copied()
     }
 
+    /// Returns the checked signature and environment of a closure.
+    pub fn closure_info(&self, closure: DefId) -> Option<&ClosureInfo> {
+        self.closure_info.get(&closure)
+    }
+
+    /// Returns the closure whose environment is the aggregate `adt`.
+    pub fn closure_adt_owner(&self, adt: AdtId) -> Option<DefId> {
+        self.closure_adt_owner.get(&adt).copied()
+    }
+
+    /// Returns the callable reached by a call expression, if it is not a
+    /// direct function call.
+    pub fn call(&self, expr: HirExprId) -> Option<ResolvedCall> {
+        self.calls.get(&expr).copied()
+    }
+
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
@@ -471,6 +583,9 @@ impl TypeckResults {
             function_addresses: FxHashMap::default(),
             coercions: FxHashMap::default(),
             casts: FxHashMap::default(),
+            closure_info: FxHashMap::default(),
+            closure_adt_owner: FxHashMap::default(),
+            calls: FxHashMap::default(),
         }
     }
 
@@ -516,5 +631,19 @@ impl TypeckResults {
 
     pub(crate) fn record_cast(&mut self, expr: HirExprId, kind: CastKind) {
         self.casts.insert(expr, kind);
+    }
+
+    pub(crate) fn record_closure(&mut self, closure: DefId, adt: AdtId, info: ClosureInfo) {
+        self.closure_adt_owner.insert(adt, closure);
+        self.closure_info.insert(closure, info);
+    }
+
+    /// Returns the closure info of `closure`, mutably, for usage collection.
+    pub(crate) fn closure_info_mut(&mut self, closure: DefId) -> Option<&mut ClosureInfo> {
+        self.closure_info.get_mut(&closure)
+    }
+
+    pub(crate) fn record_call(&mut self, expr: HirExprId, call: ResolvedCall) {
+        self.calls.insert(expr, call);
     }
 }

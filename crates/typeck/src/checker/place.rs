@@ -196,6 +196,9 @@ impl Checker<'_> {
             PlaceRoot::Local(def) | PlaceRoot::Static(def) => {
                 self.hir.definitions().is_mutable(def)
             }
+            // A closure body may write a captured value; whether the enclosing
+            // binding is mutable is decided when the closure borrows it.
+            PlaceRoot::Capture { .. } => true,
             PlaceRoot::Const(_) => false,
         }
     }

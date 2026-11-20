@@ -642,6 +642,13 @@ impl<'a> BodyLowering<'a> {
                     span,
                 );
             }
+            Coercion::ClosureToFnPtr { .. } => {
+                // The conversion needs the closure instance and the address of
+                // its body, both of which only exist once closures reach MIR.
+                // A closure body is not lowered yet, so this coercion cannot be
+                // reached from a lowered body.
+                unreachable!("a closure-to-pointer coercion reached MIR lowering")
+            }
         }
     }
 
@@ -2069,6 +2076,12 @@ impl<'a> BodyLowering<'a> {
         let root = match place.root {
             seal_typeck::PlaceRoot::Local(def) => {
                 PlaceRoot::Local(self.place_of_local(def).expect_local())
+            }
+            seal_typeck::PlaceRoot::Capture { .. } => {
+                // Capture places are produced only while checking a closure
+                // body, and closure bodies are not lowered yet. Reaching this
+                // arm would mean the lowering skipped the closure boundary.
+                unreachable!("a closure capture place reached MIR lowering outside its environment")
             }
             seal_typeck::PlaceRoot::Static(def) => PlaceRoot::Static(def),
             seal_typeck::PlaceRoot::Const(def) => {

@@ -182,6 +182,22 @@ impl Checker<'_> {
     }
 
     pub(super) fn is_copy(&self, ty: TyId) -> bool {
+        // A closure stores its captures inline. A shared-reference environment
+        // is `Copy`, a by-value environment is `Copy` when every captured value
+        // is, and an exclusive-reference environment never is, because copying
+        // it would duplicate the exclusive loan.
+        if let TyKind::Adt { adt, .. } = self.hir.ty_ctxt().kind(ty)
+            && let Some(closure) = self.hir.closure_for_adt(adt)
+            && let Some(info) = self.results.closure_info(closure)
+        {
+            return info.captures.iter().all(|capture| match capture.storage {
+                crate::results::CaptureStorage::Exclusive => false,
+                crate::results::CaptureStorage::Shared => true,
+                crate::results::CaptureStorage::Value => {
+                    self.is_copy_with(capture.value_ty, &self.env)
+                }
+            });
+        }
         self.hir.ty_ctxt().is_copy_with(ty, &self.env)
     }
 

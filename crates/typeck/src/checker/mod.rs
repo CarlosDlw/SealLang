@@ -2,7 +2,9 @@
 
 mod borrow;
 mod call;
+mod callable;
 mod cast;
+mod closure;
 mod coerce;
 mod const_context;
 mod drop;
@@ -81,6 +83,10 @@ pub(crate) struct Checker<'a> {
     pub(super) validated_trait_arguments: FxHashSet<TraitRef>,
     /// The definition whose body is being checked, for its generic scope.
     pub(super) owner: Option<DefId>,
+    /// The closure whose body is being checked, when inside one.
+    pub(super) current_closure: Option<DefId>,
+    /// Closures whose body has already been checked.
+    pub(super) checked_closures: FxHashSet<DefId>,
     pub(super) ret: TyId,
     /// Non-`Copy` pattern bindings referenced by the guard being checked.
     ///
@@ -125,6 +131,8 @@ impl<'a> Checker<'a> {
             proof_cache: FxHashMap::default(),
             validated_trait_arguments: FxHashSet::default(),
             owner: None,
+            current_closure: None,
+            checked_closures: FxHashSet::default(),
             ret: unit,
             guard_moves: None,
             checking_place_base: false,

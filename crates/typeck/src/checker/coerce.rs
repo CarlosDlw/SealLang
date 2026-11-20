@@ -75,18 +75,38 @@ impl Checker<'_> {
                 self.results.record_expr(expr, expected);
                 expected
             }
-            Ok(false) => match self.coerce_to_function_pointer(expr, found, expected) {
+            Ok(false) => match self.coerce_to_closure_pointer(expr, found, expected) {
                 Ok(true) => {
-                    // The address is the same value; only the signature it may
-                    // be called with changed, so no MIR rvalue is needed.
+                    let closure = self
+                        .closure_of_ty(found)
+                        .expect("a closure-pointer coercion has a closure source");
+                    self.results.record_coercion(
+                        expr,
+                        Coercion::ClosureToFnPtr {
+                            closure,
+                            target: expected,
+                        },
+                    );
                     self.results.record_expr(expr, expected);
                     expected
                 }
-                Ok(false) => {
-                    let span = self.hir.expr(expr).span;
-                    self.mismatch(span, expected, found);
-                    found
-                }
+                Ok(false) => match self.coerce_to_function_pointer(expr, found, expected) {
+                    Ok(true) => {
+                        // The address is the same value; only the signature it
+                        // may be called with changed, so no MIR rvalue is needed.
+                        self.results.record_expr(expr, expected);
+                        expected
+                    }
+                    Ok(false) => {
+                        let span = self.hir.expr(expr).span;
+                        self.mismatch(span, expected, found);
+                        found
+                    }
+                    Err(()) => {
+                        self.results.record_expr(expr, self.error_ty());
+                        self.error_ty()
+                    }
+                },
                 Err(()) => {
                     self.results.record_expr(expr, self.error_ty());
                     self.error_ty()
@@ -198,6 +218,58 @@ impl Checker<'_> {
                 Err(())
             }
         }
+    }
+
+    /// Attempts to coerce a closure without captures to a function pointer.
+    ///
+    /// `Ok(false)` means the source is not a closure, so another coercion or
+    /// ordinary equality applies. `Err(())` means the source is a closure but
+    /// cannot become the target pointer, and a diagnostic was reported.
+    fn coerce_to_closure_pointer(
+        &mut self,
+        expr: HirExprId,
+        source: seal_ty::TyId,
+        target: seal_ty::TyId,
+    ) -> Result<bool, ()> {
+        let Some(closure) = self.closure_of_ty(source) else {
+            return Ok(false);
+        };
+        let Some(target_def) = self.hir.ty_ctxt().fn_ptr_parts(target) else {
+            return Ok(false);
+        };
+        let Some(info) = self.results.closure_info(closure).cloned() else {
+            return Ok(false);
+        };
+        let span = self.hir.expr(expr).span;
+        if !info.captures.is_empty() {
+            self.error(
+                codes::E3098,
+                span,
+                format!(
+                    "this closure captures {} value(s), so it cannot become a function pointer",
+                    info.captures.len()
+                ),
+            )
+            .help(
+                "use a closure without captures, or take the captured values as parameters instead",
+            )
+            .emit();
+            return Err(());
+        }
+
+        let params: Vec<seal_ty::TyId> = info
+            .signature
+            .params
+            .iter()
+            .map(|ty| self.resolve_deep(*ty))
+            .collect();
+        let ret = self.resolve_deep(info.signature.ret);
+        if params != target_def.params || ret != target_def.ret {
+            // The closure body already reported the signature mismatch with
+            // `E3094` when the same expected type supplied its signature.
+            return Err(());
+        }
+        Ok(true)
     }
 
     /// Attempts to coerce one Seal function pointer to another.

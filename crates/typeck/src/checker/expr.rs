@@ -294,9 +294,10 @@ impl Checker<'_> {
                 flow,
                 span,
             ),
-            // Closure values are typed at the creating expression in a later
-            // phase; until then the recovery type keeps checking total.
-            ExprKind::Closure { .. } | ExprKind::Capture { .. } => self.error_ty(),
+            ExprKind::Closure { closure, .. } => self.check_closure(closure, expected, flow, span),
+            ExprKind::Capture { closure, index } => {
+                self.check_capture(expr, closure, index, mode, span)
+            }
             ExprKind::Error => self.error_ty(),
         };
 
@@ -702,6 +703,7 @@ impl Checker<'_> {
             place.ty = ty;
             self.results.record_place(expr, place);
         }
+        self.check_capture_subplace_move(base, ty, mode, span);
         if mode.requires_initialized() && !self.is_error(ty) {
             self.require_initialized(expr, flow, span);
         }
@@ -772,6 +774,7 @@ impl Checker<'_> {
             place.projections.push(PlaceProjection::TupleField(index));
             place.ty = ty;
             self.results.record_place(expr, place);
+            self.check_capture_subplace_move(base, ty, mode, index_span);
         }
         if mode.requires_initialized() && !self.is_error(ty) {
             self.require_initialized(expr, flow, index_span);
@@ -1024,6 +1027,7 @@ impl Checker<'_> {
             });
             place.ty = element;
             self.results.record_place(expr, place);
+            self.check_capture_subplace_move(base, element, mode, span);
         }
         if mode.requires_initialized() && !self.is_error(element) && index_ty == self.usize_ty() {
             self.require_initialized(expr, flow, span);

@@ -5,6 +5,7 @@ mod borrows;
 mod c_types;
 mod calls;
 mod casts;
+mod closures;
 mod copy_optin;
 mod drop_builtin;
 mod drop_calls;
