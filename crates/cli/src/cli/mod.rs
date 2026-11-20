@@ -240,6 +240,10 @@ pub(crate) struct MetadataArgs {
     #[arg(long)]
     pub(crate) no_deps: bool,
 
+    /// Print JSON (the default and only format).
+    #[arg(long)]
+    pub(crate) json: bool,
+
     /// Output format; only JSON is available.
     #[arg(long, value_enum, default_value = "json")]
     pub(crate) format: MetadataFormat,

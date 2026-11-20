@@ -147,7 +147,13 @@ fn metadata_is_parseable_and_lists_modules_and_targets() {
             .arg("none")
             .arg("--yes"),
     ));
-    let metadata = output(seal().arg("metadata").arg("--project").arg(&fixture.root));
+    let metadata = output(
+        seal()
+            .arg("metadata")
+            .arg("--json")
+            .arg("--project")
+            .arg(&fixture.root),
+    );
     assert_success(&metadata);
     let value: serde_json::Value =
         serde_json::from_slice(&metadata.stdout).expect("metadata is JSON");

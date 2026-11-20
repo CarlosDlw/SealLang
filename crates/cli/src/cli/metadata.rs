@@ -51,6 +51,7 @@ struct TargetInfoEntry {
 }
 
 pub(crate) fn metadata(_cli: &Cli, root: &Path, args: &MetadataArgs) -> ExitCode {
+    let _ = (args.json, args.format);
     let project = match crate::cli::load(root) {
         Ok(project) => project,
         Err(code) => return code,
