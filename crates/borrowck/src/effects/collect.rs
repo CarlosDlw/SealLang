@@ -195,7 +195,9 @@ pub(super) fn collect_rvalue(
                 collect_operand(hir, arg, direct);
             }
             match target {
-                CallTarget::Direct { instance, .. } | CallTarget::TraitMethod { instance, .. } => {
+                CallTarget::Direct { instance, .. }
+                | CallTarget::TraitMethod { instance, .. }
+                | CallTarget::Closure { instance } => {
                     if hir.is_unsafe_function(instance.def) {
                         direct.touches_raw = true;
                     }
@@ -206,7 +208,7 @@ pub(super) fn collect_rvalue(
                 }
                 // The callee is chosen at run time: its body may reach any
                 // static and any raw-memory contract.
-                CallTarget::FnPtr { .. } => {
+                CallTarget::FnPtr { .. } | CallTarget::FnTrait { .. } => {
                     direct.unknown = true;
                     direct.touches_raw = true;
                 }
@@ -223,7 +225,16 @@ pub(super) fn collect_rvalue(
                     .get(&instance.def)
                     .cloned()
                     .unwrap_or_default(),
-                CallTarget::Extern { .. } | CallTarget::FnPtr { .. } => Vec::new(),
+                CallTarget::Closure { instance } => {
+                    if hir.body_of(instance.def).is_some() {
+                        vec![instance.def]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                CallTarget::Extern { .. }
+                | CallTarget::FnPtr { .. }
+                | CallTarget::FnTrait { .. } => Vec::new(),
             };
             calls.push(candidates);
         }

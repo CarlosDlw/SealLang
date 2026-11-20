@@ -165,11 +165,18 @@ impl Effects {
             CallTarget::TraitMethod { instance, .. } => {
                 self.candidates(&self.trait_candidates, instance.def)
             }
+            CallTarget::Closure { instance } => self
+                .summaries
+                .get(&instance.def)
+                .cloned()
+                .unwrap_or_else(GlobalEffects::unknown),
             // An external function has no Seal body: it may read or write any
             // static and exercise raw-memory contracts the checker cannot see.
-            // A function pointer names no callee until run time, so it carries
-            // the same conservative summary.
-            CallTarget::Extern { .. } | CallTarget::FnPtr { .. } => GlobalEffects::unknown(),
+            // A function pointer or a function-trait bound names no callee until
+            // monomorphization, so it carries the same conservative summary.
+            CallTarget::Extern { .. } | CallTarget::FnPtr { .. } | CallTarget::FnTrait { .. } => {
+                GlobalEffects::unknown()
+            }
         }
     }
 

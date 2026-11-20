@@ -19,7 +19,7 @@ impl<'a> Interpreter<'a> {
             CallTarget::Extern { .. } => {
                 return Err(self.error(EvalErrorKind::ExternCall, span));
             }
-            CallTarget::TraitMethod { .. } => {
+            CallTarget::TraitMethod { .. } | CallTarget::FnTrait { .. } => {
                 return Err(self.error(
                     EvalErrorKind::DynamicDispatch {
                         const_fn: self.caller_is_const_fn(),
@@ -27,9 +27,9 @@ impl<'a> Interpreter<'a> {
                     span,
                 ));
             }
-            // The pointer value is only known at run time, so the evaluator
-            // cannot follow the call.
-            CallTarget::FnPtr { .. } => {
+            // Closure and function pointer bodies are only known at run time,
+            // so the evaluator cannot follow the call.
+            CallTarget::Closure { .. } | CallTarget::FnPtr { .. } => {
                 return Err(self.error(EvalErrorKind::FunctionPointerCall, span));
             }
         };

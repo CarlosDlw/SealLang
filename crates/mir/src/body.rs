@@ -26,6 +26,12 @@ pub enum BodyKind {
         /// Whether the static is declared `mut`.
         mutable: bool,
     },
+    /// A closure body.
+    ///
+    /// Local one is the synthetic environment, followed by the closure's own
+    /// parameters. The environment is `*Env` for an `Fn` closure, `*mut Env`
+    /// for an `FnMut` closure, and `Env` by value for an `FnOnce` closure.
+    Closure,
 }
 
 /// The role a local plays in its body.

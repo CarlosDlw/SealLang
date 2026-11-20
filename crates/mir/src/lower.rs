@@ -8,13 +8,16 @@ mod while_let;
 use seal_ast::{AssignOp, BinaryOp, Literal, UnaryOp, UpdateOp};
 use seal_def::{DefId, DefKind};
 use seal_hash::{FxHashMap, FxHashSet};
-use seal_hir::{Body as HirBody, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId, Res, StmtKind};
+use seal_hir::{
+    Body as HirBody, CaptureDef, CaptureSource, ExprKind, Hir, HirBlockId, HirExprId, HirStmtId,
+    Res, StmtKind,
+};
 use seal_index::{Idx, IndexVec};
 use seal_span::Span;
-use seal_ty::{Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
+use seal_ty::{ClosureKind, Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
-    Coercion, IndexProtocol, MethodKind, PlaceProjection, ProtocolCall, ReceiverAdjust,
-    ResolvedMethod, ResolvedPlace, TypeckResults,
+    CaptureStorage, Coercion, IndexProtocol, MethodKind, PlaceProjection, ProtocolCall,
+    ReceiverAdjust, ResolvedCall, ResolvedMethod, ResolvedPlace, TypeckResults,
 };
 
 use crate::body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
@@ -32,9 +35,36 @@ fn body_kind(kind: seal_hir::BodyKind) -> BodyKind {
         seal_hir::BodyKind::Function => BodyKind::Function,
         seal_hir::BodyKind::Const => BodyKind::Const,
         seal_hir::BodyKind::Static { mutable } => BodyKind::Static { mutable },
-        seal_hir::BodyKind::Closure => {
-            unreachable!("closure bodies are not lowered to MIR yet")
-        }
+        seal_hir::BodyKind::Closure => BodyKind::Closure,
+    }
+}
+
+/// Returns the complete type arguments of a closure's synthetic aggregate.
+///
+/// A closure has no parameters of its own: its aggregate is instantiated with
+/// the enclosing item's parameters, exactly as type checking does when it
+/// builds the closure's value type.
+fn closure_args(hir: &Hir, closure: DefId) -> SubstsId {
+    let arguments: Vec<TyId> = hir
+        .flattened_generics(closure)
+        .iter()
+        .map(|parameter| hir.ty_ctxt().intern(TyKind::Param(parameter.param)))
+        .collect();
+    hir.ty_ctxt().substs(&arguments)
+}
+
+/// Returns the type of a closure's environment local.
+fn closure_environment_ty(hir: &Hir, closure: DefId, kind: ClosureKind) -> TyId {
+    let Some(definition) = hir.closure(closure) else {
+        panic!("closure {closure:?} has no definition; this is a compiler bug");
+    };
+    let environment = hir
+        .ty_ctxt()
+        .adt_ty_with(definition.adt, closure_args(hir, closure));
+    match kind {
+        ClosureKind::Fn => hir.ty_ctxt().ref_ty_with(RefKind::Shared, environment),
+        ClosureKind::FnMut => hir.ty_ctxt().ref_ty_with(RefKind::Exclusive, environment),
+        ClosureKind::FnOnce => environment,
     }
 }
 
@@ -46,11 +76,6 @@ fn body_kind(kind: seal_hir::BodyKind) -> BodyKind {
 pub fn lower(hir: &Hir, typeck: &TypeckResults) -> Mir {
     let mut mir = Mir::new();
     for body in hir.bodies().iter() {
-        // A closure body becomes a value of its creating function in a later
-        // phase; it has no standalone MIR entry yet.
-        if body.kind == seal_hir::BodyKind::Closure {
-            continue;
-        }
         mir.push_body(BodyLowering::new(hir, typeck, body).run(body));
     }
     mir
@@ -102,6 +127,8 @@ struct BodyLowering<'a> {
     entry: BasicBlockId,
     loops: Vec<LoopTargets>,
     arg_count: usize,
+    /// Local one of a closure body: its synthetic environment.
+    closure_env: Option<LocalId>,
     param_env: ParamEnv,
     /// The scopes enclosing the code being lowered, outermost first.
     ///
@@ -131,6 +158,18 @@ impl<'a> BodyLowering<'a> {
         let ret = signature.ret;
         let param_types = signature.params.clone();
         let param_env = hir.param_env(body.owner);
+        let closure_kind = (body.kind == seal_hir::BodyKind::Closure).then(|| {
+            typeck
+                .closure_info(body.owner)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "closure {:?} has no checked environment; this is a compiler bug",
+                        body.owner
+                    )
+                })
+                .kind
+        });
+        let environment_ty = closure_kind.map(|kind| closure_environment_ty(hir, body.owner, kind));
 
         let placeholder = BasicBlockId::from_u32(0).expect("zero is a valid block index");
         let mut lowering = Self {
@@ -145,7 +184,8 @@ impl<'a> BodyLowering<'a> {
             current: None,
             entry: placeholder,
             loops: Vec::new(),
-            arg_count: body.params.len(),
+            arg_count: body.params.len() + usize::from(environment_ty.is_some()),
+            closure_env: None,
             param_env,
             scopes: Vec::new(),
             temp_window: 0,
@@ -164,7 +204,17 @@ impl<'a> BodyLowering<'a> {
         lowering.entry = entry;
         lowering.current = Some(entry);
 
-        let mut parameters = Vec::with_capacity(body.params.len());
+        let mut parameters = Vec::with_capacity(body.params.len() + 1);
+        if let Some(environment_ty) = environment_ty {
+            let environment = lowering.push_local(LocalDecl {
+                ty: environment_ty,
+                name: None,
+                kind: LocalKind::Arg,
+                span,
+            });
+            lowering.closure_env = Some(environment);
+            parameters.push(environment);
+        }
         for (param, ty) in body.params.iter().zip(&param_types) {
             let definition = hir.definitions().get(param.def);
             let local = lowering.push_local(LocalDecl {
@@ -642,12 +692,111 @@ impl<'a> BodyLowering<'a> {
                     span,
                 );
             }
-            Coercion::ClosureToFnPtr { .. } => {
-                // The conversion needs the closure instance and the address of
-                // its body, both of which only exist once closures reach MIR.
-                // A closure body is not lowered yet, so this coercion cannot be
-                // reached from a lowered body.
-                unreachable!("a closure-to-pointer coercion reached MIR lowering")
+            Coercion::ClosureToFnPtr { closure, target } => {
+                let closure_ty = self.expr_ty(expr);
+                let instance = self.closure_instance(closure, closure_ty);
+                let dest = dest.unwrap_or_else(|| self.new_temp(target, span));
+                self.assign_constant(
+                    dest,
+                    Constant::ClosureFnPtr {
+                        instance,
+                        ty: target,
+                    },
+                    span,
+                );
+            }
+        }
+    }
+
+    /// Returns the instance of a concrete closure value.
+    fn closure_instance(&self, closure: DefId, ty: TyId) -> Instance {
+        let ty = match self.hir.ty_ctxt().kind(ty) {
+            TyKind::Ref { pointee, .. } => pointee,
+            _ => ty,
+        };
+        if let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(ty) {
+            if self.hir.closure_for_adt(adt) != Some(closure) {
+                panic!("closure {closure:?} names a different aggregate; this is a compiler bug");
+            }
+            return Instance::new(closure, args);
+        }
+        // A closure coerced to a function pointer keeps the closure's own
+        // aggregate type only in its definition, because type checking replaced
+        // the expression type with the coercion target.
+        Instance::new(closure, closure_args(self.hir, closure))
+    }
+
+    /// Lowers a closure literal into its environment aggregate.
+    fn lower_closure_expr(
+        &mut self,
+        expr: HirExprId,
+        closure: DefId,
+        captures: &[CaptureDef],
+        dest: Option<Place>,
+        span: Span,
+    ) {
+        let closure_ty = self.expr_ty(expr);
+        let TyKind::Adt { adt, args } = self.hir.ty_ctxt().kind(closure_ty) else {
+            panic!("closure {closure:?} has no aggregate type; this is a compiler bug");
+        };
+        let definition = self.hir.ty_ctxt().adt(adt).def;
+        let info = self
+            .typeck
+            .closure_info(closure)
+            .unwrap_or_else(|| {
+                panic!("closure {closure:?} has no checked environment; this is a compiler bug")
+            })
+            .clone();
+        if info.captures.len() != captures.len() {
+            panic!("closure {closure:?} capture lists disagree; this is a compiler bug");
+        }
+
+        let mut fields = Vec::with_capacity(captures.len());
+        for (index, capture) in captures.iter().enumerate() {
+            let storage = info.captures[index].storage;
+            let value_ty = info.captures[index].value_ty;
+            let source = match capture.source {
+                CaptureSource::Local(origin) => self.place_of_local(origin),
+                CaptureSource::Outer(slot) => self.capture_place(self.owner, slot).0,
+            };
+            let operand = self.lower_capture_operand(source, value_ty, storage, span);
+            fields.push((capture.field, operand));
+        }
+
+        let dest = dest.unwrap_or_else(|| self.new_temp(closure_ty, span));
+        self.assign_rvalue(
+            dest,
+            Rvalue::Aggregate {
+                kind: AggregateKind::Struct {
+                    adt: definition,
+                    args,
+                },
+                fields,
+            },
+            span,
+        );
+    }
+
+    /// Reads one captured value into the environment field.
+    fn lower_capture_operand(
+        &mut self,
+        place: Place,
+        value_ty: TyId,
+        storage: CaptureStorage,
+        span: Span,
+    ) -> Operand {
+        match storage {
+            CaptureStorage::Value => self.place_operand(place, value_ty),
+            CaptureStorage::Shared | CaptureStorage::Exclusive => {
+                let kind = if storage == CaptureStorage::Shared {
+                    RefKind::Shared
+                } else {
+                    RefKind::Exclusive
+                };
+                let reference_ty = self.hir.ty_ctxt().ref_ty_with(kind, value_ty);
+                let reference = self.new_temp(reference_ty, span);
+                self.assign_rvalue(reference.clone(), Rvalue::Ref { place, kind }, span);
+                Operand::Copy(reference)
             }
         }
     }
@@ -763,9 +912,18 @@ impl<'a> BodyLowering<'a> {
                 res: Res::Capture { .. },
                 ..
             }
-            | ExprKind::Error
-            | ExprKind::Closure { .. }
             | ExprKind::Capture { .. } => {
+                if let Some(dest) = dest {
+                    let place = self.place_of_expr(expr);
+                    let ty = self.expr_ty(expr);
+                    let operand = self.place_operand(place, ty);
+                    self.assign_operand(dest, operand, span);
+                }
+            }
+            ExprKind::Closure { closure, captures } => {
+                self.lower_closure_expr(expr, closure, &captures, dest, span);
+            }
+            ExprKind::Error => {
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
@@ -1210,6 +1368,11 @@ impl<'a> BodyLowering<'a> {
         result_ty: TyId,
         span: Span,
     ) {
+        if let Some(call) = self.typeck.call(expr) {
+            self.lower_callable_call(call, callee, args, dest, result_ty, span);
+            return;
+        }
+
         let function = match self.hir.expr(callee).kind.clone() {
             ExprKind::Path {
                 res: Res::Function(definition),
@@ -1343,6 +1506,96 @@ impl<'a> BodyLowering<'a> {
             },
             span,
         );
+    }
+
+    /// Lowers a call through a concrete closure or a function-trait bound.
+    fn lower_callable_call(
+        &mut self,
+        call: ResolvedCall,
+        callee: HirExprId,
+        args: &[HirExprId],
+        dest: Option<Place>,
+        result_ty: TyId,
+        span: Span,
+    ) {
+        let callee_ty = self.expr_ty(callee);
+        let (target, kind) = match call {
+            ResolvedCall::Closure { closure, kind } => {
+                let instance = self.closure_instance(closure, callee_ty);
+                (CallTarget::Closure { instance }, kind)
+            }
+            ResolvedCall::FnTrait {
+                trait_ref,
+                kind,
+                parameters,
+            } => (
+                CallTarget::FnTrait {
+                    trait_ref,
+                    kind,
+                    parameters,
+                },
+                kind,
+            ),
+        };
+
+        let receiver = self.lower_callable_receiver(callee, callee_ty, kind, span);
+        let callee_span = self.hir.expr(callee).span;
+        let mut arg_spans = Vec::with_capacity(args.len() + 1);
+        arg_spans.push(callee_span);
+        arg_spans.extend(args.iter().map(|arg| self.hir.expr(*arg).span));
+        let mut arguments = Vec::with_capacity(args.len() + 1);
+        arguments.push(receiver);
+        arguments.extend(args.iter().map(|arg| self.lower_operand(*arg)));
+
+        let dest = dest.unwrap_or_else(|| self.new_temp(result_ty, span));
+        self.assign_rvalue(
+            dest,
+            Rvalue::Call {
+                target,
+                args: arguments,
+                arg_spans,
+            },
+            span,
+        );
+    }
+
+    /// Produces the receiver operand a closure body expects.
+    fn lower_callable_receiver(
+        &mut self,
+        callee: HirExprId,
+        callee_ty: TyId,
+        kind: ClosureKind,
+        span: Span,
+    ) -> Operand {
+        let place = match self.typeck.place(callee).cloned() {
+            Some(place) => self.resolved_place(&place),
+            None => {
+                let temporary = self.new_temp(callee_ty, span);
+                self.lower_expr_into(callee, Some(temporary.clone()));
+                temporary
+            }
+        };
+        match kind {
+            ClosureKind::FnOnce => self.place_operand(place, callee_ty),
+            ClosureKind::Fn | ClosureKind::FnMut => {
+                let reference_kind = if kind == ClosureKind::Fn {
+                    RefKind::Shared
+                } else {
+                    RefKind::Exclusive
+                };
+                let reference_ty = self.hir.ty_ctxt().ref_ty_with(reference_kind, callee_ty);
+                let reference = self.new_temp(reference_ty, span);
+                self.assign_rvalue(
+                    reference.clone(),
+                    Rvalue::Ref {
+                        place,
+                        kind: reference_kind,
+                    },
+                    span,
+                );
+                Operand::Copy(reference)
+            }
+        }
     }
 
     /// Applies the C default argument promotions to variadic arguments.
@@ -1975,9 +2228,7 @@ impl<'a> BodyLowering<'a> {
                 }
                 None => Operand::Constant(Constant::Unit),
             },
-            ExprKind::Error | ExprKind::Closure { .. } | ExprKind::Capture { .. } => {
-                Operand::Constant(Constant::Unit)
-            }
+            ExprKind::Error => Operand::Constant(Constant::Unit),
             ExprKind::Deref { .. } | ExprKind::Field { .. } | ExprKind::Index { .. } => {
                 let place = self.place_of_expr(expr);
                 self.place_operand(place, ty)
@@ -2066,6 +2317,48 @@ impl<'a> BodyLowering<'a> {
         temporary
     }
 
+    /// Returns the place of one capture inside the current closure environment.
+    ///
+    /// The environment local is local one. A by-reference environment is
+    /// dereferenced first, then the capture field is selected, and a field that
+    /// stores a borrow is dereferenced to the captured value.
+    fn capture_place(&self, closure: DefId, index: u32) -> (Place, TyId) {
+        let Some(environment) = self.closure_env else {
+            panic!(
+                "capture {index} of {closure:?} was lowered outside its environment; \
+                 this is a compiler bug"
+            );
+        };
+        debug_assert_eq!(
+            closure, self.owner,
+            "a capture place names the closure whose body is being lowered"
+        );
+        let Some(definition) = self.hir.closure(closure) else {
+            panic!("closure {closure:?} has no definition; this is a compiler bug");
+        };
+        let Some(capture) = definition.captures.get(index as usize) else {
+            panic!("closure {closure:?} has no capture {index}; this is a compiler bug");
+        };
+        let Some(info) = self.typeck.closure_info(closure) else {
+            panic!("closure {closure:?} has no checked environment; this is a compiler bug");
+        };
+        let Some(capture_info) = info.captures.get(index as usize) else {
+            panic!("closure {closure:?} has no checked capture {index}; this is a compiler bug");
+        };
+
+        let mut place = Place::local(environment);
+        let environment_ty = self.locals[environment].ty;
+        if matches!(self.hir.ty_ctxt().kind(environment_ty), TyKind::Ref { .. }) {
+            place.projections.push(Projection::Deref);
+        }
+        place.projections.push(Projection::Field(capture.field));
+        if capture_info.storage != CaptureStorage::Value {
+            place.projections.push(Projection::Deref);
+        }
+        let ty = capture_info.value_ty;
+        (place, ty)
+    }
+
     /// Converts a place resolved by type checking into a MIR place.
     ///
     /// Index expressions are evaluated here, in source order, and a runtime
@@ -2073,29 +2366,36 @@ impl<'a> BodyLowering<'a> {
     /// becomes an explicit two-block graph, so code generation never has to
     /// invent control flow while computing an address.
     fn resolved_place(&mut self, place: &ResolvedPlace) -> Place {
-        let root = match place.root {
-            seal_typeck::PlaceRoot::Local(def) => {
-                PlaceRoot::Local(self.place_of_local(def).expect_local())
+        let (mut root, mut projections, mut ty) = match place.root {
+            seal_typeck::PlaceRoot::Local(def) => (
+                PlaceRoot::Local(self.place_of_local(def).expect_local()),
+                Vec::with_capacity(place.projections.len()),
+                place.root_ty,
+            ),
+            seal_typeck::PlaceRoot::Capture { closure, index, .. } => {
+                let (capture, ty) = self.capture_place(closure, index);
+                let mut projections = capture.projections;
+                projections.reserve(place.projections.len());
+                (capture.root, projections, ty)
             }
-            seal_typeck::PlaceRoot::Capture { .. } => {
-                // Capture places are produced only while checking a closure
-                // body, and closure bodies are not lowered yet. Reaching this
-                // arm would mean the lowering skipped the closure boundary.
-                unreachable!("a closure capture place reached MIR lowering outside its environment")
-            }
-            seal_typeck::PlaceRoot::Static(def) => PlaceRoot::Static(def),
+            seal_typeck::PlaceRoot::Static(def) => (
+                PlaceRoot::Static(def),
+                Vec::with_capacity(place.projections.len()),
+                place.root_ty,
+            ),
             seal_typeck::PlaceRoot::Const(def) => {
                 // A constant has no storage, so a projected or borrowed const
                 // path starts from a temporary that holds its value.
                 let span = self.hir.definitions().get(def).span;
                 let temp = self.new_temp(place.root_ty, span);
                 self.assign_operand(temp.clone(), Operand::Const(def), span);
-                temp.root
+                (
+                    temp.root,
+                    Vec::with_capacity(place.projections.len()),
+                    place.root_ty,
+                )
             }
         };
-        let mut root = root;
-        let mut projections = Vec::with_capacity(place.projections.len());
-        let mut ty = place.root_ty;
         let mut slice_reference: Option<Place> = None;
         for projection in &place.projections {
             match projection {

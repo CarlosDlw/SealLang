@@ -52,6 +52,18 @@ pub enum Constant {
         /// The raw C function pointer type.
         ty: TyId,
     },
+    /// The address of a closure body with an empty environment.
+    ///
+    /// A closure without captures can be called through a function pointer. The
+    /// instance names the lifted body and `ty` is always a Seal function
+    /// pointer type; code generation emits a trampoline that builds the empty
+    /// environment.
+    ClosureFnPtr {
+        /// The closure and its complete type arguments.
+        instance: Instance,
+        /// The Seal function pointer type of the coerced value.
+        ty: TyId,
+    },
     /// The unit value.
     Unit,
 }

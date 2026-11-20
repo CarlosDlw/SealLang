@@ -345,12 +345,20 @@ fn check_rvalue(
                         check_type(tcx, instance, argument)?;
                     }
                 }
-                CallTarget::TraitMethod { .. } => {
+                CallTarget::TraitMethod { .. } | CallTarget::FnTrait { .. } => {
                     return Err(MonoValidationError::SymbolicCall { instance, span });
                 }
                 CallTarget::Extern { .. } => {}
                 CallTarget::FnPtr { ty, .. } => {
                     check_type(tcx, instance, ty)?;
+                }
+                CallTarget::Closure { instance: closure } => {
+                    if program.id_of(closure).is_none() {
+                        return Err(MonoValidationError::UnknownInstance { instance: closure });
+                    }
+                    for argument in tcx.substs_args(closure.args) {
+                        check_type(tcx, instance, argument)?;
+                    }
                 }
             }
             for argument in args {
@@ -398,6 +406,10 @@ fn check_operand(
         | Constant::Str { ty, .. }
         | Constant::CStr { ty, .. } => check_type(tcx, instance, *ty),
         Constant::FunctionAddr {
+            instance: function,
+            ty,
+        }
+        | Constant::ClosureFnPtr {
             instance: function,
             ty,
         } => {

@@ -3,12 +3,12 @@
 use seal_diagnostics::DiagCtxt;
 use seal_error_codes as codes;
 use seal_hir::Hir;
-use seal_mir::{Body, CallTarget, Rvalue, StatementKind};
+use seal_mir::{AggregateKind, Body, CallTarget, Operand, Rvalue, StatementKind};
 
 pub(crate) use seal_mir::instantiate_body;
 use seal_span::Span;
 use seal_symbol::Interner;
-use seal_ty::{Bound, Instance, SubstsId, TemplateUnifier, TraitImplDef, TyCtxt, TyId};
+use seal_ty::{Bound, Instance, SubstsId, TemplateUnifier, TraitImplDef, TyCtxt, TyId, TyKind};
 
 use crate::error::MonoError;
 use crate::vtable::{self, VtableKey};
@@ -25,6 +25,8 @@ pub(crate) struct ChildCall {
 pub(crate) enum BodyEvent {
     /// A call whose callee must be collected.
     Call(ChildCall),
+    /// A closure environment whose lifted body must be collected.
+    Closure(ChildCall),
     /// A trait-object coercion that needs a vtable.
     Vtable {
         /// The concrete type and principal trait.
@@ -57,7 +59,7 @@ pub(crate) fn resolve_body(
                 continue;
             };
             match rvalue {
-                Rvalue::Call { target, .. } => match *target {
+                Rvalue::Call { target, args, .. } => match *target {
                     CallTarget::Direct { instance, .. } => {
                         events.push(BodyEvent::Call(ChildCall { instance, span }));
                     }
@@ -65,6 +67,21 @@ pub(crate) fn resolve_body(
                     // The callee is a pointer value, not an instance: the
                     // constant that produced it already enqueued its body.
                     CallTarget::FnPtr { .. } => {}
+                    CallTarget::Closure { instance } => {
+                        events.push(BodyEvent::Call(ChildCall { instance, span }));
+                    }
+                    CallTarget::FnTrait { .. } => {
+                        match resolve_fn_trait(hir, interner, *target, args.as_mut_slice()) {
+                            Ok(ResolvedFnTrait::Closure(instance)) => {
+                                *target = CallTarget::Closure { instance };
+                                events.push(BodyEvent::Call(ChildCall { instance, span }));
+                            }
+                            Ok(ResolvedFnTrait::FnPtr { ty }) => {
+                                *target = CallTarget::FnPtr { ty, receiver: None };
+                            }
+                            Err(error) => report(dcx, span, &error),
+                        }
+                    }
                     CallTarget::TraitMethod {
                         instance,
                         parameters,
@@ -82,6 +99,18 @@ pub(crate) fn resolve_body(
                         Err(error) => report(dcx, span, &error),
                     },
                 },
+                Rvalue::Aggregate {
+                    kind: AggregateKind::Struct { adt, args },
+                    ..
+                } => {
+                    let closure = hir.adt(*adt).and_then(|adt| hir.closure_for_adt(adt));
+                    if let Some(closure) = closure {
+                        events.push(BodyEvent::Closure(ChildCall {
+                            instance: Instance::new(closure, *args),
+                            span,
+                        }));
+                    }
+                }
                 Rvalue::MakeTraitObject {
                     source_ty,
                     target_ty,
@@ -392,6 +421,60 @@ fn display_def(hir: &Hir, interner: &Interner, def: seal_def::DefId) -> String {
 
 fn display_type(tcx: &TyCtxt, interner: &Interner, ty: TyId) -> String {
     tcx.display_with(ty, interner).to_string()
+}
+
+/// The concrete form selected for one symbolic function-trait call.
+pub(crate) enum ResolvedFnTrait {
+    Closure(Instance),
+    FnPtr { ty: TyId },
+}
+
+/// Resolves a function-trait call from its concrete self type.
+///
+/// A closure keeps the receiver argument MIR lowering produced: a borrow for
+/// `Fn`/`FnMut`, the value for `FnOnce`. A function pointer is passed by value,
+/// so a borrow introduced for the generic call is dereferenced back to the
+/// pointer value.
+pub(crate) fn resolve_fn_trait(
+    hir: &Hir,
+    interner: &Interner,
+    target: CallTarget,
+    args: &mut [Operand],
+) -> Result<ResolvedFnTrait, MonoError> {
+    let tcx = hir.ty_ctxt();
+    let CallTarget::FnTrait {
+        trait_ref, kind, ..
+    } = target
+    else {
+        unreachable!("only a function-trait target is resolved here");
+    };
+    let missing = || MonoError::MissingImpl {
+        trait_name: display_def(hir, interner, trait_ref.trait_def),
+        self_type: display_type(tcx, interner, trait_ref.self_ty),
+    };
+    match tcx.kind(trait_ref.self_ty) {
+        TyKind::Adt { adt, args } => {
+            let Some(closure) = hir.closure_for_adt(adt) else {
+                return Err(missing());
+            };
+            Ok(ResolvedFnTrait::Closure(Instance::new(closure, args)))
+        }
+        TyKind::FnPtr(_) => {
+            if kind != seal_ty::ClosureKind::FnOnce {
+                let Some(place) = args.first().and_then(Operand::place) else {
+                    return Err(MonoError::MissingImpl {
+                        trait_name: display_def(hir, interner, trait_ref.trait_def),
+                        self_type: display_type(tcx, interner, trait_ref.self_ty),
+                    });
+                };
+                args[0] = Operand::Copy(place.deref());
+            }
+            Ok(ResolvedFnTrait::FnPtr {
+                ty: trait_ref.self_ty,
+            })
+        }
+        _ => Err(missing()),
+    }
 }
 
 fn report(dcx: &DiagCtxt, span: Span, error: &MonoError) {

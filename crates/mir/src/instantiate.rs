@@ -174,6 +174,18 @@ fn substitute_target(tcx: &TyCtxt, substs: SubstsId, target: CallTarget) -> Call
             instance: Instance::new(instance.def, substitute_substs(tcx, substs, instance.args)),
             parameters,
         },
+        CallTarget::Closure { instance } => CallTarget::Closure {
+            instance: Instance::new(instance.def, substitute_substs(tcx, substs, instance.args)),
+        },
+        CallTarget::FnTrait {
+            trait_ref,
+            kind,
+            parameters,
+        } => CallTarget::FnTrait {
+            trait_ref: substitute_trait_ref(tcx, substs, trait_ref),
+            kind,
+            parameters: substitute_substs(tcx, substs, parameters),
+        },
         // An external declaration has no type arguments to substitute.
         CallTarget::Extern {
             def,
@@ -210,12 +222,16 @@ fn substitute_operand(tcx: &TyCtxt, substs: SubstsId, operand: &mut Operand) {
         | Constant::Float { ty, .. }
         | Constant::Str { ty, .. }
         | Constant::CStr { ty, .. }
-        | Constant::FunctionAddr { ty, .. } => {
+        | Constant::FunctionAddr { ty, .. }
+        | Constant::ClosureFnPtr { ty, .. } => {
             *ty = tcx.substitute(*ty, substs);
         }
         Constant::Bool(_) | Constant::Char(_) | Constant::Unit => {}
     }
-    if let Constant::FunctionAddr { instance, .. } = constant {
-        *instance = Instance::new(instance.def, substitute_substs(tcx, substs, instance.args));
+    match constant {
+        Constant::FunctionAddr { instance, .. } | Constant::ClosureFnPtr { instance, .. } => {
+            *instance = Instance::new(instance.def, substitute_substs(tcx, substs, instance.args));
+        }
+        _ => {}
     }
 }

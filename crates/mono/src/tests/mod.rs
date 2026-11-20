@@ -1,5 +1,6 @@
 //! Monomorphization tests.
 
+mod closures;
 mod collector;
 mod drop_glue;
 mod globals;

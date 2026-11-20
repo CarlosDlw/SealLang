@@ -4,6 +4,7 @@ mod arrays;
 mod borrows;
 mod calls;
 mod casts;
+mod closures;
 mod control_flow;
 mod copy_optin;
 mod drop_elaboration;

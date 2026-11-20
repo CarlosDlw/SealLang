@@ -263,6 +263,40 @@ pub enum ValidationError {
         /// The block containing the rvalue.
         block: BasicBlockId,
     },
+    /// A closure body has no environment local.
+    ClosureWithoutEnvironment,
+    /// A closure environment has the wrong shape for its aggregate.
+    ClosureEnvironmentMismatch {
+        /// The environment local.
+        local: LocalId,
+    },
+    /// A closure body selects a field that is not one of its captures.
+    CaptureFieldMismatch {
+        /// The block containing the place.
+        block: BasicBlockId,
+        /// The selected field.
+        field: DefId,
+    },
+    /// A closure call does not name a closure body.
+    ClosureTargetInvalid {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A symbolic function-trait call keeps an inference variable.
+    FnTraitHasInference {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A symbolic function-trait call has the wrong arity or self type.
+    FnTraitTargetMismatch {
+        /// The block containing the call.
+        block: BasicBlockId,
+    },
+    /// A closure function-pointer constant names an invalid closure or type.
+    ClosureFnPtrMismatch {
+        /// The block containing the constant.
+        block: BasicBlockId,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -441,6 +475,34 @@ impl fmt::Display for ValidationError {
                 f,
                 "block {block:?} holds a trait-object rvalue with an inference-variable type"
             ),
+            Self::ClosureWithoutEnvironment => {
+                f.write_str("a closure body has no environment local")
+            }
+            Self::ClosureEnvironmentMismatch { local } => {
+                write!(f, "local {local:?} is not a valid closure environment")
+            }
+            Self::CaptureFieldMismatch { block, field } => write!(
+                f,
+                "block {block:?} selects {field:?}, which is not a capture of this closure"
+            ),
+            Self::ClosureTargetInvalid { block } => {
+                write!(f, "block {block:?} calls an invalid closure target")
+            }
+            Self::FnTraitHasInference { block } => {
+                write!(
+                    f,
+                    "block {block:?} keeps an inference variable in a function-trait call"
+                )
+            }
+            Self::FnTraitTargetMismatch { block } => {
+                write!(f, "block {block:?} has a malformed function-trait call")
+            }
+            Self::ClosureFnPtrMismatch { block } => {
+                write!(
+                    f,
+                    "block {block:?} has a malformed closure function pointer"
+                )
+            }
         }
     }
 }
@@ -473,13 +535,30 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
             locals: body.locals.len(),
         });
     }
-    if body.kind != BodyKind::Function && body.arg_count != 0 {
+    if body.kind == BodyKind::Closure && body.arg_count == 0 {
+        return Err(ValidationError::ClosureWithoutEnvironment);
+    }
+    if matches!(body.kind, BodyKind::Const | BodyKind::Static { .. }) && body.arg_count != 0 {
         return Err(ValidationError::ValueBodyHasArguments {
             arg_count: body.arg_count,
         });
     }
     if body.kind != BodyKind::Function && body.is_const {
         return Err(ValidationError::ConstFlagOnValueBody);
+    }
+    if body.kind == BodyKind::Closure
+        && let Some(hir) = hir
+    {
+        let environment = LocalId::from_u32(1).expect("one is a valid local index");
+        let Some(declaration) = body.locals.get(environment) else {
+            return Err(ValidationError::ClosureWithoutEnvironment);
+        };
+        let Some(adt) = closure_environment_adt(hir, declaration.ty) else {
+            return Err(ValidationError::ClosureEnvironmentMismatch { local: environment });
+        };
+        if hir.closure_for_adt(adt) != Some(body.owner) {
+            return Err(ValidationError::ClosureEnvironmentMismatch { local: environment });
+        }
     }
 
     for (local, declaration) in body.locals.iter_enumerated() {
@@ -585,7 +664,41 @@ fn check_place(
             });
         }
     }
+    if let Some(hir) = hir
+        && body.kind == BodyKind::Closure
+        && place.root == crate::place::PlaceRoot::Local(LocalId::from_u32(1).expect("one is valid"))
+    {
+        let mut projections = place.projections.iter();
+        if matches!(projections.next(), Some(crate::place::Projection::Deref)) {
+            // A by-reference environment is dereferenced before its fields.
+        }
+        if let Some(crate::place::Projection::Field(field)) = projections.next() {
+            let environment = body.local(LocalId::from_u32(1).expect("one is valid")).ty;
+            let Some(adt) = closure_environment_adt(hir, environment) else {
+                return Err(ValidationError::ClosureEnvironmentMismatch {
+                    local: LocalId::from_u32(1).expect("one is valid"),
+                });
+            };
+            if hir.ty_ctxt().adt(adt).field(*field).is_none() {
+                return Err(ValidationError::CaptureFieldMismatch {
+                    block,
+                    field: *field,
+                });
+            }
+        }
+    }
     Ok(())
+}
+
+fn closure_environment_adt(hir: &Hir, ty: TyId) -> Option<seal_ty::AdtId> {
+    let ty = match hir.ty_ctxt().kind(ty) {
+        TyKind::Ref { pointee, .. } => pointee,
+        _ => ty,
+    };
+    let TyKind::Adt { adt, .. } = hir.ty_ctxt().kind(ty) else {
+        return None;
+    };
+    hir.ty_ctxt().adt(adt).is_closure().then_some(adt)
 }
 
 /// Checks a drop statement's place.
@@ -633,11 +746,25 @@ fn check_operand(
             return Err(ValidationError::MoveFromUnsizedPlace { block });
         }
     }
-    if let Some(hir) = hir
-        && let Some(ty) = constant_ty(hir.ty_ctxt(), operand)
-        && contains_infer(hir, ty)
-    {
-        return Err(ValidationError::InferredConstant { block });
+    if let Some(hir) = hir {
+        if let Some(ty) = constant_ty(hir.ty_ctxt(), operand)
+            && contains_infer(hir, ty)
+        {
+            return Err(ValidationError::InferredConstant { block });
+        }
+        if let Operand::Constant(crate::operand::Constant::ClosureFnPtr { instance, ty }) = operand
+        {
+            let Some(definition) = hir.closure(instance.def) else {
+                return Err(ValidationError::ClosureFnPtrMismatch { block });
+            };
+            if !definition.captures.is_empty()
+                || hir.ty_ctxt().fn_ptr_parts(*ty).is_none()
+                || hir.ty_ctxt().substs_args(instance.args).len()
+                    != hir.flattened_generics(instance.def).len()
+            {
+                return Err(ValidationError::ClosureFnPtrMismatch { block });
+            }
+        }
     }
     Ok(())
 }
@@ -868,7 +995,8 @@ fn constant_ty(tcx: &seal_ty::TyCtxt, operand: &Operand) -> Option<seal_ty::TyId
             | crate::operand::Constant::Float { ty, .. }
             | crate::operand::Constant::Str { ty, .. }
             | crate::operand::Constant::CStr { ty, .. }
-            | crate::operand::Constant::FunctionAddr { ty, .. },
+            | crate::operand::Constant::FunctionAddr { ty, .. }
+            | crate::operand::Constant::ClosureFnPtr { ty, .. },
         ) => Some(*ty),
         Operand::Constant(crate::operand::Constant::Bool(_)) => Some(tcx.bool_ty()),
         Operand::Constant(crate::operand::Constant::Char(_)) => Some(tcx.char_ty()),
@@ -1095,6 +1223,95 @@ fn check_rvalue(
             }
             if let Some(hir) = hir {
                 match *target {
+                    CallTarget::Closure { instance } => {
+                        let Some(closure) = hir.closure(instance.def) else {
+                            return Err(ValidationError::ClosureTargetInvalid { block });
+                        };
+                        if hir.definitions().kind(instance.def) != DefKind::Closure {
+                            return Err(ValidationError::ClosureTargetInvalid { block });
+                        }
+                        let expected = hir.flattened_generics(instance.def).len();
+                        let found = hir.ty_ctxt().substs_args(instance.args).len();
+                        if found != expected {
+                            return Err(ValidationError::CallInstanceArityMismatch {
+                                def: instance.def,
+                                expected,
+                                found,
+                            });
+                        }
+                        let Some(closure_body) = hir.body_of(instance.def) else {
+                            return Err(ValidationError::ClosureTargetInvalid { block });
+                        };
+                        let parameters = closure_body.params.len() + 1;
+                        if args.len() != parameters {
+                            return Err(ValidationError::CallArityMismatch {
+                                args: args.len().saturating_sub(1),
+                                parameters: parameters.saturating_sub(1),
+                            });
+                        }
+                        let first = args
+                            .first()
+                            .and_then(|argument| operand_ty(hir, body, argument));
+                        let environment_matches = first.is_some_and(|ty| {
+                            let ty = match hir.ty_ctxt().kind(ty) {
+                                TyKind::Ref { pointee, .. } => pointee,
+                                _ => ty,
+                            };
+                            matches!(
+                                hir.ty_ctxt().kind(ty),
+                                TyKind::Adt { adt, .. } if adt == closure.adt
+                            )
+                        });
+                        if !environment_matches {
+                            return Err(ValidationError::ClosureTargetInvalid { block });
+                        }
+                    }
+                    CallTarget::FnTrait {
+                        trait_ref,
+                        kind,
+                        parameters,
+                    } => {
+                        if hir.fn_trait_kind(trait_ref.trait_def) != Some(kind) {
+                            return Err(ValidationError::FnTraitTargetMismatch { block });
+                        }
+                        let parameters = hir.ty_ctxt().substs_args(parameters);
+                        if args.len() != parameters.len() + 1 {
+                            return Err(ValidationError::FnTraitTargetMismatch { block });
+                        }
+                        if contains_infer(hir, trait_ref.self_ty)
+                            || hir
+                                .ty_ctxt()
+                                .substs_args(trait_ref.args)
+                                .iter()
+                                .any(|argument| contains_infer(hir, *argument))
+                            || parameters
+                                .iter()
+                                .any(|parameter| contains_infer(hir, *parameter))
+                        {
+                            return Err(ValidationError::FnTraitHasInference { block });
+                        }
+                        let expected_receiver = match kind {
+                            seal_ty::ClosureKind::Fn => hir
+                                .ty_ctxt()
+                                .ref_ty_with(seal_ty::RefKind::Shared, trait_ref.self_ty),
+                            seal_ty::ClosureKind::FnMut => hir
+                                .ty_ctxt()
+                                .ref_ty_with(seal_ty::RefKind::Exclusive, trait_ref.self_ty),
+                            seal_ty::ClosureKind::FnOnce => trait_ref.self_ty,
+                        };
+                        if args
+                            .first()
+                            .and_then(|argument| operand_ty(hir, body, argument))
+                            .is_none_or(|ty| ty != expected_receiver)
+                        {
+                            return Err(ValidationError::FnTraitTargetMismatch { block });
+                        }
+                        for (expected, argument) in parameters.iter().zip(&args[1..]) {
+                            if operand_ty(hir, body, argument).is_some_and(|ty| ty != *expected) {
+                                return Err(ValidationError::RvalueOperandTypeMismatch { block });
+                            }
+                        }
+                    }
                     CallTarget::FnPtr { ty, receiver } => {
                         let Some(definition) = hir.ty_ctxt().fn_ptr_parts(ty) else {
                             return Err(ValidationError::FnPtrTargetNotFunctionPointer { block });

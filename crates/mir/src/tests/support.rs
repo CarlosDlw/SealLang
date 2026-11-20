@@ -159,7 +159,11 @@ pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir, Mir) {
             .body_of(body.owner)
             .unwrap_or_else(|| panic!("body for {:?} is missing", body.owner));
         assert_eq!(lowered.owner, body.owner);
-        assert_eq!(lowered.arg_count, body.params.len());
+        let expected = match lowered.kind {
+            crate::BodyKind::Closure => body.params.len() + 1,
+            _ => body.params.len(),
+        };
+        assert_eq!(lowered.arg_count, expected);
     }
     (fixture, hir, mir)
 }

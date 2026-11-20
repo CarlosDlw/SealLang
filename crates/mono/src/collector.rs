@@ -268,7 +268,7 @@ impl Collector<'_> {
         });
         for event in events {
             match event {
-                BodyEvent::Call(child) => {
+                BodyEvent::Call(child) | BodyEvent::Closure(child) => {
                     let mut chain = pending.chain.clone();
                     chain.push((child.instance, child.span));
                     self.enqueue(child.instance, pending.depth + 1, chain, child.span);
@@ -537,9 +537,12 @@ impl Collector<'_> {
                     self.scan_value(&value, span);
                 }
             }
-            Operand::Constant(Constant::FunctionAddr { instance, .. }) => {
-                // The address can be called from C, so the function body must be
-                // monomorphized even when no Seal call site names it.
+            Operand::Constant(
+                Constant::FunctionAddr { instance, .. } | Constant::ClosureFnPtr { instance, .. },
+            ) => {
+                // The address can be called from C, or from a function pointer
+                // value, so the body must be monomorphized even when no Seal
+                // call site names it.
                 if self.hir.body_of(instance.def).is_some() {
                     let chain = vec![(*instance, span)];
                     self.enqueue(*instance, 0, chain, span);

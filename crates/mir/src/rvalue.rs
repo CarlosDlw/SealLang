@@ -4,7 +4,7 @@ use seal_def::DefId;
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
 use seal_span::Span;
-use seal_ty::{CastKind, Instance, SubstsId, TraitRef, TyId, VariantIdx};
+use seal_ty::{CastKind, ClosureKind, Instance, SubstsId, TraitRef, TyId, VariantIdx};
 
 use crate::operand::Operand;
 use crate::place::Place;
@@ -133,6 +133,28 @@ pub enum CallTarget {
         /// methods.
         parameters: usize,
     },
+    /// A call of a concrete closure value.
+    ///
+    /// The first argument is the environment the closure body expects, followed
+    /// by the source arguments. An `Fn` call passes `*Env`, an `FnMut` call
+    /// passes `*mut Env`, and an `FnOnce` call passes `Env` by value.
+    Closure {
+        /// The closure and its complete type arguments.
+        instance: Instance,
+    },
+    /// A call through a parameter declared with a function-trait bound.
+    ///
+    /// The call stays symbolic until monomorphization substitutes the concrete
+    /// self type. The first argument is the receiver in the form the bound's
+    /// kind requires: a shared or exclusive borrow, or the value for `FnOnce`.
+    FnTrait {
+        /// The bound that supplies the callable signature.
+        trait_ref: TraitRef,
+        /// The strongest bound selected for the call.
+        kind: ClosureKind,
+        /// The bound's parameter types, in declaration order.
+        parameters: SubstsId,
+    },
     /// A function implemented outside Seal.
     ///
     /// The declaration has no body and no type arguments; the linker symbol is
@@ -150,9 +172,10 @@ pub enum CallTarget {
     /// The pointer value is the first element of the call's `args`, followed by
     /// the real arguments in source order. That keeps the callee in evaluation
     /// order without making this target unbounded: the target stays `Copy` and
-    /// names only the pointer type and how its receiver is reached. Phase 2
-    /// always uses `receiver: None`, where the first argument is the pointer
-    /// itself; closures fill in the environment kind later.
+    /// names only the pointer type and how its receiver is reached. A call
+    /// written through a function pointer uses `receiver: None`, where the
+    /// first argument is the pointer itself; monomorphization also produces
+    /// this form when a function-trait bound is instantiated with a pointer.
     FnPtr {
         /// The pointer type the call was checked against, always
         /// [`TyKind::FnPtr`](seal_ty::TyKind::FnPtr).
@@ -168,8 +191,10 @@ impl CallTarget {
     #[inline]
     pub fn try_instance(self) -> Option<Instance> {
         match self {
-            Self::Direct { instance, .. } | Self::TraitMethod { instance, .. } => Some(instance),
-            Self::Extern { .. } | Self::FnPtr { .. } => None,
+            Self::Direct { instance, .. }
+            | Self::TraitMethod { instance, .. }
+            | Self::Closure { instance } => Some(instance),
+            Self::Extern { .. } | Self::FnPtr { .. } | Self::FnTrait { .. } => None,
         }
     }
 
@@ -181,8 +206,9 @@ impl CallTarget {
     /// one use [`CallTarget::try_instance`].
     #[inline]
     pub fn instance(self) -> Instance {
-        self.try_instance()
-            .expect("an external or function pointer call has no Seal instance")
+        self.try_instance().expect(
+            "an external, function pointer, or symbolic function-trait call has no Seal instance",
+        )
     }
 
     /// Returns the expected parameter count.
@@ -197,8 +223,8 @@ impl CallTarget {
             Self::Direct { parameters, .. }
             | Self::TraitMethod { parameters, .. }
             | Self::Extern { parameters, .. } => parameters,
-            Self::FnPtr { .. } => {
-                panic!("a function pointer call takes its parameters from `ty`")
+            Self::FnPtr { .. } | Self::Closure { .. } | Self::FnTrait { .. } => {
+                panic!("this call target takes its parameters from its type or signature")
             }
         }
     }
@@ -206,7 +232,20 @@ impl CallTarget {
     /// Returns `true` when monomorphization must choose the implementation.
     #[inline]
     pub fn is_trait_method(self) -> bool {
-        matches!(self, Self::TraitMethod { .. })
+        matches!(self, Self::TraitMethod { .. } | Self::FnTrait { .. })
+    }
+
+    /// Returns `true` for a call of a concrete closure value.
+    #[inline]
+    pub fn is_closure(self) -> bool {
+        matches!(self, Self::Closure { .. })
+    }
+
+    /// Returns `true` for a call that still needs a function-trait bound
+    /// resolved by monomorphization.
+    #[inline]
+    pub fn is_fn_trait(self) -> bool {
+        matches!(self, Self::FnTrait { .. })
     }
 
     /// Returns `true` for a call through a Seal function pointer.
