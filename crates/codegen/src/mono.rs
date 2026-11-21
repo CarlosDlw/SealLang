@@ -1,8 +1,10 @@
 //! Code generation from one `.sealmono` unit.
 //!
-//! The frontend already lowered types and MIR and wrote optimized LLVM bitcode.
-//! This module only parses that bitcode and asks LLVM for a native object; it
-//! never lowers a type, a body, or a generic instance again.
+//! The frontend already lowered types and MIR and wrote the unit's bitcode.
+//! This module parses that bitcode, runs the unit's optimization pipeline, and
+//! asks LLVM for a native object; it never lowers a type, a body, or a generic
+//! instance again. Keeping optimization here is what makes the expensive passes
+//! run in parallel across `codegen-cgu` actions.
 
 use std::path::Path;
 
@@ -11,6 +13,7 @@ use inkwell::context::Context;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple,
 };
+use seal_session::OptLevel;
 
 use crate::error::CodegenError;
 
@@ -41,6 +44,12 @@ pub fn emit_object_from_bitcode(
         2 => OptimizationLevel::Default,
         _ => OptimizationLevel::Aggressive,
     };
+    let pipeline = match opt_level {
+        0 => OptLevel::O0,
+        1 => OptLevel::O1,
+        2 => OptLevel::O2,
+        _ => OptLevel::O3,
+    };
     let machine = target
         .create_target_machine(
             &triple,
@@ -63,6 +72,7 @@ pub fn emit_object_from_bitcode(
             format!("cannot parse the frontend bitcode: {error}"),
         )
     })?;
+    crate::optimize::run(&module, &machine, pipeline)?;
     let buffer = machine
         .write_to_memory_buffer(&module, FileType::Object)
         .map_err(|error| {

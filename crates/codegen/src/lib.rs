@@ -81,6 +81,7 @@ mod mono;
 mod names;
 mod object;
 mod operand;
+mod optimize;
 mod options;
 mod panic;
 mod place;

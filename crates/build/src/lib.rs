@@ -483,18 +483,19 @@ impl<'a> Builder<'a> {
                 .output("mono")
                 .ok_or_else(|| BuildError::action("the frontend produced no mono artifact"))?;
             let units = mono_units(context, mono.digest)?;
-            if units.len() != *count as usize {
+            if units.units.len() != *count as usize {
                 return Err(BuildError::action(format!(
                     "the frontend for `{}` wrote {} units but the build expected {count}",
                     job.target,
-                    units.len()
+                    units.units.len()
                 )));
             }
             let mut keys = Vec::new();
-            for (cgu, unit) in units.into_iter().enumerate() {
+            for (cgu, unit) in units.units.into_iter().enumerate() {
                 let action = Arc::new(CodegenAction::new(
                     self.label(job),
                     mono.digest,
+                    units.profile,
                     unit,
                     cgu as u32,
                     &context.temp_root,
@@ -586,18 +587,19 @@ impl<'a> Builder<'a> {
         count: u32,
     ) -> BuildResult<Vec<Digest>> {
         let units = mono_units(context, mono)?;
-        if units.len() != count as usize {
+        if units.units.len() != count as usize {
             return Err(BuildError::action(format!(
                 "the frontend for `{label}` wrote {} units but the build expected {count}",
-                units.len()
+                units.units.len()
             )));
         }
         let mut graph = ActionGraph::new();
         let mut keys = Vec::with_capacity(count as usize);
-        for (cgu, unit) in units.into_iter().enumerate() {
+        for (cgu, unit) in units.units.into_iter().enumerate() {
             let action = Arc::new(CodegenAction::new(
                 label,
                 mono,
+                units.profile,
                 unit,
                 cgu as u32,
                 &context.temp_root,
@@ -766,15 +768,29 @@ fn target_output(project: &Project, target: &Target) -> PathBuf {
 }
 
 /// Returns one digest per `.sealmono` unit, in CGU order.
-fn mono_units(context: &ActionContext, mono: Digest) -> BuildResult<Vec<Digest>> {
+struct MonoUnits {
+    profile: Digest,
+    units: Vec<Digest>,
+}
+
+fn mono_units(context: &ActionContext, mono: Digest) -> BuildResult<MonoUnits> {
     let path = context.cache.cas().object_path(mono);
     let archive = seal_metadata::read_archive_file(&path)
         .map_err(|error| BuildError::action(format!("cannot read the mono artifact: {error}")))?;
-    Ok(archive
-        .modules()
-        .iter()
-        .map(|bytes| Digest::of_bytes(bytes))
-        .collect())
+    let manifest = archive.manifest();
+    let profile =
+        serde_json::to_vec(&(manifest.target.as_str(), &manifest.profile, &manifest.entry))
+            .map_err(|error| {
+                BuildError::action(format!("cannot hash the mono profile: {error}"))
+            })?;
+    Ok(MonoUnits {
+        profile: Digest::of_bytes(&profile),
+        units: archive
+            .modules()
+            .iter()
+            .map(|bytes| Digest::of_bytes(bytes))
+            .collect(),
+    })
 }
 
 fn built_target(

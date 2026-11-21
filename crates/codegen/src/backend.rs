@@ -10,7 +10,6 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::module::Module;
-use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple};
 use inkwell::values::FunctionValue;
 use seal_const_eval::ConstProgram;
@@ -294,21 +293,11 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         CodegenError::internal(format!("generated LLVM IR is invalid: {error}"))
     })?;
 
-    if options.opt_level != OptLevel::O0 {
-        module
-            .run_passes(
-                match options.opt_level {
-                    OptLevel::O0 => "default<O0>",
-                    OptLevel::O1 => "default<O1>",
-                    OptLevel::O2 => "default<O2>",
-                    OptLevel::O3 => "default<O3>",
-                },
-                &machine,
-                PassBuilderOptions::create(),
-            )
-            .map_err(|error| {
-                CodegenError::internal(format!("LLVM optimization failed: {error}"))
-            })?;
+    // A mono artifact is optimized per unit by `codegen-cgu`: optimizing the
+    // whole module here would serialize the expensive passes in the frontend
+    // and defeat the split. The all-in-one paths still optimize in place.
+    if options.emit != Emit::Mono {
+        crate::optimize::run(&module, &machine, options.opt_level)?;
     }
 
     if options.emit == Emit::Mono {

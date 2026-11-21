@@ -256,9 +256,15 @@ pub(crate) struct CodegenAction {
 
 impl CodegenAction {
     /// Creates an action for one code generation unit.
+    ///
+    /// `profile` hashes the target, entry, optimization level, debug flag, and
+    /// unit count. The unit digest alone is not enough: the same bitcode can be
+    /// passed to code generation at different optimization levels, and those
+    /// requests must not share a cache entry.
     pub(crate) fn new(
         label: impl Into<String>,
         mono: Digest,
+        profile: Digest,
         unit: Digest,
         cgu: u32,
         temp_root: &Path,
@@ -268,10 +274,16 @@ impl CodegenAction {
             label,
             mono,
             cgu,
-            inputs: vec![ActionInput {
-                path: format!("mono:cgu{cgu}"),
-                digest: unit,
-            }],
+            inputs: vec![
+                ActionInput {
+                    path: "mono-profile".to_owned(),
+                    digest: profile,
+                },
+                ActionInput {
+                    path: format!("mono:cgu{cgu}"),
+                    digest: unit,
+                },
+            ],
             temp_root: temp_root.to_path_buf(),
         }
     }

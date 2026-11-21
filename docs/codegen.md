@@ -57,11 +57,16 @@ module to bitcode, and partitions it with
 function or global that another unit calls and keeps hidden visibility, so no
 Seal symbol becomes part of a library's C surface.
 
-`sealc codegen --mono app.sealmono --cgu 2 -o app.2.o` validates the archive and
-parses only that unit. It never lowers HIR, MIR, types, or generic instances; it
-runs the target machine over the frozen IR. The build graph keys each unit by
-the blake3 digest of its own bitcode, so an edit reruns only the unit whose
-bytes changed. A corrupt, truncated, or version-mismatched archive is `E8070`.
+`sealc codegen --mono app.sealmono --cgu 2 -o app.2.o` validates the archive,
+parses only that unit, and runs the unit's optimization pipeline before the
+target machine emits the object. It never lowers HIR, MIR, types, or generic
+instances. Optimization lives in the per-CGU action so the expensive passes run
+in parallel instead of serializing in the frontend. A multi-unit build therefore
+optimizes each unit on its own; cross-unit inlining is not available, which is
+the expected trade-off of code generation units. The build graph keys each unit
+by the blake3 digest of its own bitcode plus the target/entry/profile, so an edit
+reruns only the unit whose bytes changed and an optimization change reruns all
+of them. A corrupt, truncated, or version-mismatched archive is `E8070`.
 
 The split requires `llvm-split` from the same LLVM installation as the compiler.
 Set `SEAL_LLVM_SPLIT` to select a different executable. `sealc build file.sl`

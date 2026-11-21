@@ -191,7 +191,7 @@ fn cgu_splits_are_parallel_and_only_the_changed_unit_reruns() {
             (
                 "seal.toml",
                 "[package]\nname = \"cgudemo\"\nversion = \"0.1.0\"\n\n\
-                 [profiles.dev]\ncodegen-units = 4\n",
+                 [profiles.dev]\ncodegen-units = 4\nopt-level = 1\n",
             ),
             (
                 "src/main.sl",
@@ -240,6 +240,28 @@ fn cgu_splits_are_parallel_and_only_the_changed_unit_reruns() {
         "the link consumes the changed object"
     );
     assert_eq!(run(&artifact), 7);
+
+    std::fs::write(
+        fixture.path("seal.toml"),
+        "[package]\nname = \"cgudemo\"\nversion = \"0.1.0\"\n\n\
+         [profiles.dev]\ncodegen-units = 4\nopt-level = 2\n",
+    )
+    .expect("profile change");
+    let project = fixture.project();
+    let builder = Builder::new(&project, options(4, true));
+    let third = builder
+        .build(&[job("cgudemo")])
+        .expect("the third build succeeds");
+    let misses: Vec<_> = third
+        .timings
+        .iter()
+        .filter(|timing| timing.kind == "codegen-cgu" && !timing.cached)
+        .collect();
+    assert_eq!(
+        misses.len(),
+        4,
+        "an optimization change invalidates every unit even when the bitcode is unchanged"
+    );
 }
 
 #[test]

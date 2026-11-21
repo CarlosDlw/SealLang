@@ -14,11 +14,13 @@ native      pkg-config or explicit flags -> a cached probe result
 
 The frontend runs analysis and monomorphization once and partitions the
 resulting LLVM module with `llvm-split --round-robin`. Each `codegen-cgu` action
-reads only its unit, so it never lowers a type, MIR body, or generic instance
-again. Code generation units run in parallel and are cached independently:
-editing one function invalidates the frontend and the unit that contains that
-function, while the other units and the link remain cache hits when the object
-bytes do not change.
+reads only its unit and runs that unit's optimization pipeline, so it never
+lowers a type, MIR body, or generic instance again. Optimization is per unit,
+not in the frontend: the expensive passes are what the split parallelizes.
+Code generation units run in parallel and are cached independently: editing one
+function invalidates the frontend and the unit that contains that function,
+while the other units and the link remain cache hits when the object bytes do
+not change.
 
 ## Where state lives
 
@@ -52,9 +54,11 @@ command, and every output digest.
 
 The frontend key includes the normalized compile plan: target, profile, package
 instances, cfg values, entry, and every source file digest. A `codegen-cgu` key
-uses the digest of its own split unit, not the whole archive, so unrelated units
-keep their cache entries. The link key includes every object digest, the link
-metadata digest, every native result, and the linker arguments.
+uses the digest of its own split unit and a digest of the target/entry/profile,
+not the whole archive, so unrelated units keep their cache entries while a
+changed optimization level invalidates all of them. The link key includes every
+object digest, the link metadata digest, every native result, and the linker
+arguments.
 
 ## Cache behavior
 
@@ -91,6 +95,20 @@ directories, builds both, and compares every file below `seal/target`. Project
 builds pass `--remap-path-prefix <root>=.` to the frontend, so debug paths do
 not embed the checkout location. `seal build` itself is deterministic for the
 same inputs; the command makes that contract testable.
+
+### Measuring the split
+
+`cargo run --release -p seal-build --example cgu_bench` builds a synthetic
+project twice: once with one CGU and once with the host's job count. It reports
+the median clean build, the median incremental build after editing one function,
+the number of actions that missed the cache, and whether both binaries exit with
+the same status. `SEAL_BENCH_FUNCTIONS` changes the workload (default 800).
+
+The numbers are host-dependent. A small or medium project can be slower with
+several units because `llvm-split` runs serially and each `codegen-cgu` starts a
+process; the benefit appears when the per-unit optimization work dominates the
+split. The incremental column is the important one for the cache contract: an
+edit reruns the frontend, one unit, and the link, while every other unit hits.
 
 ## Sandbox
 
