@@ -63,9 +63,23 @@ An explicit target names a `kind` and, for `bin`, `example`, and `generator`,
 an `entry` function path. A missing entry is `E2087`; an entry that does not
 resolve to one top-level function is also `E2087`. A `lib` target cannot name
 an entry. `sources` and `include` add globs; `include` is restricted to tests,
-benches, and examples. `reuse`, `profile`, `runtime`, `linker`, `linker-script`,
-and `output` are accepted by the manifest parser and carried into the target
-model.
+benches, and examples. `reuse`, `profile`, `runtime`, `panic`, `linker`,
+`sysroot`, `linker-script`, `link-args`, and `output` are accepted by the
+manifest parser and carried into the target model. `runtime = "none"` is a
+freestanding target: no runtime archive is linked, the entry becomes `_start`,
+and panics trap. A freestanding target must use `panic = "trap"`; the parser
+rejects the contradictory combination with `E8060`.
+
+`seal/targets/<triple>.toml` adds a full target specification. `seal target
+add` validates and installs one, `seal target list` shows the host and project
+targets, and `seal target info <TRIPLE>` prints the resolved TOML. A custom
+specification can set `pointer-width`, `endianness`, `data-layout`, `c-abi`,
+`runtime`, `panic`, `linker`, `sysroot`, and `linker-script`. A cross
+executable without a declared linker is `E8062`; a cross executable that would
+link the compiler host's runtime is `E6003`, so a cross target either uses
+`runtime = "none"` or stays at object inspection with `seal check`. A malformed
+specification is `E8060`. The built-in defaults match the triple when no file
+exists.
 
 `seal build` selects `lib`, `bin`, `staticlib`, and `cdylib` targets by
 default. `--all-targets` adds tests, benches, and examples. A library target

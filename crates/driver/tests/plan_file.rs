@@ -59,6 +59,7 @@ fn plan(
         entry: entry.map(str::to_owned),
         metadata: seal_plan::PlanMetadata::default(),
         output,
+        target_spec: None,
     }
 }
 
@@ -161,6 +162,7 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
         entry: Some("root::main".to_owned()),
         metadata: seal_plan::PlanMetadata::default(),
         output: Some(output_path.clone()),
+        target_spec: None,
     };
     let path = write_plan(&fixture.root, &plan);
     let output = run(&["build", "--plan-file", &path.display().to_string()]);

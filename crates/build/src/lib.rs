@@ -49,7 +49,7 @@ pub use tasks::{TaskOutcome, TaskReport, TaskRequest, TaskRunner};
 
 use action::{
     Action, CodegenAction, FrontendAction, GenerateAction, LinkAction, LinkActionSpec, LinkKind,
-    NativeAction, slash_path,
+    LinkSettings, NativeAction, slash_path,
 };
 use context::ActionContext;
 use graph::ActionGraph;
@@ -306,6 +306,7 @@ impl<'a> Builder<'a> {
                 .project
                 .compile_plan(job.package, &job.target, &options)?;
             let count = plan.profile.codegen_units.max(1);
+            let settings = LinkSettings::from_plan(&plan);
             let frontend = Arc::new(FrontendAction::new(
                 self.label(job),
                 plan,
@@ -314,11 +315,11 @@ impl<'a> Builder<'a> {
                 &context.temp_root,
             )?);
             let key = graph.add(Action::Frontend(frontend), Vec::new())?;
-            frontends.push((*job, key, count));
+            frontends.push((*job, key, count, settings));
         }
         let records = graph.execute(context, self.options.jobs)?;
         let mut result = Vec::new();
-        for (job, frontend_key, count) in frontends {
+        for (job, frontend_key, count, settings) in frontends {
             let target = self.target(job);
             let path = target_output(self.project, target);
             let link_key = {
@@ -343,6 +344,7 @@ impl<'a> Builder<'a> {
                         native: Vec::new(),
                         link_args: self.options.link_args.clone(),
                         linker: target.linker.as_ref().map(OsString::from),
+                        settings,
                         temp_root: &context.temp_root,
                     },
                 ));
@@ -465,6 +467,7 @@ impl<'a> Builder<'a> {
             } else {
                 1
             };
+            let settings = LinkSettings::from_plan(&plan);
             let frontend = Arc::new(FrontendAction::new(
                 self.label(job),
                 plan,
@@ -473,13 +476,13 @@ impl<'a> Builder<'a> {
                 &context.temp_root,
             )?);
             let key = graph.add(Action::Frontend(frontend), Vec::new())?;
-            frontends.push((*job, key, path, count));
+            frontends.push((*job, key, path, count, settings));
         }
         let records = graph.execute(context, self.options.jobs)?;
 
         let mut codegen_graph = ActionGraph::new();
         let mut codegen_keys = Vec::new();
-        for (job, frontend_key, path, count) in &frontends {
+        for (job, frontend_key, path, count, _settings) in &frontends {
             let frontend = records.get(frontend_key).ok_or_else(|| {
                 BuildError::action(format!("the frontend `{}` produced no record", job.target))
             })?;
@@ -506,14 +509,14 @@ impl<'a> Builder<'a> {
                 ));
                 keys.push(codegen_graph.add(Action::Codegen(action), Vec::new())?);
             }
-            codegen_keys.push((*job, *frontend_key, path.clone(), keys));
+            codegen_keys.push((*job, *frontend_key, path.clone(), keys, _settings.clone()));
         }
         let codegen_records = codegen_graph.execute(context, self.options.jobs)?;
 
         let mut link_graph = ActionGraph::new();
         let mut links = Vec::new();
         let mut outputs = Vec::new();
-        for (job, frontend_key, path, keys) in &codegen_keys {
+        for (job, frontend_key, path, keys, settings) in &codegen_keys {
             let target = self.target(job);
             let frontend = records.get(frontend_key).ok_or_else(|| {
                 BuildError::action(format!("the frontend `{}` produced no record", job.target))
@@ -567,6 +570,7 @@ impl<'a> Builder<'a> {
                     native: self.native_for(job, native),
                     link_args: self.options.link_args.clone(),
                     linker: target.linker.as_ref().map(OsString::from),
+                    settings: settings.clone(),
                     temp_root: &context.temp_root,
                 },
             ));

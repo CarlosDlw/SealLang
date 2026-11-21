@@ -8,10 +8,15 @@
 #![warn(missing_docs)]
 
 mod c_abi;
+mod definition;
+mod runtime;
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 pub use c_abi::CAbiProperties;
+pub use definition::{CAbiDefinition, TargetDefinition};
+pub use runtime::{PanicStrategy, RuntimePolicy};
 
 /// Machine architecture.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -170,12 +175,21 @@ impl TargetTriple {
             Arch::X86_64 | Arch::Aarch64 | Arch::Riscv64 => 64,
             Arch::X86 | Arch::Arm | Arch::Wasm32 => 32,
         };
-        TargetSpec {
+        let mut spec = TargetSpec {
             triple: self.clone(),
             pointer_width,
             endianness: Endianness::Little,
             native_i128: pointer_width == 64,
-        }
+            data_layout: None,
+            c_abi: CAbiProperties::default(),
+            runtime: RuntimePolicy::Default,
+            panic: PanicStrategy::Abort,
+            linker: None,
+            sysroot: None,
+            linker_script: None,
+        };
+        spec.c_abi = CAbiProperties::for_target(&spec);
+        spec
     }
 }
 
@@ -192,9 +206,45 @@ pub struct TargetSpec {
     pointer_width: u8,
     endianness: Endianness,
     native_i128: bool,
+    data_layout: Option<String>,
+    c_abi: CAbiProperties,
+    runtime: RuntimePolicy,
+    panic: PanicStrategy,
+    linker: Option<String>,
+    sysroot: Option<PathBuf>,
+    linker_script: Option<PathBuf>,
 }
 
 impl TargetSpec {
+    /// Creates a specification from validated parts.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        triple: TargetTriple,
+        pointer_width: u8,
+        endianness: Endianness,
+        native_i128: bool,
+        data_layout: Option<String>,
+        c_abi: CAbiProperties,
+        runtime: RuntimePolicy,
+        panic: PanicStrategy,
+        linker: Option<String>,
+        sysroot: Option<PathBuf>,
+        linker_script: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            triple,
+            pointer_width,
+            endianness,
+            native_i128,
+            data_layout,
+            c_abi,
+            runtime,
+            panic,
+            linker,
+            sysroot,
+            linker_script,
+        }
+    }
     /// Returns the target triple.
     #[inline]
     pub fn triple(&self) -> &TargetTriple {
@@ -229,8 +279,90 @@ impl TargetSpec {
     /// Returns the C ABI properties of this target.
     ///
     /// The properties decide how `c_char`, `c_long`, and `c_wchar` resolve.
-    pub fn c_abi(&self) -> CAbiProperties {
-        CAbiProperties::for_target(self)
+    #[inline]
+    pub const fn c_abi(&self) -> CAbiProperties {
+        self.c_abi
+    }
+
+    /// Returns the explicit LLVM data layout, when the target declares one.
+    #[inline]
+    pub fn data_layout(&self) -> Option<&str> {
+        self.data_layout.as_deref()
+    }
+
+    /// Returns whether the target links the Seal runtime.
+    #[inline]
+    pub const fn runtime(&self) -> RuntimePolicy {
+        self.runtime
+    }
+
+    /// Returns what a panic does on this target.
+    #[inline]
+    pub const fn panic(&self) -> PanicStrategy {
+        self.panic
+    }
+
+    /// Returns the linker program declared by the target.
+    #[inline]
+    pub fn linker(&self) -> Option<&str> {
+        self.linker.as_deref()
+    }
+
+    /// Returns the sysroot declared by the target.
+    #[inline]
+    pub fn sysroot(&self) -> Option<&Path> {
+        self.sysroot.as_deref()
+    }
+
+    /// Returns the linker script declared by the target.
+    #[inline]
+    pub fn linker_script(&self) -> Option<&Path> {
+        self.linker_script.as_deref()
+    }
+
+    /// Returns whether this target is freestanding.
+    #[inline]
+    pub const fn is_freestanding(&self) -> bool {
+        matches!(self.runtime, RuntimePolicy::None)
+    }
+
+    /// Returns a copy with a different runtime policy.
+    pub fn with_runtime(mut self, runtime: RuntimePolicy) -> Self {
+        self.runtime = runtime;
+        if runtime == RuntimePolicy::None {
+            self.panic = PanicStrategy::Trap;
+        }
+        self
+    }
+
+    /// Returns a copy with a different panic policy.
+    pub fn with_panic(mut self, panic: PanicStrategy) -> Self {
+        self.panic = panic;
+        self
+    }
+
+    /// Returns a copy with a linker program override.
+    pub fn with_linker(mut self, linker: Option<String>) -> Self {
+        self.linker = linker;
+        self
+    }
+
+    /// Returns a copy with a sysroot override.
+    pub fn with_sysroot(mut self, sysroot: Option<PathBuf>) -> Self {
+        self.sysroot = sysroot;
+        self
+    }
+
+    /// Returns a copy with a linker script override.
+    pub fn with_linker_script(mut self, script: Option<PathBuf>) -> Self {
+        self.linker_script = script;
+        self
+    }
+
+    /// Returns a copy with an explicit data layout.
+    pub fn with_data_layout(mut self, data_layout: Option<String>) -> Self {
+        self.data_layout = data_layout;
+        self
     }
 }
 
@@ -262,6 +394,11 @@ pub enum TargetError {
         /// The rejected triple.
         triple: String,
     },
+    /// A TOML target specification is invalid.
+    InvalidSpec {
+        /// The reason, ready for the diagnostic.
+        detail: String,
+    },
 }
 
 impl fmt::Display for TargetError {
@@ -279,6 +416,7 @@ impl fmt::Display for TargetError {
             Self::UnknownOs { os, triple } => {
                 write!(f, "unknown operating system `{os}` in target `{triple}`")
             }
+            Self::InvalidSpec { detail } => f.write_str(detail),
         }
     }
 }

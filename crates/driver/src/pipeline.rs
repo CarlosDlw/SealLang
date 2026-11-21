@@ -48,6 +48,18 @@ enum Request<'a> {
     Api { path: PathBuf },
 }
 
+/// Project-level settings that accompany a lowered HIR body.
+struct HirRequest<'a> {
+    /// The primary source input.
+    input: &'a Path,
+    /// The selected entry definition, when the plan names one.
+    entry: Option<DefId>,
+    /// The plan profile, when compiling a project target.
+    profile: Option<&'a seal_plan::PlanProfile>,
+    /// The complete plan, when compiling a project target.
+    plan: Option<&'a CompilePlan>,
+}
+
 /// Whether compilation completed without errors.
 enum Outcome {
     /// All inputs compiled successfully.
@@ -259,6 +271,12 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
     if let Some(plan) = &plan {
         options.target =
             seal_target::TargetTriple::parse(&plan.target).map_err(|error| error.to_string())?;
+        if let Some(target) = &plan.target_spec {
+            let spec = target
+                .to_spec()
+                .map_err(|error| format!("invalid target specification: {error}"))?;
+            options.target_spec = Some(spec);
+        }
     }
     let session = Session::new(options).map_err(|error| error.to_string())?;
     if let Some(plan) = plan {
@@ -344,7 +362,18 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
 
-    compile_hir(session, request, hir, file_id, input, None, None);
+    compile_hir(
+        session,
+        request,
+        hir,
+        file_id,
+        HirRequest {
+            input,
+            entry: None,
+            profile: None,
+            plan: None,
+        },
+    );
 }
 
 /// Compiles every input as one package with a module graph.
@@ -409,9 +438,12 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         request,
         hir,
         primary_file,
-        &arguments.inputs[0],
-        None,
-        None,
+        HirRequest {
+            input: &arguments.inputs[0],
+            entry: None,
+            profile: None,
+            plan: None,
+        },
     );
 }
 
@@ -536,9 +568,12 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
         request,
         hir,
         primary_file,
-        &primary_input,
-        entry,
-        Some(&plan.profile),
+        HirRequest {
+            input: &primary_input,
+            entry,
+            profile: Some(&plan.profile),
+            plan: Some(&plan),
+        },
     );
     true
 }
@@ -591,10 +626,14 @@ fn compile_hir(
     request: Request<'_>,
     hir: seal_hir::Hir,
     file_id: seal_span::FileId,
-    input: &Path,
-    entry: Option<DefId>,
-    profile: Option<&seal_plan::PlanProfile>,
+    planned: HirRequest<'_>,
 ) {
+    let HirRequest {
+        input,
+        entry,
+        profile,
+        plan,
+    } = planned;
     let errors = session.diag().error_count();
 
     // Lowering relies on the invariants the checker establishes, so it runs
@@ -719,9 +758,38 @@ fn compile_hir(
             _ => seal_session::OptLevel::O3,
         }
     });
+    let target_spec = plan
+        .and_then(|plan| plan.target_spec.as_ref())
+        .and_then(|target| target.to_spec().ok());
+    let mut link_args = link.link_args.clone();
+    if let Some(target) = plan.and_then(|plan| plan.target_spec.as_ref()) {
+        link_args.extend(target.link_args.iter().map(OsString::from));
+    }
     let options = CodegenOptions {
         emit: *emit,
         output: output_path,
+        runtime: target_spec
+            .as_ref()
+            .map_or(seal_target::RuntimePolicy::Default, |spec| spec.runtime()),
+        panic: target_spec
+            .as_ref()
+            .map_or(seal_target::PanicStrategy::Abort, |spec| spec.panic()),
+        linker: target_spec
+            .as_ref()
+            .and_then(|spec| spec.linker().map(ToOwned::to_owned)),
+        linker_script: target_spec
+            .as_ref()
+            .and_then(|spec| spec.linker_script().map(Path::to_path_buf)),
+        sysroot: target_spec
+            .as_ref()
+            .and_then(|spec| spec.sysroot().map(Path::to_path_buf)),
+        source_date_epoch: plan
+            .and_then(|plan| plan.target_spec.as_ref())
+            .map_or(0, |target| target.source_date_epoch),
+        reproducible: plan
+            .and_then(|plan| plan.target_spec.as_ref())
+            .is_none_or(|target| target.reproducible),
+        target_triple: plan.map(|plan| plan.target.clone()),
         opt_level,
         debug_info: profile.map_or(output.optimization.debug_info, |profile| profile.debug),
         crate_name: input
@@ -730,7 +798,7 @@ fn compile_hir(
         runtime_archive: runtime_archive.map(Path::to_path_buf),
         libraries: link.libraries.clone(),
         search_paths: link.search_paths.clone(),
-        link_args: link.link_args.clone(),
+        link_args,
         entry,
         cgu_count: cgu_count
             .as_ref()

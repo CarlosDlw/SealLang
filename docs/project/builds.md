@@ -31,6 +31,7 @@ not change.
 | `seal/cache/actions/` | One JSON record per action key |
 | `seal/cache/locks/` | Short-lived advisory locks |
 | `seal/cache/tmp/` | Atomic staging for objects, plans, and link outputs |
+| `seal/toolchains/<version>/` | Installed, checksum-verified toolchain bundles |
 
 Cache directories are owner-only (`0700`) and objects are `0600`. Objects are
 written to a unique temporary file, flushed, and renamed into place, so a
@@ -59,7 +60,17 @@ not the whole archive, so unrelated units keep their cache entries while a
 changed optimization level invalidates all of them. The link key includes every
 object digest, the link metadata digest, every native result, the linker
 arguments, and the link kind, so an executable, static library, and shared
-library never share a cache entry.
+library never share a cache entry. It also includes the resolved target
+specification, runtime and panic policy, linker, linker script, sysroot,
+toolchain version, `SOURCE_DATE_EPOCH`, and reproducibility flag. Changing
+`--target`, a target TOML file, a profile, or a pinned toolchain therefore
+invalidates exactly the actions whose bytes depend on it.
+
+A project can pin a toolchain with `seal-toolchain.toml`. Before planning, the
+CLI verifies the installed tree against the pinned SHA-256 digest and checks the
+version and declared targets; a missing or modified install is `E8061`. Bundles
+are installed offline with `seal toolchain install --from <DIR>`; no download is
+attempted without a verified checksum.
 
 ## Cache behavior
 
@@ -94,8 +105,12 @@ per-unit emission out of that critical section.
 `seal verify-repro` copies a self-contained project into two temporary
 directories, builds both, and compares every file below `seal/target`. Project
 builds pass `--remap-path-prefix <root>=.` to the frontend, so debug paths do
-not embed the checkout location. `seal build` itself is deterministic for the
-same inputs; the command makes that contract testable.
+not embed the checkout location. Reproducible links receive
+`SOURCE_DATE_EPOCH` (default `0`, or the environment value) and omit a
+nondeterministic build ID on GNU targets. Static archives are written with
+sorted members and normalized metadata. `seal build` itself is deterministic
+for the same toolchain, target, features, and environment; the command makes
+that contract testable, including freestanding outputs.
 
 ### Measuring the split
 

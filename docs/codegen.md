@@ -595,6 +595,24 @@ locale, or `atexit` handlers:
   `--runtime-archive <PATH>` supplies an archive built for that target.
   `sealc build --emit=obj` remains available for cross-compilation.
 
+### Freestanding output
+
+A target with `runtime = "none"` removes the runtime archive and the C `main`
+wrapper. The selected Seal entry is called by an exported `_start` wrapper; its
+`i32` result (or zero for unit) is passed to a generated `exit` stub compiled
+with `SEAL_CC`, the declared linker, `CC`, or `cc` using `-ffreestanding`. The
+stub performs the target's direct process-exit system call, so no libc, CRT, or
+Seal runtime enters the link. The linker receives `-nostdlib`,
+`-Wl,-e,_start`, an optional declared
+script and sysroot, and any target link arguments. A missing linker, sysroot, or
+script is `E8062` rather than a late host-toolchain failure.
+
+Panics in a freestanding target lower to LLVM `unreachable` (a trap) instead of
+`seal_panic`; the target parser rejects `runtime = "none"` with
+`panic = "abort"`. Objects remain available for cross-target inspection, and
+the same target specification is used by the frontend, codegen, and link cache
+keys.
+
 ### Heap
 
 The heap layer (`runtime/heap/`) is separate and is linked only when a program

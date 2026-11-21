@@ -86,6 +86,7 @@ fn template_name(template: Template) -> &'static str {
         Template::Bin => "binary",
         Template::Lib => "library",
         Template::Workspace => "workspace",
+        Template::Kernel => "freestanding kernel",
     }
 }
 
@@ -94,7 +95,10 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
     let tests = root.join("tests");
     std::fs::create_dir_all(&src).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&tests).map_err(|error| error.to_string())?;
-    write(root.join(".gitignore"), "/seal/target/\n/target/\n")?;
+    write(
+        root.join(".gitignore"),
+        "/seal/target/\n/seal/toolchains/\n/target/\n",
+    )?;
     match template {
         Template::Bin => {
             write(
@@ -128,6 +132,29 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
             )?;
         }
         Template::Workspace => return scaffold_workspace(root, name),
+        Template::Kernel => {
+            write(
+                root.join("seal.toml"),
+                &format!(
+                    "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
+                     [targets.kernel]\nkind = \"bin\"\nentry = \"root::_start\"\n\
+                     runtime = \"none\"\npanic = \"trap\"\nlinker = \"cc\"\n\
+                     linker-script = \"kernel.ld\"\nlink-args = [\"-no-pie\"]\n"
+                ),
+            )?;
+            write(
+                src.join("main.sl"),
+                "extern \"c\" {\n  func exit(code: c_int) -> ();\n}\n\n\
+                 func _start() {\n  unsafe {\n    exit(42);\n  }\n}\n",
+            )?;
+            write(
+                root.join("kernel.ld"),
+                "ENTRY(_start)\n\nSECTIONS {\n  . = 0x10000;\n\
+                 .text : { *(.text*) }\n  .rodata : { *(.rodata*) }\n\
+                 .data : { *(.data*) }\n  .bss : { *(.bss*) *(COMMON) }\n}\n",
+            )?;
+        }
     }
     write_lockfile(root)
 }

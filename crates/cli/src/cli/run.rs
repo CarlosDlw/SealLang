@@ -80,10 +80,15 @@ pub(crate) fn run(cli: &Cli, root: &std::path::Path, args: &RunArgs) -> ExitCode
         .target_triple
         .clone()
         .unwrap_or_else(|| seal_target::host_triple().as_str().to_owned());
+    let toolchain = match crate::cli::build::toolchain_version(&project, &triple) {
+        Ok(toolchain) => toolchain,
+        Err(code) => return code,
+    };
     if let Err(code) = prepare_lockfile(cli, &project, &triple, &args.selection) {
         return code;
     }
-    let options = plan_options(&args.selection, BuildMode::Build, target);
+    let mut options = plan_options(&args.selection, BuildMode::Build, target);
+    options.toolchain = toolchain;
     let plan = match project.compile_plan(job.package, &job.target, &options) {
         Ok(plan) => plan,
         Err(error) => return ui::error(error.code(), error.message()),

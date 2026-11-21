@@ -80,8 +80,12 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             primary,
             output: None,
             profile: None,
+            runtime: None,
+            panic: None,
             linker: None,
+            sysroot: None,
             linker_script: None,
+            link_args: Vec::new(),
             required_features: Vec::new(),
             when: None,
             generator_inputs: Vec::new(),
@@ -101,8 +105,12 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             primary,
             output: None,
             profile: None,
+            runtime: None,
+            panic: None,
             linker: None,
+            sysroot: None,
             linker_script: None,
+            link_args: Vec::new(),
             required_features: Vec::new(),
             when: None,
             generator_inputs: Vec::new(),
@@ -192,6 +200,42 @@ fn build_one(
     } else {
         Vec::new()
     };
+    if declaration
+        .runtime
+        .as_deref()
+        .is_some_and(|runtime| !matches!(runtime, "default" | "none"))
+    {
+        return Err(ProjectError::target(format!(
+            "the target `{name}` declares the unknown runtime policy `{}`",
+            declaration.runtime.as_deref().unwrap_or_default()
+        )));
+    }
+    if declaration
+        .panic
+        .as_deref()
+        .is_some_and(|panic| !matches!(panic, "abort" | "trap"))
+    {
+        return Err(ProjectError::target(format!(
+            "the target `{name}` declares the unknown panic policy `{}`",
+            declaration.panic.as_deref().unwrap_or_default()
+        )));
+    }
+    if declaration.runtime.as_deref() == Some("none")
+        && declaration.panic.as_deref() == Some("abort")
+    {
+        return Err(ProjectError::target(format!(
+            "the freestanding target `{name}` must use `panic = \"trap\"`"
+        )));
+    }
+    if declaration
+        .link_args
+        .iter()
+        .any(|argument| argument.is_empty() || argument.contains('\0'))
+    {
+        return Err(ProjectError::target(format!(
+            "the target `{name}` declares an empty or NUL-containing link argument"
+        )));
+    }
 
     Ok(Target {
         name: name.to_owned(),
@@ -201,8 +245,15 @@ fn build_one(
         primary,
         output,
         profile: declaration.profile.clone(),
+        runtime: declaration.runtime.clone(),
+        panic: declaration.panic.clone(),
         linker: declaration.linker.clone(),
+        sysroot: declaration
+            .sysroot
+            .as_ref()
+            .map(|sysroot| root.join(sysroot)),
         linker_script,
+        link_args: declaration.link_args.clone(),
         required_features: declaration.required_features.clone(),
         when: declaration.when.clone(),
         generator_inputs,

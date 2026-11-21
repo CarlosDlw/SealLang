@@ -9,7 +9,9 @@ mod init;
 pub(crate) mod metadata;
 pub(crate) mod new;
 mod run;
+mod target;
 mod task;
+mod toolchain;
 mod tree;
 mod verify_repro;
 mod why;
@@ -31,6 +33,8 @@ pub(crate) enum Template {
     Lib,
     /// A root project with two members.
     Workspace,
+    /// A freestanding kernel with a linker script and `_start`.
+    Kernel,
 }
 
 /// Version-control setup for a new project.
@@ -128,6 +132,10 @@ pub(crate) enum Command {
     Task(TaskArgs),
     /// Build in two directories and compare every artifact byte.
     VerifyRepro(verify_repro::VerifyReproArgs),
+    /// Inspect, install, pin, and verify toolchains.
+    Toolchain(toolchain::ToolchainArgs),
+    /// Inspect and install TOML target specifications.
+    Target(target::TargetArgs),
 }
 
 /// Options shared by build-like commands.
@@ -158,7 +166,7 @@ pub(crate) struct Selection {
     pub(crate) release: bool,
 
     /// Compile for a target triple.
-    #[arg(long, value_name = "TRIPLE")]
+    #[arg(long, alias = "target", value_name = "TRIPLE")]
     pub(crate) target_triple: Option<String>,
 
     /// Enable features; features are recorded in the plan.
@@ -275,7 +283,7 @@ pub(crate) struct QueryArgs {
     pub(crate) package: Option<String>,
 
     /// Compile for a target triple.
-    #[arg(long, value_name = "TRIPLE")]
+    #[arg(long, alias = "target", value_name = "TRIPLE")]
     pub(crate) target_triple: Option<String>,
 
     /// Enable features.
@@ -408,6 +416,8 @@ where
         Command::Cache(args) => cache::cache(&cli, &project, args),
         Command::Task(args) => task::task(&cli, &project, args),
         Command::VerifyRepro(args) => verify_repro::verify_repro(&cli, &project, args),
+        Command::Toolchain(args) => toolchain::run(&cli, &project, args),
+        Command::Target(args) => target::run(&cli, &project, args),
     }
 }
 

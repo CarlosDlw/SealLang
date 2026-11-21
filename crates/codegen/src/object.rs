@@ -21,7 +21,10 @@ pub struct ObjectLink<'a> {
     /// The executable to write.
     pub output: &'a Path,
     /// Runtime archive bytes linked as the final input.
-    pub runtime: &'a [u8],
+    ///
+    /// `None` is a freestanding link: no runtime archive is written or passed
+    /// to the linker.
+    pub runtime: Option<&'a [u8]>,
     /// Libraries passed to the linker in order.
     pub libraries: &'a [String],
     /// Directories searched for native libraries.
@@ -32,6 +35,18 @@ pub struct ObjectLink<'a> {
     pub linker: Option<&'a OsStr>,
     /// Whether to produce a shared library instead of an executable.
     pub shared: bool,
+    /// Whether this is a freestanding link (`-nostdlib`, `_start`, exit stub).
+    pub freestanding: bool,
+    /// The target triple used to compile the freestanding support stub.
+    pub target: &'a str,
+    /// The linker script, when the target declares one.
+    pub linker_script: Option<&'a Path>,
+    /// The sysroot passed to the C toolchain.
+    pub sysroot: Option<&'a Path>,
+    /// Timestamp exposed to the linker for reproducible outputs.
+    pub source_date_epoch: u64,
+    /// Whether to request deterministic linker metadata.
+    pub reproducible: bool,
 }
 
 /// One request to archive existing objects and the runtime.
@@ -42,7 +57,9 @@ pub struct ObjectArchive<'a> {
     /// The static library to write.
     pub output: &'a Path,
     /// Runtime archive bytes linked into the library.
-    pub runtime: &'a [u8],
+    ///
+    /// `None` archives only the generated objects.
+    pub runtime: Option<&'a [u8]>,
 }
 
 /// Archives `objects` and the runtime into `output` atomically.
@@ -56,7 +73,7 @@ pub fn link_objects(request: &ObjectLink<'_>) -> Result<(), CodegenError> {
     let objects: Vec<&Path> = request.objects.iter().map(PathBuf::as_path).collect();
     let inner = LinkRequest {
         objects: &objects,
-        runtime: Some(request.runtime),
+        runtime: request.runtime,
         output: request.output,
         shared: request.shared,
         source_libraries: &[],
@@ -64,6 +81,12 @@ pub fn link_objects(request: &ObjectLink<'_>) -> Result<(), CodegenError> {
         search_paths: request.search_paths,
         link_args: request.link_args,
         linker: request.linker,
+        freestanding: request.freestanding,
+        target: request.target,
+        linker_script: request.linker_script,
+        sysroot: request.sysroot,
+        source_date_epoch: request.source_date_epoch,
+        reproducible: request.reproducible,
     };
     artifact::link_object(&inner)
 }

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use seal_target::TargetTriple;
+use seal_target::{CAbiDefinition, TargetDefinition, TargetSpec, TargetTriple};
 use serde::{Deserialize, Serialize};
 
 use crate::{PlanError, PlanResult};
@@ -136,6 +136,117 @@ pub struct PlanMetadata {
     pub kind: String,
     /// The source root of the primary package.
     pub root: String,
+    /// The toolchain version that produced the plan.
+    pub toolchain: String,
+}
+
+/// The target properties that affect code generation and linking.
+///
+/// The plan carries an explicit representation instead of the target crate's
+/// type so a plan file names every property it relies on. `None` keeps the
+/// historical behavior: derive the properties from `target`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlanTarget {
+    /// The target triple.
+    pub triple: String,
+    /// Pointer width in bits (`32` or `64`).
+    pub pointer_width: u8,
+    /// Byte order (`little` or `big`).
+    pub endianness: String,
+    /// Explicit LLVM data layout, when the target declares one.
+    pub data_layout: Option<String>,
+    /// Whether plain C `char` is signed.
+    pub c_char_signed: bool,
+    /// Width of C `long` in bits.
+    pub c_long_width: u16,
+    /// Width of C `wchar_t` in bits.
+    pub c_wchar_width: u16,
+    /// Whether C `wchar_t` is signed.
+    pub c_wchar_signed: bool,
+    /// Runtime policy (`default` or `none`).
+    pub runtime: String,
+    /// Panic policy (`abort` or `trap`).
+    pub panic: String,
+    /// Linker program used for executable targets.
+    pub linker: Option<String>,
+    /// Sysroot passed to the C toolchain.
+    pub sysroot: Option<PathBuf>,
+    /// Linker script passed to the C toolchain.
+    pub linker_script: Option<PathBuf>,
+    /// Extra linker arguments declared by the target.
+    pub link_args: Vec<String>,
+    /// Timestamp used by reproducible artifacts.
+    pub source_date_epoch: u64,
+    /// Whether outputs are canonicalized for reproducibility.
+    pub reproducible: bool,
+}
+
+impl PlanTarget {
+    /// Captures a target specification and the target's link settings.
+    pub fn from_spec(
+        spec: &TargetSpec,
+        link_args: Vec<String>,
+        source_date_epoch: u64,
+        reproducible: bool,
+    ) -> Self {
+        let abi = spec.c_abi();
+        Self {
+            triple: spec.triple().as_str().to_owned(),
+            pointer_width: spec.pointer_width(),
+            endianness: match spec.endianness() {
+                seal_target::Endianness::Little => "little",
+                seal_target::Endianness::Big => "big",
+            }
+            .to_owned(),
+            data_layout: spec.data_layout().map(ToOwned::to_owned),
+            c_char_signed: abi.char_signed(),
+            c_long_width: abi.long_width(),
+            c_wchar_width: abi.wchar_width(),
+            c_wchar_signed: abi.wchar_signed(),
+            runtime: spec.runtime().as_str().to_owned(),
+            panic: spec.panic().as_str().to_owned(),
+            linker: spec.linker().map(ToOwned::to_owned),
+            sysroot: spec.sysroot().map(PathBuf::from),
+            linker_script: spec.linker_script().map(PathBuf::from),
+            link_args,
+            source_date_epoch,
+            reproducible,
+        }
+    }
+
+    /// Resolves the plan representation back into a validated target.
+    pub fn to_spec(&self) -> PlanResult<TargetSpec> {
+        if self
+            .link_args
+            .iter()
+            .any(|argument| argument.is_empty() || argument.contains('\0'))
+        {
+            return Err(PlanError::invalid(
+                "the plan target declares an empty or NUL-containing link argument",
+            ));
+        }
+        let definition = TargetDefinition {
+            triple: self.triple.clone(),
+            data_layout: self.data_layout.clone(),
+            pointer_width: Some(self.pointer_width),
+            endianness: Some(self.endianness.clone()),
+            c_abi: Some(CAbiDefinition {
+                char_signed: self.c_char_signed,
+                long_width: self.c_long_width,
+                wchar_width: self.c_wchar_width,
+                wchar_signed: self.c_wchar_signed,
+            }),
+            runtime: Some(self.runtime.clone()),
+            panic: Some(self.panic.clone()),
+            linker: self.linker.clone(),
+            sysroot: self.sysroot.clone(),
+            linker_script: self.linker_script.clone(),
+        };
+        definition
+            .resolve()
+            .map_err(|error| PlanError::invalid(error.to_string()))
+    }
 }
 
 /// One validated compilation request.
@@ -163,6 +274,9 @@ pub struct CompilePlan {
     /// Artifact path selected by the project layer.
     #[serde(default)]
     pub output: Option<PathBuf>,
+    /// Target properties for custom, freestanding, and cross builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_spec: Option<PlanTarget>,
 }
 
 impl CompilePlan {
@@ -181,6 +295,16 @@ impl CompilePlan {
                 "the compile plan names an unsupported target `{}`",
                 self.target
             )));
+        }
+        if let Some(target_spec) = &self.target_spec {
+            let spec = target_spec.to_spec()?;
+            if spec.triple().as_str() != self.target {
+                return Err(PlanError::invalid(format!(
+                    "the plan target specification names `{}` but the plan compiles for `{}`",
+                    spec.triple(),
+                    self.target
+                )));
+            }
         }
         if self.packages.is_empty() {
             return Err(PlanError::invalid("the compile plan contains no packages"));
@@ -324,6 +448,7 @@ mod tests {
             entry: Some("root::main".to_owned()),
             metadata: PlanMetadata::default(),
             output: None,
+            target_spec: None,
         }
     }
 
@@ -366,5 +491,85 @@ mod tests {
         let mut plan = plan();
         plan.target = "plan9".to_owned();
         assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+    }
+
+    #[test]
+    fn a_target_specification_is_validated_and_must_match_the_target() {
+        let mut plan = plan();
+        plan.target_spec = Some(PlanTarget {
+            triple: plan.target.clone(),
+            pointer_width: 64,
+            endianness: "little".to_owned(),
+            c_char_signed: true,
+            c_long_width: 64,
+            c_wchar_width: 32,
+            c_wchar_signed: true,
+            runtime: "default".to_owned(),
+            panic: "abort".to_owned(),
+            reproducible: true,
+            ..PlanTarget::default()
+        });
+        plan.validate().expect("valid target spec");
+        plan.target_spec.as_mut().expect("spec").triple = "aarch64-unknown-linux-gnu".to_owned();
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn a_freestanding_target_specification_round_trips() {
+        let mut plan = plan();
+        plan.target_spec = Some(PlanTarget {
+            triple: plan.target.clone(),
+            pointer_width: 64,
+            endianness: "little".to_owned(),
+            runtime: "none".to_owned(),
+            panic: "trap".to_owned(),
+            linker: Some("cc".to_owned()),
+            linker_script: Some(PathBuf::from("kernel.ld")),
+            link_args: vec!["-no-pie".to_owned()],
+            c_char_signed: true,
+            c_long_width: 64,
+            c_wchar_width: 32,
+            c_wchar_signed: true,
+            reproducible: true,
+            ..PlanTarget::default()
+        });
+        plan.validate().expect("valid freestanding plan");
+        let spec = plan
+            .target_spec
+            .as_ref()
+            .expect("spec")
+            .to_spec()
+            .expect("resolves");
+        assert!(spec.is_freestanding());
+        assert_eq!(spec.panic().as_str(), "trap");
+    }
+
+    #[test]
+    fn a_nul_link_argument_is_rejected() {
+        let mut plan = plan();
+        plan.target_spec = Some(PlanTarget {
+            triple: plan.target.clone(),
+            pointer_width: 64,
+            endianness: "little".to_owned(),
+            runtime: "default".to_owned(),
+            panic: "abort".to_owned(),
+            link_args: vec!["bad\0argument".to_owned()],
+            ..PlanTarget::default()
+        });
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn an_invalid_target_specification_is_rejected() {
+        let mut plan = plan();
+        plan.target_spec = Some(PlanTarget {
+            triple: plan.target.clone(),
+            pointer_width: 48,
+            endianness: "little".to_owned(),
+            runtime: "none".to_owned(),
+            panic: "abort".to_owned(),
+            ..PlanTarget::default()
+        });
+        assert!(plan.validate().is_err());
     }
 }

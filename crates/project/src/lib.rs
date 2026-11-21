@@ -44,10 +44,18 @@ pub struct Target {
     pub output: Option<PathBuf>,
     /// The target's profile override.
     pub profile: Option<String>,
+    /// The runtime policy (`default` or `none`).
+    pub runtime: Option<String>,
+    /// The panic policy (`abort` or `trap`).
+    pub panic: Option<String>,
     /// The linker override.
     pub linker: Option<String>,
+    /// The sysroot passed to the C toolchain.
+    pub sysroot: Option<PathBuf>,
     /// The linker script.
     pub linker_script: Option<PathBuf>,
+    /// Extra linker arguments declared for this target.
+    pub link_args: Vec<String>,
     /// Features that must be enabled before the target is built.
     pub required_features: Vec<String>,
     /// The configuration condition under which this target exists.
@@ -223,6 +231,72 @@ impl Project {
         plan::compile_plan(self, package, target, options)
     }
 
+    /// Returns the validated target specification for `triple`.
+    ///
+    /// A project may keep a TOML specification at
+    /// `<project>/seal/targets/<triple>.toml`; without one, the built-in
+    /// properties for the triple are used.
+    pub fn target_spec(&self, triple: &str) -> ProjectResult<seal_target::TargetSpec> {
+        let parsed = seal_target::TargetTriple::parse(triple)
+            .map_err(|error| ProjectError::target_spec(error.to_string()))?;
+        let path = self.target_spec_path(parsed.as_str());
+        if !path.is_file() {
+            return Ok(parsed.spec());
+        }
+        let text = std::fs::read_to_string(&path).map_err(|error| {
+            ProjectError::target_spec(format!("cannot read `{}`: {error}", path.display()))
+        })?;
+        let spec = seal_target::TargetSpec::parse_toml(&text)
+            .map_err(|error| ProjectError::target_spec(format!("{}: {error}", path.display())))?;
+        let spec = resolve_spec_paths(spec, &self.root);
+        if spec.triple().as_str() != triple {
+            return Err(ProjectError::target_spec(format!(
+                "the target specification `{}` names `{}`, not `{triple}`",
+                path.display(),
+                spec.triple()
+            )));
+        }
+        Ok(spec)
+    }
+
+    /// Returns every project target specification, sorted by triple.
+    pub fn target_specs(&self) -> ProjectResult<Vec<seal_target::TargetSpec>> {
+        let directory = self.root.join("seal").join("targets");
+        if !directory.exists() {
+            return Ok(Vec::new());
+        }
+        let entries = std::fs::read_dir(&directory).map_err(|error| {
+            ProjectError::target_spec(format!("cannot read `{}`: {error}", directory.display()))
+        })?;
+        let mut specs = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                ProjectError::target_spec(format!("cannot read `{}`: {error}", directory.display()))
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).map_err(|error| {
+                ProjectError::target_spec(format!("cannot read `{}`: {error}", path.display()))
+            })?;
+            let spec = seal_target::TargetSpec::parse_toml(&text).map_err(|error| {
+                ProjectError::target_spec(format!("{}: {error}", path.display()))
+            })?;
+            specs.push(resolve_spec_paths(spec, &self.root));
+        }
+        specs.sort_by(|left, right| left.triple().as_str().cmp(right.triple().as_str()));
+        Ok(specs)
+    }
+
+    /// Returns the path of the TOML specification for `triple`.
+    pub fn target_spec_path(&self, triple: &str) -> PathBuf {
+        self.root
+            .join("seal")
+            .join("targets")
+            .join(format!("{triple}.toml"))
+    }
+
     /// Returns all targets selected by `--all-targets`.
     pub fn all_targets(&self) -> Vec<(usize, &Target)> {
         self.packages
@@ -250,6 +324,22 @@ impl Project {
 
 #[cfg(test)]
 mod tests;
+
+/// Resolves target paths relative to the project root.
+fn resolve_spec_paths(spec: seal_target::TargetSpec, root: &Path) -> seal_target::TargetSpec {
+    let resolve = |path: Option<&Path>| {
+        path.map(|path| {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            }
+        })
+    };
+    let sysroot = resolve(spec.sysroot());
+    let linker_script = resolve(spec.linker_script());
+    spec.with_sysroot(sysroot).with_linker_script(linker_script)
+}
 
 /// Loads a manifest and returns it with the canonical root.
 pub(crate) fn load_manifest(root: &Path) -> ProjectResult<LoadedManifest> {

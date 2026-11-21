@@ -70,6 +70,11 @@ pub enum CodegenError {
         /// The invalid configuration, ready for the diagnostic.
         detail: String,
     },
+    /// A declared linker, sysroot, or linker script is missing or unusable.
+    LinkerInput {
+        /// The invalid configuration, ready for the diagnostic.
+        detail: String,
+    },
     /// Writing or linking the requested artifact failed.
     Artifact {
         /// The output that could not be produced.
@@ -102,6 +107,13 @@ impl CodegenError {
         }
     }
 
+    /// Creates an invalid linker-input error.
+    pub(crate) fn linker_input(detail: impl Into<String>) -> Self {
+        Self::LinkerInput {
+            detail: detail.into(),
+        }
+    }
+
     /// Creates an artifact error.
     pub(crate) fn artifact(path: impl Into<PathBuf>, detail: impl Into<String>) -> Self {
         Self::Artifact {
@@ -119,6 +131,7 @@ impl CodegenError {
             Self::EntryPoint(_) => Some(codes::E6001.diag_code()),
             Self::UnsupportedTarget { .. } => Some(codes::E6002.diag_code()),
             Self::LinkInput { .. } => Some(codes::E6005.diag_code()),
+            Self::LinkerInput { .. } => Some(codes::E8062.diag_code()),
             Self::Artifact { .. } => Some(codes::E6003.diag_code()),
             Self::Internal(_) => None,
         }
@@ -133,6 +146,7 @@ impl fmt::Display for CodegenError {
                 write!(f, "cannot generate code for target `{triple}`: {detail}")
             }
             Self::LinkInput { detail } => write!(f, "invalid link input: {detail}"),
+            Self::LinkerInput { detail } => write!(f, "invalid linker input: {detail}"),
             Self::Artifact { path, detail } => {
                 write!(f, "could not emit `{}`: {detail}", path.display())
             }

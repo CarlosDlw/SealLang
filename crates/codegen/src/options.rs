@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use seal_def::DefId;
 use seal_session::OptLevel;
+use seal_target::{PanicStrategy, RuntimePolicy};
 
 /// The artifact a code generation request produces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,6 +51,25 @@ pub struct CodegenOptions {
     pub emit: Emit,
     /// Where the artifact is written.
     pub output: PathBuf,
+    /// Whether the target links the Seal runtime.
+    ///
+    /// [`RuntimePolicy::None`] removes the runtime archive and the C `main`
+    /// wrapper; the executable entry is the freestanding `_start`.
+    pub runtime: RuntimePolicy,
+    /// What a panic does on the target.
+    pub panic: PanicStrategy,
+    /// The linker program selected by the target or command line.
+    pub linker: Option<String>,
+    /// The linker script passed to the C toolchain.
+    pub linker_script: Option<PathBuf>,
+    /// The sysroot passed to the C toolchain.
+    pub sysroot: Option<PathBuf>,
+    /// Timestamp used by reproducible artifacts.
+    pub source_date_epoch: u64,
+    /// Whether outputs are canonicalized for reproducibility.
+    pub reproducible: bool,
+    /// The selected target triple, used to build freestanding support code.
+    pub target_triple: Option<String>,
     /// Optimization level.
     pub opt_level: OptLevel,
     /// Emit DWARF debug information.
@@ -82,6 +102,14 @@ impl CodegenOptions {
         Self {
             emit,
             output: output.into(),
+            runtime: RuntimePolicy::Default,
+            panic: PanicStrategy::Abort,
+            linker: None,
+            linker_script: None,
+            sysroot: None,
+            source_date_epoch: 0,
+            reproducible: true,
+            target_triple: None,
             opt_level: OptLevel::O0,
             debug_info: false,
             crate_name: None,

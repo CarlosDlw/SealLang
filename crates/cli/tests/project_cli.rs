@@ -447,6 +447,275 @@ fn verify_repro_builds_two_copies_and_finds_them_identical() {
 }
 
 #[test]
+fn a_kernel_template_builds_freestanding_and_exits_42() {
+    let fixture = fixture("kernel");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--template")
+            .arg("kernel")
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let build = output(seal().arg("build").arg("--project").arg(&fixture.root));
+    assert_success(&build);
+    assert!(
+        !String::from_utf8_lossy(&build.stderr).contains("unknown key"),
+        "the kernel manifest uses only known keys: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = output(seal().arg("run").arg("--project").arg(&fixture.root));
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(fixture.root.join("seal/target/dev/kernel").is_file());
+}
+
+#[test]
+fn target_commands_add_and_report_specifications() {
+    let fixture = fixture("targets");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let list = output(
+        seal()
+            .arg("target")
+            .arg("list")
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&list);
+    assert!(String::from_utf8_lossy(&list.stdout).contains("x86_64"));
+
+    let spec = fixture.root.join("custom-target.toml");
+    write(
+        &spec,
+        "triple = \"aarch64-unknown-none\"\nruntime = \"none\"\npanic = \"trap\"\nlinker = \"aarch64-linux-gnu-gcc\"\n",
+    );
+    let add = output(
+        seal()
+            .arg("target")
+            .arg("add")
+            .arg(&spec)
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&add);
+    let info = output(
+        seal()
+            .arg("target")
+            .arg("info")
+            .arg("aarch64-unknown-none")
+            .arg("--json")
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&info);
+    let value: serde_json::Value = serde_json::from_slice(&info.stdout).expect("target JSON");
+    assert_eq!(value["runtime"], "none");
+    assert_eq!(value["panic"], "trap");
+
+    let invalid = fixture.root.join("invalid-target.toml");
+    write(
+        &invalid,
+        "triple = \"x86_64-unknown-linux-gnu\"\npointer-width = 48\n",
+    );
+    let rejected = output(
+        seal()
+            .arg("target")
+            .arg("add")
+            .arg(&invalid)
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("E8060"));
+}
+
+#[test]
+fn a_pinned_toolchain_is_verified_before_a_build() {
+    let fixture = fixture("toolchain");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let offline = output(
+        seal()
+            .arg("toolchain")
+            .arg("install")
+            .arg("--offline")
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_eq!(offline.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&offline.stderr).contains("E8061"));
+    let bundle = fixture.root.join("bundle");
+    write(&bundle.join("bin/sealc"), "#!/bin/sh\nexit 0\n");
+    let checksum = output(
+        seal()
+            .arg("toolchain")
+            .arg("checksum")
+            .arg(&bundle)
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&checksum);
+    let checksum = String::from_utf8_lossy(&checksum.stdout).trim().to_owned();
+    write(
+        &bundle.join("seal-toolchain.toml"),
+        &format!(
+            "channel = \"stable\"\nversion = \"{}\"\nchecksum = \"{checksum}\"\ntargets = [\"x86_64-unknown-linux\", \"x86_64-unknown-linux-gnu\"]\n\n[components]\nsealc = \"bin/sealc\"\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    let install = output(
+        seal()
+            .arg("toolchain")
+            .arg("install")
+            .arg("--from")
+            .arg(&bundle)
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&install);
+    let pin = output(
+        seal()
+            .arg("toolchain")
+            .arg("pin")
+            .arg(env!("CARGO_PKG_VERSION"))
+            .arg("--project")
+            .arg(&fixture.root),
+    );
+    assert_success(&pin);
+    assert_success(&output(
+        seal().arg("build").arg("--project").arg(&fixture.root),
+    ));
+
+    let installed = fixture
+        .root
+        .join("seal/toolchains")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("bin/sealc");
+    std::fs::write(&installed, b"tampered").expect("tamper");
+    let rejected = output(seal().arg("build").arg("--project").arg(&fixture.root));
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("E8061"));
+}
+
+#[test]
+fn a_cross_binary_without_a_linker_is_e8062() {
+    let fixture = fixture("cross-linker");
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"cross\"\n\n[package]\nname = \"cross\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &fixture.root.join("src/main.sl"),
+        "func main() -> i32 { 0 }\n",
+    );
+    let build = output(
+        seal()
+            .arg("build")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--target")
+            .arg("aarch64-unknown-linux-gnu"),
+    );
+    assert_eq!(build.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&build.stderr).contains("E8062"));
+}
+
+#[test]
+fn a_cross_binary_may_not_link_the_host_runtime() {
+    let fixture = fixture("cross-runtime");
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"cross\"\n\n[package]\nname = \"cross\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &fixture.root.join("src/main.sl"),
+        "func main() -> i32 { 0 }\n",
+    );
+    write(
+        &fixture
+            .root
+            .join("seal/targets/aarch64-unknown-linux-gnu.toml"),
+        "triple = \"aarch64-unknown-linux-gnu\"\nlinker = \"cc\"\n",
+    );
+    let build = output(
+        seal()
+            .arg("build")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--target")
+            .arg("aarch64-unknown-linux-gnu"),
+    );
+    assert_eq!(build.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(stderr.contains("E6003"), "unexpected stderr: {stderr}");
+    assert!(stderr.contains("runtime"), "unexpected stderr: {stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_spec_linker_is_used_by_the_build() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture("spec-linker");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let log = fixture.root.join("linker-invoked");
+    let linker = fixture.root.join("fake-linker.sh");
+    write(
+        &linker,
+        &format!(
+            "#!/bin/sh\nprintf invoked > '{}'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then shift; out=\"$1\"; fi\n  shift\ndone\n: > \"$out\"\n",
+            log.display()
+        ),
+    );
+    let mut permissions = std::fs::metadata(&linker)
+        .expect("linker metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&linker, permissions).expect("executable linker");
+
+    let host = seal_target::host_triple();
+    write(
+        &fixture.root.join(format!("seal/targets/{host}.toml")),
+        &format!("triple = \"{host}\"\nlinker = \"{}\"\n", linker.display()),
+    );
+    let build = output(seal().arg("build").arg("--project").arg(&fixture.root));
+    assert_success(&build);
+    assert!(
+        log.is_file(),
+        "the build must use the linker declared by the target spec\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+}
+
+#[test]
 fn paths_with_spaces_and_unicode_work() {
     let fixture = fixture("spaces");
     let root = fixture.root.join("projeto com espaço");

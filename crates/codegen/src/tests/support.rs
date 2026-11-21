@@ -311,6 +311,7 @@ pub(crate) fn build_module<'ctx>(
             source_map: compiled.session.source_map(),
             debug: debug.as_ref(),
             scope,
+            trap_panics: false,
         }
         .lower()
         .expect("a body lowers");

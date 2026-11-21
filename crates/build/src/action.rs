@@ -18,6 +18,7 @@ use seal_codegen::ObjectLink;
 use seal_manifest::NativeManifest;
 use seal_plan::{BuildMode, CompilePlan};
 use seal_sandbox::{SandboxPolicy, SandboxRequest};
+use seal_target::{PanicStrategy, RuntimePolicy};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
@@ -370,6 +371,45 @@ impl LinkKind {
     }
 }
 
+/// Target, runtime, and reproducibility settings shared by every link.
+#[derive(Clone, Debug)]
+pub(crate) struct LinkSettings {
+    pub(crate) runtime: RuntimePolicy,
+    pub(crate) panic: PanicStrategy,
+    pub(crate) target: String,
+    pub(crate) linker: Option<String>,
+    pub(crate) linker_script: Option<PathBuf>,
+    pub(crate) sysroot: Option<PathBuf>,
+    pub(crate) source_date_epoch: u64,
+    pub(crate) reproducible: bool,
+    pub(crate) toolchain: String,
+    pub(crate) link_args: Vec<OsString>,
+}
+
+impl LinkSettings {
+    pub(crate) fn from_plan(plan: &CompilePlan) -> Self {
+        let target = plan.target_spec.as_ref();
+        Self {
+            runtime: target
+                .and_then(|target| RuntimePolicy::parse(&target.runtime))
+                .unwrap_or_default(),
+            panic: target
+                .and_then(|target| PanicStrategy::parse(&target.panic))
+                .unwrap_or_default(),
+            target: plan.target.clone(),
+            linker: target.and_then(|target| target.linker.clone()),
+            linker_script: target.and_then(|target| target.linker_script.clone()),
+            sysroot: target.and_then(|target| target.sysroot.clone()),
+            source_date_epoch: target.map_or(0, |target| target.source_date_epoch),
+            reproducible: target.is_none_or(|target| target.reproducible),
+            toolchain: plan.metadata.toolchain.clone(),
+            link_args: target
+                .map(|target| target.link_args.iter().map(OsString::from).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// Inputs collected before a [`LinkAction`] is created.
 #[derive(Clone, Debug)]
 pub(crate) struct LinkActionSpec<'a> {
@@ -385,6 +425,8 @@ pub(crate) struct LinkActionSpec<'a> {
     pub(crate) link_args: Vec<OsString>,
     /// An explicit linker program.
     pub(crate) linker: Option<OsString>,
+    /// Target, runtime, and reproducibility settings.
+    pub(crate) settings: LinkSettings,
     /// The directory for temporary link files.
     pub(crate) temp_root: &'a Path,
 }
@@ -399,6 +441,14 @@ pub(crate) struct LinkAction {
     native: Vec<NativeResult>,
     link_args: Vec<OsString>,
     linker: Option<OsString>,
+    runtime: RuntimePolicy,
+    panic: PanicStrategy,
+    target: String,
+    linker_script: Option<PathBuf>,
+    sysroot: Option<PathBuf>,
+    source_date_epoch: u64,
+    reproducible: bool,
+    toolchain: String,
     inputs: Vec<ActionInput>,
     temp_root: PathBuf,
 }
@@ -413,8 +463,11 @@ impl LinkAction {
             native,
             mut link_args,
             linker,
+            mut settings,
             temp_root,
         } = spec;
+        let linker = linker.or_else(|| settings.linker.take().map(OsString::from));
+        link_args.extend(settings.link_args.iter().cloned());
         for entry in &native {
             link_args.extend(entry.link_args.iter().map(OsString::from));
         }
@@ -444,6 +497,14 @@ impl LinkAction {
             native,
             link_args,
             linker,
+            runtime: settings.runtime,
+            panic: settings.panic,
+            target: settings.target,
+            linker_script: settings.linker_script,
+            sysroot: settings.sysroot,
+            source_date_epoch: settings.source_date_epoch,
+            reproducible: settings.reproducible,
+            toolchain: settings.toolchain,
             inputs,
             temp_root: temp_root.to_path_buf(),
         }
@@ -458,7 +519,25 @@ impl LinkAction {
             "link".to_owned(),
             self.kind.as_str().to_owned(),
             self.label.clone(),
+            format!("--target={}", self.target),
+            format!("--runtime={}", self.runtime),
+            format!("--panic={}", self.panic),
+            format!("--toolchain={}", self.toolchain),
+            format!("--epoch={}", self.source_date_epoch),
+            format!("--reproducible={}", self.reproducible),
         ];
+        if let Some(linker) = &self.linker {
+            command.push(format!("--linker={}", linker.to_string_lossy()));
+        }
+        if let Some(script) = &self.linker_script {
+            command.push(format!("--linker-script={}", script.display()));
+        }
+        if let Some(sysroot) = &self.sysroot {
+            command.push(format!("--sysroot={}", sysroot.display()));
+        }
+        for argument in &self.link_args {
+            command.push(format!("--link-arg={}", argument.to_string_lossy()));
+        }
         for native in &self.native {
             command.push(format!("native:{}", native.alias));
         }
@@ -492,14 +571,18 @@ impl LinkAction {
             .iter()
             .map(|digest| context.cache.cas().object_path(*digest))
             .collect();
-        let runtime = seal_codegen::runtime_archive();
+        let runtime_bytes = (self.runtime == RuntimePolicy::Default
+            && self.kind != LinkKind::StaticLib)
+            .then(seal_codegen::runtime_archive);
+        let runtime = runtime_bytes;
         let linker = self.linker.as_deref();
         let result = match self.kind {
             LinkKind::StaticLib => {
                 let request = seal_codegen::ObjectArchive {
                     objects: &objects,
                     output: &output,
-                    runtime,
+                    runtime: (self.runtime == RuntimePolicy::Default)
+                        .then(seal_codegen::runtime_archive),
                 };
                 seal_codegen::archive_objects(&request)
             }
@@ -513,6 +596,12 @@ impl LinkAction {
                     link_args: &link_args,
                     linker,
                     shared: self.kind == LinkKind::Cdylib,
+                    freestanding: self.runtime == RuntimePolicy::None,
+                    target: &self.target,
+                    linker_script: self.linker_script.as_deref(),
+                    sysroot: self.sysroot.as_deref(),
+                    source_date_epoch: self.source_date_epoch,
+                    reproducible: self.reproducible,
                 };
                 seal_codegen::link_objects(&request)
             }

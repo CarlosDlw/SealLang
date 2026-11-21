@@ -56,7 +56,7 @@ fn a_failed_link_preserves_the_existing_output_and_leaves_no_temporary_files() {
     );
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr.contains("E6003") && stderr.contains("cannot run linker"),
+        stderr.contains("E8062") && stderr.contains("cannot run linker"),
         "unexpected stderr: {stderr}"
     );
     assert_eq!(

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use seal_manifest::TargetKind;
-use seal_plan::{BuildMode, CfgOptions, CompilePlan, PlanMetadata, PlanProfile};
-use seal_target::TargetTriple;
+use seal_plan::{BuildMode, CfgOptions, CompilePlan, PlanMetadata, PlanProfile, PlanTarget};
+use seal_target::{PanicStrategy, RuntimePolicy, TargetTriple};
 use sha2::{Digest, Sha256};
 
 use crate::cfg::CfgEnvironment;
@@ -34,6 +34,12 @@ pub struct PlanOptions {
     pub cfgs: Vec<String>,
     /// Generated files added to the primary package before planning.
     pub extra_files: Vec<PathBuf>,
+    /// Whether artifacts use canonical timestamps and paths.
+    pub reproducible: bool,
+    /// Overrides `SOURCE_DATE_EPOCH` for this plan.
+    pub source_date_epoch: Option<u64>,
+    /// The toolchain version that will compile the plan.
+    pub toolchain: String,
 }
 
 impl Default for PlanOptions {
@@ -49,6 +55,9 @@ impl Default for PlanOptions {
             all_features: false,
             cfgs: Vec::new(),
             extra_files: Vec::new(),
+            reproducible: true,
+            source_date_epoch: None,
+            toolchain: env!("CARGO_PKG_VERSION").to_owned(),
         }
     }
 }
@@ -77,7 +86,6 @@ pub(crate) fn compile_plan(
     let profile = profiles::resolve(project, &profile_name)?;
     let triple = TargetTriple::parse(&options.target)
         .map_err(|error| ProjectError::plan(error.to_string()))?;
-    let spec = triple.spec();
     let cfg = CfgEnvironment::for_triple(&triple);
     if target
         .when
@@ -89,6 +97,64 @@ pub(crate) fn compile_plan(
             target.name, options.target
         )));
     }
+    let mut spec = project.target_spec(&options.target)?;
+    if let Some(runtime) = &target.runtime {
+        let policy = RuntimePolicy::parse(runtime).ok_or_else(|| {
+            ProjectError::target(format!(
+                "the target `{}` declares the unknown runtime policy `{runtime}`",
+                target.name
+            ))
+        })?;
+        spec = spec.with_runtime(policy);
+    }
+    if let Some(panic) = &target.panic {
+        let policy = PanicStrategy::parse(panic).ok_or_else(|| {
+            ProjectError::target(format!(
+                "the target `{}` declares the unknown panic policy `{panic}`",
+                target.name
+            ))
+        })?;
+        spec = spec.with_panic(policy);
+    }
+    if target.linker.is_some() {
+        spec = spec.with_linker(target.linker.clone());
+    }
+    if target.sysroot.is_some() {
+        spec = spec.with_sysroot(target.sysroot.clone());
+    }
+    if target.linker_script.is_some() {
+        spec = spec.with_linker_script(target.linker_script.clone());
+    }
+    if spec.is_freestanding() && spec.panic() != PanicStrategy::Trap {
+        return Err(ProjectError::target(format!(
+            "the freestanding target `{}` must use `panic = \"trap\"`",
+            target.name
+        )));
+    }
+    let host = seal_target::host_triple();
+    let cross = triple != host;
+    if options.mode == BuildMode::Build
+        && cross
+        && !matches!(target.kind, TargetKind::Lib | TargetKind::Staticlib)
+        && spec.linker().is_none()
+    {
+        return Err(ProjectError::linker(format!(
+            "the cross target `{}` needs a linker; declare `linker` in `{}` or the target manifest",
+            options.target,
+            project.target_spec_path(&options.target).display()
+        )));
+    }
+    if options.mode == BuildMode::Build
+        && cross
+        && spec.runtime() == RuntimePolicy::Default
+        && !matches!(target.kind, TargetKind::Lib | TargetKind::Generator)
+    {
+        return Err(ProjectError::artifact(format!(
+            "the cross target `{}` would link the compiler host's runtime archive; declare `runtime = \"none\"` in the target or target manifest, or inspect the object with `seal check`",
+            options.target
+        )));
+    }
+    let source_date_epoch = source_date_epoch(options)?;
     for value in &options.cfgs {
         if !matches!(value.as_str(), "test" | "bench" | "debug_assertions") {
             return Err(ProjectError::manifest(format!(
@@ -209,8 +275,15 @@ pub(crate) fn compile_plan(
             target: target.name.clone(),
             kind: target.kind.as_str().to_owned(),
             root: package.root.display().to_string(),
+            toolchain: options.toolchain.clone(),
         },
         output,
+        target_spec: Some(PlanTarget::from_spec(
+            &spec,
+            target.link_args.clone(),
+            source_date_epoch,
+            options.reproducible,
+        )),
     };
     plan.validate().map_err(|error| {
         ProjectError::plan(format!(
@@ -219,6 +292,23 @@ pub(crate) fn compile_plan(
         ))
     })?;
     Ok(plan)
+}
+
+fn source_date_epoch(options: &PlanOptions) -> ProjectResult<u64> {
+    if let Some(epoch) = options.source_date_epoch {
+        return Ok(epoch);
+    }
+    match std::env::var("SOURCE_DATE_EPOCH") {
+        Ok(value) => value.parse::<u64>().map_err(|_| {
+            ProjectError::plan(format!(
+                "`SOURCE_DATE_EPOCH` must be a non-negative integer, but it is `{value}`"
+            ))
+        }),
+        Err(std::env::VarError::NotPresent) => Ok(0),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(ProjectError::plan("`SOURCE_DATE_EPOCH` is not valid UTF-8"))
+        }
+    }
 }
 
 fn default_output(project: &Project, target: &Target, profile: &str) -> PathBuf {

@@ -23,6 +23,16 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
     /// The caller must position the builder in the block that should not
     /// continue. On success the builder is left on a terminated block.
     pub(crate) fn panic_at(&self, span: Span, message: &str) -> Result<(), CodegenError> {
+        if self.trap_panics {
+            // A freestanding target has no runtime to format or report a
+            // panic through. An `unreachable` terminator is a hardware trap on
+            // every supported target and keeps the artifact runtime-free.
+            let _ = (span, message);
+            self.builder.build_unreachable().map_err(|error| {
+                CodegenError::internal(format!("cannot emit a panic trap: {error:?}"))
+            })?;
+            return Ok(());
+        }
         let (file, line, column) = self.source_location(span);
         let (message_data, message_length) = self.constants.string_global(message)?;
         let (file_data, file_length) = self.constants.string_global(&file)?;

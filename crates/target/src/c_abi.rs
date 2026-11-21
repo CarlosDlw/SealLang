@@ -4,7 +4,7 @@
 //! `c_wchar`) resolve. They are facts about the target, never about the host,
 //! so the compiler does not consult `cfg!` or the machine that built it.
 
-use crate::{Arch, Os, TargetSpec};
+use crate::{Arch, Os, TargetSpec, TargetTriple};
 
 /// The C ABI properties of one target.
 ///
@@ -25,6 +25,23 @@ pub struct CAbiProperties {
 }
 
 impl CAbiProperties {
+    /// Creates explicit C ABI properties.
+    ///
+    /// Callers validate the widths; this constructor only records them.
+    pub(crate) const fn new(
+        char_signed: bool,
+        long_width: u16,
+        wchar_width: u16,
+        wchar_signed: bool,
+    ) -> Self {
+        Self {
+            char_signed,
+            long_width,
+            wchar_width,
+            wchar_signed,
+        }
+    }
+
     /// Derives the properties from `target`.
     ///
     /// `char` is signed on Windows, Darwin, and the x86 family, and unsigned on
@@ -33,11 +50,20 @@ impl CAbiProperties {
     /// `wchar_t` is a 16-bit unsigned type on Windows and a 32-bit signed type
     /// elsewhere.
     pub fn for_target(target: &TargetSpec) -> Self {
-        let os = target.triple().os();
-        let arch = target.triple().arch();
+        Self::for_target_parts(target.triple(), target.pointer_width())
+    }
+
+    /// Derives the properties from a triple and an explicit pointer width.
+    ///
+    /// A custom target specification can change the pointer width of the
+    /// triple it names, so the C ABI must use the resolved width rather than
+    /// the built-in default.
+    pub(crate) fn for_target_parts(triple: &TargetTriple, pointer_width: u8) -> Self {
+        let os = triple.os();
+        let arch = triple.arch();
         let char_signed =
             matches!(os, Os::Windows | Os::Darwin) || matches!(arch, Arch::X86 | Arch::X86_64);
-        let long_width = if target.pointer_width() == 32 || os == Os::Windows {
+        let long_width = if pointer_width == 32 || os == Os::Windows {
             32
         } else {
             64

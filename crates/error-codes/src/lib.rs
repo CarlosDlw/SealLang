@@ -2464,6 +2464,30 @@ pub const E8047: ErrorCode = ErrorCode {
 Each artifact path and each generated file has exactly one producer. Two actions\nwriting the same path would make the result depend on execution order.\n\nRename one target or one generated output so every path has a single owner.",
 };
 
+/// A project target or target specification is unknown or invalid.
+pub const E8060: ErrorCode = ErrorCode {
+    code: "E8060",
+    title: "invalid target specification",
+    explanation: "\
+A target declaration names a triple or a property the compiler cannot use. Every\n`seal/targets/<triple>.toml` file must name the same triple as its file, use a\nsupported pointer width and byte order, and declare a valid runtime and panic\npolicy.\n\nRun `seal target info <TRIPLE>` to inspect a specification and fix the named\nfield.",
+};
+
+/// A toolchain is not installed, verified, or compatible.
+pub const E8061: ErrorCode = ErrorCode {
+    code: "E8061",
+    title: "toolchain verification failed",
+    explanation: "\
+A toolchain is only installed after its complete tree matches the SHA-256 digest\nin `seal-toolchain.toml`. A mismatch, a symlink, an unsupported checksum, a\nmissing offline bundle, or a pin that names a different compiler version is\nrejected before any file is copied or used.\n\nInstall a verified bundle with `seal toolchain install --from <DIR>`, or remove\nthe pin when the embedded compiler is the intended toolchain.",
+};
+
+/// A linker, sysroot, or linker script is missing or unusable.
+pub const E8062: ErrorCode = ErrorCode {
+    code: "E8062",
+    title: "missing cross linker input",
+    explanation: "\
+A cross or freestanding executable needs a linker and, when declared, a sysroot\nand linker script built for the target. The compiler does not silently fall back\nto the host toolchain, because that would either fail late or produce an object\nfor the wrong target.\n\nDeclare `linker`, `sysroot`, and `linker-script` in the target specification or\nthe target manifest, and make sure each path exists.",
+};
+
 /// A `.sealmono` metadata artifact is invalid.
 pub const E8070: ErrorCode = ErrorCode {
     code: "E8070",
@@ -3873,7 +3897,7 @@ pub static ALL: &[ErrorCode] = &[
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
     E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8040, E8041, E8042, E8043, E8044,
-    E8045, E8046, E8047, E8070, E8103, E8104, E9001, E9002,
+    E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8103, E8104, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

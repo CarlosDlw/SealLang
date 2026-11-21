@@ -14,6 +14,7 @@ use crate::ui;
 struct Report {
     version: u32,
     toolchain: Check,
+    target: Check,
     linker: Check,
     cache: Check,
     lockfile: Check,
@@ -33,11 +34,7 @@ pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
         Err(code) => return code,
     };
     let target = host_triple().as_str().to_owned();
-    let toolchain = Check {
-        name: "toolchain".to_owned(),
-        ok: true,
-        detail: format!("seal {} (embedded compiler)", env!("CARGO_PKG_VERSION")),
-    };
+    let (toolchain, target_check) = check_toolchain_and_target(&project, &target);
     let linker = match find_linker() {
         Some(path) => Check {
             name: "linker".to_owned(),
@@ -64,14 +61,19 @@ pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
         })
         .collect();
     let report = Report {
-        version: 1,
+        version: 2,
         toolchain,
+        target: target_check,
         linker,
         cache,
         lockfile,
         warnings,
     };
-    let ok = report.toolchain.ok && report.linker.ok && report.cache.ok && report.lockfile.ok;
+    let ok = report.toolchain.ok
+        && report.target.ok
+        && report.linker.ok
+        && report.cache.ok
+        && report.lockfile.ok;
     if args.json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),
@@ -82,6 +84,7 @@ pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
     } else {
         for check in [
             &report.toolchain,
+            &report.target,
             &report.linker,
             &report.cache,
             &report.lockfile,
@@ -102,6 +105,116 @@ pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+fn check_toolchain_and_target(project: &Project, target: &str) -> (Check, Check) {
+    let pin = seal_toolchain::read_pin(&project.root);
+    let toolchain = match pin {
+        Err(error) => Check {
+            name: "toolchain".to_owned(),
+            ok: false,
+            detail: error.to_string(),
+        },
+        Ok(Some(_pin)) => {
+            let store = seal_toolchain::ToolchainStore::for_project(&project.root);
+            match store.which(&project.root) {
+                Ok(Some(installed)) => match seal_toolchain::ensure_compatible(
+                    &installed.manifest,
+                    seal_toolchain::EMBEDDED_VERSION,
+                    target,
+                ) {
+                    Ok(()) => Check {
+                        name: "toolchain".to_owned(),
+                        ok: true,
+                        detail: format!("seal {} (pinned, verified)", installed.manifest.version),
+                    },
+                    Err(error) => Check {
+                        name: "toolchain".to_owned(),
+                        ok: false,
+                        detail: error.to_string(),
+                    },
+                },
+                Ok(None) => Check {
+                    name: "toolchain".to_owned(),
+                    ok: false,
+                    detail: "the project pin is missing".to_owned(),
+                },
+                Err(error) => Check {
+                    name: "toolchain".to_owned(),
+                    ok: false,
+                    detail: error.to_string(),
+                },
+            }
+        }
+        Ok(None) => Check {
+            name: "toolchain".to_owned(),
+            ok: true,
+            detail: format!(
+                "seal {} (embedded compiler, no project pin)",
+                seal_toolchain::EMBEDDED_VERSION
+            ),
+        },
+    };
+    let spec = match project.target_spec(target) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return (
+                toolchain,
+                Check {
+                    name: "target".to_owned(),
+                    ok: false,
+                    detail: error.message().to_owned(),
+                },
+            );
+        }
+    };
+    let mut problems = Vec::new();
+    if let Some(linker) = spec.linker() {
+        let found = if linker.contains(['/', '\\']) {
+            Path::new(linker).is_file()
+        } else {
+            find_on_path(linker).is_some()
+        };
+        if !found {
+            problems.push(format!("linker `{linker}` is not available"));
+        }
+    }
+    if let Some(sysroot) = spec.sysroot()
+        && !sysroot.is_dir()
+    {
+        problems.push(format!("sysroot `{}` is missing", sysroot.display()));
+    }
+    if let Some(script) = spec.linker_script()
+        && !script.is_file()
+    {
+        problems.push(format!("linker script `{}` is missing", script.display()));
+    }
+    let target_check = Check {
+        name: "target".to_owned(),
+        ok: problems.is_empty(),
+        detail: if problems.is_empty() {
+            format!(
+                "{} (runtime={}, panic={})",
+                spec.triple(),
+                spec.runtime(),
+                spec.panic()
+            )
+        } else {
+            problems.join("; ")
+        },
+    };
+    (toolchain, target_check)
+}
+
+fn find_on_path(program: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Finds a working C linker on `PATH`.

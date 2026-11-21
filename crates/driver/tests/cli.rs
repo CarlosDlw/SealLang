@@ -243,6 +243,30 @@ fn check_writes_no_artifact() {
 }
 
 #[test]
+fn a_cross_object_has_the_requested_architecture() {
+    let dir = TempDir::new("cross-object");
+    let source = dir.join("main.sl");
+    let object = dir.join("cross.o");
+    fs::write(&source, "func main() -> i32 { 0 }\n").expect("source");
+    let output = sealc(&[
+        "build",
+        "--target=aarch64-unknown-linux-gnu",
+        "--emit=obj",
+        "-o",
+        object.to_str().expect("UTF-8"),
+        source.to_str().expect("UTF-8"),
+    ]);
+    assert!(
+        output.status.success(),
+        "cross object failed: {}",
+        stderr(&output)
+    );
+    let bytes = fs::read(&object).expect("object bytes");
+    assert_eq!(&bytes[..4], b"\x7fELF");
+    assert_eq!(u16::from_le_bytes([bytes[18], bytes[19]]), 183);
+}
+
+#[test]
 fn usage_errors_exit_with_status_two() {
     for arguments in [
         &["build"][..],

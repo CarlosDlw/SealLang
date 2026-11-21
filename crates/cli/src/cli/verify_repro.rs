@@ -125,10 +125,22 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), String> {
         let entry =
             entry.map_err(|error| format!("cannot read `{}`: {error}", source.display()))?;
         let name = entry.file_name();
-        if matches!(name.to_str(), Some("seal" | "target" | ".git")) {
+        if matches!(name.to_str(), Some("target" | ".git")) {
             continue;
         }
         let from = entry.path();
+        if name == "seal" {
+            // User configuration below `seal` is part of the project: target
+            // specs and pinned toolchains must reach both copies. Cache and
+            // target state are generated and stay excluded.
+            for child in ["targets", "toolchains"] {
+                let source = from.join(child);
+                if source.is_dir() {
+                    copy_tree(&source, &destination.join("seal").join(child))?;
+                }
+            }
+            continue;
+        }
         let to = destination.join(&name);
         let file_type = entry
             .file_type()
@@ -178,4 +190,46 @@ fn collect(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::copy_tree;
+
+    fn scratch(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "seal-verify-repro-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn copies_user_configuration_but_not_generated_state() {
+        let source = scratch("source");
+        let destination = scratch("destination");
+        fs::create_dir_all(source.join("seal/targets")).expect("targets");
+        fs::create_dir_all(source.join("seal/toolchains/0.1.0")).expect("toolchains");
+        fs::create_dir_all(source.join("seal/target/debug")).expect("target");
+        fs::create_dir_all(source.join("seal/cache/objects")).expect("cache");
+        fs::write(source.join("seal/targets/host.toml"), b"triple").expect("spec");
+        fs::write(source.join("seal/toolchains/0.1.0/marker"), b"marker").expect("toolchain");
+        fs::write(source.join("seal/target/debug/app"), b"app").expect("artifact");
+        fs::write(source.join("seal/cache/objects/object"), b"object").expect("object");
+
+        copy_tree(&source, &destination).expect("copy");
+        assert!(destination.join("seal/targets/host.toml").is_file());
+        assert!(destination.join("seal/toolchains/0.1.0/marker").is_file());
+        assert!(!destination.join("seal/target").exists());
+        assert!(!destination.join("seal/cache").exists());
+
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(destination);
+    }
 }

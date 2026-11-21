@@ -27,6 +27,10 @@ pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> Exit
         .target_triple
         .clone()
         .unwrap_or_else(|| seal_target::host_triple().as_str().to_owned());
+    let toolchain = match crate::cli::build::toolchain_version(&project, &target_triple) {
+        Ok(toolchain) => toolchain,
+        Err(code) => return code,
+    };
     if let Err(code) =
         crate::cli::build::prepare_lockfile(cli, &project, &target_triple, &args.selection)
     {
@@ -37,7 +41,9 @@ pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> Exit
             .package(job.package)
             .target(&job.target)
             .expect("selection returns existing targets");
-        let options = crate::cli::build::plan_options(&args.selection, BuildMode::Check, target);
+        let mut options =
+            crate::cli::build::plan_options(&args.selection, BuildMode::Check, target);
+        options.toolchain = toolchain.clone();
         let plan = match project.compile_plan(job.package, &job.target, &options) {
             Ok(plan) => plan,
             Err(error) => return ui::error(error.code(), error.message()),

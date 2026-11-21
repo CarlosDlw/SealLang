@@ -69,6 +69,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
     /// This function's debug subprogram.
     pub(crate) scope: Option<DISubprogram<'ctx>>,
+    /// Whether panics trap instead of calling the runtime.
+    pub(crate) trap_panics: bool,
 }
 
 /// Lowers a single MIR body.
@@ -94,6 +96,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) source_map: &'a SourceMap,
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
     pub(crate) scope: Option<DISubprogram<'ctx>>,
+    pub(crate) trap_panics: bool,
     pub(crate) allocas: Vec<PointerValue<'ctx>>,
     pub(crate) blocks: Vec<BasicBlock<'ctx>>,
     entry: BasicBlock<'ctx>,
@@ -134,6 +137,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             source_map: self.source_map,
             debug: self.debug,
             scope: self.scope,
+            trap_panics: self.trap_panics,
             allocas: Vec::with_capacity(self.body.locals.len()),
             blocks,
             entry,

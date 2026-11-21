@@ -1,5 +1,6 @@
 //! Entry point validation and the C `main` wrapper.
 
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Linkage;
@@ -110,6 +111,9 @@ fn describe(kind: TyKind) -> String {
     }
 }
 
+/// The freestanding process entry symbol.
+pub(crate) const FREESTANDING_ENTRY: &str = "_start";
+
 /// Emits the C `main` wrapper that calls the Seal entry point.
 ///
 /// A Seal `main` returns `i32` or `()`. The wrapper always returns `i32`, so the
@@ -137,6 +141,63 @@ pub(crate) fn emit_wrapper<'ctx>(
     };
     builder.build_return(Some(&status)).map_err(|error| {
         CodegenError::internal(format!("cannot build the entry point return: {error:?}"))
+    })?;
+    Ok(())
+}
+
+/// Emits the freestanding `_start` wrapper.
+///
+/// The wrapper calls the selected Seal entry and terminates through `exit`.
+/// The link action provides a freestanding `exit` implementation, so no C
+/// runtime, `main`, or Seal runtime archive is involved.
+pub(crate) fn emit_freestanding_wrapper<'ctx>(
+    context: &'ctx Context,
+    module: &Module<'ctx>,
+    builder: &Builder<'ctx>,
+    user_entry: FunctionValue<'ctx>,
+) -> Result<(), CodegenError> {
+    let i32_type = context.i32_type();
+    let exit_type = context.void_type().fn_type(&[i32_type.into()], false);
+    let exit = match module.get_function("exit") {
+        Some(function) => function,
+        None => {
+            let function = module.add_function("exit", exit_type, Some(Linkage::External));
+            for name in ["noreturn", "nounwind"] {
+                let kind = Attribute::get_named_enum_kind_id(name);
+                function.add_attribute(
+                    AttributeLoc::Function,
+                    context.create_enum_attribute(kind, 0),
+                );
+            }
+            function
+        }
+    };
+    let wrapper_type = context.void_type().fn_type(&[], false);
+    let wrapper = module.add_function(FREESTANDING_ENTRY, wrapper_type, Some(Linkage::External));
+    let entry = context.append_basic_block(wrapper, "entry");
+    builder.position_at_end(entry);
+    let call = builder
+        .build_call(user_entry, &[], "seal_entry_result")
+        .map_err(|error| {
+            CodegenError::internal(format!(
+                "cannot build the freestanding entry call: {error:?}"
+            ))
+        })?;
+    let status = match call.try_as_basic_value() {
+        ValueKind::Basic(BasicValueEnum::IntValue(value)) => value,
+        ValueKind::Basic(_) | ValueKind::Instruction(_) => i32_type.const_zero(),
+    };
+    builder
+        .build_call(exit, &[status.into()], "seal_exit")
+        .map_err(|error| {
+            CodegenError::internal(format!(
+                "cannot build the freestanding exit call: {error:?}"
+            ))
+        })?;
+    builder.build_unreachable().map_err(|error| {
+        CodegenError::internal(format!(
+            "cannot terminate the freestanding entry: {error:?}"
+        ))
     })?;
     Ok(())
 }

@@ -25,7 +25,7 @@ use seal_mono::MonoProgram;
 use seal_session::OptLevel;
 use seal_span::{FileId, SourceMap};
 use seal_symbol::Interner;
-use seal_target::TargetSpec;
+use seal_target::{RuntimePolicy, TargetSpec};
 use seal_ty::{Instance, RefKind, TyId, TyKind};
 
 use crate::artifact;
@@ -90,7 +90,8 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     let runtime = if matches!(
         options.emit,
         Emit::Executable | Emit::StaticLib | Emit::Cdylib
-    ) {
+    ) && options.runtime == RuntimePolicy::Default
+    {
         Some(runtime_archive(options, input.target)?)
     } else {
         None
@@ -122,7 +123,10 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     let context = Context::create();
     let module = context.create_module(options.crate_name.as_deref().unwrap_or("seal"));
     module.set_triple(&triple);
-    let data_layout = machine.get_target_data().get_data_layout();
+    let data_layout = match input.target.data_layout() {
+        Some(layout) => inkwell::targets::TargetData::create(layout).get_data_layout(),
+        None => machine.get_target_data().get_data_layout(),
+    };
     module.set_data_layout(&data_layout);
     let source_name = input
         .source_map
@@ -281,6 +285,8 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             source_map: input.source_map,
             debug: debug.as_ref(),
             scope,
+            trap_panics: options.panic == seal_target::PanicStrategy::Trap
+                || options.runtime == RuntimePolicy::None,
         }
         .lower()?;
     }
@@ -296,7 +302,11 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     )?;
 
     if let Some(entry_point) = entry_point {
-        entry::emit_wrapper(&context, &module, &builder, functions[&entry_point])?;
+        if options.runtime == RuntimePolicy::None {
+            entry::emit_freestanding_wrapper(&context, &module, &builder, functions[&entry_point])?;
+        } else {
+            entry::emit_wrapper(&context, &module, &builder, functions[&entry_point])?;
+        }
     }
 
     if let Some(debug) = &debug {
@@ -327,7 +337,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         &module,
         &machine,
         options,
-        runtime.as_deref().unwrap_or(&[]),
+        runtime.as_deref(),
         &source_libraries,
     )?;
     Ok(Artifact {

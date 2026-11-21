@@ -104,6 +104,7 @@ mod tests {
             entry: Some("root::main".to_owned()),
             metadata: PlanMetadata::default(),
             output: None,
+            target_spec: None,
         }
     }
 

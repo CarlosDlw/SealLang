@@ -17,6 +17,6 @@ pub use artifact::{
 };
 pub use compile::{
     BuildMode, CfgOptions, CompilePlan, FORMAT_VERSION, PlanDependency, PlanFile, PlanMetadata,
-    PlanPackage, PlanProfile,
+    PlanPackage, PlanProfile, PlanTarget,
 };
 pub use error::{PlanError, PlanResult};

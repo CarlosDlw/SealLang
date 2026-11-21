@@ -38,6 +38,21 @@ impl ProjectError {
         Self::new("E8003", message)
     }
 
+    /// An invalid target specification (`E8060`).
+    pub fn target_spec(message: impl Into<String>) -> Self {
+        Self::new("E8060", message)
+    }
+
+    /// A linker, sysroot, or linker script is missing (`E8062`).
+    pub fn linker(message: impl Into<String>) -> Self {
+        Self::new("E8062", message)
+    }
+
+    /// An artifact cannot be emitted for the selected target (`E6003`).
+    pub fn artifact(message: impl Into<String>) -> Self {
+        Self::new("E6003", message)
+    }
+
     /// A target entry function is missing (`E2087`).
     pub fn entry(message: impl Into<String>) -> Self {
         Self::new("E2087", message)

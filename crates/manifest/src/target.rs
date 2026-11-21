@@ -82,12 +82,21 @@ pub struct TargetManifest {
     /// The runtime policy (`default` or `none`).
     #[serde(default)]
     pub runtime: Option<String>,
+    /// The panic policy (`abort` or `trap`).
+    #[serde(default)]
+    pub panic: Option<String>,
     /// The linker program.
     #[serde(default)]
     pub linker: Option<String>,
+    /// The sysroot passed to the C toolchain.
+    #[serde(default)]
+    pub sysroot: Option<PathBuf>,
     /// The linker script.
     #[serde(default)]
     pub linker_script: Option<PathBuf>,
+    /// Extra linker arguments declared for this target.
+    #[serde(default)]
+    pub link_args: Vec<String>,
     /// The artifact path relative to the target directory.
     #[serde(default)]
     pub output: Option<PathBuf>,
@@ -119,8 +128,11 @@ impl TargetManifest {
             env: std::collections::BTreeMap::new(),
             profile: None,
             runtime: None,
+            panic: None,
             linker: None,
+            sysroot: None,
             linker_script: None,
+            link_args: Vec::new(),
             output: None,
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -142,8 +154,11 @@ impl TargetManifest {
             env: std::collections::BTreeMap::new(),
             profile: None,
             runtime: None,
+            panic: None,
             linker: None,
+            sysroot: None,
             linker_script: None,
+            link_args: Vec::new(),
             output: None,
             inputs: Vec::new(),
             outputs: Vec::new(),

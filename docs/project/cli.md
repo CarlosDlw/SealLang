@@ -9,6 +9,7 @@ compiler in-process. `sealc` remains the low-level single-file driver.
 $ seal new demo --yes
 $ seal new library --template lib --vcs none
 $ seal new workspace --template workspace
+$ seal new kernel --template kernel --vcs none --yes
 $ seal init --template bin
 ```
 
@@ -18,7 +19,11 @@ calls that module. `lib` has no `main`. `workspace` creates a root manifest and
 two members with a path dependency; `crates/app` is the default member, so
 `seal build` at the root selects it without `--workspace`. Every template writes
 `seal.toml`, `seal.lock`, `src/`, `tests/`, and `.gitignore`; `--vcs git`
-additionally runs `git init`.
+additionally runs `git init`. The `kernel` template is freestanding: it writes
+`runtime = "none"`, `panic = "trap"`, a `kernel.ld` entry script, and a
+`_start` function that exits with 42 through a generated `exit` stub. It builds
+and runs on the host without libc or the Seal runtime, which is the acceptance
+shape for bare-metal targets.
 
 ## Building and checking
 
@@ -27,6 +32,7 @@ $ seal build
 $ seal build --release
 $ seal build --workspace
 $ seal build -p app --target x86_64-unknown-linux-gnu
+$ seal build --target aarch64-unknown-linux-gnu --release
 $ seal check -p app
 ```
 
@@ -76,10 +82,12 @@ $ seal verify-repro --keep
 ```
 
 `verify-repro` copies a self-contained project into two temporary directories,
-builds both, and compares every file under `seal/target` byte by byte. It exits
-`1` with the first differing artifact and byte offset (`E8104`). `--keep` leaves
-the two trees in place for inspection. Path dependencies outside the project
-root are not copied, so the check targets self-contained projects.
+builds both, and compares every file under `seal/target` byte by byte. User
+configuration under `seal/` (`targets` and pinned `toolchains`) is copied, while
+the generated `seal/target` and `seal/cache` trees are not. It exits `1` with the
+first differing artifact and byte offset (`E8104`). `--keep` leaves the two trees
+in place for inspection. Path dependencies outside the project root are not
+copied, so the check targets self-contained projects.
 
 Project builds pass `--remap-path-prefix <project-root>=.` to the frontend, so
 debug paths do not contain the checkout directory. The same inputs therefore
@@ -138,12 +146,46 @@ triple, packages, targets, module index, files, features, dependency edges, and
 concrete package instances. It is enough for an editor to list modules and targets without running
 code generation.
 
-`doctor` checks the embedded toolchain, a linker on `PATH`, a writable
-`seal/target`, and a current lockfile. The compiler is embedded, so a missing
-toolchain is not possible; a missing linker makes executable targets fail and
-is reported as a failed check. Manifest warnings include unknown keys and
-suggestions. `--fix` creates the cache directory and rewrites the lockfile when
-possible; `--json` emits the same checks as one object.
+`doctor` checks the embedded or pinned toolchain, the host target, a linker on
+`PATH`, a writable `seal/target`, and a current lockfile. A pinned toolchain
+is verified against its installed tree; a missing or modified install is
+`E8061`. The target check reports a declared linker, sysroot, or linker script
+that does not exist, which would otherwise fail the link as `E8062`. Manifest
+warnings include unknown keys and suggestions. `--fix` creates the cache
+directory and rewrites the lockfile when possible; `--json` emits the same
+checks as one object.
+
+## Toolchains and targets
+
+```console
+$ seal toolchain list
+$ seal toolchain checksum path/to/bundle
+$ seal toolchain install --from path/to/bundle --offline
+$ seal toolchain install --from path/to/bundle --public-key <HEX>
+$ seal toolchain pin 0.1.0
+$ seal toolchain update --offline
+$ seal toolchain verify 0.1.0
+$ seal toolchain which
+$ seal target list
+$ seal target add target.toml
+$ seal target info aarch64-unknown-none --json
+```
+
+The toolchain store lives at `seal/toolchains/<version>`. Installation copies
+only regular files, rejects symlinks and paths outside the bundle, verifies the
+SHA-256 tree digest before and after copying, and writes the install marker only
+after both checks pass. A manifest may also carry an Ed25519 `signature` over
+its canonical channel, version, checksum, components, and targets; such a
+bundle requires `--public-key <HEX>` and an invalid signature is `E8061`. `pin`
+writes the same manifest to `seal-toolchain.toml`;
+`update` selects the highest installed semantic version. Both are offline by
+default. A bundle's metadata names `channel`, `version`, `checksum`,
+`components`, and `targets`; use `seal toolchain checksum` when authoring one.
+
+`seal target list` always includes the host and adds every
+`seal/targets/*.toml`. `add` validates and installs a specification under the
+triple in the file; `info` prints the resolved TOML or a stable JSON object.
+Target specifications are documented in [manifest.md](manifest.md#targets).
 
 ## Output policy
 

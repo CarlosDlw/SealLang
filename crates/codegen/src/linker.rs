@@ -18,8 +18,8 @@ use crate::error::CodegenError;
 pub(crate) struct LinkInputs<'a> {
     /// The generated object files, in deterministic order.
     pub(crate) objects: Vec<PathBuf>,
-    /// The Seal runtime archive.
-    pub(crate) runtime: &'a Path,
+    /// The Seal runtime archive, or `None` for a freestanding link.
+    pub(crate) runtime: Option<&'a Path>,
     /// The executable or shared library written by the linker.
     pub(crate) output: &'a Path,
     /// Whether the output is a shared library instead of an executable.
@@ -32,6 +32,12 @@ pub(crate) struct LinkInputs<'a> {
     pub(crate) search_paths: &'a [PathBuf],
     /// Arguments passed through with `--link-arg`, in request order.
     pub(crate) link_args: &'a [OsString],
+    /// Whether the link is freestanding (`-nostdlib`, `_start`, no runtime).
+    pub(crate) freestanding: bool,
+    /// The linker script, when one is declared.
+    pub(crate) linker_script: Option<&'a Path>,
+    /// The sysroot passed to the compiler driver.
+    pub(crate) sysroot: Option<&'a Path>,
 }
 
 impl LinkInputs<'_> {
@@ -99,6 +105,22 @@ pub(crate) fn validate(inputs: &LinkInputs<'_>) -> Result<(), CodegenError> {
     for library in inputs.libraries_in_order() {
         validate_library_name(library)?;
     }
+    if let Some(script) = inputs.linker_script {
+        if !script.is_file() {
+            return Err(CodegenError::linker_input(format!(
+                "the linker script `{}` does not exist or is not a file",
+                script.display()
+            )));
+        }
+    }
+    if let Some(sysroot) = inputs.sysroot
+        && !sysroot.is_dir()
+    {
+        return Err(CodegenError::linker_input(format!(
+            "the sysroot `{}` does not exist or is not a directory",
+            sysroot.display()
+        )));
+    }
     for path in inputs.search_paths {
         if !path.exists() {
             return Err(CodegenError::link_input(format!(
@@ -152,6 +174,18 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
             if inputs.shared {
                 arguments.push(OsString::from("-shared"));
             }
+            if let Some(sysroot) = inputs.sysroot {
+                arguments.push(OsString::from("--sysroot"));
+                arguments.push(sysroot.as_os_str().to_owned());
+            }
+            if inputs.freestanding {
+                arguments.push(OsString::from("-nostdlib"));
+                arguments.push(OsString::from("-Wl,-e,_start"));
+                if let Some(script) = inputs.linker_script {
+                    arguments.push(OsString::from("-Wl,-T"));
+                    arguments.push(script.as_os_str().to_owned());
+                }
+            }
             for object in &inputs.objects {
                 arguments.push(object.as_os_str().to_owned());
             }
@@ -163,7 +197,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
                 arguments.push(OsString::from(format!("-l{library}")));
             }
             arguments.extend(inputs.link_args.iter().cloned());
-            arguments.push(inputs.runtime.as_os_str().to_owned());
+            if let Some(runtime) = inputs.runtime {
+                arguments.push(runtime.as_os_str().to_owned());
+            }
             arguments.push(OsString::from("-o"));
             arguments.push(inputs.output.as_os_str().to_owned());
         }
@@ -184,7 +220,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
                 arguments.push(msvc_library(library));
             }
             arguments.extend(inputs.link_args.iter().cloned());
-            arguments.push(inputs.runtime.as_os_str().to_owned());
+            if let Some(runtime) = inputs.runtime {
+                arguments.push(runtime.as_os_str().to_owned());
+            }
         }
         Flavor::MsvcLinker => {
             arguments.push(OsString::from("/NOLOGO"));
@@ -202,7 +240,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
                 arguments.push(msvc_library(library));
             }
             arguments.extend(inputs.link_args.iter().cloned());
-            arguments.push(inputs.runtime.as_os_str().to_owned());
+            if let Some(runtime) = inputs.runtime {
+                arguments.push(runtime.as_os_str().to_owned());
+            }
         }
     }
     Invocation { program, arguments }
@@ -262,13 +302,16 @@ mod tests {
     ) -> LinkInputs<'a> {
         LinkInputs {
             objects: vec![PathBuf::from("app.o")],
-            runtime: Path::new("seal_rt.lib"),
+            runtime: Some(Path::new("seal_rt.lib")),
             output: Path::new("app.exe"),
             shared: false,
             source_libraries,
             libraries,
             search_paths,
             link_args,
+            freestanding: false,
+            linker_script: None,
+            sysroot: None,
         }
     }
 

@@ -94,9 +94,19 @@ impl Session {
         options: Options,
         emitter: Option<Box<dyn Emitter>>,
     ) -> Result<Self, SessionError> {
-        let target = TargetTriple::parse(options.target.as_str())
-            .map_err(SessionError::Target)?
-            .spec();
+        let parsed = TargetTriple::parse(options.target.as_str()).map_err(SessionError::Target)?;
+        let target = match &options.target_spec {
+            Some(spec) if spec.triple() == &parsed => spec.clone(),
+            Some(spec) => {
+                return Err(SessionError::Target(TargetError::InvalidSpec {
+                    detail: format!(
+                        "the target specification names `{}`, but the session compiles for `{parsed}`",
+                        spec.triple()
+                    ),
+                }));
+            }
+            None => parsed.spec(),
+        };
         let remapper = PathRemapper::from_specs(options.remap_prefixes.iter().map(String::as_str))
             .map_err(SessionError::Remap)?;
         let source_map = Arc::new(SourceMap::new());

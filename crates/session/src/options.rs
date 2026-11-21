@@ -7,7 +7,7 @@
 
 use seal_diagnostics::{ColorChoice, DEFAULT_ERROR_LIMIT};
 use seal_hash::{Fingerprint, StableHash, StableHasher};
-use seal_target::TargetTriple;
+use seal_target::{TargetSpec, TargetTriple};
 use seal_version::LanguageVersion;
 
 /// Optimization level.
@@ -54,6 +54,11 @@ pub struct Options {
     pub crate_name: Option<String>,
     /// Target triple. Tracked: changes layout and code generation.
     pub target: TargetTriple,
+    /// Full target specification for custom, cross, and freestanding targets.
+    ///
+    /// `None` derives it from `target`. Tracked: every property changes layout,
+    /// ABI, or linking.
+    pub target_spec: Option<TargetSpec>,
     /// Optimization level. Tracked.
     pub opt_level: OptLevel,
     /// Emit debug information. Tracked.
@@ -81,6 +86,7 @@ impl Default for Options {
         Self {
             crate_name: None,
             target: seal_target::host_triple(),
+            target_spec: None,
             opt_level: OptLevel::default(),
             debug_info: false,
             language_version: LanguageVersion::CURRENT,
@@ -104,6 +110,33 @@ impl Options {
         let mut hasher = StableHasher::new();
         self.crate_name.stable_hash(&mut hasher);
         self.target.as_str().stable_hash(&mut hasher);
+        if let Some(spec) = &self.target_spec {
+            spec.triple().as_str().stable_hash(&mut hasher);
+            hasher.write_u8(spec.pointer_width());
+            spec.data_layout()
+                .unwrap_or_default()
+                .stable_hash(&mut hasher);
+            hasher.write_u8(match spec.endianness() {
+                seal_target::Endianness::Little => 0,
+                seal_target::Endianness::Big => 1,
+            });
+            let abi = spec.c_abi();
+            abi.char_signed().stable_hash(&mut hasher);
+            abi.long_width().stable_hash(&mut hasher);
+            abi.wchar_width().stable_hash(&mut hasher);
+            abi.wchar_signed().stable_hash(&mut hasher);
+            spec.runtime().as_str().stable_hash(&mut hasher);
+            spec.panic().as_str().stable_hash(&mut hasher);
+            spec.linker().unwrap_or_default().stable_hash(&mut hasher);
+            spec.sysroot()
+                .map(|path| path.to_string_lossy())
+                .unwrap_or_default()
+                .stable_hash(&mut hasher);
+            spec.linker_script()
+                .map(|path| path.to_string_lossy())
+                .unwrap_or_default()
+                .stable_hash(&mut hasher);
+        }
         hasher.write_u8(self.opt_level.as_u8());
         self.debug_info.stable_hash(&mut hasher);
         self.language_version.major().stable_hash(&mut hasher);

@@ -22,5 +22,6 @@ seal-plan.workspace = true
 seal-project.workspace = true
 seal-sandbox.workspace = true
 seal-target.workspace = true
+seal-toolchain.workspace = true
 serde.workspace = true
 serde_json.workspace = true

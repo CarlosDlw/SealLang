@@ -17,13 +17,14 @@ use inkwell::targets::{FileType, TargetMachine};
 use crate::error::CodegenError;
 use crate::linker;
 use crate::options::{CodegenOptions, Emit};
+use seal_target::RuntimePolicy;
 
 /// Produces the requested artifact for `module`.
 pub(crate) fn emit_artifact(
     module: &Module<'_>,
     machine: &TargetMachine,
     options: &CodegenOptions,
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
     source_libraries: &[String],
 ) -> Result<(), CodegenError> {
     match options.emit {
@@ -61,7 +62,7 @@ fn link_executable(
     module: &Module<'_>,
     machine: &TargetMachine,
     options: &CodegenOptions,
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
     source_libraries: &[String],
 ) -> Result<(), CodegenError> {
     link_module(module, machine, options, runtime, source_libraries, false)
@@ -71,7 +72,7 @@ fn link_cdylib(
     module: &Module<'_>,
     machine: &TargetMachine,
     options: &CodegenOptions,
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
     source_libraries: &[String],
 ) -> Result<(), CodegenError> {
     link_module(module, machine, options, runtime, source_libraries, true)
@@ -81,7 +82,7 @@ fn link_staticlib(
     module: &Module<'_>,
     machine: &TargetMachine,
     options: &CodegenOptions,
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
 ) -> Result<(), CodegenError> {
     let output = options.output.as_path();
     let object = machine
@@ -118,7 +119,7 @@ fn link_module(
     module: &Module<'_>,
     machine: &TargetMachine,
     options: &CodegenOptions,
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
     source_libraries: &[String],
     shared: bool,
 ) -> Result<(), CodegenError> {
@@ -153,14 +154,20 @@ fn link_module(
     let objects = [object_path.as_path()];
     let request = LinkRequest {
         objects: &objects,
-        runtime: Some(runtime),
+        runtime,
         output,
         shared,
         source_libraries,
         libraries: &options.libraries,
         search_paths: &options.search_paths,
         link_args: &options.link_args,
-        linker: None,
+        linker: options.linker.as_deref().map(std::ffi::OsStr::new),
+        freestanding: options.runtime == RuntimePolicy::None,
+        target: options.target_triple.as_deref().unwrap_or_default(),
+        linker_script: options.linker_script.as_deref(),
+        sysroot: options.sysroot.as_deref(),
+        source_date_epoch: options.source_date_epoch,
+        reproducible: options.reproducible,
     };
     run_linker(&request)
 }
@@ -173,7 +180,7 @@ fn link_module(
 /// whole archive exists.
 pub(crate) fn archive_files(
     objects: &[&Path],
-    runtime: &[u8],
+    runtime: Option<&[u8]>,
     output: &Path,
 ) -> Result<(), CodegenError> {
     let directory = output
@@ -204,12 +211,14 @@ pub(crate) fn archive_files(
     // A fresh directory also guarantees that `ar` never appends to a stale
     // archive left by a process that reused the same pid.
     let temporary = work.join("archive.a");
-    seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
-        CodegenError::artifact(
-            &runtime_path,
-            format!("cannot write the temporary runtime archive: {error}"),
-        )
-    })?;
+    if let Some(runtime) = runtime {
+        seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
+            CodegenError::artifact(
+                &runtime_path,
+                format!("cannot write the temporary runtime archive: {error}"),
+            )
+        })?;
+    }
 
     if cfg!(windows) {
         let program = std::env::var_os("SEAL_AR").unwrap_or_else(|| OsString::from("lib"));
@@ -218,7 +227,9 @@ pub(crate) fn archive_files(
         for object in objects {
             command.arg(object);
         }
-        command.arg(&runtime_path);
+        if runtime.is_some() {
+            command.arg(&runtime_path);
+        }
         run_tool(command, &program, output)?;
     } else {
         let combined = work.join("combined.o");
@@ -228,7 +239,9 @@ pub(crate) fn archive_files(
         for object in objects {
             partial.arg(object);
         }
-        partial.arg(&runtime_path);
+        if runtime.is_some() {
+            partial.arg(&runtime_path);
+        }
         run_tool(partial, &compiler, output)?;
 
         let program = std::env::var_os("SEAL_AR").unwrap_or_else(|| OsString::from("ar"));
@@ -293,6 +306,12 @@ pub(crate) struct LinkRequest<'a> {
     pub(crate) search_paths: &'a [PathBuf],
     pub(crate) link_args: &'a [OsString],
     pub(crate) linker: Option<&'a std::ffi::OsStr>,
+    pub(crate) freestanding: bool,
+    pub(crate) target: &'a str,
+    pub(crate) linker_script: Option<&'a Path>,
+    pub(crate) sysroot: Option<&'a Path>,
+    pub(crate) source_date_epoch: u64,
+    pub(crate) reproducible: bool,
 }
 
 /// Links one object into `output`, replacing it atomically.
@@ -313,22 +332,51 @@ pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> 
         if cfg!(windows) { ".lib" } else { ".a" }
     ));
     let temporary_path = temporary_executable(output)?;
+    let mut objects: Vec<PathBuf> = request
+        .objects
+        .iter()
+        .map(|path| path.to_path_buf())
+        .collect();
+    let mut support_guard = None;
+    if request.freestanding {
+        let work = directory.join(format!(
+            ".{}.{}.{}.freestanding",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let guard = TempDirectory(work.clone());
+        let stub = compile_exit_stub(&work, request.target, request.linker)?;
+        objects.push(stub);
+        support_guard = Some(guard);
+    }
+    let mut link_args: Vec<OsString> = request.link_args.to_vec();
+    if request.reproducible
+        && !request.shared
+        && matches!(
+            request.target.split('-').nth(2).unwrap_or_default(),
+            "linux" | "freebsd" | "android"
+        )
+    {
+        link_args.push(OsString::from("-Wl,--build-id=none"));
+    }
+    let runtime = request.runtime.map(|_| runtime_path.as_path());
     let inputs = linker::LinkInputs {
-        objects: request
-            .objects
-            .iter()
-            .map(|path| path.to_path_buf())
-            .collect(),
-        runtime: &runtime_path,
+        objects,
+        runtime,
         output: &temporary_path,
         shared: request.shared,
         source_libraries: request.source_libraries,
         libraries: request.libraries,
         search_paths: request.search_paths,
-        link_args: request.link_args,
+        link_args: &link_args,
+        freestanding: request.freestanding,
+        linker_script: request.linker_script,
+        sysroot: request.sysroot,
     };
-    // Validate before any temporary file is written: a bad `-l` or `-L` must
-    // not leave a runtime archive or a partial executable behind.
+    // Validate before writing the runtime archive or executable: a bad `-l` or
+    // `-L` must not produce a partial output. The guarded support directory is
+    // removed on every early return.
     linker::validate(&inputs)?;
 
     let _runtime_guard = if let Some(runtime) = request.runtime {
@@ -344,6 +392,7 @@ pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> 
         None
     };
     let _temporary_guard = TempFile(temporary_path.clone());
+    let _support_guard = support_guard;
     let program = request
         .linker
         .map(std::ffi::OsStr::to_owned)
@@ -351,6 +400,7 @@ pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> 
     let invocation = linker::invocation(program, &inputs);
     let result = Command::new(invocation.program())
         .args(invocation.arguments())
+        .env("SOURCE_DATE_EPOCH", request.source_date_epoch.to_string())
         .output();
     match result {
         Ok(result) if result.status.success() => {
@@ -374,17 +424,115 @@ pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> 
                 libraries_text(&inputs),
             ),
         )),
-        Err(error) => Err(CodegenError::artifact(
-            output,
-            format!(
-                "cannot run linker `{}`: {error}\ncommand: {}\nlibraries: {}",
-                invocation.program().to_string_lossy(),
-                invocation.command_line(),
-                libraries_text(&inputs),
-            ),
-        )),
+        Err(error) => Err(CodegenError::linker_input(format!(
+            "cannot run linker `{}` for target `{}`: {error}; declare a linker for this target",
+            invocation.program().to_string_lossy(),
+            request.target
+        ))),
     }
 }
+
+/// Compiles the freestanding `exit` implementation used by `_start`.
+///
+/// The implementation uses the target's direct process-exit system call, so it
+/// needs no libc and no runtime archive. `SEAL_CC`, then the declared linker
+/// driver, then `CC`, then `cc` compiles it. A cross build therefore uses the
+/// same target compiler driver as the link unless `SEAL_CC` overrides it.
+fn compile_exit_stub(
+    work: &Path,
+    target: &str,
+    linker: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf, CodegenError> {
+    std::fs::create_dir_all(work).map_err(|error| {
+        CodegenError::artifact(
+            work,
+            format!("cannot create the freestanding support directory: {error}"),
+        )
+    })?;
+    let source = work.join("exit.c");
+    std::fs::write(&source, FREESTANDING_EXIT).map_err(|error| {
+        CodegenError::artifact(
+            &source,
+            format!("cannot write the freestanding exit stub: {error}"),
+        )
+    })?;
+    let object = work.join("exit.o");
+    let compiler = std::env::var_os("SEAL_CC")
+        .or_else(|| linker.map(std::ffi::OsStr::to_owned))
+        .or_else(|| std::env::var_os("CC"))
+        .unwrap_or_else(|| OsString::from("cc"));
+    let result = Command::new(&compiler)
+        .arg("-ffreestanding")
+        .arg("-fno-builtin")
+        .arg("-fno-stack-protector")
+        .arg("-c")
+        .arg(&source)
+        .arg("-o")
+        .arg(&object)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .output();
+    match result {
+        Ok(result) if result.status.success() => Ok(object),
+        Ok(result) => Err(CodegenError::linker_input(format!(
+            "cannot compile the freestanding exit stub for `{target}` with `{}`: {}; declare a C compiler for the target in `SEAL_CC`",
+            compiler.to_string_lossy(),
+            String::from_utf8_lossy(&result.stderr).trim()
+        ))),
+        Err(error) => Err(CodegenError::linker_input(format!(
+            "cannot run the C compiler `{}` for the freestanding target `{target}`: {error}",
+            compiler.to_string_lossy()
+        ))),
+    }
+}
+
+const FREESTANDING_EXIT: &str = r#"
+void exit(int code);
+
+#if defined(__x86_64__)
+#  if defined(__APPLE__)
+#    define SEAL_EXIT_SYSCALL 0x2000001
+#  else
+#    define SEAL_EXIT_SYSCALL 60
+#  endif
+void exit(int code) {
+  __asm__ __volatile__("syscall" :: "a"(SEAL_EXIT_SYSCALL), "D"((long)code) : "rcx", "r11", "memory");
+  __builtin_unreachable();
+}
+#elif defined(__aarch64__)
+#  if defined(__APPLE__)
+#    define SEAL_EXIT_SYSCALL 1
+#  else
+#    define SEAL_EXIT_SYSCALL 93
+#  endif
+void exit(int code) {
+  register long x8 __asm__("x8") = SEAL_EXIT_SYSCALL;
+  register long x0 __asm__("x0") = code;
+  __asm__ __volatile__("svc #0" :: "r"(x8), "r"(x0) : "memory");
+  __builtin_unreachable();
+}
+#elif defined(__i386__)
+void exit(int code) {
+  __asm__ __volatile__("int $0x80" :: "a"(1), "b"(code) : "memory");
+  __builtin_unreachable();
+}
+#elif defined(__arm__)
+void exit(int code) {
+  register long r7 __asm__("r7") = 1;
+  register long r0 __asm__("r0") = code;
+  __asm__ __volatile__("svc #0" :: "r"(r7), "r"(r0) : "memory");
+  __builtin_unreachable();
+}
+#elif defined(__riscv)
+void exit(int code) {
+  register long a7 __asm__("a7") = 93;
+  register long a0 __asm__("a0") = code;
+  __asm__ __volatile__("ecall" :: "r"(a7), "r"(a0) : "memory");
+  __builtin_unreachable();
+}
+#else
+#  error "the freestanding exit stub does not support this architecture"
+#endif
+"#;
 
 static LINK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

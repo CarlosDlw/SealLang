@@ -41,6 +41,10 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
         .target_triple
         .clone()
         .unwrap_or_else(|| host_triple().as_str().to_owned());
+    let toolchain = match toolchain_version(&project, &target) {
+        Ok(toolchain) => toolchain,
+        Err(code) => return code,
+    };
     if let Err(code) = prepare_lockfile(cli, &project, &target, &args.selection) {
         return code;
     }
@@ -69,10 +73,12 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
                 .package(job.package)
                 .target(&job.target)
                 .expect("selection returns existing targets");
+            let mut options = plan_options(&args.selection, BuildMode::Build, target);
+            options.toolchain = toolchain.clone();
             JobRequest {
                 package: job.package,
                 target: job.target.clone(),
-                options: plan_options(&args.selection, BuildMode::Build, target),
+                options,
             }
         })
         .collect();
@@ -389,6 +395,37 @@ pub(crate) fn plan_options(
         all_features: selection.all_features,
         cfgs: selection.cfgs.clone(),
         extra_files: Vec::new(),
+        reproducible: true,
+        source_date_epoch: None,
+        toolchain: seal_toolchain::EMBEDDED_VERSION.to_owned(),
+    }
+}
+
+/// Returns the pinned toolchain version after checking it can build `target`.
+pub(crate) fn toolchain_version(project: &Project, target: &str) -> Result<String, ExitCode> {
+    let pin = seal_toolchain::read_pin(&project.root)
+        .map_err(|error| ui::error(error.code(), &error.to_string()))?;
+    match pin {
+        Some(_) => {
+            let store = seal_toolchain::ToolchainStore::for_project(&project.root);
+            let installed = store
+                .which(&project.root)
+                .map_err(|error| ui::error(error.code(), &error.to_string()))?
+                .ok_or_else(|| {
+                    ui::error(
+                        "E8061",
+                        "`seal-toolchain.toml` pins a toolchain that is not installed",
+                    )
+                })?;
+            seal_toolchain::ensure_compatible(
+                &installed.manifest,
+                seal_toolchain::EMBEDDED_VERSION,
+                target,
+            )
+            .map_err(|error| ui::error(error.code(), &error.to_string()))?;
+            Ok(installed.manifest.version)
+        }
+        None => Ok(seal_toolchain::EMBEDDED_VERSION.to_owned()),
     }
 }
 
@@ -455,6 +492,9 @@ fn lock_options(project: &Project, target: &str, selection: &Selection) -> PlanO
         all_features: selection.all_features,
         cfgs: selection.cfgs.clone(),
         extra_files: Vec::new(),
+        reproducible: true,
+        source_date_epoch: None,
+        toolchain: seal_toolchain::EMBEDDED_VERSION.to_owned(),
     }
 }
 
