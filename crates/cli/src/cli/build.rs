@@ -314,9 +314,13 @@ pub(crate) fn select_jobs(
                 true
             } else {
                 match mode {
-                    Mode::Build | Mode::Check => {
-                        matches!(target.kind, TargetKind::Lib | TargetKind::Bin)
-                    }
+                    Mode::Build | Mode::Check => matches!(
+                        target.kind,
+                        TargetKind::Lib
+                            | TargetKind::Bin
+                            | TargetKind::Staticlib
+                            | TargetKind::Cdylib
+                    ),
                     Mode::Run => target.is_executable(),
                 }
             };

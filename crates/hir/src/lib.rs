@@ -34,6 +34,7 @@ mod body;
 mod builtin;
 mod cfg;
 mod closure;
+mod export;
 mod expr;
 mod extern_decl;
 mod generics;
@@ -52,6 +53,7 @@ pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use cfg::CfgEnvironment;
 pub use closure::{CaptureDef, CaptureSource, ClosureDef};
+pub use export::Export;
 pub use expr::{Expr, ExprKind, Place, Projection};
 pub use extern_decl::{ExternFunction, ExternStatic, LinkDirective};
 pub use generics::InherentImpl;
@@ -142,6 +144,8 @@ pub struct Hir {
     fn_sigs: Vec<FnSigUse>,
     extern_functions: FxHashMap<DefId, extern_decl::ExternFunction>,
     extern_function_order: Vec<DefId>,
+    exports: FxHashMap<DefId, Export>,
+    export_order: Vec<DefId>,
     extern_statics: FxHashMap<DefId, extern_decl::ExternStatic>,
     extern_static_order: Vec<DefId>,
     link_directives: Vec<extern_decl::LinkDirective>,
@@ -177,6 +181,16 @@ impl Hir {
         c_abi: CAbiProperties,
     ) -> Self {
         lower::lower_ast(ast, dcx, interner, c_abi)
+    }
+
+    /// Returns every C-exported function in declaration order.
+    pub fn exports(&self) -> &[DefId] {
+        &self.export_order
+    }
+
+    /// Returns the export record of `def`, if it is C-exported.
+    pub fn export(&self, def: DefId) -> Option<&Export> {
+        self.exports.get(&def)
     }
 
     /// Returns the definition table.
@@ -679,6 +693,12 @@ impl Hir {
         self.definitions.get(def).kind == DefKind::ExternStatic
     }
 
+    pub(crate) fn insert_export(&mut self, def: DefId, export: Export) {
+        if self.exports.insert(def, export).is_none() {
+            self.export_order.push(def);
+        }
+    }
+
     pub(crate) fn insert_extern_function(&mut self, def: DefId, data: extern_decl::ExternFunction) {
         self.extern_function_order.push(def);
         self.extern_functions.insert(def, data);
@@ -855,6 +875,8 @@ impl Hir {
             fn_sigs: Vec::new(),
             extern_functions: FxHashMap::default(),
             extern_function_order: Vec::new(),
+            exports: FxHashMap::default(),
+            export_order: Vec::new(),
             extern_statics: FxHashMap::default(),
             extern_static_order: Vec::new(),
             link_directives: Vec::new(),

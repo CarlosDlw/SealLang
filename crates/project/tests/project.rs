@@ -213,6 +213,62 @@ fn a_library_plan_has_no_entry_and_uses_an_object_output() {
 }
 
 #[test]
+fn static_and_shared_libraries_use_library_output_names() {
+    for (kind, name) in [
+        ("staticlib", seal_plan::static_library_name("math")),
+        ("cdylib", seal_plan::shared_library_name("math")),
+    ] {
+        let fixture = fixture(&[
+            (
+                "seal.toml",
+                &format!(
+                    "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+                     [targets.math]\nkind = \"{kind}\"\nsources = [\"src/lib.sl\"]\n"
+                ),
+            ),
+            (
+                "src/lib.sl",
+                "export \"c\" func add(a: i32, b: i32) -> i32 { a + b }\n",
+            ),
+        ]);
+        let project = Project::load(&fixture.root).expect("project");
+        let target = project.package(0).target("math").expect("library target");
+        let mut options = plan_options();
+        options.mode = BuildMode::Build;
+        let plan = project
+            .compile_plan(0, &target.name, &options)
+            .expect("plan");
+        assert!(plan.entry.is_none());
+        let output = plan.output.as_ref().expect("library output");
+        assert!(output.to_string_lossy().contains(name.as_str()));
+        if kind == "staticlib" {
+            assert_eq!(
+                output.extension(),
+                Some(std::ffi::OsStr::new(
+                    seal_plan::static_library_suffix().trim_start_matches('.')
+                ))
+            );
+        } else {
+            assert!(!output.extension().is_some_and(|value| value == "o"));
+        }
+    }
+}
+
+#[test]
+fn library_targets_cannot_name_an_entry_function() {
+    let fixture = fixture(&[
+        (
+            "seal.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.math]\nkind = \"staticlib\"\nentry = \"root::main\"\n",
+        ),
+        ("src/lib.sl", "func main() -> i32 { 0 }\n"),
+    ]);
+    let error = Project::load(&fixture.root).unwrap_err();
+    assert_eq!(error.code(), "E8003");
+}
+
+#[test]
 fn the_lockfile_is_deterministic_and_relative() {
     let fixture = fixture(&[
         (

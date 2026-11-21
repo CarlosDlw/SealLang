@@ -7,7 +7,7 @@ from the local cache instead of running the command again.
 ```
 frontend    one compile plan -> .sealmono (per-CGU LLVM bitcode) + link metadata
 codegen-cgu one bitcode unit -> one native object
-link        objects + runtime + native libraries -> executable
+link        objects + runtime + native libraries -> executable, staticlib, or cdylib
 generate    generator executable + inputs -> declared files
 native      pkg-config or explicit flags -> a cached probe result
 ```
@@ -57,8 +57,9 @@ instances, cfg values, entry, and every source file digest. A `codegen-cgu` key
 uses the digest of its own split unit and a digest of the target/entry/profile,
 not the whole archive, so unrelated units keep their cache entries while a
 changed optimization level invalidates all of them. The link key includes every
-object digest, the link metadata digest, every native result, and the linker
-arguments.
+object digest, the link metadata digest, every native result, the linker
+arguments, and the link kind, so an executable, static library, and shared
+library never share a cache entry.
 
 ## Cache behavior
 
@@ -254,6 +255,10 @@ invalid metadata is `E8070`. The split requires the `llvm-split` tool from the
 same LLVM installation as the compiler; `SEAL_LLVM_SPLIT` selects another path.
 
 `sealc build file.sl` keeps the all-in-one path and does not use the CAS or the
-sandbox. Staticlib/cdylib emission and C ABI exports are not part of this phase:
-the language has no exported-function declaration yet, so producing a library
-with no callable C surface would be misleading.
+sandbox. `export "c"` functions and `staticlib`/`cdylib` targets are part of the
+current surface: the link action produces `lib<name>.a`/`lib<name>.lib`,
+`lib<name>.so`, `lib<name>.dylib`, or `<name>.dll`, and a library target has no entry function.
+A static archive is deterministic and contains the runtime; a shared library is
+linked from the same objects with the platform's shared flag. Only declared
+exports enter the dynamic symbol table. `seal verify-repro` compares both kinds
+byte by byte; see [language/ffi.md](../language/ffi.md#8-exporting-seal-functions-to-c).

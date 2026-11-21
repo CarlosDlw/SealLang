@@ -48,7 +48,8 @@ pub use error::{BuildError, BuildResult};
 pub use tasks::{TaskOutcome, TaskReport, TaskRequest, TaskRunner};
 
 use action::{
-    Action, CodegenAction, FrontendAction, GenerateAction, LinkAction, NativeAction, slash_path,
+    Action, CodegenAction, FrontendAction, GenerateAction, LinkAction, LinkActionSpec, LinkKind,
+    NativeAction, slash_path,
 };
 use context::ActionContext;
 use graph::ActionGraph;
@@ -335,12 +336,15 @@ impl<'a> Builder<'a> {
                 let mut link_graph = ActionGraph::new();
                 let link = Arc::new(LinkAction::new(
                     self.label(job),
-                    objects,
-                    metadata.digest,
-                    Vec::new(),
-                    self.options.link_args.clone(),
-                    target.linker.as_ref().map(OsString::from),
-                    &context.temp_root,
+                    LinkActionSpec {
+                        kind: LinkKind::Executable,
+                        objects,
+                        metadata: metadata.digest,
+                        native: Vec::new(),
+                        link_args: self.options.link_args.clone(),
+                        linker: target.linker.as_ref().map(OsString::from),
+                        temp_root: &context.temp_root,
+                    },
                 ));
                 let key = link_graph.add(Action::Link(link), Vec::new())?;
                 let link_records = link_graph.execute(context, 1)?;
@@ -514,7 +518,7 @@ impl<'a> Builder<'a> {
             let frontend = records.get(frontend_key).ok_or_else(|| {
                 BuildError::action(format!("the frontend `{}` produced no record", job.target))
             })?;
-            if !target.is_executable() {
+            if target.kind == TargetKind::Lib {
                 let first = keys
                     .first()
                     .ok_or_else(|| BuildError::action("the codegen graph produced no unit"))?;
@@ -549,14 +553,22 @@ impl<'a> Builder<'a> {
             let metadata = frontend
                 .output("link-metadata")
                 .ok_or_else(|| BuildError::action("the frontend produced no link metadata"))?;
+            let kind = match target.kind {
+                TargetKind::Staticlib => LinkKind::StaticLib,
+                TargetKind::Cdylib => LinkKind::Cdylib,
+                _ => LinkKind::Executable,
+            };
             let link = Arc::new(LinkAction::new(
                 self.label(job),
-                objects,
-                metadata.digest,
-                self.native_for(job, native),
-                self.options.link_args.clone(),
-                target.linker.as_ref().map(OsString::from),
-                &context.temp_root,
+                LinkActionSpec {
+                    kind,
+                    objects,
+                    metadata: metadata.digest,
+                    native: self.native_for(job, native),
+                    link_args: self.options.link_args.clone(),
+                    linker: target.linker.as_ref().map(OsString::from),
+                    temp_root: &context.temp_root,
+                },
             ));
             let key = link_graph.add(Action::Link(link), Vec::new())?;
             links.push((*job, key, path.clone()));
@@ -566,10 +578,14 @@ impl<'a> Builder<'a> {
             let record = link_records
                 .get(&key)
                 .ok_or_else(|| BuildError::action("the link produced no record"))?;
+            let output_name = match self.target(job).kind {
+                TargetKind::Staticlib | TargetKind::Cdylib => "library",
+                _ => "executable",
+            };
             materialize_record(
                 context,
                 record,
-                "executable",
+                output_name,
                 &path,
                 &format!("target `{}`", job.target),
             )?;
@@ -759,9 +775,9 @@ fn target_output(project: &Project, target: &Target) -> PathBuf {
         .join("target")
         .join(target.profile.clone().unwrap_or_else(|| "dev".to_owned()));
     let name = match target.kind {
-        TargetKind::Lib | TargetKind::Staticlib | TargetKind::Cdylib => {
-            format!("lib{}.o", target.name)
-        }
+        TargetKind::Lib => format!("lib{}.o", target.name),
+        TargetKind::Staticlib => seal_plan::static_library_name(&target.name),
+        TargetKind::Cdylib => seal_plan::shared_library_name(&target.name),
         _ => target.name.clone(),
     };
     directory.join(name)

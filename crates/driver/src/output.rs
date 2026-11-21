@@ -26,6 +26,8 @@ fn default_output(input: &Path, emit: Emit) -> PathBuf {
         Emit::Assembly => format!("{stem}.s"),
         Emit::Executable => stem,
         Emit::Mono => format!("{stem}.sealmono"),
+        Emit::StaticLib => seal_plan::static_library_name(&stem),
+        Emit::Cdylib => seal_plan::shared_library_name(&stem),
     };
     input.with_file_name(name)
 }
@@ -88,6 +90,14 @@ mod tests {
         assert_eq!(
             default_output(Path::new("src/main.sl"), Emit::Mono),
             PathBuf::from("src/main.sealmono")
+        );
+        assert_eq!(
+            default_output(Path::new("src/main.sl"), Emit::StaticLib),
+            PathBuf::from(format!("src/libmain{}", seal_plan::static_library_suffix()))
+        );
+        assert_eq!(
+            default_output(Path::new("src/main.sl"), Emit::Cdylib),
+            PathBuf::from("src").join(seal_plan::shared_library_name("main"))
         );
     }
 }

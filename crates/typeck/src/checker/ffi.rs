@@ -5,8 +5,10 @@
 //! boundary is checked by the shared FFI-safety predicate, so a parameter, a
 //! return type, and an external static are accepted or rejected by one rule.
 
+use seal_hash::FxHashMap;
 use seal_layout::LayoutCtxt;
 use seal_span::Span;
+use seal_symbol::Symbol;
 use seal_ty::{FfiPosition, TyId, TyKind, safety};
 
 use super::Checker;
@@ -18,6 +20,7 @@ impl Checker<'_> {
     pub(super) fn build_externs(&mut self) {
         self.validate_fn_sigs();
         self.validate_extern_structs();
+        self.validate_exports();
         let functions: Vec<_> = self.hir.extern_functions().to_vec();
         for definition in functions {
             let Some(data) = self.hir.extern_function(definition).cloned() else {
@@ -52,6 +55,62 @@ impl Checker<'_> {
             };
             let span = self.hir.definitions().get(definition).span;
             self.check_ffi_type(data.ty, FfiPosition::Static, span);
+        }
+    }
+
+    /// Validates every function exported to C.
+    ///
+    /// An export has a Seal body but also promises a C ABI. Each parameter and
+    /// the return type must be FFI-safe, the name must be a usable linker
+    /// symbol, and two exports cannot claim the same C name.
+    fn validate_exports(&mut self) {
+        let exports = self.hir.exports().to_vec();
+        let mut names: FxHashMap<Symbol, Span> = FxHashMap::default();
+        for definition in exports {
+            let span = self.hir.definitions().get(definition).span;
+            let Some(body) = self.hir.body_of(definition) else {
+                continue;
+            };
+            for param in &body.params {
+                let param_span = self.hir.definitions().get(param.def).span;
+                self.check_ffi_type(param.ty, FfiPosition::Parameter, param_span);
+            }
+            if let Some(ret) = body.ret {
+                self.check_ffi_type(ret, FfiPosition::Return, span);
+            }
+            let name = self.hir.definitions().get(definition).name;
+            let text = self.interner.resolve(name);
+            if text == "main" {
+                self.error(
+                    seal_error_codes::E3082,
+                    span,
+                    "the symbol `main` is reserved for the C entry point",
+                )
+                .help("export a differently named function")
+                .emit();
+            }
+            if text.is_empty()
+                || text
+                    .chars()
+                    .any(|character| character.is_whitespace() || character.is_control())
+            {
+                self.error(
+                    seal_error_codes::E3082,
+                    span,
+                    "an exported symbol must be non-empty and contain no whitespace",
+                )
+                .emit();
+            }
+            if let Some(first) = names.insert(name, span) {
+                self.error(
+                    seal_error_codes::E3082,
+                    span,
+                    format!("the C symbol `{text}` is exported more than once"),
+                )
+                .secondary(first, "first exported here")
+                .help("give each exported function a distinct name")
+                .emit();
+            }
         }
     }
 

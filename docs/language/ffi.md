@@ -4,8 +4,8 @@ Status: implemented in the current language version. The surface includes
 `extern "c"` functions, statics and link directives; C-layout structs by value;
 opaque types and `c_void`; variadic declarations and promotions; `c"..."`
 literals; C function pointer types, callbacks and indirect calls;
-`with_len`/`as_str`; and native library linking from source and the command
-line.
+`with_len`/`as_str`; native library linking from source and the command line;
+and `export "c"` functions that C can call from a static or shared library.
 
 An `extern` declaration names code or storage that C defines and the linker
 resolves. Seal does not own the body or the storage: it emits a declaration,
@@ -585,7 +585,78 @@ Before writing an `unsafe` boundary, answer every question:
 6. Does the C contract permit the aliasing that Seal's `noalias` proof would
    otherwise forbid?
 
-## 8. Diagnostics
+## 8. Exporting Seal functions to C
+
+`export "c"` gives a Seal function a C symbol. The body stays ordinary Seal
+code; the compiler emits a hidden internal function plus one C wrapper, so C
+sees exactly the declared name and nothing from Seal's mangling scheme.
+
+```seal
+export "c" func add(a: i32, b: i32) -> i32 {
+  a + b
+}
+```
+
+```c
+/* math.h */
+int add(int a, int b);
+```
+
+```console
+$ sealc build --emit=staticlib -o libmath.a math.sl
+$ cc app.c libmath.a -o app
+```
+
+The wrapper uses the target's C ABI for every FFI-safe parameter and return
+type, including C-layout structs returned in registers or through `sret`. The
+C declaration must match the Seal signature exactly. A scalar `bool` is C's
+`_Bool` (one `i1` value); a struct field that must occupy one byte uses
+`c_bool`. Checked references, fat pointers, `char`, `i128`, and Seal-layout
+aggregates are rejected with `E3084`, exactly as on an `extern` declaration.
+
+An export must be a free function. It cannot be generic, cannot be named
+`main`, cannot appear on an impl method, and cannot be declared in an import.
+Its C name is the Seal function name; there is no `link_name` for exports. Two
+exports with one name are `E3082`. A body with no export is never visible to
+C, even when the function is `public`.
+
+Calling an exported function from C does not create an `unsafe` obligation for
+Seal: the C caller owns the arguments and must satisfy the same contract a C
+function would. Seal cannot validate a null pointer, a dangling handle, or a
+violated aliasing rule across that boundary; document those preconditions in
+the header that accompanies the library. Exported functions must not unwind;
+a Seal panic aborts instead of crossing into C.
+
+Library artifacts are built directly from a source file or from a project
+target:
+
+```toml
+[targets.math]
+kind = "staticlib"   # or "cdylib"
+sources = ["src/lib.sl"]
+```
+
+```console
+$ seal build
+$ ls seal/target/dev/libmath.a
+```
+
+A `staticlib` is `lib<name>.a` (`lib<name>.lib` on MSVC); it contains the
+compiled target and the Seal runtime, so link it once. It does not embed native
+libraries named by `link` directives; the final C link supplies them. A
+`cdylib` is `lib<name>.so`, `lib<name>.dylib`, or `<name>.dll`; the linker adds
+the platform's shared flag, links native libraries, and only declared exports
+are dynamic symbols. `nm -D --defined-only libmath.so` therefore lists `add`
+but not `seal.add`, `seal.main`, or the C entry wrapper. A library target has
+no entry function and no C `main`.
+
+Static archives are deterministic: object members are stored in a fixed order
+and the archive tool writes no timestamps or temporary paths. GNU hosts use
+`ar crsD`; Apple and BSD hosts use `ar crs` with `ZERO_AR_DATE=1`. Rebuilding
+the same inputs produces identical bytes, and `seal verify-repro` compares
+library artifacts like any other output.
+
+## 9. Diagnostics
 
 | Code | Meaning |
 |------|---------|
@@ -594,9 +665,9 @@ Before writing an `unsafe` boundary, answer every question:
 | `E3070` | An external call appears outside `unsafe` |
 | `E3080` | The ABI spelling is unknown or unavailable |
 | `E3081` | The declaration is malformed, or uses an unsupported member |
-| `E3082` | The linker symbol is empty, reserved, or contains invalid characters |
+| `E3082` | A linker symbol or exported name is empty, reserved, duplicated, or contains invalid characters |
 | `E3083` | One symbol is declared with two different shapes |
-| `E3084` | A parameter, return type, field, or static type is not FFI-safe |
+| `E3084` | A parameter, return type, field, or static type is not FFI-safe, or an exported function is generic |
 | `E3085` | An external struct is empty, or a field has no valid C representation |
 | `E3086` | An external static is accessed outside `unsafe`, or an immutable one is written |
 | `E3087` | An opaque type is used by value or dereferenced |
@@ -608,15 +679,19 @@ Before writing an `unsafe` boundary, answer every question:
 | `E3093` | An external function, struct, or opaque type is generic |
 | `E4033` | A constant calls an external function or C function pointer, or takes a C function address |
 | `E4034` | A constant reads an external static |
-| `E6003` | The linker failed; the message names the command and libraries |
+| `E6003` | The linker or archive tool failed; the message names the command and inputs |
 | `E6005` | A library name or `-L` search path is invalid |
 
-## 9. Current limits
+## 10. Current limits
 
 The following are deliberately rejected, never silently miscompiled:
 
 - Seal cannot define its own variadic function; only an `extern` declaration
-  may end in `...` (`E3088`).
+  may end in `...` (`E3088`). A variadic function cannot be exported either.
+- Exports are free functions only. They cannot be generic, cannot be methods,
+  and cannot rename their C symbol; the function name is the C name.
+- Only functions can be exported. Exported statics, constants, and types are
+  not part of the surface, and the compiler does not generate a C header.
 - A Seal function pointer is not a first-class value type: only the raw C form
   exists, and taking a Seal function's address is an explicit cast.
 - Per-declaration attributes such as `noalias` or `noreturn` are not accepted
@@ -636,7 +711,7 @@ The following are deliberately rejected, never silently miscompiled:
 These limits are visible in the type system or in a diagnostic; none of them
 silently changes a layout or a call.
 
-## 10. Patterns that stay auditable
+## 11. Patterns that stay auditable
 
 ### Put the contract in one function
 
@@ -685,7 +760,7 @@ A pointer derived from a Seal place must not be stored in C beyond the place's
 lifetime. If C must retain it, copy the bytes into C-owned storage, or keep the
 ownership explicit with an opaque handle and a release function.
 
-## 11. Comparison with Rust
+## 12. Comparison with Rust
 
 The surface deliberately follows Rust's C interop, with Seal's smaller type
 system and explicit unsafe gate:
@@ -712,7 +787,7 @@ so `CString`, `CStr`, `Box`, and `Vec` wrappers do not exist; `c"..."` plus
 attribute because C layout is a distinct declaration form, `extern struct`,
 which cannot be confused with the default layout.
 
-## 12. Acceptance matrix
+## 13. Acceptance matrix
 
 Every row below is exercised by the compiler's test suite or by
 [`examples/045_ffi_libc.sl`](../../examples/045_ffi_libc.sl). The rows group the
@@ -722,6 +797,7 @@ Every row below is exercised by the compiler's test suite or by
 |------|-------------------|----------|
 | Scalar names | `c_int`, `c_long`, `size_t`, and `c_char` resolve from the target, not the host; `c_char` signedness and `c_long`/`c_wchar` widths match the C fixture at runtime | `crates/target/src/c_abi.rs`, `crates/hir/src/tests/c_types.rs`, `crates/codegen/tests/ffi.rs` |
 | `_Bool` representation | a direct `bool` parameter and result use `i1`; `c_bool` occupies one byte in an aggregate; a `bool` field is `E3085` with a `c_bool` suggestion | `crates/codegen/src/tests/externs.rs`, `crates/typeck/src/tests/ffi.rs`, `crates/codegen/tests/ffi.rs` |
+| C exports | scalar, 1-, 2-, and 3-field C-layout structs roundtrip through an exported function; a static archive links from C; a shared library exposes only the declared C names; a generic export, `main`, a duplicate name, and a non-FFI-safe parameter are `E3082`/`E3084` | `crates/codegen/tests/exports.rs`, `crates/typeck/src/tests/exports.rs`, `crates/build/tests/build.rs` |
 | Declarations and calls | block and single-item declarations compile; `abs(-41)` returns 41; a call outside `unsafe` is `E3070`; `getpid` returns a non-zero pid | `crates/codegen/tests/ffi.rs`, `crates/typeck/src/tests/ffi.rs`, `examples/045_ffi_libc.sl` |
 | Symbols | `link_name` selects the object-file symbol; `main` is `E3082`; two shapes for one symbol are `E3083`; leading underscores, digits, and long names are accepted | `crates/codegen/src/tests/externs.rs`, `crates/typeck/src/tests/ffi.rs` |
 | External statics | a static is read and written in `unsafe`; an access outside it and a write to an immutable declaration are `E3086`; C sees a Seal write and Seal sees a C write | `crates/codegen/tests/ffi.rs`, `crates/typeck/src/tests/ffi.rs` |
@@ -737,7 +813,7 @@ Every row below is exercised by the compiler's test suite or by
 | IR contract | a declaration has no `noalias`, `readonly`, or `nounwind`; a variadic call uses the promoted types; an external global is `external global` without `constant`; a program without `extern` emits no declarations | `crates/codegen/src/tests/externs.rs` |
 | Determinism and targets | `-O0` and `-O2` agree; `--emit=obj` with `extern` compiles for another architecture; object and assembly output ignore link inputs | `crates/codegen/tests/ffi.rs`, `crates/codegen/tests/end_to_end.rs` |
 
-## 13. Complete example
+## 14. Complete example
 
 The chapter's canonical program is [`examples/045_ffi_libc.sl`](../../examples/045_ffi_libc.sl).
 It declares `abs` and `snprintf`, formats `value=%d` from a `c"..."` literal,
@@ -776,7 +852,7 @@ func main() -> i32 {
 It compiles at `-O0` with debug information and at `-O2` without it, and the
 acceptance suite asserts the exit status in both modes.
 
-## 14. Quick reference
+## 15. Quick reference
 
 ```text
 extern "ABI" { link "name"; func f(x: T, ...) -> R link_name "symbol"; static [mut] s: T; }
@@ -791,11 +867,13 @@ c"bytes"
 | Operation | Spell it as |
 |-----------|-------------|
 | Declare a C function | `extern "c" func name(args) -> R;` |
+| Export a Seal function | `export "c" func name(args) -> R { ... }` |
 | Rename the symbol | `... link_name "symbol";` |
 | Declare a C variable | `extern "c" { static mut name: T; }` |
 | Declare a C struct | `extern struct S { field: T }` |
 | Declare an opaque handle | `extern type S;` and use `*raw mut S` |
 | Name a library | `link "m";` in the block, `-l m`, or `-L DIR` |
+| Build a C library | `sealc build --emit=staticlib` or `--emit=cdylib`; `kind = "staticlib"`/`"cdylib"` in a target |
 | Pass a linker argument | `--link-arg ARG` |
 | Call C safely | `unsafe { name(args) }` |
 | Pass a NUL-terminated string | `c"text"` |

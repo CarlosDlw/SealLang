@@ -6,6 +6,7 @@
 
 use seal_ast::{Modifiers, Visibility};
 use seal_error_codes as codes;
+use seal_lexer::TokenKind;
 
 use crate::parser::Parser;
 
@@ -54,6 +55,24 @@ impl Parser<'_> {
                         .emit();
                 } else {
                     modifiers.cfg = Some(self.parse_cfg_expr(span));
+                }
+                continue;
+            }
+
+            if self.at_name("export") {
+                let span = self.current_span();
+                let Some(TokenKind::Str(abi)) = self.peek_kind() else {
+                    break;
+                };
+                self.bump();
+                self.bump();
+                if modifiers.export_span.is_some() {
+                    self.error(codes::E1001, span, "an item has only one `export` ABI")
+                        .help("remove the duplicate `export` modifier")
+                        .emit();
+                } else {
+                    modifiers.export = Some(abi);
+                    modifiers.export_span = Some(span);
                 }
                 continue;
             }

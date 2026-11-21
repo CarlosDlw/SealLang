@@ -26,6 +26,10 @@ pub(crate) enum EmitArg {
     Exe,
     /// A `.sealmono` archive of per-CGU LLVM bitcode.
     Mono,
+    /// A static C library.
+    Staticlib,
+    /// A shared C library.
+    Cdylib,
     /// A JSON snapshot of the package API and module tree.
     Api,
 }
@@ -37,6 +41,8 @@ impl From<EmitArg> for Emit {
             EmitArg::Asm => Self::Assembly,
             EmitArg::Exe => Self::Executable,
             EmitArg::Mono => Self::Mono,
+            EmitArg::Staticlib => Self::StaticLib,
+            EmitArg::Cdylib => Self::Cdylib,
             EmitArg::Api => Self::Object,
         }
     }
@@ -171,6 +177,9 @@ mod tests {
         assert_eq!(Emit::from(EmitArg::Asm), Emit::Assembly);
         assert_eq!(Emit::from(EmitArg::Exe), Emit::Executable);
         assert_eq!(Emit::from(EmitArg::Mono), Emit::Mono);
+        assert_eq!(Emit::from(EmitArg::Staticlib), Emit::StaticLib);
+        assert_eq!(Emit::from(EmitArg::Cdylib), Emit::Cdylib);
+        assert_eq!(Emit::from(EmitArg::Api), Emit::Object);
     }
 
     #[test]

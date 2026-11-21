@@ -50,6 +50,11 @@ pub(crate) struct TypeMapper<'ctx> {
 }
 
 impl<'ctx> TypeMapper<'ctx> {
+    /// Returns the LLVM context this mapper belongs to.
+    pub(crate) fn context(&self) -> &'ctx Context {
+        self.context
+    }
+
     /// Creates the mapper for the host and an explicit pointer width.
     #[cfg(test)]
     pub(crate) fn new(

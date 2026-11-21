@@ -4,8 +4,10 @@
 produces one artifact per invocation:
 
 - a relocatable object (`sealc build --emit=obj`),
-- target assembly (`sealc build --emit=asm`), or
-- a linked native executable (`sealc build --emit=exe`, the default).
+- target assembly (`sealc build --emit=asm`),
+- a linked native executable (`sealc build --emit=exe`, the default),
+- a static C library (`sealc build --emit=staticlib`), or
+- a shared C library (`sealc build --emit=cdylib`).
 
 `sealc check` stops after monomorphization and writes nothing. Object and
 assembly output do not require an entry point; executables do.
@@ -44,8 +46,10 @@ assembly output do not require an entry point; executables do.
 5. **Optimize.** `-O1` through `-O3` run LLVM's `default<On>` pipeline; `-O0`
    skips it. The target machine's optimization level matches the flag.
 6. **Emit.** Object and assembly bytes come from LLVM's target machine and are
-   written atomically. An executable is linked from a temporary object with the
-   system C toolchain.
+   written atomically. An executable or shared library is linked from a
+   temporary object with the system C toolchain. A static library feeds the
+   object and the runtime archive to a partial linker and then `ar crsD`, so
+   the archive member order and bytes are deterministic.
 
 ### Split frontend and CGU code generation
 
@@ -91,10 +95,14 @@ ends option parsing so a file named like a flag stays an input; in `run`, `--`
 separates the program arguments.
 
 - `sealc build --emit=exe` (the default) links an executable,
-  `sealc build --emit=obj` writes an object, and `sealc build --emit=asm` writes
-  assembly. `sealc check` stops after monomorphization and writes nothing.
+  `sealc build --emit=obj` writes an object, `sealc build --emit=asm` writes
+  assembly, `sealc build --emit=staticlib` writes a static C library, and
+  `sealc build --emit=cdylib` writes a shared C library. `sealc check` stops
+  after monomorphization and writes nothing.
 - Without `-o`, `sealc build` writes `file` for an executable, `file.o` for an
-  object, or `file.s` for assembly, next to the input.
+  object, `file.s` for assembly, `libfile.a`/`libfile.lib` for a static
+  library, or `libfile.so`/`libfile.dylib`/`file.dll` for a shared library,
+  next to the input.
 - `-o` accepts one output path and is rejected with more than one input.
 - `-O` alone selects level 3; `-O0` through `-O3` and `--opt-level <LEVEL>`
   select a level explicitly.
@@ -363,6 +371,13 @@ External declarations are emitted by `externs.rs` and classified by `c_abi.rs`:
   function is excluded from `noalias` because its address escapes.
 - Debug builds describe an external function with a bodyless subprogram and a
   C struct with its real size and offsets; an opaque type has no value type.
+- An `export "c"` function keeps its body under the hidden internal symbol and
+  gets one `CallConv::C` wrapper at the exported name. The wrapper uses the
+  same `CSignature`/`CAbi` classification as an external declaration, converts
+  each argument into the internal ABI, calls the hidden function, and converts
+  the result back. Large results use the C `sret` pointer instead of the
+  internal return. The wrapper is the only exported symbol; see
+  [language/ffi.md](language/ffi.md#8-exporting-seal-functions-to-c).
 
 ## Global data
 
@@ -605,8 +620,8 @@ references one of its symbols:
 
 ## Linking
 
-Executables use the linker selected by `SEAL_LINKER`, then `CC`, then the
-platform default (`cl` on Windows, `cc` elsewhere). The argument style follows
+Executables and shared libraries use the linker selected by `SEAL_LINKER`, then
+`CC`, then the platform default (`cl` on Windows, `cc` elsewhere). The argument style follows
 the program name: `cl` and `clang-cl` use `/Fe:` and pass linker-only options
 after `/link`; the standalone `link` uses `/OUT:`; every other toolchain uses
 `-o`. On Windows the driver appends `.exe` to executable output paths that have
@@ -631,6 +646,17 @@ value is passed as one argument vector element, never through a shell.
 sealc build -L ./lib -l sealfixture -l m --link-arg -Wl,--as-needed app.sl
 ```
 
+### Static libraries
+
+`--emit=staticlib` writes an archive instead of invoking the linker. On a
+GNU-like host the object and runtime archive are combined with `cc -r` into one
+relocatable object, which `ar crsD` stores as the only member; `SEAL_AR`
+selects a different archive tool. Apple and BSD hosts use `ar crs` with
+`ZERO_AR_DATE=1`. On MSVC, `lib /NOLOGO /OUT:` combines the inputs. The
+temporary paths never enter the archive, so identical inputs produce identical
+bytes. A failed tool is `E6003` and names the program and its
+stderr. The destination is replaced atomically after the archive exists.
+
 ### Validation
 
 Library names may not be empty or contain whitespace, control characters, or a
@@ -652,7 +678,7 @@ never leaves a truncated one.
 |------|---------|
 | `E6001` | The executable has no usable `main`, or `main` has parameters or a return type other than `i32`/`()`. |
 | `E6002` | LLVM has no backend for the requested triple or cannot create a target machine. |
-| `E6003` | The artifact could not be written, the linker could not run, linking failed, an external runtime archive could not be read, or an executable was requested for a target that does not match the embedded runtime and no replacement was supplied. A link failure names the command and libraries. |
+| `E6003` | The artifact could not be written, the linker or archive tool could not run, linking or archiving failed, an external runtime archive could not be read, or a linked artifact was requested for a target that does not match the embedded runtime and no replacement was supplied. A failure names the command and libraries. |
 | `E6005` | A library name is empty or contains whitespace, control characters, or a path separator, or a `-L` search path is missing or not a directory. |
 
 Broken compiler invariants (invalid MIR reaching codegen, an unresolved inference

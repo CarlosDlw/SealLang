@@ -7,10 +7,14 @@
 
 #![warn(missing_docs)]
 
+mod artifact;
 mod compile;
 mod error;
 mod serialize;
 
+pub use artifact::{
+    shared_library_name, shared_library_suffix, static_library_name, static_library_suffix,
+};
 pub use compile::{
     BuildMode, CfgOptions, CompilePlan, FORMAT_VERSION, PlanDependency, PlanFile, PlanMetadata,
     PlanPackage, PlanProfile,

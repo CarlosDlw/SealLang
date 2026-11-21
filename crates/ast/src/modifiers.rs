@@ -4,6 +4,9 @@
 //! combinations that have no meaning. Name resolution decides whether a
 //! visibility is reachable from another module or package.
 
+use seal_span::Span;
+use seal_symbol::Symbol;
+
 use crate::id::CfgExprId;
 
 /// The declared visibility of an item, field, or method.
@@ -41,6 +44,10 @@ pub struct Modifiers {
     pub cfg: Option<CfgExprId>,
     /// Whether the item was declared with the contextual `test` modifier.
     pub is_test: bool,
+    /// The ABI spelling after `export`, when the item is exported to C.
+    pub export: Option<Symbol>,
+    /// The span of the `export` modifier, for diagnostics.
+    pub export_span: Option<Span>,
 }
 
 impl Modifiers {
@@ -52,6 +59,8 @@ impl Modifiers {
             has_visibility: false,
             cfg: None,
             is_test: false,
+            export: None,
+            export_span: None,
         }
     }
 

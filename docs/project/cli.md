@@ -30,8 +30,8 @@ $ seal build -p app --target x86_64-unknown-linux-gnu
 $ seal check -p app
 ```
 
-`build` selects libraries and binaries and writes them under
-`seal/target/<profile>/`. `check` runs the same analysis and writes no artifact.
+`build` selects libraries, binaries, static libraries, and shared libraries and
+writes them under `seal/target/<profile>/`. `check` runs the same analysis and writes no artifact.
 `-p` selects one package; `--workspace` selects every package. `--all-targets`
 adds tests, benches, and examples. A positional target name selects one target.
 `--profile` chooses a declared profile and `--release` is shorthand for the
@@ -166,6 +166,8 @@ $ sealc check --plan-file plan.json
 $ sealc build --plan-file plan.json
 $ sealc build --emit=api plan.json -o api.json
 $ sealc build --emit=obj plan.json -o module.o
+$ sealc build --emit=staticlib math.sl -o libmath.a
+$ sealc build --emit=cdylib math.sl -o libmath.so
 ```
 
 A plan names the target, profile, packages in dependency order, source files,
@@ -176,6 +178,9 @@ historical `sealc build file.sl` path is unchanged.
 
 `--emit=api` writes a JSON snapshot of the package modules and public items
 instead of code. It is a tool-facing snapshot, not a stable ABI.
+`--emit=staticlib` and `--emit=cdylib` produce C libraries; the C surface is
+the set of `export "c"` functions. Without `-o`, their default names are
+`lib<input>.a`/`.lib` and `lib<input>.so`/`.dylib`/`<input>.dll`.
 
 ## Exit status
 

@@ -342,10 +342,58 @@ impl CodegenAction {
     }
 }
 
+/// The artifact a link action produces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkKind {
+    /// A native executable with the C `main` wrapper.
+    Executable,
+    /// A static C library containing the objects and runtime.
+    StaticLib,
+    /// A shared C library containing the objects and runtime.
+    Cdylib,
+}
+
+impl LinkKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Executable => "exe",
+            Self::StaticLib => "staticlib",
+            Self::Cdylib => "cdylib",
+        }
+    }
+
+    pub(crate) const fn output_name(self) -> &'static str {
+        match self {
+            Self::Executable => "executable",
+            Self::StaticLib | Self::Cdylib => "library",
+        }
+    }
+}
+
+/// Inputs collected before a [`LinkAction`] is created.
+#[derive(Clone, Debug)]
+pub(crate) struct LinkActionSpec<'a> {
+    /// The artifact kind.
+    pub(crate) kind: LinkKind,
+    /// The object digests, in order.
+    pub(crate) objects: Vec<Digest>,
+    /// The frontend link metadata digest.
+    pub(crate) metadata: Digest,
+    /// Resolved native dependencies.
+    pub(crate) native: Vec<NativeResult>,
+    /// Extra linker arguments from the command line.
+    pub(crate) link_args: Vec<OsString>,
+    /// An explicit linker program.
+    pub(crate) linker: Option<OsString>,
+    /// The directory for temporary link files.
+    pub(crate) temp_root: &'a Path,
+}
+
 /// The `link` action: one or more objects plus runtime and native libraries.
 #[derive(Clone, Debug)]
 pub(crate) struct LinkAction {
     label: String,
+    kind: LinkKind,
     objects: Vec<Digest>,
     metadata: Digest,
     native: Vec<NativeResult>,
@@ -357,15 +405,16 @@ pub(crate) struct LinkAction {
 
 impl LinkAction {
     /// Creates a link action from a frontend record and resolved native inputs.
-    pub(crate) fn new(
-        label: impl Into<String>,
-        objects: Vec<Digest>,
-        metadata: Digest,
-        native: Vec<NativeResult>,
-        mut link_args: Vec<OsString>,
-        linker: Option<OsString>,
-        temp_root: &Path,
-    ) -> Self {
+    pub(crate) fn new(label: impl Into<String>, spec: LinkActionSpec<'_>) -> Self {
+        let LinkActionSpec {
+            kind,
+            objects,
+            metadata,
+            native,
+            mut link_args,
+            linker,
+            temp_root,
+        } = spec;
         for entry in &native {
             link_args.extend(entry.link_args.iter().map(OsString::from));
         }
@@ -389,6 +438,7 @@ impl LinkAction {
         }
         Self {
             label: label.into(),
+            kind,
             objects,
             metadata,
             native,
@@ -404,7 +454,11 @@ impl LinkAction {
     }
 
     fn command(&self) -> Vec<String> {
-        let mut command = vec!["link".to_owned(), self.label.clone()];
+        let mut command = vec![
+            "link".to_owned(),
+            self.kind.as_str().to_owned(),
+            self.label.clone(),
+        ];
         for native in &self.native {
             command.push(format!("native:{}", native.alias));
         }
@@ -440,16 +494,30 @@ impl LinkAction {
             .collect();
         let runtime = seal_codegen::runtime_archive();
         let linker = self.linker.as_deref();
-        let request = ObjectLink {
-            objects: &objects,
-            output: &output,
-            runtime,
-            libraries: &libraries,
-            search_paths: &search_paths,
-            link_args: &link_args,
-            linker,
+        let result = match self.kind {
+            LinkKind::StaticLib => {
+                let request = seal_codegen::ObjectArchive {
+                    objects: &objects,
+                    output: &output,
+                    runtime,
+                };
+                seal_codegen::archive_objects(&request)
+            }
+            LinkKind::Executable | LinkKind::Cdylib => {
+                let request = ObjectLink {
+                    objects: &objects,
+                    output: &output,
+                    runtime,
+                    libraries: &libraries,
+                    search_paths: &search_paths,
+                    link_args: &link_args,
+                    linker,
+                    shared: self.kind == LinkKind::Cdylib,
+                };
+                seal_codegen::link_objects(&request)
+            }
         };
-        if let Err(error) = seal_codegen::link_objects(&request) {
+        if let Err(error) = result {
             let _ = fs::remove_dir_all(&work);
             return Err(BuildError::action(format!(
                 "the link action `{}` failed: {error}",
@@ -458,12 +526,15 @@ impl LinkAction {
         }
         let digest = context.cache.cas().put_file(&output)?;
         let _ = fs::remove_dir_all(&work);
-        Ok(ActionRecord::new(
-            "link",
-            self.inputs.clone(),
-            vec![ActionOutput::executable("executable", digest)],
+        let artifact = if self.kind == LinkKind::Executable {
+            ActionOutput::executable(self.kind.output_name(), digest)
+        } else {
+            ActionOutput::data(self.kind.output_name(), digest)
+        };
+        Ok(
+            ActionRecord::new("link", self.inputs.clone(), vec![artifact])
+                .with_command(self.command()),
         )
-        .with_command(self.command()))
     }
 }
 

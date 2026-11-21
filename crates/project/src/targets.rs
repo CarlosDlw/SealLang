@@ -123,7 +123,11 @@ fn build_one(
     base: &[PathBuf],
     exclude: &[String],
 ) -> ProjectResult<Target> {
-    if declaration.kind == TargetKind::Lib && declaration.entry.is_some() {
+    if matches!(
+        declaration.kind,
+        TargetKind::Lib | TargetKind::Staticlib | TargetKind::Cdylib
+    ) && declaration.entry.is_some()
+    {
         return Err(ProjectError::target(format!(
             "the library target `{name}` cannot name an entry function"
         )));

@@ -72,6 +72,7 @@ mod drop_glue;
 mod entry;
 mod equality;
 mod error;
+mod export;
 mod extern_decl;
 mod function;
 mod global;
@@ -99,7 +100,7 @@ mod tests;
 pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
 pub use mono::emit_object_from_bitcode;
-pub use object::{ObjectLink, link_objects};
+pub use object::{ObjectArchive, ObjectLink, archive_objects, link_objects};
 pub use options::{CodegenOptions, Emit};
 
 /// Returns the runtime archive embedded in this compiler build.

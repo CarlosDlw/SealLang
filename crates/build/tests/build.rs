@@ -81,6 +81,65 @@ fn basic_project() -> Fixture {
     )
 }
 
+fn library_project(kind: &str) -> Fixture {
+    Fixture::new(
+        "seal-build-library",
+        &[
+            (
+                "seal.toml",
+                &format!(
+                    "[package]\nname = \"libdemo\"\nversion = \"0.1.0\"\n\n\
+                     [targets.math]\nkind = \"{kind}\"\nsources = [\"src/lib.sl\"]\n"
+                ),
+            ),
+            (
+                "src/lib.sl",
+                "export \"c\" func add(a: i32, b: i32) -> i32 {\n  a + b\n}\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn static_library_targets_produce_a_deterministic_archive() {
+    let fixture = library_project("staticlib");
+    let project = fixture.project();
+    let builder = Builder::new(&project, options(1, false));
+    let first = builder
+        .build(&[job("math")])
+        .expect("the static library builds");
+    assert_eq!(first.outputs.len(), 1);
+    let archive = fixture
+        .path("seal/target/dev")
+        .join(seal_plan::static_library_name("math"));
+    assert_eq!(first.outputs[0].path, archive);
+    let bytes = std::fs::read(&archive).expect("the archive exists");
+
+    std::fs::remove_dir_all(fixture.path("seal")).expect("clean target");
+    builder
+        .build(&[job("math")])
+        .expect("the static library rebuilds");
+    assert_eq!(
+        std::fs::read(&archive).expect("the rebuilt archive exists"),
+        bytes,
+        "the archive must not depend on temporary paths or timestamps"
+    );
+}
+
+#[test]
+fn shared_library_targets_produce_a_platform_library() {
+    let fixture = library_project("cdylib");
+    let project = fixture.project();
+    let build = Builder::new(&project, options(1, false))
+        .build(&[job("math")])
+        .expect("the shared library builds");
+    assert_eq!(build.outputs.len(), 1);
+    let expected = fixture
+        .path("seal/target/dev")
+        .join(seal_plan::shared_library_name("math"));
+    assert_eq!(build.outputs[0].path, expected);
+}
+
 fn generator_project() -> Fixture {
     Fixture::new(
         "seal-build-generator",

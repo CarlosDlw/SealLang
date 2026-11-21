@@ -20,8 +20,10 @@ pub(crate) struct LinkInputs<'a> {
     pub(crate) objects: Vec<PathBuf>,
     /// The Seal runtime archive.
     pub(crate) runtime: &'a Path,
-    /// The executable written by the linker.
+    /// The executable or shared library written by the linker.
     pub(crate) output: &'a Path,
+    /// Whether the output is a shared library instead of an executable.
+    pub(crate) shared: bool,
     /// Libraries declared by `link "..."` in the source, in source order.
     pub(crate) source_libraries: &'a [String],
     /// Libraries requested with `-l`, in request order.
@@ -147,6 +149,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
     let mut arguments = Vec::new();
     match flavor(&program) {
         Flavor::Gnu => {
+            if inputs.shared {
+                arguments.push(OsString::from("-shared"));
+            }
             for object in &inputs.objects {
                 arguments.push(object.as_os_str().to_owned());
             }
@@ -164,6 +169,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
         }
         Flavor::MsvcCompiler => {
             arguments.push(OsString::from("/nologo"));
+            if inputs.shared {
+                arguments.push(OsString::from("/LD"));
+            }
             for object in &inputs.objects {
                 arguments.push(object.as_os_str().to_owned());
             }
@@ -180,6 +188,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
         }
         Flavor::MsvcLinker => {
             arguments.push(OsString::from("/NOLOGO"));
+            if inputs.shared {
+                arguments.push(OsString::from("/DLL"));
+            }
             for object in &inputs.objects {
                 arguments.push(object.as_os_str().to_owned());
             }
@@ -253,6 +264,7 @@ mod tests {
             objects: vec![PathBuf::from("app.o")],
             runtime: Path::new("seal_rt.lib"),
             output: Path::new("app.exe"),
+            shared: false,
             source_libraries,
             libraries,
             search_paths,

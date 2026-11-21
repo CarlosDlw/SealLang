@@ -18,6 +18,10 @@ pub enum Emit {
     Executable,
     /// A `.sealmono` archive of per-CGU LLVM bitcode.
     Mono,
+    /// A static C library containing the object and runtime.
+    StaticLib,
+    /// A shared C library containing the object and runtime.
+    Cdylib,
 }
 
 impl Emit {
@@ -29,6 +33,8 @@ impl Emit {
             Self::Assembly => "asm",
             Self::Executable => "exe",
             Self::Mono => "mono",
+            Self::StaticLib => "staticlib",
+            Self::Cdylib => "cdylib",
         }
     }
 }

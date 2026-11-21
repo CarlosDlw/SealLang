@@ -124,6 +124,13 @@ impl Parser<'_> {
                 .emit();
             modifiers.is_test = false;
         }
+        if modifiers.export_span.is_some() {
+            self.error(codes::E2079, start, "an import cannot be exported")
+                .help("remove `export`; only a function can be exported")
+                .emit();
+            modifiers.export = None;
+            modifiers.export_span = None;
+        }
 
         let (root, root_span) = match self.current_kind() {
             TokenKind::Ident(name) => {

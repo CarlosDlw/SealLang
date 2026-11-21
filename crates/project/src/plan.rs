@@ -265,7 +265,9 @@ pub(crate) fn instance_hash(
 /// Returns the artifact name for a target, used by the CLI.
 pub(crate) fn artifact_name(kind: TargetKind, name: &str) -> String {
     match kind {
-        TargetKind::Lib | TargetKind::Staticlib | TargetKind::Cdylib => format!("lib{name}.o"),
+        TargetKind::Lib => format!("lib{name}.o"),
+        TargetKind::Staticlib => seal_plan::static_library_name(name),
+        TargetKind::Cdylib => seal_plan::shared_library_name(name),
         _ => name.to_owned(),
     }
 }

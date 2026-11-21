@@ -8,6 +8,7 @@ mod dyn_types;
 mod enums;
 mod errors;
 mod examples;
+mod exports;
 mod exprs;
 mod extern_items;
 mod fn_ptrs;

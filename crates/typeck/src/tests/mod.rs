@@ -12,6 +12,7 @@ mod drop_calls;
 mod dyn_types;
 mod enums;
 mod examples;
+mod exports;
 mod ffi;
 mod flow;
 mod fn_ptrs;

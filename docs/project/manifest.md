@@ -67,8 +67,11 @@ benches, and examples. `reuse`, `profile`, `runtime`, `linker`, `linker-script`,
 and `output` are accepted by the manifest parser and carried into the target
 model.
 
-`seal build` selects `lib` and `bin` targets by default. `--all-targets` adds
-tests, benches, and examples.
+`seal build` selects `lib`, `bin`, `staticlib`, and `cdylib` targets by
+default. `--all-targets` adds tests, benches, and examples. A library target
+(`lib`, `staticlib`, or `cdylib`) cannot name an `entry`. `staticlib` writes
+`lib<name>.a` or `lib<name>.lib`; `cdylib` writes `lib<name>.so`, `lib<name>.dylib`, or
+`<name>.dll`; both expose only `export "c"` functions.
 
 A `generator` target also declares runtime `inputs`, the `outputs` it writes,
 and the cache contract it must satisfy. Another target opts into those files

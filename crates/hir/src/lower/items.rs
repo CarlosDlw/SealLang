@@ -1409,6 +1409,41 @@ impl Lowering<'_> {
         self.register_generics(definition, &generics, None, false);
         self.queue_bounds(definition, &generics, &[], &where_clause, None);
 
+        let modifiers = self.ast.item(item_id).modifiers;
+        if let Some(spelling) = modifiers.export {
+            let abi_name = self.interner.resolve(spelling);
+            let export = match seal_ty::Abi::from_name(abi_name) {
+                Some(abi) => crate::Export {
+                    abi,
+                    span: modifiers.export_span.unwrap_or(span),
+                },
+                None => {
+                    self.error(
+                        codes::E3080,
+                        modifiers.export_span.unwrap_or(span),
+                        format!("unknown or unavailable ABI `{abi_name}`"),
+                    )
+                    .help("exported functions currently support `\"c\"`, `\"cdecl\"`, or `\"system\"`")
+                    .emit();
+                    crate::Export {
+                        abi: seal_ty::Abi::C,
+                        span: modifiers.export_span.unwrap_or(span),
+                    }
+                }
+            };
+            if !generics.params.is_empty() {
+                self.error(
+                    codes::E3084,
+                    modifiers.export_span.unwrap_or(span),
+                    "an exported function cannot be generic",
+                )
+                .help("export a concrete function and call the generic one from it")
+                .emit();
+            } else {
+                self.hir.insert_export(definition, export);
+            }
+        }
+
         if let Some(first) = self.local_value(name) {
             self.duplicate(
                 first,

@@ -30,6 +30,25 @@ pub struct ObjectLink<'a> {
     pub link_args: &'a [OsString],
     /// An explicit linker program; `None` uses `SEAL_LINKER`, `CC`, or `cc`.
     pub linker: Option<&'a OsStr>,
+    /// Whether to produce a shared library instead of an executable.
+    pub shared: bool,
+}
+
+/// One request to archive existing objects and the runtime.
+#[derive(Clone, Debug)]
+pub struct ObjectArchive<'a> {
+    /// The object files produced by the code generation actions, in order.
+    pub objects: &'a [PathBuf],
+    /// The static library to write.
+    pub output: &'a Path,
+    /// Runtime archive bytes linked into the library.
+    pub runtime: &'a [u8],
+}
+
+/// Archives `objects` and the runtime into `output` atomically.
+pub fn archive_objects(request: &ObjectArchive<'_>) -> Result<(), CodegenError> {
+    let objects: Vec<&Path> = request.objects.iter().map(PathBuf::as_path).collect();
+    artifact::archive_files(&objects, request.runtime, request.output)
 }
 
 /// Links `objects` into `output`, replacing the destination atomically.
@@ -39,6 +58,7 @@ pub fn link_objects(request: &ObjectLink<'_>) -> Result<(), CodegenError> {
         objects: &objects,
         runtime: Some(request.runtime),
         output: request.output,
+        shared: request.shared,
         source_libraries: &[],
         libraries: request.libraries,
         search_paths: request.search_paths,

@@ -144,6 +144,13 @@ impl<'a> Parser<'a> {
     /// Parses one non-import item after its modifiers were collected.
     fn parse_item(&mut self) -> ItemId {
         let start = self.current_span();
+        if self.item_modifiers.export_span.is_some() && !self.at_function_start() {
+            self.error(codes::E1001, start, "`export` applies only to functions")
+                .help("write `export \"c\" func name(...) { ... }`")
+                .emit();
+            self.item_modifiers.export = None;
+            self.item_modifiers.export_span = None;
+        }
         if self.item_modifiers.is_test && !self.at_function_start() {
             self.error(codes::E1001, start, "`test` applies only to functions")
                 .help("remove `test` from this declaration")
@@ -654,7 +661,18 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
-            let method_modifiers = self.parse_modifiers();
+            let mut method_modifiers = self.parse_modifiers();
+            if method_modifiers.export_span.is_some() {
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    "an implementation method cannot be exported directly",
+                )
+                .help("export a free function that calls the method")
+                .emit();
+                method_modifiers.export = None;
+                method_modifiers.export_span = None;
+            }
             if self.at_extern_item() {
                 let span = self.current_span();
                 self.error(

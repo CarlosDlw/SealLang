@@ -87,7 +87,10 @@ pub struct Artifact {
 
 /// Lowers checked MIR to LLVM IR and produces the requested artifact.
 pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifact, CodegenError> {
-    let runtime = if options.emit == Emit::Executable {
+    let runtime = if matches!(
+        options.emit,
+        Emit::Executable | Emit::StaticLib | Emit::Cdylib
+    ) {
         Some(runtime_archive(options, input.target)?)
     } else {
         None
@@ -281,6 +284,16 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         }
         .lower()?;
     }
+
+    crate::export::emit(
+        &module,
+        &builder,
+        input.hir,
+        input.mono,
+        &mapper,
+        &functions,
+        input.interner,
+    )?;
 
     if let Some(entry_point) = entry_point {
         entry::emit_wrapper(&context, &module, &builder, functions[&entry_point])?;
