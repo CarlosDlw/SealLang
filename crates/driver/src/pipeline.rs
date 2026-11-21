@@ -11,6 +11,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
+use std::sync::Arc;
 
 use seal_codegen::{CodegenInput, CodegenOptions, Emit};
 use seal_def::{DefId, PackageId, PackageInstanceId};
@@ -343,40 +344,45 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     };
     let errors = session.diag().error_count();
 
-    let tokens = session.profiler().time("lex", || {
-        seal_lexer::lex(&file, session.diag(), session.interner())
-    });
+    let Some(tokens) = session
+        .profiler()
+        .time("lex", || crate::frontend::lex(session, file_id, &file))
+    else {
+        return;
+    };
     // A lexical error leaves `Error` tokens behind, and parsing them only adds
     // secondary syntax errors; the parser runs on a clean token stream.
     if session.diag().error_count() != errors {
         return;
     }
 
-    let ast = session.profiler().time("parse", || {
-        seal_parser::parse(&tokens, session.diag(), session.interner())
-    });
+    let Some(ast) = session.profiler().time("parse", || {
+        crate::frontend::parse(session, file_id, &file, &tokens)
+    }) else {
+        return;
+    };
     // Lowering assumes a syntactically valid tree. A parse error already leaves
     // `Error` nodes behind, so the pipeline stops after `parse`.
     if session.diag().error_count() != errors {
         return;
     }
 
-    let hir = session.profiler().time("hir", || {
-        seal_hir::lower_with_c_abi(
-            &ast,
-            session.diag(),
-            session.interner(),
-            session.target().c_abi(),
-        )
-    });
+    let Some(hir) = session.profiler().time("hir", || {
+        crate::frontend::lower_single(session, file_id, &file, &ast)
+    }) else {
+        return;
+    };
     if session.diag().error_count() != errors {
         return;
     }
+    let hir = hir
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     compile_hir(
         session,
         request,
-        hir,
+        &hir,
         file_id,
         HirRequest {
             input,
@@ -399,19 +405,24 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         let Some(file) = session.source_map().file(file_id) else {
             return;
         };
-        let tokens = session.profiler().time("lex", || {
-            seal_lexer::lex(&file, session.diag(), session.interner())
-        });
+        let Some(tokens) = session
+            .profiler()
+            .time("lex", || crate::frontend::lex(session, file_id, &file))
+        else {
+            return;
+        };
         if session.diag().error_count() != errors {
             return;
         }
-        let ast = session.profiler().time("parse", || {
-            seal_parser::parse(&tokens, session.diag(), session.interner())
-        });
+        let Some(ast) = session.profiler().time("parse", || {
+            crate::frontend::parse(session, file_id, &file, &tokens)
+        }) else {
+            return;
+        };
         if session.diag().error_count() != errors {
             return;
         }
-        loaded.push((file_id, ast));
+        loaded.push((file_id, Arc::unwrap_or_clone(ast)));
     }
     let Some(&(primary_file, _)) = loaded.first() else {
         session
@@ -447,7 +458,7 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
     compile_hir(
         session,
         request,
-        hir,
+        &hir,
         primary_file,
         HirRequest {
             input: &arguments.inputs[0],
@@ -472,15 +483,20 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
             let Some(source) = session.source_map().file(file_id) else {
                 return false;
             };
-            let tokens = session.profiler().time("lex", || {
-                seal_lexer::lex(&source, session.diag(), session.interner())
-            });
+            let Some(tokens) = session
+                .profiler()
+                .time("lex", || crate::frontend::lex(session, file_id, &source))
+            else {
+                return false;
+            };
             if session.diag().error_count() != errors {
                 return false;
             }
-            let ast = session.profiler().time("parse", || {
-                seal_parser::parse(&tokens, session.diag(), session.interner())
-            });
+            let Some(ast) = session.profiler().time("parse", || {
+                crate::frontend::parse(session, file_id, &source, &tokens)
+            }) else {
+                return false;
+            };
             if session.diag().error_count() != errors {
                 return false;
             }
@@ -488,7 +504,7 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
                 primary = Some((file_id, file.path.clone()));
             }
             file_ids.insert((index, file.path.clone()), file_id);
-            loaded.push((file_id, ast));
+            loaded.push((file_id, Arc::unwrap_or_clone(ast)));
         }
     }
     let Some((primary_file, primary_input)) = primary else {
@@ -577,7 +593,7 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
     compile_hir(
         session,
         request,
-        hir,
+        &hir,
         primary_file,
         HirRequest {
             input: &primary_input,
@@ -635,7 +651,7 @@ fn expose_paths(session: &Session, values: &[String]) -> Vec<seal_hir::ModulePat
 fn compile_hir(
     session: &Session,
     request: Request<'_>,
-    hir: seal_hir::Hir,
+    hir: &seal_hir::Hir,
     file_id: seal_span::FileId,
     planned: HirRequest<'_>,
 ) {
@@ -651,7 +667,7 @@ fn compile_hir(
     // only when no error was reported.
     let typeck = session.profiler().time("typeck", || {
         seal_typeck::check(
-            &hir,
+            hir,
             session.diag(),
             session.interner(),
             session.target().pointer_width(),
@@ -663,8 +679,8 @@ fn compile_hir(
 
     let mut mir = session
         .profiler()
-        .time("mir", || seal_mir::lower(&hir, &typeck));
-    if let Err(error) = mir.validate_with(&hir) {
+        .time("mir", || seal_mir::lower(hir, &typeck));
+    if let Err(error) = mir.validate_with(hir) {
         session
             .diag()
             .bug(format!("MIR lowering produced an invalid body: {error}"));
@@ -674,14 +690,14 @@ fn compile_hir(
     // destructor it never runs. Borrow checking then sees the guards and the
     // replacement drops the program actually executes.
     let elaborated = session.profiler().time("elaborate-drops", || {
-        seal_mir::elaborate_drops(&hir, &mut mir)
+        seal_mir::elaborate_drops(hir, &mut mir)
     });
     if let Err(error) = elaborated {
         session
             .diag()
             .bug(format!("drop elaboration failed: {error}"));
     }
-    if let Err(error) = mir.validate_with(&hir) {
+    if let Err(error) = mir.validate_with(hir) {
         session.diag().bug(format!(
             "drop elaboration produced an invalid body: {error}"
         ));
@@ -691,7 +707,7 @@ fn compile_hir(
     // Later phases read the resulting program instead of evaluating again.
     let program = session.profiler().time("const-eval", || {
         seal_const_eval::evaluate(
-            &hir,
+            hir,
             &mir,
             session.diag(),
             session.interner(),
@@ -703,7 +719,7 @@ fn compile_hir(
     }
     let aliasing = session.profiler().time("borrowck", || {
         seal_borrowck::check(
-            &hir,
+            hir,
             &mir,
             Some(&program),
             session.diag(),
@@ -717,12 +733,12 @@ fn compile_hir(
     // Collection runs even for `check`: it resolves symbolic trait calls and
     // proves the program has a finite, fully concrete instance set.
     let mono = session.profiler().time("mono", || {
-        seal_mono::collect(&hir, &mir, &program, session.diag(), session.interner())
+        seal_mono::collect(hir, &mir, &program, session.diag(), session.interner())
     });
     if session.diag().error_count() != errors {
         return;
     }
-    if let Err(error) = mono.validate(&hir) {
+    if let Err(error) = mono.validate(hir) {
         session.diag().bug(format!(
             "monomorphization produced an invalid instance: {error}"
         ));
@@ -748,7 +764,7 @@ fn compile_hir(
                 .and_then(|plan| plan.packages.get(plan.primary))
                 .map(|package| package.version.as_str())
                 .unwrap_or("0.0.0");
-            if let Err(error) = api::write(session, &hir, package_version, path) {
+            if let Err(error) = api::write(session, hir, package_version, path) {
                 session.diag().bug(error);
             }
         }
@@ -828,7 +844,7 @@ fn compile_hir(
     let codegen_input = CodegenInput {
         mono: &mono,
         constants: &program,
-        hir: &hir,
+        hir,
         source_map: session.source_map(),
         interner: session.interner(),
         target: session.target(),
@@ -843,7 +859,7 @@ fn compile_hir(
         return;
     }
     if let Some(path) = link_metadata
-        && let Err(error) = write_link_metadata(session, &hir, path)
+        && let Err(error) = write_link_metadata(session, hir, path)
     {
         session.diag().bug(error);
     }

@@ -38,6 +38,7 @@ seal-toolchain = { path = "crates/toolchain" }
 seal-fs = { path = "crates/fs" }
 seal-profiling = { path = "crates/profiling" }
 seal-session = { path = "crates/session" }
+seal-query = { path = "crates/query" }
 seal-test = { path = "crates/test" }
 seal-test-support = { path = "crates/test-support" }
 seal-plan = { path = "crates/plan" }

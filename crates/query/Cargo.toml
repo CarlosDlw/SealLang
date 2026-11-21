@@ -1,0 +1,32 @@
+[package]
+name = "seal-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seal-hash.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+seal-diagnostics.workspace = true
+seal-lexer.workspace = true
+seal-parser.workspace = true
+seal-span.workspace = true
+seal-symbol.workspace = true
+
+[[bench]]
+name = "frontend"
+harness = false
+
+[[bench]]
+name = "queries"
+harness = false
+
+[[bench]]
+name = "build"
+harness = false

@@ -9,6 +9,7 @@ mod actions;
 mod api;
 mod cli;
 mod doc_text;
+mod frontend;
 mod options;
 mod output;
 mod pipeline;

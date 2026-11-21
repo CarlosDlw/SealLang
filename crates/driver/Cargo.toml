@@ -29,6 +29,7 @@ seal-mir.workspace = true
 seal-metadata.workspace = true
 seal-mono.workspace = true
 seal-parser.workspace = true
+seal-query.workspace = true
 seal-error-codes.workspace = true
 seal-def.workspace = true
 seal-fs.workspace = true

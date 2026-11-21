@@ -23,6 +23,7 @@ use seal_diagnostics::{
 use seal_error_codes as codes;
 use seal_fs::{self, LoadError};
 use seal_profiling::Profiler;
+use seal_query::QueryDb;
 use seal_span::{FileId, FileName, PathRemapper, SourceMap};
 use seal_symbol::Interner;
 use seal_target::{TargetError, TargetSpec, TargetTriple};
@@ -71,6 +72,7 @@ pub struct Session {
     diag: DiagCtxt,
     gates: FeatureGates,
     profiler: Profiler,
+    queries: QueryDb,
     cancelled: AtomicBool,
 }
 
@@ -127,6 +129,7 @@ impl Session {
             diag,
             gates,
             profiler,
+            queries: QueryDb::new(),
             cancelled: AtomicBool::new(false),
         })
     }
@@ -171,6 +174,16 @@ impl Session {
     #[inline]
     pub fn profiler(&self) -> &Profiler {
         &self.profiler
+    }
+
+    /// Returns the incremental query database for this session.
+    ///
+    /// The database is scoped to the session: two sessions never share memoized
+    /// compiler arenas. Persistent byte results belong in a `DiskCache` owned by
+    /// the build layer, not in this in-memory table.
+    #[inline]
+    pub fn queries(&self) -> &QueryDb {
+        &self.queries
     }
 
     /// Returns the selected language version.

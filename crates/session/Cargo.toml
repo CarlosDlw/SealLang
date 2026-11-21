@@ -14,6 +14,7 @@ seal-error-codes.workspace = true
 seal-fs.workspace = true
 seal-hash.workspace = true
 seal-profiling.workspace = true
+seal-query.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
 seal-target.workspace = true

@@ -41,7 +41,8 @@ allowed to depend only on crates below it in the list.
 | `seal-target` | Target triples and the properties derived from them. |
 | `seal-fs` | UTF-8 source loading and atomic artifact writes. |
 | `seal-profiling` | Phase timings for `--time-passes`. |
-| `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler. |
+| `seal-query` | Revisioned incremental query database: named inputs, typed query keys, dependency validation by fingerprint, red-green backdating, statistics, cycle detection, and a versioned persistent byte cache. |
+| `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler, and the session-scoped query database. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
 | `seal-plan` | The versioned `CompilePlan` exchanged between the project layer and the driver: target, profile, packages, files, API paths, dependency aliases, cfg values, entry, and output. |
 | `seal-manifest` | `seal.toml` parsing and validation: project/package settings, targets, path dependencies, env, profiles, API exposure, unknown-key warnings, and span-bearing diagnostics. |
@@ -1083,9 +1084,119 @@ The section invariants are:
   value and a type.
 - **New emitter.** Implement `seal_diagnostics::Emitter`; configuration is passed
   in, not read from the environment.
-- **Incremental compilation.** The foundation already provides stable hashes,
-  content hashes on `SourceFile`, and serializable IDs. A query engine can be
-  added as a later crate without changing spans, symbols, or diagnostics.
+- **Incremental compilation.** New phases use the query keys and dependency
+  rules in [Incremental queries](#incremental-queries). A query value that
+  contains spans is scoped to one `SourceMap` and therefore to one session.
+
+## Incremental queries
+
+`seal-query` is the incremental layer. It memoizes a pure computation by a
+stable logical key and records every input and derived query that computation
+read. The driver does not use timestamps, file modification times, or absolute
+paths to decide whether a value is valid.
+
+### Inputs and keys
+
+An input is a named byte string with one of six kinds: source, manifest,
+features, cfg, toolchain, or declared environment. The identity is
+`(kind, name)`; installing the same bytes again keeps the revision, and
+installing different bytes advances the global revision exactly once. The
+process environment is never read implicitly: a caller that wants an
+environment value adds it as an input.
+
+Derived keys use one of the stable kinds below. The name is an entity identity
+inside the compiler, not a host path.
+
+| Kind | Meaning |
+|------|---------|
+| `tokens` | Lex one source file. |
+| `ast` | Parse one token stream. |
+| `module-items` | Resolve the items and imports visible in a module. |
+| `signature` | Lower one declaration to its HIR signature. |
+| `body-hir` | Lower one body to HIR. |
+| `typeck-body` | Type-check one HIR body. |
+| `mir-body` | Lower one checked body to MIR. |
+| `mono-instance` | Collect one monomorphized instance. |
+| `codegen-cgu` | Emit one code-generation unit. |
+
+### Validation and backdating
+
+A query records a dependency stamp for each read: the input digest or the
+result fingerprint of another query. A request is a hit only when the key's
+dependency list is unchanged and every recorded fingerprint still matches the
+current value. A missing dependency is invalid, so deleting a cached producer
+cannot leave a consumer using a stale value.
+
+When an invalidated query runs, the caller supplies a semantic fingerprint for
+the new result. If the fingerprint equals the previous one, the result is
+**backdated**: the value is replaced, but dependents remain valid because their
+recorded fingerprint still matches. A comment-only edit can therefore stop at
+the body that normalizes trivia instead of forcing type checking, MIR, and code
+generation again.
+
+All values are `Arc`-shared and must be `Send + Sync`. The database never holds
+its lock while a computation runs, and a thread-local active stack turns a
+recursive query into `QueryError::Cycle` rather than a deadlock. Independent
+queries can run concurrently. Statistics count hits, misses, and backdates per
+query kind.
+
+### Session integration
+
+`Session` owns one `QueryDb`; every session starts with an empty table. Values
+can contain spans into that session's `SourceMap`, so they must not outlive it
+or move to another session. `seal-driver` routes lexing, parsing, and the
+single-file HIR lowering through the database (`frontend::lex`,
+`frontend::parse`, `frontend::lower_single`). Multi-file package and plan
+lowering still lower the whole package directly because their result is
+package-wide.
+
+Type checking, MIR lowering, monomorphization, and code generation remain
+whole-program phases in the driver. The `typeck-body`, `mir-body`,
+`mono-instance`, and `codegen-cgu` keys and invalidation rules are implemented
+and exercised by the query tests and benchmark graph, but those phases are not
+yet partitioned at those boundaries. No compiler speedup is claimed for them.
+
+### Persistent cache
+
+`DiskCache` stores only byte payloads, with a format version, key digest, length
+limit, and BLAKE3 checksum. Writes use a temporary file and rename; a corrupt,
+truncated, wrong-key, oversized, or old-version record is a miss and a rebuild.
+The key file name is derived from the query kind and logical name, never from an
+absolute project path. The build layer's existing content-addressed action
+cache remains the cache used for real compiler artifacts; `DiskCache` is the
+serializable-result primitive for query consumers.
+
+### Measurements
+
+Measured on 2026-11-21 with `cargo bench -p seal-query` in release mode on the
+Linux development host. Numbers vary with the machine and load; the counts are
+deterministic.
+
+| Scenario | Measurement |
+|----------|-------------|
+| Frontend, direct lex+parse | 5.105 us/iteration |
+| Frontend, query-cached lex+parse | 0.698 us/iteration |
+| Frontend cache | 7.31x, 1000 hits, 0 misses |
+| Query graph, no-op | 5.126 us/iteration, 0 misses |
+| Body edit | 7.589 us/iteration, 5 misses/edit (body, typeck, MIR, mono, CGU) |
+| Signature edit | 9.411 us/iteration, 9 misses/edit |
+| Comment-only body edit | 6.003 us/iteration, 1 miss/edit, backdated |
+| Feature edit | 500 misses / 500 edits |
+| Cfg edit | 500 misses / 500 edits |
+| Const edit | 500 misses / 500 edits |
+| 256 KiB serializable payload | 179.052 us generate, 429.695 us disk hit (0.42x) |
+
+The query graph is a deterministic model of body and signature invalidation,
+not a full compiler measurement. Its direct-compute baseline is intentionally
+trivial (1.033 us), so query overhead dominates: the benchmark proves the
+invalidation cardinality, not a speedup. The disk cache is slower for a
+synthetic 256 KiB payload that is cheap to regenerate; it must be applied only
+where the avoided computation costs more than the read and checksum.
+
+`seal watch` still starts an action and a session per change. Because spans are
+session-scoped, it does not reuse HIR or AST values across edits; its latency is
+reported by the existing watch status line, and the query cache improves only
+repeated requests inside one session.
 
 ## Verification
 

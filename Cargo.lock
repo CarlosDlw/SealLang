@@ -1160,6 +1160,7 @@ dependencies = [
  "seal-mono",
  "seal-parser",
  "seal-plan",
+ "seal-query",
  "seal-session",
  "seal-span",
  "seal-symbol",
@@ -1361,6 +1362,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-query"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "seal-diagnostics",
+ "seal-hash",
+ "seal-lexer",
+ "seal-parser",
+ "seal-span",
+ "seal-symbol",
+]
+
+[[package]]
 name = "seal-registry"
 version = "0.1.0"
 dependencies = [
@@ -1421,6 +1435,7 @@ dependencies = [
  "seal-fs",
  "seal-hash",
  "seal-profiling",
+ "seal-query",
  "seal-span",
  "seal-symbol",
  "seal-target",
