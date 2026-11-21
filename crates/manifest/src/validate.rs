@@ -242,6 +242,129 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
                 ));
             }
         }
+        if target.kind == TargetKind::Generator {
+            if target.outputs.is_empty() {
+                return Err(index.fail(
+                    &format!("{path}.outputs"),
+                    "a generator target must declare the outputs it produces",
+                ));
+            }
+            for output in &target.outputs {
+                validate_glob(output, index, &format!("{path}.outputs"))?;
+                if !output.contains('/') {
+                    return Err(index.fail(
+                        &format!("{path}.outputs"),
+                        format!(
+                            "the generator output `{output}` must live in a directory so undeclared files can be detected"
+                        ),
+                    ));
+                }
+            }
+            for input in &target.inputs {
+                validate_glob(input, index, &format!("{path}.inputs"))?;
+            }
+        } else if !target.inputs.is_empty() || !target.outputs.is_empty() {
+            return Err(index.fail(
+                &path,
+                format!(
+                    "only a generator target can declare `inputs` and `outputs`; `{name}` is `{}`",
+                    target.kind.as_str()
+                ),
+            ));
+        }
+        for generated in &target.generated {
+            match manifest.targets.get(generated) {
+                Some(declaration) if declaration.kind == TargetKind::Generator => {}
+                Some(_) => {
+                    return Err(index.fail(
+                        &format!("{path}.generated"),
+                        format!("`{generated}` is not a generator target"),
+                    ));
+                }
+                None => {
+                    return Err(index.fail(
+                        &format!("{path}.generated"),
+                        format!("the `{name}` target names the unknown generator `{generated}`"),
+                    ));
+                }
+            }
+            if target.kind == TargetKind::Generator {
+                return Err(index.fail(
+                    &format!("{path}.generated"),
+                    "a generator target cannot consume another generator's outputs",
+                ));
+            }
+        }
+        for alias in &target.native {
+            if !manifest.native.contains_key(alias) {
+                return Err(index.fail(
+                    &format!("{path}.native"),
+                    format!("the `{name}` target names the unknown native dependency `{alias}`"),
+                ));
+            }
+        }
+    }
+
+    for (alias, native) in &manifest.native {
+        let path = format!("native.{alias}");
+        validate_identifier(alias, index, &path)?;
+        if native.is_empty() {
+            return Err(index.fail(
+                &path,
+                format!("the native dependency `{alias}` declares no pkg-config package, library, or search path"),
+            ));
+        }
+        if let Some(package) = &native.pkg_config {
+            validate_program_text(
+                package,
+                index,
+                &format!("{path}.pkg-config"),
+                "pkg-config package",
+            )?;
+        }
+        for library in &native.libs {
+            validate_library(library, index, &format!("{path}.libs"))?;
+        }
+        for search in &native.search_paths {
+            validate_native_path(search, index, &format!("{path}.search-paths"))?;
+        }
+    }
+
+    for (name, task) in &manifest.tasks {
+        let path = format!("tasks.{name}");
+        validate_identifier(name, index, &path)?;
+        if task.steps.is_empty() {
+            return Err(index.fail(&path, format!("the task `{name}` has no steps")));
+        }
+        for (position, step) in task.steps.iter().enumerate() {
+            let step_path = format!("{path}.steps.{position}");
+            validate_program_text(
+                &step.program,
+                index,
+                &format!("{step_path}.program"),
+                "program",
+            )?;
+            for argument in &step.args {
+                if argument.contains('\0') {
+                    return Err(index.fail(
+                        &format!("{step_path}.args"),
+                        "an argument cannot contain a NUL byte",
+                    ));
+                }
+            }
+            for key in step.env.keys() {
+                validate_identifier(key, index, &format!("{step_path}.env"))?;
+            }
+            if let Some(directory) = &step.cwd {
+                validate_relative_path(directory, index, &format!("{step_path}.cwd"))?;
+            }
+            if step.timeout == Some(0) {
+                return Err(index.fail(
+                    &format!("{step_path}.timeout"),
+                    "a step timeout must be at least one second",
+                ));
+            }
+        }
     }
     if libraries > 1 {
         let library_path = target_paths
@@ -430,6 +553,63 @@ fn validate_entry_path(entry: &str, index: &KeyIndex, path: &str) -> ManifestRes
     Ok(())
 }
 
+fn validate_library(name: &str, index: &KeyIndex, path: &str) -> ManifestResult<()> {
+    if name.is_empty()
+        || name.contains(['/', '\\'])
+        || name
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(index.fail(path, format!("`{name}` is not a valid library name")));
+    }
+    Ok(())
+}
+
+fn validate_program_text(
+    text: &str,
+    index: &KeyIndex,
+    path: &str,
+    kind: &str,
+) -> ManifestResult<()> {
+    if text.trim().is_empty() {
+        return Err(index.fail(path, format!("a {kind} cannot be empty")));
+    }
+    if text.chars().any(char::is_control) {
+        return Err(index.fail(path, format!("a {kind} cannot contain control characters")));
+    }
+    Ok(())
+}
+
+fn validate_native_path(path_value: &Path, index: &KeyIndex, path: &str) -> ManifestResult<()> {
+    if path_value.as_os_str().is_empty() {
+        return Err(index.fail(path, "a search path cannot be empty"));
+    }
+    if path_value.is_absolute() {
+        return Ok(());
+    }
+    validate_relative_path(path_value, index, path)
+}
+
+fn validate_relative_path(path_value: &Path, index: &KeyIndex, path: &str) -> ManifestResult<()> {
+    if path_value.as_os_str().is_empty() {
+        return Err(index.fail(path, "a path cannot be empty"));
+    }
+    if path_value.is_absolute()
+        || path_value
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+    {
+        return Err(index.fail(
+            path,
+            format!(
+                "the path `{}` must stay inside the package",
+                path_value.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_glob(glob: &str, index: &KeyIndex, path: &str) -> ManifestResult<()> {
     if glob.is_empty() {
         return Err(index.fail(path, "a source glob cannot be empty"));
@@ -526,6 +706,10 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
                         "linker",
                         "linker-script",
                         "output",
+                        "inputs",
+                        "outputs",
+                        "generated",
+                        "native",
                     ],
                     &format!("targets.{name}"),
                     &mut warnings,
@@ -565,6 +749,40 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
                     &format!("env.{name}"),
                     &mut warnings,
                 );
+            }
+        }
+    }
+    if let Some(native) = table(document.as_table(), "native") {
+        for (name, item) in native.iter() {
+            if let Some(detail) = item.as_table_like() {
+                check_table_like(
+                    detail,
+                    &["pkg-config", "libs", "search-paths", "static"],
+                    &format!("native.{name}"),
+                    &mut warnings,
+                );
+            }
+        }
+    }
+    if let Some(tasks) = table(document.as_table(), "tasks") {
+        for (name, item) in tasks.iter() {
+            if let Some(task) = item.as_table_like() {
+                check_table_like(
+                    task,
+                    &["description", "steps"],
+                    &format!("tasks.{name}"),
+                    &mut warnings,
+                );
+                if let Some(steps) = task.get("steps").and_then(|item| item.as_array_of_tables()) {
+                    for (position, step) in steps.iter().enumerate() {
+                        check_table_like(
+                            step,
+                            &["program", "args", "env", "cwd", "timeout"],
+                            &format!("tasks.{name}.steps.{position}"),
+                            &mut warnings,
+                        );
+                    }
+                }
             }
         }
     }
@@ -735,6 +953,104 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message().contains("at most one"));
+    }
+
+    #[test]
+    fn generator_native_and_task_tables_are_validated_together() {
+        let manifest = load(
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+
+[native.math]
+libs = ["m"]
+search-paths = ["/usr/lib"]
+
+[targets.gen]
+kind = "generator"
+entry = "root::main"
+sources = ["src/gen.sl"]
+inputs = ["data/*.txt"]
+outputs = ["generated/*.sl"]
+
+[targets.app]
+kind = "bin"
+entry = "root::main"
+generated = ["gen"]
+native = ["math"]
+
+[tasks.ci]
+steps = [
+  { program = "echo", args = ["ok"], cwd = "." },
+]
+"#,
+        );
+        assert_eq!(manifest.manifest.native.len(), 1);
+        assert_eq!(manifest.manifest.tasks.len(), 1);
+        assert_eq!(
+            manifest.manifest.targets["gen"].outputs,
+            vec!["generated/*.sl".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_generator_without_outputs_is_rejected() {
+        let error = load_str(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.gen]\nkind = \"generator\"\nentry = \"root::main\"\n",
+        )
+        .unwrap_err();
+        assert!(error.message().contains("must declare the outputs"));
+    }
+
+    #[test]
+    fn only_a_generator_may_declare_inputs_and_outputs() {
+        let error = load_str(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.app]\nkind = \"bin\"\nentry = \"root::main\"\noutputs = [\"generated/*.sl\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.message().contains("only a generator"));
+    }
+
+    #[test]
+    fn generated_and_native_references_must_exist() {
+        let generated = load_str(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.app]\nkind = \"bin\"\nentry = \"root::main\"\ngenerated = [\"missing\"]\n",
+        )
+        .unwrap_err();
+        assert!(generated.message().contains("unknown generator"));
+
+        let native = load_str(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.app]\nkind = \"bin\"\nentry = \"root::main\"\nnative = [\"missing\"]\n",
+        )
+        .unwrap_err();
+        assert!(native.message().contains("unknown native dependency"));
+    }
+
+    #[test]
+    fn an_empty_native_declaration_or_task_is_rejected() {
+        let native =
+            load_str("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[native.empty]\n")
+                .unwrap_err();
+        assert!(native.message().contains("declares no"));
+
+        let task =
+            load_str("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[tasks.ci]\nsteps = []\n")
+                .unwrap_err();
+        assert!(task.message().contains("has no steps"));
+    }
+
+    #[test]
+    fn a_native_library_name_cannot_smuggle_a_path() {
+        let error = load_str(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[native.bad]\nlibs = [\"../lib\"]\n",
+        )
+        .unwrap_err();
+        assert!(error.message().contains("not a valid library name"));
     }
 
     #[test]

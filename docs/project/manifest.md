@@ -70,6 +70,51 @@ model.
 `seal build` selects `lib` and `bin` targets by default. `--all-targets` adds
 tests, benches, and examples.
 
+A `generator` target also declares runtime `inputs`, the `outputs` it writes,
+and the cache contract it must satisfy. Another target opts into those files
+with `generated = ["generator-name"]`; a target that is not a generator cannot
+declare `inputs` or `outputs`. A target links declared native dependencies with
+`native = ["alias"]`. See [builds.md](builds.md) for the execution and cache
+contract.
+
+## Generators, native libraries, and tasks
+
+```toml
+[targets.table]
+kind = "generator"
+entry = "root::main"
+sources = ["src/table.sl"]
+inputs = ["data/*.txt"]
+outputs = ["generated/table.sl"]
+
+[targets.app]
+kind = "bin"
+entry = "root::main"
+generated = ["table"]
+native = ["math"]
+
+[native.math]
+libs = ["m"]
+
+[native.zlib]
+pkg-config = "zlib"
+static = true
+
+[tasks.ci]
+steps = [
+  { program = "seal", args = ["check"] },
+  { program = "seal", args = ["build", "--release"], timeout = 600 },
+]
+```
+
+Generator output globs must name a directory so undeclared files can be
+detected. `generated` may only name a generator in the same manifest, and a
+generator cannot consume another generator's outputs. A native declaration is
+either explicit (`libs`, `search-paths`) or a `pkg-config` package; an empty
+declaration, an unknown alias, or a library name containing a path is `E8005`.
+Task steps name a program and an argument vector, never a shell command; `cwd`
+stays inside the project and `timeout` is in seconds.
+
 ## Dependencies and the lockfile
 
 This phase resolves `path` dependencies inside the project. The alias is the
@@ -132,6 +177,12 @@ or absolute paths, and is written only when its bytes change. `--locked` and
 `--frozen` compare the same per-edge resolution and fail with `E8008` instead of
 rewriting a stale lockfile.
 
+After a successful build, resolved native dependencies are appended as
+`[[native]]` tables with the package, alias, pkg-config name, static flag,
+libraries, search paths, and extra linker flags. `--locked` compares them too:
+a system library change that alters the result is `E8008` until the lockfile is
+refreshed.
+
 ## API
 
 `[package.api] expose` lists the module paths other packages may reach.
@@ -160,8 +211,8 @@ is false are not lowered or typechecked. `cfg(env("NAME"))` is accepted only
 for a value declared in `[env]`; an undeclared name is `E2084`.
 
 `[env]` values may be written as a string or as a table with `value`,
-`tracked`, and `secret`. The values are carried by the project model; using
-them in the compiler's build key belongs to the cache phase.
+`tracked`, and `secret`. Build actions hash the values they use; secret values
+appear in cache records and logs only as digests.
 
 ## Diagnostics
 
@@ -182,5 +233,13 @@ them in the compiler's build key belongs to the cache phase.
 | `E8009` | Unknown or invalid profile |
 | `E8010` | Structurally invalid compile plan |
 | `E8011` | Project I/O failure |
+| `E8040` | Cache object or action record invalid |
+| `E8041` | Sandbox policy or input violation |
+| `E8042` | Generator output contract violated |
+| `E8043` | Native dependency not resolved |
+| `E8044` | Sandbox timeout |
+| `E8045` | Build action or graph failure |
+| `E8046` | Task failure |
+| `E8047` | Two build outputs claim one path |
 | `E2087` | Target entry does not resolve |
 | `E8103` | More than one runnable target |

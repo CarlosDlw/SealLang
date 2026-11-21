@@ -42,6 +42,43 @@ coverage builds; other names are rejected because the configuration is typed.
 The lockfile is refreshed before a build. `--locked` and `--frozen` compare it
 with the current resolution and fail with `E8008` instead of changing it.
 
+A repeated build is a cache hit. Actions are keyed by their input digests,
+hashed environment, and command, so changing one source rebuilds exactly the
+targets that consume it. `-j/--jobs` bounds parallel actions, `--timings`
+prints one line per action, and `--no-cache` bypasses reads and writes. The
+status of every action is printed (`Running`, `Cached`, or a corrupt-entry
+warning) unless `--quiet` or `--message-format=json` suppresses human output.
+See [builds.md](builds.md) for the action graph, cache layout, sandbox,
+generators, native dependencies, and tasks.
+
+## Cache and cleaning
+
+```console
+$ seal cache stats
+$ seal cache verify
+$ seal cache prune --max-size 1073741824 --older-than 604800
+$ seal cache explain <KEY>
+$ seal clean
+```
+
+`cache verify` hashes every object and validates every action record, reports
+corrupt paths with `E8040`, and exits `1` when something is wrong; the next
+build discards and rebuilds those entries. `prune` removes old records and
+least-recently-used objects. `explain` prints the action kind, display command,
+input paths and digests, hashed environment, and output digests; environment
+values are never printed. `clean` removes `seal/cache` and `seal/target`.
+
+## Tasks
+
+```console
+$ seal task ci
+$ seal task ci --no-fail-fast
+```
+
+`task` runs the steps of `[tasks.<NAME>]` in order without a shell and through
+the sandbox. A failing step stops the task unless `--no-fail-fast` is given.
+The task exits `1` when any step failed (`E8046`).
+
 ## Running
 
 ```console

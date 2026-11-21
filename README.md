@@ -270,6 +270,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
 | [`docs/project/manifest.md`](docs/project/manifest.md) | Project manifests, members, targets, path dependencies, lockfile, and API exposure |
 | [`docs/project/cli.md`](docs/project/cli.md) | The `seal` commands, compile plans, metadata, doctor, and exit status |
+| [`docs/project/builds.md`](docs/project/builds.md) | The action graph, content-addressed cache, sandbox, generators, native libraries, and tasks |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |

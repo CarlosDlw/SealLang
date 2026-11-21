@@ -140,7 +140,13 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         None
     };
 
-    let entry_point = if options.emit == Emit::Executable {
+    // An object requested with an explicit entry is a project artifact that a
+    // separate link action will consume, so it needs the same C `main` wrapper
+    // an executable would get. A plain `sealc build --emit=obj` without an
+    // entry keeps the historical object layout.
+    let entry_point = if options.emit == Emit::Executable
+        || (options.emit == Emit::Object && options.entry.is_some())
+    {
         Some(match options.entry {
             Some(definition) => entry::validate_selected(input.hir, input.mono, definition)?,
             None => entry::validate(input.hir, input.mono)?,

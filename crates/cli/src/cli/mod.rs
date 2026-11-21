@@ -1,12 +1,15 @@
 //! Argument parsing and command dispatch.
 
 pub(crate) mod build;
+mod cache;
 mod check;
+mod clean;
 mod doctor;
 mod init;
 pub(crate) mod metadata;
 pub(crate) mod new;
 mod run;
+mod task;
 mod tree;
 mod why;
 
@@ -116,6 +119,12 @@ pub(crate) enum Command {
     Metadata(MetadataArgs),
     /// Check the toolchain, linker, cache, and lockfile.
     Doctor(DoctorArgs),
+    /// Remove build outputs and the local cache.
+    Clean,
+    /// Inspect, verify, prune, or explain the local cache.
+    Cache(CacheArgs),
+    /// Run a declarative task from `seal.toml`.
+    Task(TaskArgs),
 }
 
 /// Options shared by build-like commands.
@@ -219,6 +228,18 @@ pub(crate) struct BuildArgs {
     /// Pass an argument through to the linker.
     #[arg(long = "link-arg", value_name = "ARG")]
     pub(crate) link_args: Vec<String>,
+
+    /// Number of actions to run in parallel.
+    #[arg(short = 'j', long, value_name = "N")]
+    pub(crate) jobs: Option<usize>,
+
+    /// Print one timing line per action.
+    #[arg(long)]
+    pub(crate) timings: bool,
+
+    /// Bypass the action cache for this build.
+    #[arg(long)]
+    pub(crate) no_cache: bool,
 }
 
 /// `seal run`.
@@ -294,6 +315,48 @@ pub(crate) enum MetadataFormat {
     Json,
 }
 
+/// `seal cache`.
+#[derive(Debug, Args)]
+pub(crate) struct CacheArgs {
+    /// The cache operation.
+    #[command(subcommand)]
+    pub(crate) command: CacheCommand,
+}
+
+/// Cache operations.
+#[derive(Debug, Subcommand)]
+pub(crate) enum CacheCommand {
+    /// Print object and action-record statistics.
+    Stats,
+    /// Verify every object and action record.
+    Verify,
+    /// Remove least-recently-used objects and old records.
+    Prune {
+        /// Maximum object bytes to keep.
+        #[arg(long, value_name = "BYTES")]
+        max_size: Option<u64>,
+        /// Remove action records older than this many seconds.
+        #[arg(long, value_name = "SECONDS")]
+        older_than: Option<u64>,
+    },
+    /// Print the inputs, outputs, and command of one action key.
+    Explain {
+        /// The action key.
+        key: String,
+    },
+}
+
+/// `seal task`.
+#[derive(Debug, Args)]
+pub(crate) struct TaskArgs {
+    /// The task name.
+    pub(crate) name: String,
+
+    /// Continue after a failing step.
+    #[arg(long)]
+    pub(crate) no_fail_fast: bool,
+}
+
 /// `seal doctor`.
 #[derive(Debug, Args)]
 pub(crate) struct DoctorArgs {
@@ -338,6 +401,9 @@ where
         Command::Why(args) => why::why(&cli, &project, args),
         Command::Metadata(args) => metadata::metadata(&cli, &project, args),
         Command::Doctor(args) => doctor::doctor(&cli, &project, args),
+        Command::Clean => clean::clean(&cli, &project),
+        Command::Cache(args) => cache::cache(&cli, &project, args),
+        Command::Task(args) => task::task(&cli, &project, args),
     }
 }
 

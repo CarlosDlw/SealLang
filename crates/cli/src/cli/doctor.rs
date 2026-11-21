@@ -159,11 +159,15 @@ fn check_cache(project: &Project, fix: bool) -> Check {
 
 fn check_lockfile(project: &Project, target: &str, fix: bool) -> Check {
     let path = project.root.join("seal.lock");
-    let expected = project.resolve_lockfile(target);
-    let current = match seal_project::Lockfile::load(&path) {
-        Ok(lockfile) => lockfile == expected,
-        Err(_) => false,
+    let resolved = project.resolve_lockfile(target);
+    let existing = seal_project::Lockfile::load(&path).ok();
+    let expected = match &existing {
+        Some(lockfile) => resolved.clone().with_native(lockfile.native.clone()),
+        None => resolved.clone(),
     };
+    let current = existing
+        .as_ref()
+        .is_some_and(|lockfile| *lockfile == expected);
     if current {
         return Check {
             name: "lockfile".to_owned(),
@@ -172,6 +176,10 @@ fn check_lockfile(project: &Project, target: &str, fix: bool) -> Check {
         };
     }
     if fix {
+        let expected = match &existing {
+            Some(lockfile) => resolved.with_native(lockfile.native.clone()),
+            None => resolved,
+        };
         return match expected.write_if_changed(&path) {
             Ok(_) => Check {
                 name: "lockfile".to_owned(),

@@ -1,0 +1,10 @@
+[package]
+name = "taskproj"
+version = "0.1.0"
+
+[tasks.ci]
+steps = [
+  { program = "/bin/sh", args = ["-c", "echo one"] },
+  { program = "/bin/sh", args = ["-c", "exit 7"] },
+  { program = "/bin/sh", args = ["-c", "echo three"] },
+]

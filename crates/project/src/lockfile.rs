@@ -91,6 +91,30 @@ pub struct LockInstance {
     pub dependencies: Vec<LockDependency>,
 }
 
+/// One resolved native dependency.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockNative {
+    /// The package that declares the alias.
+    pub package: String,
+    /// The alias from `[native.<alias>]`.
+    pub alias: String,
+    /// The pkg-config package, when one was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pkg_config: Option<String>,
+    /// Whether static libraries were requested.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub static_link: bool,
+    /// Library names in link order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libs: Vec<String>,
+    /// Linker search paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_paths: Vec<String>,
+    /// Extra linker flags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_args: Vec<String>,
+}
+
 /// The complete lockfile.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lockfile {
@@ -106,6 +130,9 @@ pub struct Lockfile {
     /// The concrete instances, sorted by package name and hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<LockInstance>,
+    /// Resolved native dependencies, sorted by package and alias.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native: Vec<LockNative>,
 }
 
 impl Default for Lockfile {
@@ -116,6 +143,7 @@ impl Default for Lockfile {
             targets: Vec::new(),
             packages: Vec::new(),
             instances: Vec::new(),
+            native: Vec::new(),
         }
     }
 }
@@ -177,6 +205,18 @@ impl Lockfile {
     /// Returns the package record for `name`.
     pub fn package(&self, name: &str) -> Option<&LockPackage> {
         self.packages.iter().find(|package| package.name == name)
+    }
+
+    /// Replaces the native records, sorting them deterministically.
+    pub fn with_native(mut self, mut native: Vec<LockNative>) -> Self {
+        native.sort_by(|left, right| {
+            left.package
+                .cmp(&right.package)
+                .then_with(|| left.alias.cmp(&right.alias))
+        });
+        native.dedup();
+        self.native = native;
+        self
     }
 }
 
@@ -296,6 +336,7 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
         targets: vec![target.to_owned()],
         packages,
         instances,
+        native: Vec::new(),
     }
 }
 
@@ -338,6 +379,7 @@ mod tests {
                 dependencies: Vec::new(),
             }],
             instances: Vec::new(),
+            native: Vec::new(),
         };
         let text = lockfile.render().unwrap();
         assert_eq!(Lockfile::parse(&text).unwrap(), lockfile);

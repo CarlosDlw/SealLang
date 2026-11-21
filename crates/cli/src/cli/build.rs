@@ -1,12 +1,17 @@
 //! `seal build` and the shared plan runner.
 
+use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use seal_build::{BuildOptions, Builder, JobRequest, ProgressEvent};
 use seal_manifest::TargetKind;
 use seal_plan::{BuildMode, CompilePlan};
-use seal_project::{PlanOptions, Project};
+use seal_project::{LockNative, Lockfile, PlanOptions, Project};
+use seal_sandbox::Sandbox;
 use seal_target::host_triple;
 
 use crate::cli::{BuildArgs, Cli, MessageFormat, Selection};
@@ -39,34 +44,206 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
     if let Err(code) = prepare_lockfile(cli, &project, &target, &args.selection) {
         return code;
     }
-    for job in jobs {
-        let package = project.package(job.package);
-        let target = package
-            .target(&job.target)
-            .expect("selection returns existing targets");
-        let options = plan_options(&args.selection, BuildMode::Build, target);
-        let plan = match project.compile_plan(job.package, &job.target, &options) {
-            Ok(plan) => plan,
-            Err(error) => return ui::error(error.code(), error.message()),
-        };
-        let emit = if target.is_executable() { "exe" } else { "obj" };
-        ui::status(
+    let jobs_parallel = match args.jobs {
+        Some(0) => {
+            return ui::error("E8045", "`--jobs` must be at least one");
+        }
+        Some(jobs) => jobs,
+        None => std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1),
+    };
+    let progress = build_progress(cli, args.timings);
+    let options = BuildOptions {
+        jobs: jobs_parallel,
+        use_cache: !args.no_cache,
+        sandbox: Sandbox::detect(),
+        cache_root: None,
+        link_args: args.link_args.iter().map(OsString::from).collect(),
+        progress,
+    };
+    let requests: Vec<JobRequest> = jobs
+        .iter()
+        .map(|job| {
+            let target = project
+                .package(job.package)
+                .target(&job.target)
+                .expect("selection returns existing targets");
+            JobRequest {
+                package: job.package,
+                target: job.target.clone(),
+                options: plan_options(&args.selection, BuildMode::Build, target),
+            }
+        })
+        .collect();
+    ui::verbose(
+        cli,
+        &format!(
+            "building {} target(s) with {} job(s){}",
+            requests.len(),
+            jobs_parallel,
+            if args.no_cache {
+                ", cache disabled"
+            } else {
+                ""
+            }
+        ),
+    );
+    let builder = Builder::new(&project, options);
+    let report = match builder.build(&requests) {
+        Ok(report) => report,
+        Err(error) => return ui::error(error.code(), error.message()),
+    };
+    for output in &report.outputs {
+        ui::status(cli, &format!("{} {}", output.package, output.target));
+        ui::detail(cli, &output.path.display().to_string());
+        ui::verbose(
             cli,
             &format!(
-                "Compiling {} {} ({})",
-                package.name,
-                target.name,
-                target.kind.as_str()
+                "  action {} ({})",
+                output.key,
+                if output.cached {
+                    "cache hit"
+                } else {
+                    "rebuilt"
+                }
             ),
         );
-        if let Err(code) = run_plan(cli, &plan, Mode::Build, emit, &args.link_args) {
-            return code;
-        }
-        if let Some(output) = &plan.output {
-            ui::detail(cli, &output.display().to_string());
+    }
+    if args.timings {
+        for timing in &report.timings {
+            println!(
+                "{} {:<16} {:>6} ms{}{}",
+                timing.key,
+                timing.kind,
+                timing.millis,
+                if timing.cached { "  cached" } else { "" },
+                if timing.label.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {}", timing.label)
+                }
+            );
         }
     }
+    ui::verbose(
+        cli,
+        &format!(
+            "{} cache hit(s), {} action(s) run in {} ms",
+            report.hits(),
+            report.misses(),
+            report.duration.as_millis()
+        ),
+    );
+    if let Err(code) =
+        update_native_lockfile(cli, &project, &target, &args.selection, &report.native)
+    {
+        return code;
+    }
     ExitCode::SUCCESS
+}
+
+fn build_progress(cli: &Cli, timings: bool) -> Option<Arc<seal_build::ProgressFn>> {
+    if cli.quiet || cli.message_format != MessageFormat::Human {
+        return None;
+    }
+    let verbose = cli.verbose;
+    Some(Arc::new(move |event: ProgressEvent| match event {
+        ProgressEvent::Started {
+            kind,
+            label,
+            command,
+            ..
+        } => {
+            println!("Running {kind} {label}");
+            if verbose && !command.is_empty() {
+                eprintln!("  command: {}", command.join(" "));
+            }
+        }
+        ProgressEvent::Cached {
+            kind,
+            label,
+            key,
+            command,
+        } => {
+            println!("Cached {kind} {label} (inputs unchanged, {})", &key[..12]);
+            if verbose && !command.is_empty() {
+                eprintln!("  command: {}", command.join(" "));
+            }
+        }
+        ProgressEvent::Finished {
+            kind,
+            label,
+            millis,
+            ..
+        } => {
+            if timings {
+                println!("Finished {kind} {label} in {millis} ms");
+            }
+        }
+        ProgressEvent::CacheCorrupt {
+            kind,
+            label,
+            reason,
+            key,
+        } => {
+            eprintln!(
+                "warning: discarded the corrupt {kind} cache entry for {label} ({key}): {reason}"
+            );
+        }
+    }))
+}
+
+fn update_native_lockfile(
+    cli: &Cli,
+    project: &Project,
+    target: &str,
+    selection: &Selection,
+    resolved: &[seal_build::NativeResult],
+) -> Result<(), ExitCode> {
+    if resolved.is_empty() {
+        return Ok(());
+    }
+    let path = project.root.join("seal.lock");
+    let existing = Lockfile::load(&path).unwrap_or_else(|_| {
+        project.resolve_lockfile_with(target, &lock_options(project, target, selection))
+    });
+    let mut native = existing.native.clone();
+    for result in resolved {
+        native.retain(|entry| !(entry.package == result.package && entry.alias == result.alias));
+        native.push(LockNative {
+            package: result.package.clone(),
+            alias: result.alias.clone(),
+            pkg_config: result.pkg_config.clone(),
+            static_link: result.static_link,
+            libs: result.libs.clone(),
+            search_paths: result
+                .search_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            link_args: result.link_args.clone(),
+        });
+    }
+    let updated = existing.clone().with_native(native);
+    if (selection.locked || selection.frozen) && updated.native != existing.native {
+        return Err(ui::error(
+            "E8008",
+            "the resolved native dependencies differ from the lockfile; run `seal build` without `--locked`",
+        ));
+    }
+    updated
+        .write_if_changed(&path)
+        .map(|_| ())
+        .map_err(|error| ui::error(error.code(), error.message()))?;
+    ui::verbose(
+        cli,
+        &format!(
+            "recorded {} native dependenc(ies) in seal.lock",
+            resolved.len()
+        ),
+    );
+    Ok(())
 }
 
 fn report_warnings(cli: &Cli, project: &Project) {
@@ -207,6 +384,7 @@ pub(crate) fn plan_options(
         no_default_features: selection.no_default_features,
         all_features: selection.all_features,
         cfgs: selection.cfgs.clone(),
+        extra_files: Vec::new(),
     }
 }
 
@@ -216,33 +394,20 @@ pub(crate) fn prepare_lockfile(
     target: &str,
     selection: &Selection,
 ) -> Result<(), ExitCode> {
-    let lock_profile = if let Some(profile) = &selection.profile {
-        profile.clone()
-    } else if selection.release {
-        "release".to_owned()
-    } else {
-        project
-            .default_package()
-            .ok()
-            .and_then(|package| project.package(package).targets.first())
-            .and_then(|target| target.profile.clone())
-            .unwrap_or_else(|| "dev".to_owned())
-    };
-    let options = PlanOptions {
-        target: target.to_owned(),
-        profile: lock_profile,
-        profile_explicit: selection.profile.is_some() || selection.release,
-        mode: BuildMode::Check,
-        output: None,
-        features: selection.features.clone(),
-        no_default_features: selection.no_default_features,
-        all_features: selection.all_features,
-        cfgs: selection.cfgs.clone(),
-    };
-    let expected = project.resolve_lockfile_with(target, &options);
+    let mut expected =
+        project.resolve_lockfile_with(target, &lock_options(project, target, selection));
     let path = project.root.join("seal.lock");
+    if let Ok(existing) = Lockfile::load(&path) {
+        let declared = declared_native(project);
+        let preserved: Vec<LockNative> = existing
+            .native
+            .into_iter()
+            .filter(|native| declared.contains(&(native.package.clone(), native.alias.clone())))
+            .collect();
+        expected = expected.with_native(preserved);
+    }
     if selection.locked || selection.frozen {
-        let existing = seal_project::Lockfile::load(&path).map_err(|error| {
+        let existing = Lockfile::load(&path).map_err(|error| {
             ui::error(
                 "E8008",
                 &format!("{}; run `seal build` without `--locked`", error.message()),
@@ -260,6 +425,47 @@ pub(crate) fn prepare_lockfile(
         .write_if_changed(&path)
         .map(|_| ())
         .map_err(|error| ui::error(error.code(), error.message()))
+}
+
+fn lock_options(project: &Project, target: &str, selection: &Selection) -> PlanOptions {
+    let profile = if let Some(profile) = &selection.profile {
+        profile.clone()
+    } else if selection.release {
+        "release".to_owned()
+    } else {
+        project
+            .default_package()
+            .ok()
+            .and_then(|package| project.package(package).targets.first())
+            .and_then(|target| target.profile.clone())
+            .unwrap_or_else(|| "dev".to_owned())
+    };
+    PlanOptions {
+        target: target.to_owned(),
+        profile,
+        profile_explicit: selection.profile.is_some() || selection.release,
+        mode: BuildMode::Check,
+        output: None,
+        features: selection.features.clone(),
+        no_default_features: selection.no_default_features,
+        all_features: selection.all_features,
+        cfgs: selection.cfgs.clone(),
+        extra_files: Vec::new(),
+    }
+}
+
+fn declared_native(project: &Project) -> BTreeSet<(String, String)> {
+    project
+        .packages
+        .iter()
+        .flat_map(|package| {
+            package
+                .manifest
+                .native
+                .keys()
+                .map(move |alias| (package.name.clone(), alias.clone()))
+        })
+        .collect()
 }
 
 static NEXT_PLAN: AtomicU64 = AtomicU64::new(0);

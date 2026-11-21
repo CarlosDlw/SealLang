@@ -80,26 +80,6 @@ fn link_executable(
         file_name.to_string_lossy(),
         std::process::id()
     ));
-    let runtime_path = directory.join(format!(
-        ".{}.{}.seal_rt{}",
-        file_name.to_string_lossy(),
-        std::process::id(),
-        if cfg!(windows) { ".lib" } else { ".a" }
-    ));
-    let temporary_path = temporary_executable(output)?;
-    let inputs = linker::LinkInputs {
-        object: &object_path,
-        runtime: &runtime_path,
-        output: &temporary_path,
-        source_libraries,
-        libraries: &options.libraries,
-        search_paths: &options.search_paths,
-        link_args: &options.link_args,
-    };
-    // Validate before any temporary file is written: a bad `-l` or `-L` must
-    // not leave an object, a runtime archive, or a partial executable behind.
-    linker::validate(&inputs)?;
-
     let _object_guard = TempFile(object_path.clone());
     seal_fs::write_atomic(&object_path, object.as_slice()).map_err(|error| {
         CodegenError::artifact(
@@ -107,15 +87,80 @@ fn link_executable(
             format!("cannot write the temporary object file: {error}"),
         )
     })?;
-    let _runtime_guard = TempFile(runtime_path.clone());
-    seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
-        CodegenError::artifact(
-            &runtime_path,
-            format!("cannot write the temporary runtime archive: {error}"),
-        )
-    })?;
+    let request = LinkRequest {
+        object: &object_path,
+        runtime: Some(runtime),
+        output,
+        source_libraries,
+        libraries: &options.libraries,
+        search_paths: &options.search_paths,
+        link_args: &options.link_args,
+        linker: None,
+    };
+    run_linker(&request)
+}
+
+/// One link request over an existing object file.
+pub(crate) struct LinkRequest<'a> {
+    pub(crate) object: &'a Path,
+    pub(crate) runtime: Option<&'a [u8]>,
+    pub(crate) output: &'a Path,
+    pub(crate) source_libraries: &'a [String],
+    pub(crate) libraries: &'a [String],
+    pub(crate) search_paths: &'a [PathBuf],
+    pub(crate) link_args: &'a [OsString],
+    pub(crate) linker: Option<&'a std::ffi::OsStr>,
+}
+
+/// Links one object into `output`, replacing it atomically.
+pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> {
+    let output = request.output;
+    let directory = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = output
+        .file_name()
+        .ok_or_else(|| CodegenError::artifact(output, "the output path has no file name"))?;
+    let runtime_path = directory.join(format!(
+        ".{}.{}.{}.seal_rt{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        if cfg!(windows) { ".lib" } else { ".a" }
+    ));
+    let temporary_path = temporary_executable(output)?;
+    let inputs = linker::LinkInputs {
+        object: request.object,
+        runtime: &runtime_path,
+        output: &temporary_path,
+        source_libraries: request.source_libraries,
+        libraries: request.libraries,
+        search_paths: request.search_paths,
+        link_args: request.link_args,
+    };
+    // Validate before any temporary file is written: a bad `-l` or `-L` must
+    // not leave a runtime archive or a partial executable behind.
+    linker::validate(&inputs)?;
+
+    let _runtime_guard = if let Some(runtime) = request.runtime {
+        let guard = TempFile(runtime_path.clone());
+        seal_fs::write_atomic(&runtime_path, runtime).map_err(|error| {
+            CodegenError::artifact(
+                &runtime_path,
+                format!("cannot write the temporary runtime archive: {error}"),
+            )
+        })?;
+        Some(guard)
+    } else {
+        None
+    };
     let _temporary_guard = TempFile(temporary_path.clone());
-    let invocation = linker::invocation(linker::default_program(), &inputs);
+    let program = request
+        .linker
+        .map(std::ffi::OsStr::to_owned)
+        .unwrap_or_else(linker::default_program);
+    let invocation = linker::invocation(program, &inputs);
     let result = Command::new(invocation.program())
         .args(invocation.arguments())
         .output();
@@ -153,6 +198,8 @@ fn link_executable(
     }
 }
 
+static LINK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 /// Returns the libraries named in a link request, for diagnostics.
 fn libraries_text(inputs: &linker::LinkInputs<'_>) -> String {
     let mut names = Vec::new();
@@ -163,6 +210,15 @@ fn libraries_text(inputs: &linker::LinkInputs<'_>) -> String {
     } else {
         names.join(", ")
     }
+}
+
+/// Links an existing object file into an executable.
+///
+/// This is the entry point the project build graph uses: the frontend action
+/// produces an object, the link action supplies the runtime bytes and native
+/// libraries, and the output is replaced atomically on success.
+pub(crate) fn link_object(request: &LinkRequest<'_>) -> Result<(), CodegenError> {
+    run_linker(request)
 }
 
 /// Builds the path the linker writes before it replaces `output`.

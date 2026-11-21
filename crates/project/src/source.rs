@@ -19,7 +19,7 @@ pub(crate) fn package_files(
     } else {
         sources.to_vec()
     };
-    discover(root, &patterns, exclude, "source")
+    discover(root, &patterns, exclude, "source", Some("sl"))
 }
 
 /// Discovers files matching target globs.
@@ -28,7 +28,19 @@ pub(crate) fn target_files(
     sources: &[String],
     exclude: &[String],
 ) -> ProjectResult<Vec<PathBuf>> {
-    discover(root, sources, exclude, "target source")
+    discover(root, sources, exclude, "target source", Some("sl"))
+}
+
+/// Discovers generator inputs, which can be any file kind.
+pub(crate) fn input_files(
+    root: &Path,
+    sources: &[String],
+    exclude: &[String],
+) -> ProjectResult<Vec<PathBuf>> {
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    discover(root, sources, exclude, "generator input", None)
 }
 
 /// Resolves one relative path inside a package, rejecting escapes and symlinks.
@@ -65,6 +77,7 @@ fn discover(
     patterns: &[String],
     exclude: &[String],
     kind: &str,
+    extension: Option<&str>,
 ) -> ProjectResult<Vec<PathBuf>> {
     let canonical_root = root.canonicalize().map_err(|error| {
         ProjectError::io(format!("cannot resolve `{}`: {error}", root.display()))
@@ -93,7 +106,9 @@ fn discover(
                 continue;
             }
             let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("sl") {
+            if let Some(extension) = extension
+                && path.extension().and_then(|value| value.to_str()) != Some(extension)
+            {
                 continue;
             }
             let relative = relative_slash(path, &canonical_root)?;
@@ -112,8 +127,9 @@ fn discover(
             }
         }
         if !matched {
+            let suffix = extension.map_or(String::new(), |value| format!("`.{value}` "));
             return Err(ProjectError::source(format!(
-                "the {kind} glob `{pattern}` matched no `.sl` files under `{}`",
+                "the {kind} glob `{pattern}` matched no {suffix}files under `{}`",
                 canonical_root.display()
             )));
         }

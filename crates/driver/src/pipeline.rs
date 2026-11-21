@@ -40,6 +40,7 @@ enum Request<'a> {
         runtime_archive: Option<&'a Path>,
         link: &'a LinkArgs,
         planned_output: Option<PathBuf>,
+        link_metadata: Option<&'a Path>,
     },
     /// Write a JSON API snapshot after analysis.
     Api { path: PathBuf },
@@ -107,6 +108,7 @@ pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
             runtime_archive: args.runtime_archive.as_deref(),
             link: &args.link,
             planned_output: None,
+            link_metadata: args.link_metadata.as_deref(),
         }
     };
     compile(&args.compile, request).map(Outcome::code)
@@ -140,6 +142,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         runtime_archive: args.runtime_archive.as_deref(),
         link: &args.link,
         planned_output: None,
+        link_metadata: None,
     };
 
     match compile(&compile_arguments, request)? {
@@ -647,6 +650,7 @@ fn compile_hir(
         runtime_archive,
         link,
         planned_output,
+        link_metadata,
     } = &request
     else {
         if let Request::Api { path } = &request {
@@ -704,5 +708,44 @@ fn compile_hir(
         .time("codegen", || seal_codegen::emit(codegen_input, &options));
     if let Err(error) = result {
         report::codegen_error(session, &error);
+        return;
     }
+    if let Some(path) = link_metadata
+        && let Err(error) = write_link_metadata(session, &hir, path)
+    {
+        session.diag().bug(error);
+    }
+}
+
+/// Writes the libraries named by `link` directives for a later link action.
+#[derive(serde::Serialize)]
+struct LinkMetadata {
+    version: u32,
+    libraries: Vec<String>,
+}
+
+fn write_link_metadata(session: &Session, hir: &seal_hir::Hir, path: &Path) -> Result<(), String> {
+    let metadata = LinkMetadata {
+        version: 1,
+        libraries: hir
+            .link_directives()
+            .iter()
+            .map(|directive| session.interner().resolve(directive.name).to_owned())
+            .collect(),
+    };
+    let text = serde_json::to_string_pretty(&metadata)
+        .map_err(|error| format!("cannot serialize link metadata: {error}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "cannot create the link metadata directory `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    std::fs::write(&temporary, text)
+        .map_err(|error| format!("cannot write `{}`: {error}", temporary.display()))?;
+    std::fs::rename(&temporary, path)
+        .map_err(|error| format!("cannot replace `{}`: {error}", path.display()))
 }

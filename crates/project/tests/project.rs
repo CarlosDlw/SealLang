@@ -273,6 +273,48 @@ fn a_member_without_a_package_is_reported() {
 }
 
 #[test]
+fn generated_files_are_added_to_the_primary_plan() {
+    let fixture = fixture(&[
+        (
+            "seal.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+             [targets.gen]\nkind = \"generator\"\nentry = \"root::main\"\n\
+             sources = [\"src/gen.sl\"]\ninputs = [\"data/*.txt\"]\n\
+             outputs = [\"generated/table.sl\"]\n\n\
+             [targets.app]\nkind = \"bin\"\nentry = \"root::main\"\n\
+             sources = [\"src/main.sl\"]\ngenerated = [\"gen\"]\n",
+        ),
+        ("src/gen.sl", "func main() -> i32 { 0 }\n"),
+        ("src/main.sl", "func main() -> i32 { value() }\n"),
+        ("data/table.txt", "payload\n"),
+        ("generated/table.sl", "func value() -> i32 { 0 }\n"),
+    ]);
+    let project = Project::load(&fixture.root).expect("project");
+    let package = project.package(0);
+    let generator = package.target("gen").expect("generator");
+    assert_eq!(generator.generator_inputs.len(), 1);
+    assert_eq!(generator.generator_outputs, vec!["generated/table.sl"]);
+    let app = package.target("app").expect("app");
+    assert_eq!(app.generated, vec!["gen"]);
+
+    let generated = fixture.root.join("generated/table.sl");
+    let options = PlanOptions {
+        mode: BuildMode::Build,
+        extra_files: vec![generated.clone()],
+        ..PlanOptions::default()
+    };
+    let plan = project
+        .compile_plan(0, "app", &options)
+        .expect("the plan builds");
+    assert!(
+        plan.packages[0]
+            .files
+            .iter()
+            .any(|file| file.path == generated)
+    );
+}
+
+#[test]
 fn output_paths_stay_under_the_project() {
     let fixture = fixture(&[
         (

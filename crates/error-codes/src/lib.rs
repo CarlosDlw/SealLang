@@ -2400,6 +2400,70 @@ pub const E8011: ErrorCode = ErrorCode {
 The project layer could not read or write a file it needs, such as `seal.toml` or\n`seal.lock`. Check the path, permissions, and that the project root exists.",
 };
 
+/// A cache object or action record is missing, corrupt, or unreadable.
+pub const E8040: ErrorCode = ErrorCode {
+    code: "E8040",
+    title: "cache entry is invalid",
+    explanation: "\
+The local cache stores objects by their blake3 digest and action records by the\ndigest of their inputs. An object whose bytes no longer hash to its name, or a\nrecord whose outputs are missing, cannot be trusted.\n\nA build discards the record and rebuilds the action. Run `seal cache verify` to\nhash every object and report the corrupt paths, or `seal cache prune` to drop\nold entries.",
+};
+
+/// A sandboxed command could not see or use a declared input.
+pub const E8041: ErrorCode = ErrorCode {
+    code: "E8041",
+    title: "sandbox policy violation",
+    explanation: "\
+Generators, native probes, and tasks run in a sandbox that exposes only declared\ninputs, output directories, the host toolchain, and an explicit environment. A\ncommand that reads an undeclared file, needs a missing tool, or starts a process\nwithout the required isolation is reported here.\n\nDeclare the path or environment value in `seal.toml`, or install the tool the\ncommand needs. On a host without bubblewrap, set a policy that allows the\nportable fallback only when the weaker isolation is acceptable.",
+};
+
+/// A generator broke its declared output contract.
+pub const E8042: ErrorCode = ErrorCode {
+    code: "E8042",
+    title: "generator output contract violated",
+    explanation: "\
+A generator declares the exact files it writes. Every declared output must exist\nafter the command succeeds, and no file below a declared output directory may be\nleft undeclared. A declared output may not overwrite a source file.\n\nMake the generator write exactly `outputs`, or update the declaration when the\nnew files are intentional.",
+};
+
+/// A native dependency could not be resolved.
+pub const E8043: ErrorCode = ErrorCode {
+    code: "E8043",
+    title: "native dependency not resolved",
+    explanation: "\
+A `[native.<alias>]` entry resolves either from explicit `libs` and\n`search-paths` or through `pkg-config`. The probe runs in the sandbox and its\nresult is cached; a missing pkg-config package, an unavailable pkg-config, or a\nflag Seal cannot forward is reported here instead of being ignored.\n\nInstall the development package, set `PKG_CONFIG_PATH`, or declare the library\nexplicitly.",
+};
+
+/// A sandboxed command exceeded its wall-clock limit.
+pub const E8044: ErrorCode = ErrorCode {
+    code: "E8044",
+    title: "sandbox timeout",
+    explanation: "\
+A task step may declare `timeout` in seconds. When the limit is reached the\nprocess is killed and the step fails with this code. The timeout exists so a\nhung generator or task cannot block a build forever.\n\nRaise the timeout only when the work is genuinely long, or fix the command that\nnever terminates.",
+};
+
+/// An action failed to run or the action graph is invalid.
+pub const E8045: ErrorCode = ErrorCode {
+    code: "E8045",
+    title: "build action failed",
+    explanation: "\
+The action graph must be acyclic, every dependency must exist, and every action\nmust produce the outputs it promised. A frontend or link failure is reported\nhere after the compiler's own diagnostics.\n\nFix the underlined source error or the linker input; `seal build --timings`\nshows which action failed.",
+};
+
+/// A declarative task failed.
+pub const E8046: ErrorCode = ErrorCode {
+    code: "E8046",
+    title: "task failed",
+    explanation: "\
+`seal task <NAME>` runs the steps of `[tasks.<NAME>]` in order. A failing step\nstops the task unless `--no-fail-fast` is given. Steps are executed as a program\nand argument vector, never through a shell.\n\nRun the failing program directly to see its full output, or adjust the step.",
+};
+
+/// Two build outputs claim the same path.
+pub const E8047: ErrorCode = ErrorCode {
+    code: "E8047",
+    title: "build output conflict",
+    explanation: "\
+Each artifact path and each generated file has exactly one producer. Two actions\nwriting the same path would make the result depend on execution order.\n\nRename one target or one generated output so every path has a single owner.",
+};
+
 /// More than one runnable target matches a command.
 pub const E8103: ErrorCode = ErrorCode {
     code: "E8103",
@@ -3785,7 +3849,8 @@ pub static ALL: &[ErrorCode] = &[
     E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
-    E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8103, E9001, E9002,
+    E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8040, E8041, E8042, E8043, E8044,
+    E8045, E8046, E8047, E8103, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

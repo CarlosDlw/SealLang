@@ -60,7 +60,7 @@ pub(super) fn sample_project(name: &str) -> Fixture {
          [targets.checks]\nkind = \"test\"\n\n\
          [targets.measure]\nkind = \"bench\"\n\n\
          [targets.demo]\nkind = \"example\"\nentry = \"root::main\"\n\n\
-         [targets.codegen]\nkind = \"generator\"\nentry = \"root::main\"\n\n\
+         [targets.codegen]\nkind = \"generator\"\nentry = \"root::main\"\noutputs = [\"generated/codegen.sl\"]\n\n\
          [profiles.release]\nopt-level = 3\n",
     );
     write(

@@ -91,6 +91,18 @@ pub struct TargetManifest {
     /// The artifact path relative to the target directory.
     #[serde(default)]
     pub output: Option<PathBuf>,
+    /// Generator input globs; they are runtime data, not compiled sources.
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    /// Generator output globs, relative to the package root.
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    /// Generator targets whose outputs this target compiles.
+    #[serde(default)]
+    pub generated: Vec<String>,
+    /// Native aliases linked into this target.
+    #[serde(default)]
+    pub native: Vec<String>,
 }
 
 impl TargetManifest {
@@ -110,6 +122,10 @@ impl TargetManifest {
             linker: None,
             linker_script: None,
             output: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            generated: Vec::new(),
+            native: Vec::new(),
         }
     }
 
@@ -129,6 +145,10 @@ impl TargetManifest {
             linker: None,
             linker_script: None,
             output: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            generated: Vec::new(),
+            native: Vec::new(),
         }
     }
 }

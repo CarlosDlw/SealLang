@@ -32,6 +32,8 @@ pub struct PlanOptions {
     pub all_features: bool,
     /// Boolean `cfg` facts forced on the command line.
     pub cfgs: Vec<String>,
+    /// Generated files added to the primary package before planning.
+    pub extra_files: Vec<PathBuf>,
 }
 
 impl Default for PlanOptions {
@@ -46,6 +48,7 @@ impl Default for PlanOptions {
             no_default_features: false,
             all_features: false,
             cfgs: Vec::new(),
+            extra_files: Vec::new(),
         }
     }
 }
@@ -104,7 +107,7 @@ pub(crate) fn compile_plan(
         } else {
             package.library().or_else(|| package.targets.first())
         };
-        let files = source_target
+        let mut files: Vec<seal_plan::PlanFile> = source_target
             .map(|target| {
                 target
                     .files
@@ -116,6 +119,16 @@ pub(crate) fn compile_plan(
                     .collect()
             })
             .unwrap_or_default();
+        if instance.package == package_index {
+            for path in &options.extra_files {
+                if !files.iter().any(|file| file.path == *path) {
+                    files.push(seal_plan::PlanFile {
+                        path: path.clone(),
+                        primary: false,
+                    });
+                }
+            }
+        }
         let exposed = package
             .manifest
             .package
@@ -174,7 +187,12 @@ pub(crate) fn compile_plan(
         || target.kind == TargetKind::Test
         || target.kind == TargetKind::Bench
     {
-        target.entry.clone()
+        // Tests and benches currently use the same executable shape as a
+        // binary; the future test harness replaces this conventional entry.
+        target.entry.clone().or_else(|| {
+            matches!(target.kind, TargetKind::Test | TargetKind::Bench)
+                .then(|| "root::main".to_owned())
+        })
     } else {
         None
     };

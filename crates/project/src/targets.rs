@@ -84,6 +84,10 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             linker_script: None,
             required_features: Vec::new(),
             when: None,
+            generator_inputs: Vec::new(),
+            generator_outputs: Vec::new(),
+            generated: Vec::new(),
+            native: Vec::new(),
         }]);
     }
     let lib = root.join("src/lib.sl");
@@ -101,6 +105,10 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             linker_script: None,
             required_features: Vec::new(),
             when: None,
+            generator_inputs: Vec::new(),
+            generator_outputs: Vec::new(),
+            generated: Vec::new(),
+            native: Vec::new(),
         }]);
     }
     Err(ProjectError::target(format!(
@@ -175,6 +183,11 @@ fn build_one(
         .linker_script
         .as_ref()
         .map(|script| root.join(script));
+    let generator_inputs = if declaration.kind == TargetKind::Generator {
+        source::input_files(root, &declaration.inputs, exclude)?
+    } else {
+        Vec::new()
+    };
 
     Ok(Target {
         name: name.to_owned(),
@@ -188,6 +201,10 @@ fn build_one(
         linker_script,
         required_features: declaration.required_features.clone(),
         when: declaration.when.clone(),
+        generator_inputs,
+        generator_outputs: declaration.outputs.clone(),
+        generated: declaration.generated.clone(),
+        native: declaration.native.clone(),
     })
 }
 

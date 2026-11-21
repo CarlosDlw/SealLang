@@ -14,10 +14,13 @@ workspace = true
 
 [dependencies]
 clap.workspace = true
+seal-build.workspace = true
+seal-cas.workspace = true
 seal-driver.workspace = true
 seal-manifest.workspace = true
 seal-plan.workspace = true
 seal-project.workspace = true
+seal-sandbox.workspace = true
 seal-target.workspace = true
 serde.workspace = true
 serde_json.workspace = true

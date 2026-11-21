@@ -19,7 +19,7 @@ mod targets;
 use std::path::{Path, PathBuf};
 
 pub use error::{ProjectError, ProjectResult};
-pub use lockfile::{LockCfg, LockDependency, LockInstance, LockPackage, Lockfile};
+pub use lockfile::{LockCfg, LockDependency, LockInstance, LockNative, LockPackage, Lockfile};
 pub use plan::PlanOptions;
 
 use seal_manifest::{
@@ -52,6 +52,14 @@ pub struct Target {
     pub required_features: Vec<String>,
     /// The configuration condition under which this target exists.
     pub when: Option<seal_manifest::CfgSpec>,
+    /// Generator input files, resolved from the target's input globs.
+    pub generator_inputs: Vec<PathBuf>,
+    /// Generator output globs, relative to the package root.
+    pub generator_outputs: Vec<String>,
+    /// Generator targets whose outputs this target compiles.
+    pub generated: Vec<String>,
+    /// Native aliases linked into this target.
+    pub native: Vec<String>,
 }
 
 impl Target {

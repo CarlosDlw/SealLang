@@ -26,4 +26,8 @@ pub(crate) struct BuildArgs {
     /// Link executables with this runtime archive instead of the embedded one.
     #[arg(long, value_name = "PATH", help_heading = "Runtime")]
     pub(crate) runtime_archive: Option<PathBuf>,
+
+    /// Write the source link directives as JSON for a later link action.
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub(crate) link_metadata: Option<PathBuf>,
 }

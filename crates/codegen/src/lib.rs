@@ -77,6 +77,7 @@ mod global;
 mod intrinsic;
 mod linker;
 mod names;
+mod object;
 mod operand;
 mod options;
 mod panic;
@@ -94,6 +95,7 @@ mod tests;
 
 pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
+pub use object::{ObjectLink, link_object};
 pub use options::{CodegenOptions, Emit};
 
 /// Returns the runtime archive embedded in this compiler build.

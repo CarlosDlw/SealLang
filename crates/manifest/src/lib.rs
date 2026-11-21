@@ -13,10 +13,12 @@ mod dependency;
 mod env;
 mod error;
 mod feature;
+mod native;
 mod package;
 mod profile;
 mod project;
 mod target;
+mod task;
 mod validate;
 
 pub use cfg::CfgSpec;
@@ -24,10 +26,12 @@ pub use dependency::{DependencyManifest, DependencySpec};
 pub use env::EnvValue;
 pub use error::{Location, ManifestError, ManifestResult, ManifestWarning};
 pub use feature::FeatureManifest;
+pub use native::NativeManifest;
 pub use package::{ApiManifest, PackageManifest};
 pub use profile::ProfileManifest;
 pub use project::ProjectManifest;
 pub use target::{TargetKind, TargetManifest};
+pub use task::{TaskManifest, TaskStepManifest};
 pub use validate::{LoadedManifest, load, load_str};
 
 /// The complete contents of one `seal.toml`.
@@ -57,4 +61,10 @@ pub struct Manifest {
     /// Build profiles.
     #[serde(default)]
     pub profiles: std::collections::BTreeMap<String, ProfileManifest>,
+    /// Declarative task recipes.
+    #[serde(default)]
+    pub tasks: std::collections::BTreeMap<String, TaskManifest>,
+    /// Declarative native library dependencies.
+    #[serde(default)]
+    pub native: std::collections::BTreeMap<String, NativeManifest>,
 }
