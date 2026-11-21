@@ -22,7 +22,9 @@ use seal_session::Session;
 use seal_target::host_triple;
 
 use crate::api;
+use crate::body_cache;
 use crate::cli::plan::resolve_entry;
+use crate::frontend::Lowered;
 
 use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, LinkArgs, OutputArgs, RunArgs};
 use crate::options::session_options;
@@ -279,7 +281,11 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
             options.target_spec = Some(spec);
         }
     }
-    let session = Session::new(options).map_err(|error| error.to_string())?;
+    let session = crate::session_cache::acquire(&options)?;
+    let session = session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    session.reset_for_request();
     if let Some(plan) = plan {
         if !compile_plan_file(&session, request.clone(), plan) {
             return Ok(Outcome::Failed(ExitCode::from(1)));
@@ -336,7 +342,8 @@ const fn plural(count: usize, singular: &'static str, plural: &'static str) -> &
 
 /// Runs the whole pipeline for one input file.
 fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
-    let Ok(file_id) = session.load_file(input) else {
+    let identity = input.display().to_string();
+    let Ok(file_id) = session.load_file_persistent(input, &identity) else {
         return;
     };
     let Some(file) = session.source_map().file(file_id) else {
@@ -367,7 +374,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         return;
     }
 
-    let Some(hir) = session.profiler().time("hir", || {
+    let Some(lowered) = session.profiler().time("hir", || {
         crate::frontend::lower_single(session, file_id, &file, &ast)
     }) else {
         return;
@@ -375,6 +382,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     if session.diag().error_count() != errors {
         return;
     }
+    let Lowered { hir, dependency } = lowered;
     let hir = hir
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -383,6 +391,8 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
         session,
         request,
         &hir,
+        dependency,
+        &input.display().to_string(),
         file_id,
         HirRequest {
             input,
@@ -398,8 +408,10 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
     let errors = session.diag().error_count();
     let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> =
         Vec::with_capacity(arguments.inputs.len());
+    let mut dependencies = Vec::with_capacity(arguments.inputs.len());
     for input in &arguments.inputs {
-        let Ok(file_id) = session.load_file(input) else {
+        let identity = input.display().to_string();
+        let Ok(file_id) = session.load_file_persistent(input, &identity) else {
             return;
         };
         let Some(file) = session.source_map().file(file_id) else {
@@ -422,6 +434,15 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         if session.diag().error_count() != errors {
             return;
         }
+        let dependency = match crate::frontend::ast_dependency(session, file_id, &file) {
+            Ok(dependency) => dependency,
+            Err(error) => {
+                session
+                    .diag()
+                    .bug(format!("the parse dependency is missing: {error}"));
+            }
+        };
+        dependencies.push(dependency);
         loaded.push((file_id, Arc::unwrap_or_clone(ast)));
     }
     let Some(&(primary_file, _)) = loaded.first() else {
@@ -443,22 +464,30 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         .collect();
     entry.exposed = expose_paths(session, &arguments.expose);
 
-    let hir = session.profiler().time("hir", || {
-        seal_hir::lower_package(
-            &plan,
-            &loaded,
-            session.diag(),
-            session.interner(),
-            session.target().c_abi(),
-        )
-    });
+    let unit_key = arguments
+        .inputs
+        .iter()
+        .map(|input| input.display().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let Some(lowered) = session.profiler().time("hir", || {
+        crate::frontend::lower_package(session, &unit_key, &plan, &loaded, dependencies)
+    }) else {
+        return;
+    };
     if session.diag().error_count() != errors {
         return;
     }
+    let Lowered { hir, dependency } = lowered;
+    let hir = hir
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     compile_hir(
         session,
         request,
         &hir,
+        dependency,
+        &unit_key,
         primary_file,
         HirRequest {
             input: &arguments.inputs[0],
@@ -472,12 +501,14 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
 /// Compiles one package graph from a versioned plan file.
 fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan) -> bool {
     let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> = Vec::new();
+    let mut dependencies = Vec::new();
     let mut file_ids = std::collections::BTreeMap::new();
     let mut primary: Option<(seal_span::FileId, PathBuf)> = None;
     let errors = session.diag().error_count();
     for (index, package) in plan.packages.iter().enumerate() {
-        for file in &package.files {
-            let Ok(file_id) = session.load_file_distinct(&file.path) else {
+        for (file_index, file) in package.files.iter().enumerate() {
+            let identity = format!("{}#{index}#{file_index}", file.path.display());
+            let Ok(file_id) = session.load_file_persistent(&file.path, &identity) else {
                 return false;
             };
             let Some(source) = session.source_map().file(file_id) else {
@@ -500,6 +531,15 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
             if session.diag().error_count() != errors {
                 return false;
             }
+            let dependency = match crate::frontend::ast_dependency(session, file_id, &source) {
+                Ok(dependency) => dependency,
+                Err(error) => {
+                    session
+                        .diag()
+                        .bug(format!("the parse dependency is missing: {error}"));
+                }
+            };
+            dependencies.push(dependency);
             if index == plan.primary && file.primary {
                 primary = Some((file_id, file.path.clone()));
             }
@@ -570,18 +610,27 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
             cfg,
         });
     }
-    let hir = session.profiler().time("hir", || {
-        seal_hir::lower_package(
-            &package_plan,
-            &loaded,
-            session.diag(),
-            session.interner(),
-            session.target().c_abi(),
-        )
-    });
+    let unit_key = format!(
+        "plan:{}:{}",
+        plan.target,
+        plan.packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let Some(lowered) = session.profiler().time("hir", || {
+        crate::frontend::lower_package(session, &unit_key, &package_plan, &loaded, dependencies)
+    }) else {
+        return false;
+    };
     if session.diag().error_count() != errors {
         return false;
     }
+    let Lowered { hir, dependency } = lowered;
+    let hir = hir
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let entry = match &plan.entry {
         Some(value) => match resolve_entry(session, &hir, value) {
             Some(definition) => Some(definition),
@@ -594,6 +643,8 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
         session,
         request,
         &hir,
+        dependency,
+        &unit_key,
         primary_file,
         HirRequest {
             input: &primary_input,
@@ -652,6 +703,8 @@ fn compile_hir(
     session: &Session,
     request: Request<'_>,
     hir: &seal_hir::Hir,
+    hir_dependency: seal_query::Dependency,
+    unit_key: &str,
     file_id: seal_span::FileId,
     planned: HirRequest<'_>,
 ) {
@@ -663,23 +716,70 @@ fn compile_hir(
     } = planned;
     let errors = session.diag().error_count();
 
-    // Lowering relies on the invariants the checker establishes, so it runs
-    // only when no error was reported.
-    let typeck = session.profiler().time("typeck", || {
-        seal_typeck::check(
-            hir,
-            session.diag(),
-            session.interner(),
-            session.target().pointer_width(),
-        )
+    // Declarations and every body are separate queries. The final table is the
+    // merge of the declarations pass and each body-local result, preserving the
+    // same lookup semantics as a whole-file check.
+    let Some(declarations) = session.profiler().time("typeck", || {
+        body_cache::declarations(session, unit_key, hir, hir_dependency.clone())
+    }) else {
+        return;
+    };
+    if session.diag().error_count() != errors {
+        return;
+    }
+    let body_unit = body_cache::BodyUnit {
+        session,
+        unit_key,
+        hir,
+        hir_dependency: hir_dependency.clone(),
+        declarations: &declarations,
+    };
+    let mut typeck = declarations.results.as_ref().clone();
+    let mut body_dependencies = Vec::with_capacity(hir.bodies().len());
+    for (index, body) in hir.bodies().iter().enumerate() {
+        let body_id = seal_hir::BodyId::from_usize(index);
+        if body.kind == seal_hir::BodyKind::Closure {
+            body_dependencies.push(None);
+            continue;
+        }
+        let Some((checked, dependency)) = session.profiler().time("typeck-body", || {
+            body_cache::typeck_body(&body_unit, body_id)
+        }) else {
+            return;
+        };
+        if session.diag().error_count() != errors {
+            return;
+        }
+        typeck.merge(checked);
+        body_dependencies.push(Some(dependency));
+    }
+
+    let mut mir_dependencies = Vec::with_capacity(hir.bodies().len());
+    let mut mir = session.profiler().time("mir", || {
+        let mut mir = seal_mir::Mir::new();
+        for (index, body) in hir.bodies().iter().enumerate() {
+            let body_id = seal_hir::BodyId::from_usize(index);
+            match &body_dependencies[index] {
+                Some(dependency) if body.kind != seal_hir::BodyKind::Closure => {
+                    let Some((lowered, mir_dependency)) =
+                        body_cache::mir_body(&body_unit, body_id, &typeck, dependency.clone())
+                    else {
+                        return mir;
+                    };
+                    mir_dependencies.push(Some(mir_dependency));
+                    mir.push_body(lowered);
+                }
+                _ => {
+                    mir_dependencies.push(None);
+                    mir.push_body(seal_mir::lower_body(hir, &typeck, body));
+                }
+            }
+        }
+        mir
     });
     if session.diag().error_count() != errors {
         return;
     }
-
-    let mut mir = session
-        .profiler()
-        .time("mir", || seal_mir::lower(hir, &typeck));
     if let Err(error) = mir.validate_with(hir) {
         session
             .diag()
@@ -732,8 +832,27 @@ fn compile_hir(
 
     // Collection runs even for `check`: it resolves symbolic trait calls and
     // proves the program has a finite, fully concrete instance set.
+    let mono_context = crate::mono_cache::MonoContext {
+        session,
+        unit_key,
+        hir,
+        hir_dependency: hir_dependency.clone(),
+        declarations_dependency: declarations.dependency.clone(),
+    };
     let mono = session.profiler().time("mono", || {
-        seal_mono::collect(hir, &mir, &program, session.diag(), session.interner())
+        seal_mono::collect_with_specializer(
+            hir,
+            &mir,
+            &program,
+            session.diag(),
+            session.interner(),
+            |instance, owner, body| {
+                let mir_dependency = hir
+                    .body_id_of(owner)
+                    .and_then(|id| mir_dependencies[id.index() as usize].clone());
+                crate::mono_cache::specialize(&mono_context, mir_dependency, instance, owner, body)
+            },
+        )
     });
     if session.diag().error_count() != errors {
         return;
@@ -896,4 +1015,160 @@ fn write_link_metadata(session: &Session, hir: &seal_hir::Hir, path: &Path) -> R
         .map_err(|error| format!("cannot write `{}`: {error}", temporary.display()))?;
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("cannot replace `{}`: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use seal_query::QueryKind;
+
+    use super::*;
+    use crate::cli::Cli;
+
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new(name: &str, source: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("seal-incremental-{}-{name}.sl", std::process::id()));
+            std::fs::write(&path, source).expect("the test source is writable");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn check(path: &Path, tag: &str) -> (crate::cli::CompileArgs, Outcome) {
+        let cli = Cli::parse_from([
+            "sealc".to_owned(),
+            "check".to_owned(),
+            path.display().to_string(),
+            "--remap-path-prefix".to_owned(),
+            format!("/seal-test-{tag}-never-present={tag}"),
+        ])
+        .expect("valid check arguments");
+        let crate::cli::CliCommand::Check(args) = cli.command else {
+            unreachable!("the command is check");
+        };
+        let outcome = compile(&args.compile, Request::Check).expect("the check runs");
+        (args.compile, outcome)
+    }
+
+    #[test]
+    fn editing_one_body_reuses_the_other_bodies() {
+        let file = TempFile::new(
+            "body-edit",
+            "func first() -> i32 { 1 }\nfunc second() -> i32 { 2 }\n",
+        );
+        let (arguments, outcome) = check(&file.0, "body");
+        assert!(matches!(outcome, Outcome::Success));
+        let options = session_options(&arguments, None);
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        session.queries().reset_stats();
+        drop(session);
+
+        std::fs::write(
+            &file.0,
+            "func first() -> i32 { 1 }\nfunc second() -> i32 { 3 }\n",
+        )
+        .expect("the edit is writable");
+        let (_, outcome) = check(&file.0, "body");
+        assert!(matches!(outcome, Outcome::Success));
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let after = session.queries().stats();
+        let misses = |kind| after.by_kind.get(&kind).map_or(0, |stats| stats.misses);
+        let hits = |kind| after.by_kind.get(&kind).map_or(0, |stats| stats.hits);
+
+        assert_eq!(misses(QueryKind::Tokens), 1);
+        assert_eq!(misses(QueryKind::Ast), 1);
+        assert_eq!(misses(QueryKind::ModuleItems), 1);
+        assert_eq!(misses(QueryKind::Signature), 0);
+        assert_eq!(
+            misses(QueryKind::TypeckBody),
+            1,
+            "only the edited body is checked"
+        );
+        assert_eq!(
+            misses(QueryKind::MirBody),
+            1,
+            "only the edited body is lowered"
+        );
+        assert_eq!(misses(QueryKind::MonoInstance), 1);
+        assert!(hits(QueryKind::TypeckBody) >= 1);
+        assert!(hits(QueryKind::MirBody) >= 1);
+        assert!(hits(QueryKind::MonoInstance) >= 1);
+    }
+
+    #[test]
+    fn cached_body_diagnostics_are_replayed() {
+        let file = TempFile::new(
+            "diagnostic-replay",
+            "func first() -> i32 { 1 }\nfunc second() -> i32 { true }\n",
+        );
+        let (arguments, outcome) = check(&file.0, "replay");
+        assert!(matches!(outcome, Outcome::Failed(_)));
+        let options = session_options(&arguments, None);
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(session.diag().error_count(), 1);
+        drop(session);
+
+        let (_, outcome) = check(&file.0, "replay");
+        assert!(matches!(outcome, Outcome::Failed(_)));
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            session.diag().error_count(),
+            1,
+            "a cache hit must replay the body's diagnostic"
+        );
+    }
+
+    #[test]
+    fn editing_a_signature_invalidates_bodies_without_rechecking_the_file() {
+        let file = TempFile::new(
+            "signature-edit",
+            "func first(value: i32) -> i32 { value }\nfunc second() -> i32 { 2 }\n",
+        );
+        let (arguments, outcome) = check(&file.0, "signature");
+        assert!(matches!(outcome, Outcome::Success));
+        let options = session_options(&arguments, None);
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        session.queries().reset_stats();
+        drop(session);
+
+        std::fs::write(
+            &file.0,
+            "func first(value: i64) -> i64 { value }\nfunc second() -> i32 { 2 }\n",
+        )
+        .expect("the edit is writable");
+        let (_, outcome) = check(&file.0, "signature");
+        assert!(matches!(outcome, Outcome::Success));
+        let session = crate::session_cache::acquire(&options).expect("the session exists");
+        let session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let after = session.queries().stats();
+        assert_eq!(after.by_kind[&QueryKind::Signature].misses, 1);
+        assert_eq!(after.by_kind[&QueryKind::Tokens].misses, 1);
+        assert!(after.by_kind[&QueryKind::TypeckBody].misses >= 2);
+    }
 }

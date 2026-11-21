@@ -12,10 +12,11 @@
 
 mod options;
 
+use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use seal_diagnostics::{
     ColorChoice, DiagCtxt, Emitter, ErrorGuaranteed, JsonEmitter, RichEmitter, should_use_color,
@@ -73,6 +74,14 @@ pub struct Session {
     gates: FeatureGates,
     profiler: Profiler,
     queries: QueryDb,
+    /// Last file loaded under a persistent build identity.
+    ///
+    /// A persistent session keeps every source generation so spans from earlier
+    /// values stay valid. Loading changed text appends a new `FileId`; unchanged
+    /// text returns the existing one.
+    persistent_files: Mutex<HashMap<String, (FileId, seal_hash::Fingerprint)>>,
+    /// Number of changed-file generations appended by persistent loads.
+    persistent_versions: AtomicUsize,
     cancelled: AtomicBool,
 }
 
@@ -130,6 +139,8 @@ impl Session {
             gates,
             profiler,
             queries: QueryDb::new(),
+            persistent_files: Mutex::new(HashMap::new()),
+            persistent_versions: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
         })
     }
@@ -190,6 +201,25 @@ impl Session {
     #[inline]
     pub fn language_version(&self) -> LanguageVersion {
         self.options.language_version
+    }
+
+    /// Resets per-request diagnostic and cancellation state.
+    ///
+    /// A persistent compiler reuses one session across edits. Memoized query
+    /// values and registered source generations stay; error counts and the
+    /// deduplication set start clean for the next request.
+    pub fn reset_for_request(&self) {
+        self.diag.reset();
+        self.cancelled.store(false, Ordering::Relaxed);
+    }
+
+    /// Returns how many changed-file generations this session has appended.
+    ///
+    /// A persistent build keeps one source generation per file version so old
+    /// spans stay valid. The count excludes the first load of each identity, so
+    /// a large project does not look like a long-running incremental session.
+    pub fn source_generations(&self) -> usize {
+        self.persistent_versions.load(Ordering::Relaxed)
     }
 
     /// Requests cooperative cancellation.
@@ -273,6 +303,63 @@ impl Session {
                 Ok(source) => self.add_file(FileName::real(source.path()), source.into_text()),
                 Err(error) => Err(self.report_load_error(error)),
             }
+        })
+    }
+
+    /// Loads a source file under a persistent build identity.
+    ///
+    /// `identity` names the logical compilation unit, such as a package index
+    /// plus path. Reloading identical bytes returns the previous `FileId`.
+    /// Reloading changed bytes appends a new source generation with a fresh
+    /// `FileId`, so cached values for unchanged files keep valid spans while the
+    /// changed file gets a new query key. The old generation stays in the source
+    /// map for values that still refer to it.
+    pub fn load_file_persistent(
+        &self,
+        path: &Path,
+        identity: &str,
+    ) -> Result<FileId, ErrorGuaranteed> {
+        self.profiler.time("load", || {
+            let source = match seal_fs::load(path, seal_fs::DEFAULT_MAX_FILE_SIZE) {
+                Ok(source) => source,
+                Err(error) => return Err(self.report_load_error(error)),
+            };
+            let digest = seal_hash::stable_hash_of(source.text());
+            let mut files = self
+                .persistent_files
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((file, previous)) = files.get(identity)
+                && *previous == digest
+            {
+                return Ok(*file);
+            }
+            if files.contains_key(identity) {
+                self.persistent_versions.fetch_add(1, Ordering::Relaxed);
+            }
+            let name = FileName::real(source.path());
+            let text = source.into_text();
+            let result = self.source_map.add_file_distinct(name, text);
+            let file = match result {
+                Ok(file) => file,
+                Err(seal_span::SourceMapError::FileTooLarge { len, max }) => {
+                    return Err(self
+                        .diag
+                        .error(format!(
+                            "source file is {len} bytes, exceeding the {max}-byte limit"
+                        ))
+                        .code(codes::E0002.diag_code())
+                        .emit());
+                }
+                Err(error) => {
+                    return Err(self
+                        .diag
+                        .error(format!("cannot register source file: {error}"))
+                        .emit());
+                }
+            };
+            files.insert(identity.to_owned(), (file, digest));
+            Ok(file)
         })
     }
 

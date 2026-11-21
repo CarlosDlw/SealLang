@@ -75,6 +75,11 @@ pub(crate) struct Checker<'a> {
     pub(super) dcx: &'a DiagCtxt,
     pub(super) interner: &'a Interner,
     pub(super) pointer_width: u8,
+    /// Signatures and declarations shared by every body check.
+    ///
+    /// `None` while checking the whole file: the checker builds its own table.
+    /// A body query points at the table produced by the declarations pass.
+    pub(super) declarations: Option<&'a TypeckResults>,
     pub(super) results: TypeckResults,
     pub(super) infer: InferCtxt,
     pub(super) env: ParamEnv,
@@ -126,11 +131,12 @@ impl<'a> Checker<'a> {
             .ty_ctxt()
             .lookup(TyKind::Unit)
             .expect("HIR lowering interns the unit type");
-        let mut checker = Self {
+        Self {
             hir,
             dcx,
             interner,
             pointer_width,
+            declarations: None,
             results: TypeckResults::new(),
             infer: InferCtxt::new(),
             env: ParamEnv::new(),
@@ -147,11 +153,28 @@ impl<'a> Checker<'a> {
             const_fn: false,
             unsafe_depth: 0,
             mut_ref_reported: false,
-        };
-        checker.validate_bound_arguments();
-        checker.build_signatures();
-        checker.build_externs();
+        }
+    }
+
+    /// Creates a checker that reuses declarations produced by another pass.
+    pub(crate) fn for_body(
+        hir: &'a Hir,
+        dcx: &'a DiagCtxt,
+        interner: &'a Interner,
+        pointer_width: u8,
+        declarations: &'a TypeckResults,
+    ) -> Self {
+        let mut checker = Self::new(hir, dcx, interner, pointer_width);
+        checker.declarations = Some(declarations);
         checker
+    }
+
+    /// Builds signatures, extern declarations, and bound diagnostics once.
+    pub(crate) fn prepare(mut self) -> Self {
+        self.validate_bound_arguments();
+        self.build_signatures();
+        self.build_externs();
+        self
     }
 
     pub(crate) fn run(mut self) -> TypeckResults {
@@ -165,6 +188,25 @@ impl<'a> Checker<'a> {
             self.check_body(&body);
         }
         self.results
+    }
+
+    /// Returns the declarations pass without checking any body.
+    pub(crate) fn run_declarations(self) -> TypeckResults {
+        self.results
+    }
+
+    /// Runs exactly one non-closure body.
+    pub(crate) fn run_body(mut self, body: &Body) -> TypeckResults {
+        self.check_body(body);
+        self.results
+    }
+
+    /// Returns a signature from the body-local table or the declarations pass.
+    pub(super) fn signature(&self, function: DefId) -> Option<&Signature> {
+        self.results.signature(function).or_else(|| {
+            self.declarations
+                .and_then(|table| table.signature(function))
+        })
     }
 
     /// Builds every signature before any body is checked, so callers see the
@@ -234,7 +276,6 @@ impl<'a> Checker<'a> {
 
     fn check_body(&mut self, body: &Body) {
         let signature = self
-            .results
             .signature(body.owner)
             .expect("every body receives a signature")
             .clone();

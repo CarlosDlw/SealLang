@@ -652,7 +652,6 @@ impl Checker<'_> {
         }
         let is_unsafe = match &target {
             UserMethod::Concrete { function, .. } => self
-                .results
                 .signature(*function)
                 .is_some_and(|signature| signature.is_unsafe),
             UserMethod::Bound { method, .. } => method.is_unsafe,

@@ -1,7 +1,7 @@
 //! Types computed by the checker.
 
 use seal_def::DefId;
-use seal_hash::FxHashMap;
+use seal_hash::{Fingerprint, FxHashMap, StableHasher};
 use seal_hir::{HirExprId, ReceiverKind};
 use seal_layout::VtableSlot;
 use seal_methods::MethodId;
@@ -577,6 +577,45 @@ impl TypeckResults {
     /// Returns the number of expressions that received a type.
     pub fn typed_expr_count(&self) -> usize {
         self.expr_ty.len()
+    }
+
+    /// Merges the body-local results of another check into this table.
+    ///
+    /// Declaration results (signatures, extern declarations, and bound
+    /// validation) are computed once and shared by every body. A body check
+    /// records only its own expressions, locals, places, and closure data, so
+    /// merging two body results never overwrites a declaration.
+    pub fn merge(&mut self, other: Self) {
+        self.expr_ty.extend(other.expr_ty);
+        self.local_ty.extend(other.local_ty);
+        self.signatures.extend(other.signatures);
+        self.places.extend(other.places);
+        self.methods.extend(other.methods);
+        self.index_protocols.extend(other.index_protocols);
+        self.iterations.extend(other.iterations);
+        self.instantiations.extend(other.instantiations);
+        self.function_addresses.extend(other.function_addresses);
+        self.coercions.extend(other.coercions);
+        self.casts.extend(other.casts);
+        self.closure_info.extend(other.closure_info);
+        self.closure_adt_owner.extend(other.closure_adt_owner);
+        self.calls.extend(other.calls);
+    }
+
+    /// Returns a stable fingerprint of every declaration signature.
+    ///
+    /// Bodies are deliberately excluded: their results are keyed independently,
+    /// so changing one body must not invalidate another body's checked tree.
+    pub fn declarations_fingerprint(&self) -> Fingerprint {
+        let mut signatures: Vec<_> = self.signatures.iter().collect();
+        signatures.sort_by_key(|(definition, _)| definition.index());
+        let mut hasher = StableHasher::new();
+        hasher.write_usize(signatures.len());
+        for (definition, signature) in signatures {
+            hasher.write_u32(definition.index());
+            hasher.write_str(&format!("{signature:?}"));
+        }
+        hasher.finish()
     }
 
     pub(crate) fn new() -> Self {

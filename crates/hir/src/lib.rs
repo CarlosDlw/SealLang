@@ -180,7 +180,22 @@ impl Hir {
         interner: &Interner,
         c_abi: CAbiProperties,
     ) -> Self {
-        lower::lower_ast(ast, dcx, interner, c_abi)
+        Self::lower_file_with_c_abi(ast, FileId::from_usize(0), dcx, interner, c_abi)
+    }
+
+    /// Lowers a parsed file registered under an explicit source-file id.
+    ///
+    /// A persistent session may compile several generations of one path, each
+    /// with its own [`FileId`]. The id must identify the file that produced
+    /// `ast`, otherwise every span in the HIR points at the wrong generation.
+    pub fn lower_file_with_c_abi(
+        ast: &Ast,
+        file: FileId,
+        dcx: &DiagCtxt,
+        interner: &Interner,
+        c_abi: CAbiProperties,
+    ) -> Self {
+        lower::lower_ast(ast, file, dcx, interner, c_abi)
     }
 
     /// Returns every C-exported function in declaration order.
@@ -206,6 +221,17 @@ impl Hir {
     /// Returns every module in the compilation.
     pub fn modules(&self) -> &IndexVec<ModuleId, module::ModuleData> {
         &self.modules
+    }
+
+    /// Returns every source file that contributed to this compilation.
+    ///
+    /// The list is sorted by [`FileId`] so fingerprints are deterministic. A
+    /// persistent session may have older generations of the same path in its
+    /// source map; those files are not part of this HIR and are not returned.
+    pub fn source_files(&self) -> Vec<FileId> {
+        let mut files: Vec<FileId> = self.file_modules.keys().copied().collect();
+        files.sort_unstable();
+        files
     }
 
     /// Returns one module.
@@ -326,6 +352,30 @@ impl Hir {
     /// Panics if `id` did not come from this tree.
     pub fn body(&self, id: BodyId) -> &Body {
         &self.bodies[id]
+    }
+
+    /// Returns every lowered block, for structural fingerprints.
+    #[inline]
+    pub fn blocks(&self) -> &IndexVec<HirBlockId, Block> {
+        &self.blocks
+    }
+
+    /// Returns every lowered statement, for structural fingerprints.
+    #[inline]
+    pub fn stmts(&self) -> &IndexVec<HirStmtId, Stmt> {
+        &self.stmts
+    }
+
+    /// Returns every lowered expression, for structural fingerprints.
+    #[inline]
+    pub fn exprs(&self) -> &IndexVec<HirExprId, Expr> {
+        &self.exprs
+    }
+
+    /// Returns every lowered pattern, for structural fingerprints.
+    #[inline]
+    pub fn patterns(&self) -> &IndexVec<HirPatternId, Pattern> {
+        &self.patterns
     }
 
     /// Returns the ID of the body owned by `owner`, if it has one.

@@ -19,7 +19,6 @@ use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
 use seal_hash::{FxHashMap, FxHashSet};
-use seal_index::Idx;
 use seal_span::{FileId, Span};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::{CAbiProperties, TyCtxt, TyId};
@@ -75,11 +74,11 @@ pub(crate) struct ItemRef {
 
 pub(crate) fn lower_ast(
     ast: &Ast,
+    file: FileId,
     dcx: &DiagCtxt,
     interner: &Interner,
     c_abi: CAbiProperties,
 ) -> Hir {
-    let file = FileId::from_usize(0);
     let name = interner.intern("main");
     let plan = crate::module::PackagePlan::single(name, file);
     let asts = [(file, ast)];

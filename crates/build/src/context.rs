@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use seal_cas::{ActionCache, ActionRecord, Digest};
+use seal_query::DiskCache;
 use seal_sandbox::Sandbox;
 
 use crate::action::Action;
@@ -15,6 +16,7 @@ use crate::{ActionTiming, ProgressEvent, ProgressFn};
 /// Cache, sandbox, and reporting state shared by every worker.
 pub(crate) struct ActionContext {
     pub(crate) cache: ActionCache,
+    pub(crate) query_cache: DiskCache,
     pub(crate) sandbox: Sandbox,
     pub(crate) temp_root: PathBuf,
     pub(crate) use_cache: bool,
@@ -30,8 +32,14 @@ impl ActionContext {
         use_cache: bool,
         progress: Option<Arc<ProgressFn>>,
     ) -> Self {
+        let query_cache = DiskCache::new(
+            temp_root
+                .parent()
+                .map_or_else(|| temp_root.clone(), |root| root.join("query-payloads")),
+        );
         Self {
             cache,
+            query_cache,
             sandbox,
             temp_root,
             use_cache,

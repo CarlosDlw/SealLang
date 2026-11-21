@@ -607,7 +607,6 @@ impl Checker<'_> {
             return self.error_ty();
         };
         let is_unsafe = self
-            .results
             .signature(function)
             .is_some_and(|signature| signature.is_unsafe);
         let natural = self.hir.ty_ctxt().fn_ptr_ty(FnPtrDef {

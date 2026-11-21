@@ -17,7 +17,7 @@ use seal_span::Span;
 use seal_ty::{ClosureKind, Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
     CaptureStorage, Coercion, IndexProtocol, MethodKind, PlaceProjection, ProtocolCall,
-    ReceiverAdjust, ResolvedCall, ResolvedMethod, ResolvedPlace, TypeckResults,
+    ReceiverAdjust, ResolvedCall, ResolvedMethod, ResolvedPlace, Signature, TypeckResults,
 };
 
 use crate::body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
@@ -76,9 +76,121 @@ fn closure_environment_ty(hir: &Hir, closure: DefId, kind: ClosureKind) -> TyId 
 pub fn lower(hir: &Hir, typeck: &TypeckResults) -> Mir {
     let mut mir = Mir::new();
     for body in hir.bodies().iter() {
-        mir.push_body(BodyLowering::new(hir, typeck, body).run(body));
+        mir.push_body(lower_body(hir, typeck, body));
     }
     mir
+}
+
+/// Lowers one HIR body to MIR.
+///
+/// The table may be the complete whole-program result or just the results for
+/// this body; if it is body-local, pass the shared declarations to
+/// [`lower_body_with_declarations`].
+pub fn lower_body(hir: &Hir, typeck: &TypeckResults, body: &HirBody) -> Body {
+    lower_body_with_declarations(hir, typeck, typeck, body)
+}
+
+/// Lowers one body whose results are separate from the shared declarations.
+///
+/// Looking up a signature falls back from `typeck` to `declarations`, so a
+/// body-local table does not need to duplicate every function signature.
+pub fn lower_body_with_declarations(
+    hir: &Hir,
+    typeck: &TypeckResults,
+    declarations: &TypeckResults,
+    body: &HirBody,
+) -> Body {
+    BodyLowering::new(hir, TypeckView::new(typeck, declarations), body).run(body)
+}
+
+/// A read-only view over body-local results and shared declarations.
+struct TypeckView<'a> {
+    body: &'a TypeckResults,
+    declarations: &'a TypeckResults,
+}
+
+impl<'a> TypeckView<'a> {
+    const fn new(body: &'a TypeckResults, declarations: &'a TypeckResults) -> Self {
+        Self { body, declarations }
+    }
+
+    fn signature(&self, function: DefId) -> Option<&Signature> {
+        self.body
+            .signature(function)
+            .or_else(|| self.declarations.signature(function))
+    }
+
+    fn expr_ty(&self, expr: HirExprId) -> Option<TyId> {
+        self.body
+            .expr_ty(expr)
+            .or_else(|| self.declarations.expr_ty(expr))
+    }
+
+    fn local_ty(&self, local: DefId) -> Option<TyId> {
+        self.body
+            .local_ty(local)
+            .or_else(|| self.declarations.local_ty(local))
+    }
+
+    fn place(&self, expr: HirExprId) -> Option<&ResolvedPlace> {
+        self.body
+            .place(expr)
+            .or_else(|| self.declarations.place(expr))
+    }
+
+    fn method(&self, expr: HirExprId) -> Option<&ResolvedMethod> {
+        self.body
+            .method(expr)
+            .or_else(|| self.declarations.method(expr))
+    }
+
+    fn index_protocol(&self, expr: HirExprId) -> Option<&IndexProtocol> {
+        self.body
+            .index_protocol(expr)
+            .or_else(|| self.declarations.index_protocol(expr))
+    }
+
+    fn iteration(&self, source: HirExprId) -> Option<&seal_typeck::IterationProtocol> {
+        self.body
+            .iteration(source)
+            .or_else(|| self.declarations.iteration(source))
+    }
+
+    fn instantiation(&self, expr: HirExprId) -> Option<Instance> {
+        self.body
+            .instantiation(expr)
+            .or_else(|| self.declarations.instantiation(expr))
+    }
+
+    fn function_address(&self, expr: HirExprId) -> Option<Instance> {
+        self.body
+            .function_address(expr)
+            .or_else(|| self.declarations.function_address(expr))
+    }
+
+    fn coercion(&self, expr: HirExprId) -> Option<Coercion> {
+        self.body
+            .coercion(expr)
+            .or_else(|| self.declarations.coercion(expr))
+    }
+
+    fn cast_kind(&self, expr: HirExprId) -> Option<seal_ty::CastKind> {
+        self.body
+            .cast_kind(expr)
+            .or_else(|| self.declarations.cast_kind(expr))
+    }
+
+    fn closure_info(&self, closure: DefId) -> Option<&seal_typeck::ClosureInfo> {
+        self.body
+            .closure_info(closure)
+            .or_else(|| self.declarations.closure_info(closure))
+    }
+
+    fn call(&self, expr: HirExprId) -> Option<ResolvedCall> {
+        self.body
+            .call(expr)
+            .or_else(|| self.declarations.call(expr))
+    }
 }
 
 #[derive(Default)]
@@ -116,7 +228,7 @@ struct IntrinsicCall<'a> {
 
 struct BodyLowering<'a> {
     hir: &'a Hir,
-    typeck: &'a TypeckResults,
+    typeck: TypeckView<'a>,
     owner: DefId,
     kind: BodyKind,
     is_const: bool,
@@ -150,7 +262,7 @@ struct BodyLowering<'a> {
 }
 
 impl<'a> BodyLowering<'a> {
-    fn new(hir: &'a Hir, typeck: &'a TypeckResults, body: &HirBody) -> Self {
+    fn new(hir: &'a Hir, typeck: TypeckView<'a>, body: &HirBody) -> Self {
         let span = hir.definitions().get(body.owner).span;
         let signature = typeck
             .signature(body.owner)

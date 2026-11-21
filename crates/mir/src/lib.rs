@@ -69,7 +69,7 @@ pub use instantiate::instantiate_body;
 
 pub use body::{BasicBlock, Body, BodyKind, LocalDecl, LocalKind};
 pub use id::{BasicBlockId, BodyId, LocalId};
-pub use lower::lower;
+pub use lower::{lower, lower_body, lower_body_with_declarations};
 pub use mir::Mir;
 pub use operand::{Constant, Operand};
 pub use place::{Place, PlaceRoot, Projection};

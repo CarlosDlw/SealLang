@@ -17,6 +17,7 @@ use seal_cas::{ActionInput, ActionOutput, ActionRecord, Digest};
 use seal_codegen::ObjectLink;
 use seal_manifest::NativeManifest;
 use seal_plan::{BuildMode, CompilePlan};
+use seal_query::{DiskCache, QueryKey, QueryKind};
 use seal_sandbox::{SandboxPolicy, SandboxRequest};
 use seal_target::{PanicStrategy, RuntimePolicy};
 use serde::{Deserialize, Serialize};
@@ -114,6 +115,7 @@ pub(crate) struct FrontendAction {
     plan: CompilePlan,
     cgu_count: u32,
     project_root: PathBuf,
+    content_digest: Digest,
     inputs: Vec<ActionInput>,
     temp_root: PathBuf,
 }
@@ -134,9 +136,10 @@ impl FrontendAction {
         let plan_bytes = serde_json::to_vec(&key_plan).map_err(|error| {
             BuildError::action(format!("cannot encode the compile plan: {error}"))
         })?;
+        let plan_digest = Digest::of_bytes(&plan_bytes);
         let mut inputs = vec![ActionInput {
             path: "plan".to_owned(),
-            digest: Digest::of_bytes(&plan_bytes),
+            digest: plan_digest,
         }];
         for package in &plan.packages {
             for file in &package.files {
@@ -144,11 +147,20 @@ impl FrontendAction {
                 inputs.push(ActionInput::from_file(name, &file.path)?);
             }
         }
+        let mut identity = plan_digest.to_hex();
+        for input in inputs.iter().skip(1) {
+            identity.push(':');
+            identity.push_str(&input.path);
+            identity.push(':');
+            identity.push_str(&input.digest.to_hex());
+        }
+        let content_digest = Digest::of_bytes(identity.as_bytes());
         Ok(Self {
             label: label.into(),
             plan,
             cgu_count: cgu_count.max(1),
             project_root: project_root.to_path_buf(),
+            content_digest,
             inputs,
             temp_root: temp_root.to_path_buf(),
         })
@@ -182,6 +194,34 @@ impl FrontendAction {
         let mono = work.join("artifact.sealmono");
         let metadata = work.join("link.json");
         let plan_path = work.join("plan.json");
+        // Source contents are inputs, not part of the plan JSON. Keying only by
+        // the plan would serve a stale artifact after a source edit.
+        let query_key = QueryKey::new(
+            QueryKind::CodegenCgu,
+            format!("frontend:{}", self.content_digest.to_hex()),
+        );
+        if context.use_cache
+            && let Some(payload) = load_frontend_payload(&context.query_cache, &query_key)
+        {
+            fs::write(&mono, &payload.mono).map_err(|error| {
+                BuildError::action(format!("cannot write `{}`: {error}", mono.display()))
+            })?;
+            fs::write(&metadata, &payload.metadata).map_err(|error| {
+                BuildError::action(format!("cannot write `{}`: {error}", metadata.display()))
+            })?;
+            let mono_digest = context.cache.cas().put_file(&mono)?;
+            let metadata_digest = context.cache.cas().put_bytes(&payload.metadata)?;
+            let _ = fs::remove_dir_all(&work);
+            return Ok(ActionRecord::new(
+                "frontend",
+                self.inputs.clone(),
+                vec![
+                    ActionOutput::data("mono", mono_digest),
+                    ActionOutput::data("link-metadata", metadata_digest),
+                ],
+            )
+            .with_command(self.command()));
+        }
         let mut plan = self.plan.clone();
         plan.output = Some(mono.clone());
         plan.write(&plan_path).map_err(|error| {
@@ -216,19 +256,18 @@ impl FrontendAction {
             )));
         }
         let mono_digest = context.cache.cas().put_file(&mono)?;
-        let metadata_bytes = match fs::read(&metadata) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                b"{\"version\":1,\"libraries\":[]}".to_vec()
-            }
-            Err(error) => {
-                let _ = fs::remove_dir_all(&work);
-                return Err(BuildError::action(format!(
-                    "cannot read link metadata for `{}`: {error}",
-                    self.label
-                )));
-            }
-        };
+        let metadata_bytes = read_link_metadata(&metadata, &self.label)?;
+        if context.use_cache
+            && let Ok(mono_bytes) = fs::read(&mono)
+            && !mono_bytes.is_empty()
+        {
+            store_frontend_payload(
+                &context.query_cache,
+                &query_key,
+                &mono_bytes,
+                &metadata_bytes,
+            );
+        }
         let metadata_digest = context.cache.cas().put_bytes(&metadata_bytes)?;
         let _ = fs::remove_dir_all(&work);
         Ok(ActionRecord::new(
@@ -244,6 +283,51 @@ impl FrontendAction {
 }
 
 static FRONTEND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Payload reused when the action cache lost a record but the query cache kept
+/// the frontend bytes. The format is a length-prefixed pair so a corrupt or
+/// truncated record is a miss, never a partial artifact.
+struct FrontendPayload {
+    mono: Vec<u8>,
+    metadata: Vec<u8>,
+}
+
+fn load_frontend_payload(cache: &DiskCache, key: &QueryKey) -> Option<FrontendPayload> {
+    let bytes = cache.load(key).ok()??;
+    let (length, rest) = bytes.split_first_chunk::<8>()?;
+    let length = u64::from_le_bytes(*length);
+    let length = usize::try_from(length).ok()?;
+    let (mono, metadata) = rest.split_at_checked(length)?;
+    if mono.is_empty() {
+        return None;
+    }
+    Some(FrontendPayload {
+        mono: mono.to_vec(),
+        metadata: metadata.to_vec(),
+    })
+}
+
+fn store_frontend_payload(cache: &DiskCache, key: &QueryKey, mono: &[u8], metadata: &[u8]) {
+    let mut payload = Vec::with_capacity(8 + mono.len() + metadata.len());
+    payload.extend_from_slice(&(mono.len() as u64).to_le_bytes());
+    payload.extend_from_slice(mono);
+    payload.extend_from_slice(metadata);
+    // The action cache is authoritative. A query-cache write failure only gives
+    // up a future fast path, so it must not fail a successful build.
+    let _ = cache.store(key, &payload);
+}
+
+fn read_link_metadata(metadata: &Path, label: &str) -> BuildResult<Vec<u8>> {
+    match fs::read(metadata) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(b"{\"version\":1,\"libraries\":[]}".to_vec())
+        }
+        Err(error) => Err(BuildError::action(format!(
+            "cannot read link metadata for `{label}`: {error}"
+        ))),
+    }
+}
 
 /// The `codegen-cgu` action: one `.sealmono` unit to one object.
 #[derive(Clone, Debug)]

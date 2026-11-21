@@ -227,6 +227,37 @@ fn a_repeated_build_is_a_full_cache_hit() {
 }
 
 #[test]
+fn persistent_frontend_payloads_are_keyed_by_source_content() {
+    let fixture = basic_project();
+    let project = fixture.project();
+    let builder = Builder::new(&project, options(1, true));
+    builder
+        .build(&[job("demo")])
+        .expect("the first build succeeds");
+    let payloads = fixture.path("seal/cache/query-payloads");
+    let first = std::fs::read_dir(&payloads)
+        .expect("the payload cache exists")
+        .count();
+    assert_eq!(first, 1, "one frontend payload after the first build");
+
+    std::fs::write(
+        fixture.path("src/main.sl"),
+        "func main() -> i32 {\n  // changed\n  0\n}\n",
+    )
+    .expect("source change");
+    builder
+        .build(&[job("demo")])
+        .expect("the second build succeeds");
+    let second = std::fs::read_dir(&payloads)
+        .expect("the payload cache exists")
+        .count();
+    assert_eq!(
+        second, 2,
+        "a source edit must use a different payload key instead of serving stale bytes"
+    );
+}
+
+#[test]
 fn job_count_does_not_change_the_artifact() {
     let fixture = basic_project();
     let project = fixture.project();

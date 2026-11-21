@@ -56,12 +56,14 @@ use seal_ty::TyId;
 
 pub use collector::{
     MAX_DEPTH, MAX_GLUE_DEPTH, MAX_GLUES, MAX_INSTANCES, MAX_VTABLES, MonoItem, collect,
+    collect_with_specializer,
 };
 pub use drop::{DropGlue, DropGlueEntry, GlueChildren};
 pub use error::MonoError;
 pub use hash::{instance_hash, instance_name, type_hash, vtable_hash, vtable_name};
 pub use id::{DropGlueId, InstanceId, VtableId};
 pub use seal_mir::CallTarget;
+pub use substitute::{BodyEvent, ChildCall, SpecializedBody, specialize};
 pub use validate::MonoValidationError;
 pub use vtable::{MonoVTable, VtableKey};
 

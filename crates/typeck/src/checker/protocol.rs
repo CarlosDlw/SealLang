@@ -573,7 +573,7 @@ impl Checker<'_> {
                 let args =
                     self.finish_arguments(&instantiated.generics, &instantiated.args, span)?;
                 let substs = self.hir.ty_ctxt().substs(&args);
-                let signature = self.results.signature(*function)?.clone();
+                let signature = self.signature(*function)?.clone();
                 let params: Vec<TyId> = signature
                     .params
                     .iter()

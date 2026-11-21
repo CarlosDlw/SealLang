@@ -19,7 +19,7 @@ use seal_ty::{Instance, TyId};
 use crate::drop::{self, DropGlueEntry};
 use crate::error::MonoError;
 use crate::id::{DropGlueId, InstanceId, VtableId};
-use crate::substitute::{self, BodyEvent};
+use crate::substitute::{self, BodyEvent, SpecializedBody};
 use crate::vtable::{self, MonoVTable, VtableKey};
 use crate::{Collected, MonoMir, MonoProgram};
 
@@ -95,6 +95,35 @@ pub fn collect(
     collect_with(hir, mir, constants, dcx, interner, Limits::DEFAULT)
 }
 
+/// Collects every reachable instance using a caller-provided specializer.
+///
+/// The callback receives the instance, its owning definition, and its generic
+/// MIR body, and must return the concrete body plus its discovery events. The
+/// definition lets an incremental caller name the exact body query the
+/// specialization depends on. Diagnostics emitted by the specializer are the
+/// caller's responsibility; the collector reports only graph-level errors.
+pub fn collect_with_specializer<F>(
+    hir: &Hir,
+    mir: &Mir,
+    constants: &ConstProgram,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    mut specialize: F,
+) -> MonoProgram
+where
+    F: FnMut(Instance, seal_def::DefId, &Body) -> SpecializedBody,
+{
+    collect_with_specializer_and_limits(
+        hir,
+        mir,
+        constants,
+        dcx,
+        interner,
+        Limits::DEFAULT,
+        &mut specialize,
+    )
+}
+
 /// Collects with explicit limits, for tests.
 pub(crate) fn collect_with(
     hir: &Hir,
@@ -104,7 +133,28 @@ pub(crate) fn collect_with(
     interner: &Interner,
     limits: Limits,
 ) -> MonoProgram {
+    collect_with_specializer_and_limits(
+        hir,
+        mir,
+        constants,
+        dcx,
+        interner,
+        limits,
+        &mut |instance, _owner, body| substitute::specialize(hir, dcx, interner, body, instance),
+    )
+}
+
+fn collect_with_specializer_and_limits(
+    hir: &Hir,
+    mir: &Mir,
+    constants: &ConstProgram,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    limits: Limits,
+    specialize: &mut dyn FnMut(Instance, seal_def::DefId, &Body) -> SpecializedBody,
+) -> MonoProgram {
     let mut collector = Collector {
+        specialize,
         hir,
         mir,
         constants,
@@ -142,6 +192,7 @@ struct Collector<'a> {
     dcx: &'a DiagCtxt,
     interner: &'a Interner,
     limits: Limits,
+    specialize: &'a mut dyn FnMut(Instance, seal_def::DefId, &Body) -> SpecializedBody,
     ids: FxHashMap<Instance, InstanceId>,
     queue: VecDeque<Pending>,
     bodies: Vec<Option<MonoMir>>,
@@ -258,15 +309,13 @@ impl Collector<'_> {
         let Some(body) = self.mir.body_of(pending.instance.def) else {
             return;
         };
-        let specialized = substitute::instantiate_body(self.hir, body, pending.instance);
-        let (body, events) =
-            substitute::resolve_body(self.hir, self.dcx, self.interner, specialized);
-        self.scan_body(&body, &pending.chain);
+        let specialized = (self.specialize)(pending.instance, pending.instance.def, body);
+        self.scan_body(&specialized.body, &pending.chain);
         self.bodies[pending.id.index() as usize] = Some(MonoMir {
             instance: pending.instance,
-            body,
+            body: specialized.body,
         });
-        for event in events {
+        for event in specialized.events {
             match event {
                 BodyEvent::Call(child) | BodyEvent::Closure(child) => {
                     let mut chain = pending.chain.clone();

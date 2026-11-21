@@ -1142,19 +1142,47 @@ query kind.
 
 ### Session integration
 
-`Session` owns one `QueryDb`; every session starts with an empty table. Values
-can contain spans into that session's `SourceMap`, so they must not outlive it
-or move to another session. `seal-driver` routes lexing, parsing, and the
-single-file HIR lowering through the database (`frontend::lex`,
-`frontend::parse`, `frontend::lower_single`). Multi-file package and plan
-lowering still lower the whole package directly because their result is
-package-wide.
+`Session` owns one `QueryDb`; every fresh session starts with an empty table.
+Values can contain spans into that session's `SourceMap`, so they cannot move to
+another session. `seal-driver` routes lexing, parsing, and HIR lowering through
+the database (`frontend::lex`, `frontend::parse`, `frontend::lower_single`,
+`frontend::lower_package`). Type checking is split into a declarations query and
+one query per non-closure body, MIR lowering has one query per body, and
+monomorphization queries specialization per instance. Code generation remains
+the existing per-CGU action in `seal-build`, whose key hashes the mono profile and
+unit digest; the `codegen-cgu` query key exists for byte-cache consumers.
 
-Type checking, MIR lowering, monomorphization, and code generation remain
-whole-program phases in the driver. The `typeck-body`, `mir-body`,
-`mono-instance`, and `codegen-cgu` keys and invalidation rules are implemented
-and exercised by the query tests and benchmark graph, but those phases are not
-yet partitioned at those boundaries. No compiler speedup is claimed for them.
+The HIR query's fingerprint covers declarations only. Source text behind every
+body is blanked before hashing, so a body edit recomputes the HIR value (new
+spans and arena IDs) but backdates its result. Each body query then depends on
+the HIR stamp, the declarations fingerprint, and a structural fingerprint of its
+own body. That structural fingerprint normalizes span positions to file-local
+offsets: a persistent session places a new file generation at a new global base,
+and unchanged bodies must still hit even though their absolute positions
+changed. Arena IDs stay in the fingerprint, so editing an earlier body that
+shifts later IDs invalidates the bodies that actually shifted.
+
+A body source edit therefore recomputes tokens, AST, the HIR value, and only the
+edited body's typeck/MIR/mono instance. Declarations and every other body stay
+cached. A signature edit changes the declarations fingerprint and invalidates
+all body checks that depend on it.
+
+### In-process sessions and watch
+
+The driver keeps a process-local cache of sessions keyed by tracked options plus
+presentation format and color. `seal-build` runs frontend actions through
+`seal_driver::run_from` in the same process, so `seal watch` reuses the session,
+source map, interner, and query database across edits instead of constructing a
+new compiler. Each request resets diagnostic counts and replay state; cached
+query values carry their diagnostics and replay them through the normal emitter
+on a hit.
+
+A changed file is registered as a new source generation with a fresh `FileId`,
+because values from earlier versions still contain spans into the old text.
+Those generations are retained while the values that reference them are
+reachable. When a session accumulates more than 128 source generations, the
+cache replaces it with a fresh session; the next request rebuilds from an empty
+query database, bounding memory in a long watch.
 
 ### Persistent cache
 
@@ -1162,9 +1190,15 @@ yet partitioned at those boundaries. No compiler speedup is claimed for them.
 limit, and BLAKE3 checksum. Writes use a temporary file and rename; a corrupt,
 truncated, wrong-key, oversized, or old-version record is a miss and a rebuild.
 The key file name is derived from the query kind and logical name, never from an
-absolute project path. The build layer's existing content-addressed action
-cache remains the cache used for real compiler artifacts; `DiskCache` is the
-serializable-result primitive for query consumers.
+absolute project path.
+
+The build layer still uses its content-addressed action cache as the
+authoritative artifact cache. The frontend action additionally stores its mono
+artifact and link metadata in `seal/cache/query-payloads`, keyed by the plan
+digest and every source digest. If the action record is lost but this payload
+survives, the frontend action restores both files into the CAS without running
+the compiler again. The source digests are part of the key, so an edit can never
+serve a stale artifact.
 
 ### Measurements
 
@@ -1184,6 +1218,8 @@ deterministic.
 | Feature edit | 500 misses / 500 edits |
 | Cfg edit | 500 misses / 500 edits |
 | Const edit | 500 misses / 500 edits |
+| Driver body edit (actual session) | 1 tokens, 1 AST, 1 HIR, 0 signature, 1 typeck-body, 1 MIR-body, 1 mono-instance miss; the other body hits |
+| `seal watch` rebuild after a source edit | 0.01 s for the `ztests` project; codegen and link were cache hits |
 | 256 KiB serializable payload | 179.052 us generate, 429.695 us disk hit (0.42x) |
 
 The query graph is a deterministic model of body and signature invalidation,
@@ -1193,10 +1229,13 @@ invalidation cardinality, not a speedup. The disk cache is slower for a
 synthetic 256 KiB payload that is cheap to regenerate; it must be applied only
 where the avoided computation costs more than the read and checksum.
 
-`seal watch` still starts an action and a session per change. Because spans are
-session-scoped, it does not reuse HIR or AST values across edits; its latency is
-reported by the existing watch status line, and the query cache improves only
-repeated requests inside one session.
+The driver body-edit row is measured by
+`pipeline::tests::editing_one_body_reuses_the_other_bodies`, which performs two
+real `check` requests through the shared session and compares query counters. It
+proves invalidation cardinality end to end; it is not a wall-clock speedup. The
+watch latency is reported by its existing status line. The disk cache remains a
+net loss for cheap synthetic payloads, so the build uses it only after an action
+cache miss and never as a replacement for the action cache.
 
 ## Verification
 

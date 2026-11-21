@@ -17,11 +17,16 @@ pub struct Mir {
 }
 
 impl Mir {
-    pub(crate) fn new() -> Self {
+    /// Creates an empty MIR table.
+    ///
+    /// Incremental callers build the table from independently lowered bodies;
+    /// [`crate::lower`] is the whole-program convenience path.
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn push_body(&mut self, body: Body) -> BodyId {
+    /// Appends one lowered body and returns its dense index.
+    pub fn push_body(&mut self, body: Body) -> BodyId {
         let owner = body.owner;
         let id = self.bodies.push(body);
         self.by_owner.insert(owner, id);

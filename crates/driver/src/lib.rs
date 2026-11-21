@@ -7,13 +7,17 @@
 
 mod actions;
 mod api;
+mod body_cache;
 mod cli;
 mod doc_text;
 mod frontend;
+mod mono_cache;
 mod options;
 mod output;
 mod pipeline;
+mod query_cache;
 mod report;
+mod session_cache;
 mod temp;
 
 use std::ffi::OsString;

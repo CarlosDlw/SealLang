@@ -114,7 +114,6 @@ impl Checker<'_> {
         expected: Option<TyId>,
     ) -> Instantiated {
         let signature = self
-            .results
             .signature(function)
             .expect("every function has a signature")
             .clone();
@@ -195,7 +194,6 @@ impl Checker<'_> {
         let args = self.finish_arguments(&instantiated.generics, &instantiated.args, span)?;
         let substs = self.hir.ty_ctxt().substs(&args);
         let signature = self
-            .results
             .signature(function)
             .expect("every function has a signature")
             .clone();

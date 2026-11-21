@@ -109,6 +109,33 @@ impl DiagCtxt {
         self.lock().first_error.is_some()
     }
 
+    /// Clears counts, deduplication, and the abort state.
+    ///
+    /// A persistent compiler session reuses one context across edits. Resetting
+    /// before each request keeps the second build's error state independent from
+    /// the first, while the emitter itself is retained.
+    pub fn reset(&self) {
+        let mut inner = self.lock();
+        inner.seen.clear();
+        inner.error_count = 0;
+        inner.warning_count = 0;
+        inner.first_error = None;
+        inner.aborted = false;
+        inner.emitter_error = None;
+    }
+
+    /// Re-emits diagnostics captured by a cached query.
+    ///
+    /// Cached compiler values do not re-run their phase, so the diagnostics that
+    /// phase produced must travel with the value. Replaying them through the
+    /// normal emitter preserves JSON/human formatting, deduplication, and error
+    /// counts.
+    pub fn replay(&self, diagnostics: &[Diagnostic]) {
+        for diagnostic in diagnostics {
+            let _ = self.emit(diagnostic.clone());
+        }
+    }
+
     /// Returns the first error guarantee, if any.
     pub fn error_guarantee(&self) -> Option<ErrorGuaranteed> {
         self.lock().first_error

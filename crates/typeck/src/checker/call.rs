@@ -81,7 +81,6 @@ impl Checker<'_> {
 
         if self.hir.definitions().kind(function) != DefKind::TraitMethod {
             let is_unsafe = self
-                .results
                 .signature(function)
                 .is_some_and(|signature| signature.is_unsafe);
             let name = self.hir.definitions().name(function);

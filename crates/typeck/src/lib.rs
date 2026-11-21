@@ -51,7 +51,7 @@ pub use results::{
 };
 
 use seal_diagnostics::DiagCtxt;
-use seal_hir::Hir;
+use seal_hir::{BodyId, Hir};
 use seal_symbol::Interner;
 
 /// Type-checks `hir`, reporting errors through `dcx`.
@@ -61,5 +61,49 @@ use seal_symbol::Interner;
 /// errors were reported: an expression that failed to check has the `Error`
 /// type, which suppresses cascading diagnostics.
 pub fn check(hir: &Hir, dcx: &DiagCtxt, interner: &Interner, pointer_width: u8) -> TypeckResults {
-    checker::Checker::new(hir, dcx, interner, pointer_width).run()
+    checker::Checker::new(hir, dcx, interner, pointer_width)
+        .prepare()
+        .run()
+}
+
+/// Builds the declarations shared by every body check.
+///
+/// The result contains every function signature, every extern declaration, and
+/// the diagnostics for declaration-level rules. An incremental caller checks
+/// this once, then calls [`check_body`] for each executable body. `check` is
+/// exactly this pass followed by all body checks.
+pub fn check_declarations(
+    hir: &Hir,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    pointer_width: u8,
+) -> TypeckResults {
+    checker::Checker::new(hir, dcx, interner, pointer_width)
+        .prepare()
+        .run_declarations()
+}
+
+/// Type-checks one non-closure body against previously built declarations.
+///
+/// The returned table contains only body-local results. Merge it with
+/// [`TypeckResults::merge`] before lowering MIR. Closure bodies are checked from
+/// their creating expression and must not be passed here.
+pub fn check_body(
+    hir: &Hir,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    pointer_width: u8,
+    declarations: &TypeckResults,
+    body: BodyId,
+) -> TypeckResults {
+    checker::Checker::for_body(hir, dcx, interner, pointer_width, declarations)
+        .run_body(&hir.bodies()[body])
+}
+
+/// Returns the stable fingerprint of a declarations table.
+///
+/// The fingerprint covers signatures only. Body results are fingerprinted by
+/// their own query, so a body edit cannot invalidate an unrelated body.
+pub fn declarations_fingerprint(results: &TypeckResults) -> seal_hash::Fingerprint {
+    results.declarations_fingerprint()
 }

@@ -33,6 +33,7 @@ seal-query.workspace = true
 seal-error-codes.workspace = true
 seal-def.workspace = true
 seal-fs.workspace = true
+seal-hash.workspace = true
 seal-plan.workspace = true
 serde.workspace = true
 serde_json.workspace = true

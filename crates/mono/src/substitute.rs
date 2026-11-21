@@ -5,7 +5,6 @@ use seal_error_codes as codes;
 use seal_hir::Hir;
 use seal_mir::{AggregateKind, Body, CallTarget, Operand, Rvalue, StatementKind};
 
-pub(crate) use seal_mir::instantiate_body;
 use seal_span::Span;
 use seal_symbol::Interner;
 use seal_ty::{Bound, Instance, SubstsId, TemplateUnifier, TraitImplDef, TyCtxt, TyId, TyKind};
@@ -14,15 +13,17 @@ use crate::error::MonoError;
 use crate::vtable::{self, VtableKey};
 
 /// One call discovered in a specialized body.
-pub(crate) struct ChildCall {
+#[derive(Clone, Copy, Debug)]
+pub struct ChildCall {
     /// The callee instance with concrete arguments.
-    pub(crate) instance: Instance,
+    pub instance: Instance,
     /// The call's source span, for limits and missing-impl diagnostics.
-    pub(crate) span: Span,
+    pub span: Span,
 }
 
 /// One discovery event in a specialized body, in statement order.
-pub(crate) enum BodyEvent {
+#[derive(Clone, Copy, Debug)]
+pub enum BodyEvent {
     /// A call whose callee must be collected.
     Call(ChildCall),
     /// A closure environment whose lifted body must be collected.
@@ -34,6 +35,34 @@ pub(crate) enum BodyEvent {
         /// The coercion's source span.
         span: Span,
     },
+}
+
+/// One body with every symbolic call resolved, plus its discovery events.
+///
+/// This is the cacheable unit of monomorphization: substitution and trait-call
+/// resolution depend on the generic MIR body and the instance's concrete type
+/// arguments, not on how many other instances the program reaches. The
+/// collector still walks the graph, but a persistent caller can reuse this
+/// value for every unchanged instance.
+#[derive(Clone, Debug)]
+pub struct SpecializedBody {
+    /// The body with every type and call substituted.
+    pub body: Body,
+    /// The callees, closures, and vtables the body discovers.
+    pub events: Vec<BodyEvent>,
+}
+
+/// Specializes one generic MIR body for a concrete instance.
+pub fn specialize(
+    hir: &Hir,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+    body: &Body,
+    instance: Instance,
+) -> SpecializedBody {
+    let specialized = seal_mir::instantiate_body(hir, body, instance);
+    let (body, events) = resolve_body(hir, dcx, interner, specialized);
+    SpecializedBody { body, events }
 }
 
 /// Resolves symbolic calls and records vtable requests in statement order.
