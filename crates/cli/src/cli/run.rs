@@ -93,7 +93,7 @@ pub(crate) fn run(cli: &Cli, root: &std::path::Path, args: &RunArgs) -> ExitCode
         Ok(plan) => plan,
         Err(error) => return ui::error(error.code(), error.message()),
     };
-    let output = match crate::cli::build::run_plan(cli, &plan, Mode::Run, "exe", &[]) {
+    let output = match crate::cli::build::run_plan(cli, &plan, Mode::Run, "exe", &[], &[]) {
         Ok(output) => output,
         Err(code) => return code,
     };

@@ -200,6 +200,15 @@ impl<'a> Parser<'a> {
                     .help("remove `test`; it applies to functions")
                     .emit();
                 }
+                if modifiers.is_bench {
+                    self.error(
+                        codes::E2079,
+                        self.current_span(),
+                        "a module declaration cannot be a benchmark",
+                    )
+                    .help("remove `bench`; it applies to functions")
+                    .emit();
+                }
                 self.item_modifiers = modifiers;
                 let item = self.parse_module_decl();
                 self.items.push(item);
@@ -234,6 +243,11 @@ impl<'a> Parser<'a> {
         if self.item_modifiers.is_test && !self.at_function_start() {
             self.error(codes::E1001, start, "`test` applies only to functions")
                 .help("remove `test` from this declaration")
+                .emit();
+        }
+        if self.item_modifiers.is_bench && !self.at_function_start() {
+            self.error(codes::E1001, start, "`bench` applies only to functions")
+                .help("remove `bench` from this declaration")
                 .emit();
         }
         if self.item_modifiers.has_visibility && self.at(TokenKind::Impl) {
@@ -329,6 +343,11 @@ impl<'a> Parser<'a> {
         if modifiers.is_test {
             self.error(codes::E1001, span, "a trait method cannot be a test")
                 .help("remove `test`")
+                .emit();
+        }
+        if modifiers.is_bench {
+            self.error(codes::E1001, span, "a trait method cannot be a benchmark")
+                .help("remove `bench`")
                 .emit();
         }
     }
@@ -1061,6 +1080,15 @@ impl<'a> Parser<'a> {
                 "a variant cannot be a test",
             )
             .help("remove `test`; it applies to functions")
+            .emit();
+        }
+        if modifiers.is_bench {
+            self.error(
+                codes::E1001,
+                self.current_span(),
+                "a variant cannot be a benchmark",
+            )
+            .help("remove `bench`; it applies to functions")
             .emit();
         }
         let (name, name_span) = self.expect_ident("a variant name");

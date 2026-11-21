@@ -89,7 +89,30 @@ impl Parser<'_> {
                 continue;
             }
 
+            if self.at_name("bench") {
+                let span = self.bump().span;
+                if modifiers.is_bench {
+                    self.error(codes::E1001, span, "`bench` is written only once")
+                        .help("remove the duplicate modifier")
+                        .emit();
+                } else {
+                    modifiers.is_bench = true;
+                }
+                continue;
+            }
+
             break;
+        }
+
+        if modifiers.is_test && modifiers.is_bench {
+            self.error(
+                codes::E1001,
+                self.current_span(),
+                "a function cannot be both a test and a benchmark",
+            )
+            .help("keep `test` or `bench`, not both")
+            .emit();
+            modifiers.is_bench = false;
         }
 
         modifiers

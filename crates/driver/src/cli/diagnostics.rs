@@ -42,4 +42,8 @@ pub(crate) struct DiagnosticArgs {
     /// Print how long each compiler phase took.
     #[arg(long = "time-passes", help_heading = "Diagnostics")]
     pub(crate) time_passes: bool,
+
+    /// Treat every emitted warning as an error.
+    #[arg(long = "deny-warnings", help_heading = "Diagnostics")]
+    pub(crate) deny_warnings: bool,
 }

@@ -1,0 +1,7 @@
+[project]
+name = "fixture"
+language = "0.1"
+
+[package]
+name = "fixture"
+version = "0.1.0"

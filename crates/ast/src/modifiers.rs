@@ -44,6 +44,8 @@ pub struct Modifiers {
     pub cfg: Option<CfgExprId>,
     /// Whether the item was declared with the contextual `test` modifier.
     pub is_test: bool,
+    /// Whether the item was declared with the contextual `bench` modifier.
+    pub is_bench: bool,
     /// The ABI spelling after `export`, when the item is exported to C.
     pub export: Option<Symbol>,
     /// The span of the `export` modifier, for diagnostics.
@@ -59,6 +61,7 @@ impl Modifiers {
             has_visibility: false,
             cfg: None,
             is_test: false,
+            is_bench: false,
             export: None,
             export_span: None,
         }
@@ -67,6 +70,6 @@ impl Modifiers {
     /// Returns `true` when no modifier was written.
     #[inline]
     pub const fn is_empty(self) -> bool {
-        !self.has_visibility && self.cfg.is_none() && !self.is_test
+        !self.has_visibility && self.cfg.is_none() && !self.is_test && !self.is_bench
     }
 }

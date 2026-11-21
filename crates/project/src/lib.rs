@@ -48,6 +48,8 @@ pub struct Target {
     pub output: Option<PathBuf>,
     /// The target's profile override.
     pub profile: Option<String>,
+    /// The library target whose sources a test or example reuses.
+    pub reuse: Option<String>,
     /// The runtime policy (`default` or `none`).
     pub runtime: Option<String>,
     /// The panic policy (`abort` or `trap`).

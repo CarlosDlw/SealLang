@@ -40,6 +40,15 @@ impl Emit {
     }
 }
 
+/// The generated entry point of a test or benchmark executable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HarnessKind {
+    /// A test executable: `--list` and `--run NAME`.
+    Test,
+    /// A benchmark executable: `--list` and `--bench NAME COUNT`.
+    Bench,
+}
+
 /// Everything the backend needs to produce one artifact.
 ///
 /// The output path is explicit rather than derived from the input: the driver
@@ -92,6 +101,8 @@ pub struct CodegenOptions {
     ///
     /// `None` keeps the single-file convention of looking for `main`.
     pub entry: Option<DefId>,
+    /// Generate a test or benchmark harness instead of requiring `main`.
+    pub harness: Option<HarnessKind>,
     /// Number of code generation units to produce for [`Emit::Mono`].
     pub cgu_count: u32,
 }
@@ -118,6 +129,7 @@ impl CodegenOptions {
             search_paths: Vec::new(),
             link_args: Vec::new(),
             entry: None,
+            harness: None,
             cgu_count: 1,
         }
     }

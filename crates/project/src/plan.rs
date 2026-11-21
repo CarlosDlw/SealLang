@@ -164,12 +164,22 @@ pub(crate) fn compile_plan(
     }
     let graph = features::resolve(project, package_index, target, options, &cfg)?;
 
-    let primary = graph.primary;
-    let mut packages = Vec::with_capacity(graph.instances.len());
+    // An integration test is its own package: it depends on the package
+    // library instead of being merged into it, so private items stay
+    // unreachable. A test with `reuse = "lib"` is a unit test and keeps the
+    // library's package, which is what gives it access to internals.
+    let integration =
+        matches!(target.kind, TargetKind::Test | TargetKind::Bench) && target.reuse.is_none();
+    let mut primary = graph.primary;
+    let mut packages = Vec::with_capacity(graph.instances.len() + integration as usize);
     for (position, instance) in graph.instances.iter().enumerate() {
         let package = project.package(instance.package);
         let source_target = if instance.package == package_index {
-            Some(target)
+            if integration {
+                package.library().or(Some(target))
+            } else {
+                Some(target)
+            }
         } else {
             package.library().or_else(|| package.targets.first())
         };
@@ -242,6 +252,62 @@ pub(crate) fn compile_plan(
         });
     }
 
+    if integration {
+        // The primary package used the library target above. Add the test
+        // package after every dependency, with the library as its only edge.
+        if let Some(library) = package.library() {
+            let library_files: Vec<seal_plan::PlanFile> = library
+                .files
+                .iter()
+                .map(|path| seal_plan::PlanFile {
+                    path: path.clone(),
+                    primary: *path == library.primary,
+                })
+                .collect();
+            let mut primary_cfg = packages[primary].cfg.clone();
+            primary_cfg.test = options.cfgs.iter().any(|value| value == "test");
+            primary_cfg.bench = options.cfgs.iter().any(|value| value == "bench");
+            packages[primary].files = library_files;
+            packages[primary].cfg = primary_cfg;
+
+            let mut test_cfg = packages[primary].cfg.clone();
+            test_cfg.test =
+                target.kind == TargetKind::Test || options.cfgs.iter().any(|value| value == "test");
+            test_cfg.bench = target.kind == TargetKind::Bench
+                || options.cfgs.iter().any(|value| value == "bench");
+            let files = target
+                .files
+                .iter()
+                .map(|path| seal_plan::PlanFile {
+                    path: path.clone(),
+                    primary: *path == target.primary,
+                })
+                .collect();
+            let alias = package_alias(&package.name);
+            let index = packages.len();
+            packages.push(seal_plan::PlanPackage {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                instance: test_instance_hash(
+                    package,
+                    &test_cfg.features,
+                    &cfg,
+                    &profile,
+                    &target.name,
+                ),
+                root: package.root.clone(),
+                files,
+                exposed: vec!["root".to_owned()],
+                dependencies: vec![seal_plan::PlanDependency {
+                    alias,
+                    package: primary,
+                }],
+                cfg: test_cfg,
+            });
+            primary = index;
+        }
+    }
+
     let output = match options.mode {
         BuildMode::Check => options.output.clone(),
         BuildMode::Build => Some(match &options.output {
@@ -249,16 +315,12 @@ pub(crate) fn compile_plan(
             None => default_output(project, target, &profile_name),
         }),
     };
-    let entry = if target.kind.needs_entry()
-        || target.kind == TargetKind::Test
-        || target.kind == TargetKind::Bench
-    {
-        // Tests and benches currently use the same executable shape as a
-        // binary; the future test harness replaces this conventional entry.
-        target.entry.clone().or_else(|| {
-            matches!(target.kind, TargetKind::Test | TargetKind::Bench)
-                .then(|| "root::main".to_owned())
-        })
+    // Test and benchmark targets are driven by the generated harness; they
+    // have no Seal-level entry function.
+    let entry = if matches!(target.kind, TargetKind::Test | TargetKind::Bench) {
+        None
+    } else if target.kind.needs_entry() {
+        target.entry.clone()
     } else {
         None
     };
@@ -322,6 +384,48 @@ fn default_output(project: &Project, target: &Target, profile: &str) -> PathBuf 
         .join("target")
         .join(profile)
         .join(file)
+}
+
+/// Returns the dependency alias a test package uses for its own library.
+fn package_alias(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Returns a stable instance number for a test package.
+fn test_instance_hash(
+    package: &crate::Package,
+    features: &[String],
+    cfg: &CfgEnvironment,
+    profile: &PlanProfile,
+    target: &str,
+) -> u32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"seal-test-package-v1\0");
+    hasher.update(package.name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(package.version.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(target.as_bytes());
+    hasher.update(b"\0");
+    for feature in features {
+        hasher.update(feature.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(cfg.os().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cfg.arch().as_bytes());
+    hasher.update([cfg.pointer_width()]);
+    hasher.update([profile.debug_assertions as u8]);
+    let digest = hasher.finalize();
+    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
 }
 
 pub(crate) fn instance_hash(

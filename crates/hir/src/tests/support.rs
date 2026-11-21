@@ -919,6 +919,7 @@ impl Reachability<'_> {
                     "a capture is a place rooted at its binding"
                 );
             }
+            ExprKind::Assert { condition, .. } => self.check_expr(condition),
             ExprKind::Path { args, .. } => self.check_optional_substs(args),
             ExprKind::Lit(_) | ExprKind::Error => {}
         }

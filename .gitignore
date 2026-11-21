@@ -4,4 +4,7 @@ ztests/*
 !ztests/projects/
 ztests/projects/*
 !ztests/projects/monorepo/
+!ztests/projects/tests/
+ztests/projects/tests/seal/
+ztests/projects/tests/seal.lock
 .local/

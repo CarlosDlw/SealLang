@@ -4,16 +4,21 @@ mod add;
 mod affected;
 mod api;
 mod audit;
+pub(crate) mod bench;
 pub(crate) mod build;
 mod cache;
 mod check;
 mod clean;
+mod completions;
+mod config;
 mod dependency;
 mod doc;
 mod doctor;
 mod graph;
+mod harness;
 mod info;
 mod init;
+mod lint;
 mod login;
 mod logout;
 pub(crate) mod metadata;
@@ -29,11 +34,13 @@ mod semver_check;
 mod snapshot;
 mod target;
 mod task;
+mod test;
 mod toolchain;
 mod tree;
 mod update;
 mod vendor;
 mod verify_repro;
+mod watch;
 mod why;
 mod yank;
 
@@ -153,6 +160,20 @@ pub(crate) enum Command {
     Run(RunArgs),
     /// Analyze targets without writing artifacts.
     Check(CheckArgs),
+    /// Build and run the test targets of the selected packages.
+    Test(TestArgs),
+    /// Build and run benchmark targets.
+    Bench(BenchArgs),
+    /// Rebuild, check, or test whenever a source file changes.
+    Watch(WatchArgs),
+    /// Print the resolved configuration and where each value came from.
+    Config(ConfigArgs),
+    /// Generate shell completions.
+    Completions(CompletionsArgs),
+    /// Generate a manual page.
+    Man(ManArgs),
+    /// Run the compiler lint policy over the selected targets.
+    Lint(LintArgs),
     /// Print the resolved package-instance graph.
     Tree(QueryArgs),
     /// Explain why packages and features are in the plan.
@@ -214,7 +235,7 @@ pub(crate) enum Command {
 }
 
 /// Options shared by build-like commands.
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 pub(crate) struct Selection {
     /// Targets to select by name.
     #[arg(value_name = "TARGET")]
@@ -374,6 +395,257 @@ pub(crate) struct RunArgs {
 pub(crate) struct CheckArgs {
     #[command(flatten)]
     pub(crate) selection: Selection,
+}
+
+/// Report format for `seal test` and `seal bench`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum HarnessFormat {
+    /// One line per test plus a summary.
+    Human,
+    /// Newline-delimited JSON events.
+    Json,
+    /// A JUnit XML document.
+    Junit,
+}
+
+/// `seal test`.
+#[derive(Debug, Args)]
+pub(crate) struct TestArgs {
+    #[command(flatten)]
+    pub(crate) selection: Selection,
+
+    /// Keep tests whose full name contains this text; repeatable.
+    #[arg(long = "filter", value_name = "TEXT")]
+    pub(crate) filters: Vec<String>,
+
+    /// Require an exact match with a `--filter` value.
+    #[arg(long)]
+    pub(crate) exact: bool,
+
+    /// Skip tests whose full name contains this text; repeatable.
+    #[arg(long = "skip", value_name = "TEXT")]
+    pub(crate) skips: Vec<String>,
+
+    /// Run one shard, written `INDEX/TOTAL` or `hash:INDEX/TOTAL`.
+    #[arg(long, value_name = "SHARD")]
+    pub(crate) partition: Option<String>,
+
+    /// Repeat every selected test this many times.
+    #[arg(long, default_value = "1", value_name = "N")]
+    pub(crate) stress: u32,
+
+    /// Retry a failed test up to this many extra times.
+    #[arg(long, default_value = "0", value_name = "N")]
+    pub(crate) retries: u32,
+
+    /// Kill a test after this many seconds; zero disables the timeout.
+    #[arg(long, default_value = "60", value_name = "SECONDS")]
+    pub(crate) timeout: u64,
+
+    /// Keep running after the first failure.
+    #[arg(long)]
+    pub(crate) no_fail_fast: bool,
+
+    /// Number of tests to run in parallel.
+    #[arg(short = 'j', long, value_name = "N")]
+    pub(crate) jobs: Option<usize>,
+
+    /// Print the selected tests without running them.
+    #[arg(long)]
+    pub(crate) list: bool,
+
+    /// Report format.
+    #[arg(long, value_enum, default_value = "human")]
+    pub(crate) format: HarnessFormat,
+
+    /// Write the report to this path instead of stdout.
+    #[arg(short = 'o', long, value_name = "PATH", requires = "format")]
+    pub(crate) output: Option<PathBuf>,
+
+    /// Bypass the action cache for this build.
+    #[arg(long)]
+    pub(crate) no_cache: bool,
+}
+
+/// `seal bench`.
+#[derive(Debug, Args)]
+pub(crate) struct BenchArgs {
+    #[command(flatten)]
+    pub(crate) selection: Selection,
+
+    /// Keep benchmarks whose full name contains this text; repeatable.
+    #[arg(long = "filter", value_name = "TEXT")]
+    pub(crate) filters: Vec<String>,
+
+    /// Require an exact match with a `--filter` value.
+    #[arg(long)]
+    pub(crate) exact: bool,
+
+    /// Skip benchmarks whose full name contains this text.
+    #[arg(long = "skip", value_name = "TEXT")]
+    pub(crate) skips: Vec<String>,
+
+    /// Run one shard, written `INDEX/TOTAL` or `hash:INDEX/TOTAL`.
+    #[arg(long, value_name = "SHARD")]
+    pub(crate) partition: Option<String>,
+
+    /// Iterations of the benchmark body per process.
+    #[arg(long, default_value = "100", value_name = "N")]
+    pub(crate) iterations: u32,
+
+    /// Number of measured processes.
+    #[arg(long, default_value = "3", value_name = "N")]
+    pub(crate) samples: u32,
+
+    /// Kill one sample after this many seconds.
+    #[arg(long, default_value = "120", value_name = "SECONDS")]
+    pub(crate) timeout: u64,
+
+    /// Number of benchmarks to run in parallel.
+    #[arg(short = 'j', long, value_name = "N")]
+    pub(crate) jobs: Option<usize>,
+
+    /// Print the selected benchmarks without running them.
+    #[arg(long)]
+    pub(crate) list: bool,
+
+    /// Compare against a baseline written by `--save`.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) baseline: Option<PathBuf>,
+
+    /// Write the measured results as a baseline.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) save: Option<PathBuf>,
+
+    /// Fail when a measurement is slower than the baseline by this percentage.
+    #[arg(long, default_value = "20", value_name = "PERCENT")]
+    pub(crate) threshold: f64,
+
+    /// Print the results as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+
+    /// Bypass the action cache for this build.
+    #[arg(long)]
+    pub(crate) no_cache: bool,
+}
+
+/// The command a watcher runs after a change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum WatchAction {
+    /// Rebuild the selected targets.
+    Build,
+    /// Type-check the selected targets.
+    Check,
+    /// Run the selected tests.
+    Test,
+}
+
+/// `seal watch`.
+#[derive(Debug, Args)]
+pub(crate) struct WatchArgs {
+    #[command(flatten)]
+    pub(crate) selection: Selection,
+
+    /// The command to repeat.
+    #[arg(long, value_enum, default_value = "build")]
+    pub(crate) action: WatchAction,
+
+    /// Wait this many milliseconds after the last change.
+    #[arg(long, default_value = "200", value_name = "MILLISECONDS")]
+    pub(crate) debounce: u64,
+
+    /// Run once and exit; useful in scripts and tests.
+    #[arg(long)]
+    pub(crate) once: bool,
+
+    /// Keep tests whose full name contains this text.
+    #[arg(long = "filter", value_name = "TEXT")]
+    pub(crate) filters: Vec<String>,
+}
+
+/// `seal config`.
+#[derive(Debug, Args)]
+pub(crate) struct ConfigArgs {
+    /// Print only this key.
+    #[arg(long, value_name = "KEY")]
+    pub(crate) key: Option<String>,
+
+    /// List every resolved key.
+    #[arg(long)]
+    pub(crate) list: bool,
+
+    /// Print a JSON array of `{key, value, origin}` objects.
+    #[arg(long)]
+    pub(crate) json: bool,
+
+    /// Print only the origin of each value.
+    #[arg(long)]
+    pub(crate) origin: bool,
+
+    /// Override the target triple for this resolution.
+    #[arg(long, value_name = "TRIPLE")]
+    pub(crate) target: Option<String>,
+
+    /// Override the profile for this resolution.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) profile: Option<String>,
+
+    /// Override the job count for this resolution.
+    #[arg(long, value_name = "N")]
+    pub(crate) jobs: Option<usize>,
+}
+
+/// Shells accepted by `seal completions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Shell {
+    /// Bourne Again Shell.
+    Bash,
+    /// Z shell.
+    Zsh,
+    /// Friendly Interactive Shell.
+    Fish,
+    /// PowerShell; `pwsh` is accepted as an alias.
+    #[value(alias = "pwsh")]
+    Powershell,
+}
+
+/// `seal completions`.
+#[derive(Debug, Args)]
+pub(crate) struct CompletionsArgs {
+    /// Shell to generate completions for.
+    pub(crate) shell: Shell,
+
+    /// Write to this path instead of stdout.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    pub(crate) output: Option<PathBuf>,
+}
+
+/// `seal man`.
+#[derive(Debug, Args)]
+pub(crate) struct ManArgs {
+    /// Write to this path instead of stdout.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    pub(crate) output: Option<PathBuf>,
+}
+
+/// `seal lint`.
+#[derive(Debug, Args)]
+pub(crate) struct LintArgs {
+    #[command(flatten)]
+    pub(crate) selection: Selection,
+
+    /// Treat a lint as an error; `warnings` covers every compiler warning.
+    #[arg(long, value_name = "LINT")]
+    pub(crate) deny: Vec<String>,
+
+    /// Allow a lint that the compiler denies by default.
+    #[arg(long, value_name = "LINT")]
+    pub(crate) allow: Vec<String>,
+
+    /// Print a JSON report.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 /// Options shared by `tree` and `why`.
@@ -879,6 +1151,12 @@ where
         Command::Build(args) => build::build(&cli, &project, args),
         Command::Run(args) => run::run(&cli, &project, args),
         Command::Check(args) => check::check(&cli, &project, args),
+        Command::Test(args) => test::test(&cli, &project, args),
+        Command::Bench(args) => bench::bench(&cli, &project, args),
+        Command::Watch(args) => watch::watch(&cli, &project, args),
+        Command::Config(args) => config::run(&cli, &project, args),
+        Command::Completions(args) => completions::completions(args),
+        Command::Man(args) => completions::man(args),
         Command::Tree(args) => tree::tree(&cli, &project, args),
         Command::Why(args) => why::why(&cli, &project, args),
         Command::Graph(args) => graph::graph(&cli, &project, args),
@@ -907,6 +1185,7 @@ where
         Command::Api(args) => api::run(&cli, &project, args),
         Command::SemverCheck(args) => semver_check::run(&cli, &project, args),
         Command::Doc(args) => doc::run(&cli, &project, args),
+        Command::Lint(args) => lint::lint(&cli, &project, args),
     }
 }
 

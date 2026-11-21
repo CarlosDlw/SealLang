@@ -324,13 +324,18 @@ impl<'a> Lowering<'a> {
 
     /// Returns whether the item's `cfg` condition is active in this instance.
     pub(super) fn item_enabled(&self, item_id: ItemId) -> bool {
-        let Some(condition) = self.ast.item(item_id).modifiers.cfg else {
+        let modifiers = self.ast.item(item_id).modifiers;
+        let cfg = &self.hir.package(self.current_package).cfg;
+        // `test` and `bench` are configuration modifiers: the item exists only
+        // in the matching harness build, so normal builds never type-check or
+        // generate test bodies.
+        if (modifiers.is_test && !cfg.test) || (modifiers.is_bench && !cfg.bench) {
+            return false;
+        }
+        let Some(condition) = modifiers.cfg else {
             return true;
         };
-        self.hir
-            .package(self.current_package)
-            .cfg
-            .evaluate(self.ast, condition, self.interner)
+        cfg.evaluate(self.ast, condition, self.interner)
     }
 
     /// Returns every top-level item of every file, in file order.
@@ -342,10 +347,11 @@ impl<'a> Lowering<'a> {
                 continue;
             }
             for &id in source.ast.program().items() {
-                if source
-                    .ast
-                    .item(id)
-                    .modifiers
+                let modifiers = source.ast.item(id).modifiers;
+                if (modifiers.is_test && !cfg.test) || (modifiers.is_bench && !cfg.bench) {
+                    continue;
+                }
+                if modifiers
                     .cfg
                     .is_some_and(|condition| !cfg.evaluate(source.ast, condition, self.interner))
                 {
@@ -622,11 +628,29 @@ impl<'a> Lowering<'a> {
 
     /// Creates a top-level item definition and records its declared visibility.
     pub(super) fn define_item(&mut self, item_id: ItemId, data: DefData) -> DefId {
-        let visibility = self.ast.item(item_id).modifiers.visibility;
+        let modifiers = self.ast.item(item_id).modifiers;
         let definition = self.define(data);
+        // The generated harness lives in the package root, outside the module
+        // that declares a test. Making a test entry point internal under its
+        // own configuration keeps it reachable without exposing it in normal
+        // builds, where the harness does not exist.
+        let harness_visible = (modifiers.is_test
+            && self.hir.package(self.current_package).cfg.test)
+            || (modifiers.is_bench && self.hir.package(self.current_package).cfg.bench);
+        let visibility = if harness_visible {
+            seal_ast::Visibility::Internal
+        } else {
+            modifiers.visibility
+        };
         self.hir
             .definitions_mut()
             .set_visibility(definition, crate::module::visibility_from(visibility));
+        self.hir
+            .definitions_mut()
+            .set_test(definition, modifiers.is_test);
+        self.hir
+            .definitions_mut()
+            .set_bench(definition, modifiers.is_bench);
         self.hir
             .definitions_mut()
             .set_doc_span(definition, self.ast.item(item_id).docs);

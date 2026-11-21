@@ -259,8 +259,9 @@ fn affected_maps_a_source_change_to_its_package() {
     let value: serde_json::Value = serde_json::from_slice(&result.stdout).expect("affected JSON");
     assert_eq!(value["packages"], serde_json::json!(["beta"]));
     let target = value["targets"].as_array().expect("targets");
-    assert_eq!(target.len(), 1);
-    assert_eq!(target[0]["package_name"], "beta");
+    // The changed library and its automatic unit-test target both rebuild.
+    assert_eq!(target.len(), 2);
+    assert!(target.iter().all(|target| target["package_name"] == "beta"));
 }
 
 #[test]

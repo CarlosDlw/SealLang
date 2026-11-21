@@ -35,6 +35,18 @@ pub(crate) fn check_jobs(
     jobs: &[Job],
     selection: &Selection,
 ) -> ExitCode {
+    check_jobs_with(cli, project, jobs, selection, &[], true)
+}
+
+/// Checks explicit jobs with extra compiler flags.
+pub(crate) fn check_jobs_with(
+    cli: &Cli,
+    project: &seal_project::Project,
+    jobs: &[Job],
+    selection: &Selection,
+    extra: &[String],
+    announce: bool,
+) -> ExitCode {
     let target_triple = selection
         .target_triple
         .clone()
@@ -58,15 +70,17 @@ pub(crate) fn check_jobs(
             Ok(plan) => plan,
             Err(error) => return ui::error(error.code(), error.message()),
         };
-        ui::status(
-            cli,
-            &format!(
-                "Checking {} {}",
-                project.package(job.package).name,
-                job.target
-            ),
-        );
-        if let Err(code) = crate::cli::build::run_plan(cli, &plan, Mode::Check, "obj", &[]) {
+        if announce {
+            ui::status(
+                cli,
+                &format!(
+                    "Checking {} {}",
+                    project.package(job.package).name,
+                    job.target
+                ),
+            );
+        }
+        if let Err(code) = crate::cli::build::run_plan(cli, &plan, Mode::Check, "obj", &[], extra) {
             return code;
         }
     }

@@ -261,6 +261,8 @@ impl Lowering<'_> {
                             ExprKind::Error
                         }
                     }
+                } else if self.is_assert_builtin(callee) {
+                    self.lower_assert(&args, span)
                 } else if self.is_len_builtin(callee) {
                     match args.as_slice() {
                         [operand] => ExprKind::Len {
@@ -888,6 +890,81 @@ impl Lowering<'_> {
             return false;
         };
         self.interner.resolve(name) == "len"
+            && !self.value_exists(name)
+            && self.scopes.lookup(name).is_none()
+    }
+
+    /// Lowers the `assert` intrinsic.
+    ///
+    /// The first argument is the condition and the optional second argument
+    /// must be a string literal. A test build reports a failure through the
+    /// ordinary panic path, so the runner observes a non-zero exit status and
+    /// the message carries the source location.
+    fn lower_assert(&mut self, args: &[AstExprId], span: Span) -> ExprKind {
+        let test = self.hir.package(self.current_package).cfg.test;
+        let bench = self.hir.package(self.current_package).cfg.bench;
+        if !test && !bench {
+            self.error(
+                codes::E8105,
+                span,
+                "`assert` is available only in test and benchmark builds",
+            )
+            .help("enable `cfg(test)` or `cfg(bench)`, or use a regular `if`")
+            .emit();
+        }
+        match args {
+            [condition] => ExprKind::Assert {
+                condition: self.lower_expr(*condition),
+                message: None,
+            },
+            [condition, message] => {
+                let value = match self.ast.expr(*message).kind {
+                    AstExprKind::Lit(seal_ast::Literal::Str(text)) => {
+                        Some(self.interner.resolve(text).to_owned())
+                    }
+                    _ => {
+                        self.error(
+                            codes::E8106,
+                            self.ast.expr(*message).span,
+                            "the `assert` message must be a string literal",
+                        )
+                        .help("write the message directly, as in `assert(ok, \"value is valid\")`")
+                        .emit();
+                        self.lower_expr(*message);
+                        None
+                    }
+                };
+                ExprKind::Assert {
+                    condition: self.lower_expr(*condition),
+                    message: value,
+                }
+            }
+            _ => {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "`assert` takes one or two arguments, but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help("pass a condition and an optional message, as in `assert(ok, \"message\")`")
+                .emit();
+                for arg in args {
+                    self.lower_expr(*arg);
+                }
+                ExprKind::Error
+            }
+        }
+    }
+
+    /// Returns `true` when `callee` is the built-in `assert` rather than a user
+    /// item.
+    fn is_assert_builtin(&self, callee: AstExprId) -> bool {
+        let AstExprKind::Path { name, .. } = self.ast.expr(callee).kind else {
+            return false;
+        };
+        self.interner.resolve(name) == "assert"
             && !self.value_exists(name)
             && self.scopes.lookup(name).is_none()
     }

@@ -42,6 +42,10 @@ pub struct DefData {
     pub doc_span: Option<Span>,
     /// The source `cfg(...)` condition, when the declaration has one.
     pub cfg: Option<Symbol>,
+    /// Whether the function was declared with the contextual `test` modifier.
+    pub is_test: bool,
+    /// Whether the function was declared with the contextual `bench` modifier.
+    pub is_bench: bool,
     /// The source file that declares the definition, when it has one.
     ///
     /// Built-in definitions have no source file. The file is kept on the
@@ -79,6 +83,8 @@ impl DefData {
             docs: None,
             doc_span: None,
             cfg: None,
+            is_test: false,
+            is_bench: false,
             file: None,
         }
     }
@@ -166,6 +172,26 @@ impl Definitions {
     /// Records the source `cfg(...)` condition of a definition.
     pub fn set_cfg(&mut self, id: DefId, cfg: Option<Symbol>) {
         self.defs[id].cfg = cfg;
+    }
+
+    /// Records whether a definition is a test entry point.
+    pub fn set_test(&mut self, id: DefId, is_test: bool) {
+        self.defs[id].is_test = is_test;
+    }
+
+    /// Records whether a definition is a benchmark entry point.
+    pub fn set_bench(&mut self, id: DefId, is_bench: bool) {
+        self.defs[id].is_bench = is_bench;
+    }
+
+    /// Returns whether `id` is a test entry point.
+    pub fn is_test(&self, id: DefId) -> bool {
+        self.defs[id].is_test
+    }
+
+    /// Returns whether `id` is a benchmark entry point.
+    pub fn is_bench(&self, id: DefId) -> bool {
+        self.defs[id].is_bench
     }
 
     /// Returns the kind of `id`.

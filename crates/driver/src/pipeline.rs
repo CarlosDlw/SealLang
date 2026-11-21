@@ -314,6 +314,17 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
         );
         return Ok(Outcome::Failed(ExitCode::from(1)));
     }
+    if arguments.diagnostics.deny_warnings {
+        let warnings = session.diag().warning_count();
+        if warnings > 0 {
+            eprintln!(
+                "error: {} {} denied by `--deny-warnings`",
+                warnings,
+                plural(warnings, "warning", "warnings")
+            );
+            return Ok(Outcome::Failed(ExitCode::from(1)));
+        }
+    }
     Ok(Outcome::Success)
 }
 
@@ -804,6 +815,11 @@ fn compile_hir(
         search_paths: link.search_paths.clone(),
         link_args,
         entry,
+        harness: match plan.map(|plan| plan.metadata.kind.as_str()) {
+            Some("test") => Some(seal_codegen::HarnessKind::Test),
+            Some("bench") => Some(seal_codegen::HarnessKind::Bench),
+            _ => None,
+        },
         cgu_count: cgu_count
             .as_ref()
             .copied()

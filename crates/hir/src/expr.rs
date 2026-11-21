@@ -226,6 +226,17 @@ pub enum ExprKind {
         /// The `*[T]` or `*mut [T]` value whose length is read.
         operand: HirExprId,
     },
+    /// The built-in `assert(condition)` and `assert(condition, "message")`.
+    ///
+    /// The intrinsic is only available in test and benchmark configurations.
+    /// The message is a compile-time string, so a failure never has to format
+    /// values or allocate.
+    Assert {
+        /// The boolean condition that must hold.
+        condition: HirExprId,
+        /// The message reported on failure, when the source supplied one.
+        message: Option<String>,
+    },
     /// A closure expression.
     ///
     /// The closure's body, parameters, and environment live behind its

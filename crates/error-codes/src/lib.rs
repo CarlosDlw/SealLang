@@ -2812,6 +2812,118 @@ pub const E8099: ErrorCode = ErrorCode {
 The registry server could not complete the request because its persisted state,\nsigning keys, content-addressed store, or HTTP layer failed. The server never\nexecutes package code.\n\nInspect the server log and storage permissions, then retry or restore the\nregistry from a verified backup.",
 };
 
+/// No test or benchmark target matches the selection.
+pub const E8100: ErrorCode = ErrorCode {
+    code: "E8100",
+    title: "no test target matches the selection",
+    explanation: "\
+`seal test` builds the test targets of the selected packages. A package with
+neither a `kind = \"test\"` target nor test functions in its library has nothing
+to run.\n\nDeclare a test target, add `test func` items to the library, or select a
+different package.",
+};
+
+/// The test harness executable could not be run.
+pub const E8101: ErrorCode = ErrorCode {
+    code: "E8101",
+    title: "test harness could not be executed",
+    explanation: "\
+The compiled test executable could not be started, or its `--list` output could
+not be read. The runner reports the operating-system error.\n\nCheck that the target executable exists and is executable, and that the target
+is a host target.",
+};
+
+/// A test-runner option is invalid.
+pub const E8102: ErrorCode = ErrorCode {
+    code: "E8102",
+    title: "invalid test runner option",
+    explanation: "\
+The runner rejects a filter, partition, retry, timeout, or stress value that
+cannot describe a valid run. For example a partition must be `N/M` with
+`0 <= N < M`, and a timeout must be positive.\n\nCorrect the option and retry. No tests were run.",
+};
+
+/// `assert` was used outside a test or benchmark build.
+pub const E8105: ErrorCode = ErrorCode {
+    code: "E8105",
+    title: "`assert` outside a test build",
+    explanation: "\
+The `assert` intrinsic exists only when `cfg(test)` or `cfg(bench)` is active,
+because a normal program has no test runner to report the failure. It is
+compiled as a panic with the call site.\n\nEnable the configuration with a test target, or write an ordinary `if` for a
+runtime check in a normal build.",
+};
+
+/// An `assert` message is not a string literal.
+pub const E8106: ErrorCode = ErrorCode {
+    code: "E8106",
+    title: "`assert` message must be a string literal",
+    explanation: "\
+The optional second argument to `assert` is embedded in the generated program as
+the panic message. Formatting or evaluating a value there would require runtime
+allocation and a formatting subsystem, so only a string literal is accepted.\n\nWrite the message directly, as in `assert(ok, \"value is valid\")`.",
+};
+
+/// A test or benchmark entry point has an invalid signature.
+pub const E8107: ErrorCode = ErrorCode {
+    code: "E8107",
+    title: "invalid test or benchmark function",
+    explanation: "\
+A `test` or `bench` function is called directly by the generated harness. It
+must be a free function with no generic parameters, no parameters, and a unit
+return type.\n\nMove the setup into the function body and remove parameters, generics, and the
+return value.",
+};
+
+/// Test results could not be written.
+pub const E8108: ErrorCode = ErrorCode {
+    code: "E8108",
+    title: "cannot write test results",
+    explanation: "\
+The runner completed but could not write the requested JUnit XML or JSON report.
+The destination directory may be missing or read-only.\n\nCreate the directory or choose another output path. The test results themselves
+remain valid and are also printed to the terminal.",
+};
+
+/// The watcher could not start or observe the project.
+pub const E8109: ErrorCode = ErrorCode {
+    code: "E8109",
+    title: "watch could not observe the project",
+    explanation: "\
+`seal watch` scans the project sources for changes. It failed to read a source
+directory or to prepare the build.\n\nCheck the project path and permissions, then restart the watcher.",
+};
+
+/// The resolved configuration is invalid.
+pub const E8110: ErrorCode = ErrorCode {
+    code: "E8110",
+    title: "invalid project configuration",
+    explanation: "\
+`seal config` resolves values from the command line, environment, project
+manifest, user configuration, and defaults. A value in one of those layers is
+not valid for its key.\n\nRun `seal config --list` to see each origin, and correct the layer named in the
+diagnostic.",
+};
+
+/// Shell completions or a manual page could not be generated.
+pub const E8111: ErrorCode = ErrorCode {
+    code: "E8111",
+    title: "cannot generate completions or manual pages",
+    explanation: "\
+`seal completions` and `seal man` render the command tree into shell scripts or
+troff. The requested shell is unknown, or the output path could not be written.\n\nUse `bash`, `zsh`, `fish`, or `pwsh`, and check the output directory.",
+};
+
+/// A lint name passed to `seal lint` is unknown.
+pub const E8112: ErrorCode = ErrorCode {
+    code: "E8112",
+    title: "unknown lint name",
+    explanation: "\
+`seal lint --deny` accepts stable lint names from the compiler, or the group
+name `warnings`. An unknown name is rejected rather than silently ignored,
+because a typo would otherwise disable the policy the user intended.\n\nRun `seal lint --help` to list the supported names.",
+};
+
 /// Two builds of the same project produced different bytes.
 pub const E8104: ErrorCode = ErrorCode {
     code: "E8104",
@@ -4213,7 +4325,8 @@ pub static ALL: &[ErrorCode] = &[
     E8026, E8027, E8028, E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038,
     E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070,
     E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092,
-    E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8103, E8104, E9001, E9002,
+    E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105,
+    E8106, E8107, E8108, E8109, E8110, E8111, E8112, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

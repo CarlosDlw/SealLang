@@ -128,6 +128,24 @@ impl Checker<'_> {
         self.usize_ty()
     }
 
+    /// Checks the built-in `assert` intrinsic.
+    ///
+    /// The message was validated during lowering, so only the condition needs
+    /// a type: it must be `bool`, and the expression itself produces `()`.
+    pub(super) fn check_assert(
+        &mut self,
+        condition: HirExprId,
+        span: Span,
+        flow: &mut Flow,
+    ) -> TyId {
+        let bool_ty = self.bool_ty();
+        let condition_ty = self.infer_expr(condition, Some(bool_ty), flow);
+        if condition_ty != bool_ty && !self.is_error(condition_ty) {
+            self.mismatch(span, bool_ty, condition_ty);
+        }
+        self.unit()
+    }
+
     fn slice_source(&self, ty: TyId, base: HirExprId) -> Option<SliceSource> {
         match self.hir.ty_ctxt().kind(ty) {
             TyKind::Array { element, length } => Some(SliceSource {

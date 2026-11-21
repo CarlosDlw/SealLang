@@ -991,6 +991,33 @@ impl<'a> BodyLowering<'a> {
                     self.assign_rvalue(dest, Rvalue::Len { slice }, span);
                 }
             }
+            ExprKind::Assert { condition, message } => {
+                let discriminant = self.lower_operand(condition);
+                let success = self.new_block();
+                let failure = self.new_block();
+                self.terminate(
+                    TerminatorKind::SwitchInt {
+                        discriminant,
+                        targets: vec![SwitchTarget {
+                            value: 1,
+                            target: success,
+                        }],
+                        otherwise: failure,
+                    },
+                    span,
+                );
+                self.current = Some(failure);
+                self.terminate(
+                    TerminatorKind::Panic {
+                        message: message.unwrap_or_else(|| "assertion failed".to_owned()),
+                    },
+                    span,
+                );
+                self.current = Some(success);
+                if let Some(dest) = dest {
+                    self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
             ExprKind::Drop { operand } => {
                 // The operand is lowered as a place, so a non-`Copy` value is
                 // moved out of it by the statement itself. A value that does

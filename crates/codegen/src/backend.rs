@@ -156,7 +156,9 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     // separate link action will consume, so it needs the same C `main` wrapper
     // an executable would get. A plain `sealc build --emit=obj` without an
     // entry keeps the historical object layout.
-    let entry_point = if options.emit == Emit::Executable
+    let entry_point = if options.harness.is_some() {
+        None
+    } else if options.emit == Emit::Executable
         || options.entry.is_some()
         || options.emit == Emit::Mono
     {
@@ -301,7 +303,17 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         input.interner,
     )?;
 
-    if let Some(entry_point) = entry_point {
+    if let Some(kind) = options.harness {
+        crate::harness::emit(
+            &context,
+            &module,
+            &builder,
+            input.hir,
+            input.interner,
+            &functions,
+            kind,
+        )?;
+    } else if let Some(entry_point) = entry_point {
         if options.runtime == RuntimePolicy::None {
             entry::emit_freestanding_wrapper(&context, &module, &builder, functions[&entry_point])?;
         } else {

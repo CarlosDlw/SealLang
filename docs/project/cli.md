@@ -267,6 +267,53 @@ items, signatures, fields, variants, `cfg`, docs, layouts, and implementations.
 `semver-check` compares against a published version or a snapshot file, prints
 breaking/minor/patch changes, and exits `1` for a breaking change.
 
+## Tests and benchmarks
+
+```console
+$ seal test
+$ seal test --filter parser --skip slow --exact
+$ seal test --partition hash:0/4 --retries 2 --timeout 30
+$ seal test --stress 5 --no-fail-fast -j 8
+$ seal test --list
+$ seal test --format json
+$ seal test --format junit -o reports/junit.xml
+$ seal bench --iterations 1000 --samples 5 --save bench-baseline.json
+$ seal bench --baseline bench-baseline.json --threshold 15
+```
+
+A function declared `test func` or `bench func` is a harness entry point. The
+modifier is configuration-aware: test functions exist in `cfg(test)` builds and
+benchmark functions in `cfg(bench)` builds, so ordinary builds neither type-check
+nor emit them. `assert(condition)` and `assert(condition, "message")` are
+available inside those functions; a failed assertion panics with the source
+span and the optional message. A package without a `[targets]` table
+automatically gets a `unit` target that reuses the library (`reuse = "lib"`,
+with access to private items), one target per `tests/*.sl` integration file, and
+one per `benches/*.sl` file. Integration targets depend on the library and see
+only its public API.
+
+`test` builds every selected test target and runs each test in its own process,
+so a panic, signal, or timeout cannot take down the runner. `--filter` keeps
+tests whose full `package::module::name` contains the text and `--exact`
+requires a whole-name match; `--skip` removes matches. `--partition
+INDEX/TOTAL` (and `hash:INDEX/TOTAL`) selects one CI shard. `--retries`
+reruns failures, `--timeout` kills a test and its process group, and `--stress`
+repeats every selected test. Fail-fast is the default; `--no-fail-fast` reports
+every result. Tests run with `-j/--jobs` in parallel.
+
+`--format human` prints a colored line per test and a summary. `--format json`
+writes one JSON object per result plus a final `summary` event as NDJSON, and
+`--format junit` writes JUnit XML (default `seal/target/test-junit.xml`, or
+`-o/--output`). A failing test makes the command exit `1`; `--list` prints the
+selected names and exits without running anything.
+
+`bench` uses the same discovery and filters, runs each benchmark body
+`--iterations` times per process, and reports the fastest and mean wall time per
+iteration across `--samples` processes. It makes no statistical claim beyond
+that measurement. `--save` writes a stable JSON baseline; `--baseline` compares
+against one and exits `1` when a benchmark is slower by more than `--threshold`
+percent. `--json` prints the measurements and regressions as one JSON object.
+
 ## Metadata and doctor
 
 ```console
@@ -286,13 +333,63 @@ navigate the workspace without running code generation. `--no-deps` keeps only
 the default package.
 
 `doctor` checks the embedded or pinned toolchain, the host target, a linker on
-`PATH`, a writable `seal/target`, and a current lockfile. A pinned toolchain
-is verified against its installed tree; a missing or modified install is
-`E8061`. The target check reports a declared linker, sysroot, or linker script
-that does not exist, which would otherwise fail the link as `E8062`. Manifest
-warnings include unknown keys and suggestions. `--fix` creates the cache
-directory and rewrites the lockfile when possible; `--json` emits the same
-checks as one object.
+`PATH`, sandbox isolation, the registry configuration, the root manifest, a
+writable `seal/target`, the lockfile, and the disk used by `seal/`. A pinned
+toolchain is verified against its installed tree; a missing or modified install
+is `E8061`. The target check reports a declared linker, sysroot, or linker
+script that does not exist, which would otherwise fail the link as `E8062`. The
+sandbox check reports bubblewrap namespaces or the portable fallback, and the
+registry check validates the URL and reports whether the configured token
+variable is set. Manifest warnings include unknown keys and suggestions.
+`--fix` creates the cache and target directories, repairs the lockfile, and
+never changes source files; it never deletes data. `--json` emits the same
+checks as one object with `version: 3`.
+
+## Configuration, watch, completions, and lint
+
+```console
+$ seal config --list
+$ seal config --key jobs --origin
+$ seal config --json
+$ seal watch --action test --filter parser
+$ seal watch --once --action check
+$ seal completions bash > seal.bash
+$ seal completions zsh -o _seal
+$ seal completions fish
+$ seal completions powershell
+$ seal man -o seal.1
+$ seal lint --deny unused_import
+$ seal lint --deny warnings
+```
+
+`config` resolves each key through one fixed order: command line, environment,
+project manifest, user configuration, then the built-in default. The keys are
+`target`, `profile`, `jobs`, `offline`, `registry.url`, `cache.dir`, `color`,
+and `message-format`; `SEAL_TARGET`, `SEAL_PROFILE`, `SEAL_JOBS`,
+`SEAL_OFFLINE`, `SEAL_REGISTRY_URL`, `SEAL_CACHE_DIR`, `SEAL_COLOR`, and
+`SEAL_MESSAGE_FORMAT` supply the environment layer. The user file is
+`$SEAL_CONFIG`, or `$XDG_CONFIG_HOME/seal/config.toml`, or
+`~/.config/seal/config.toml`. `--origin` prints the winning layer, `--json`
+prints `{key, value, origin}` objects, and `--key` narrows the output.
+
+`watch` polls `.sl` files, `seal.toml`, and `seal.lock` and reruns `build`
+(default), `check`, or `test` after the tree has been quiet for `--debounce`
+milliseconds. It uses the normal action cache, so an unchanged dependency is a
+cache hit. The terminal is cleared before each run when stdout is a terminal;
+`--once` runs the action immediately and exits, which is the scriptable and
+testable form. Polling avoids a platform-specific notification dependency and
+never rebuilds in a loop. Ctrl-C clears the terminal status and exits `130`.
+
+`completions` generates bash, zsh, fish, or PowerShell scripts from the same
+clap metadata as the parser. `man` renders a troff page with every command and
+global option. Both write to stdout unless `-o/--output` names a file.
+
+`lint` applies the compiler's warning policy instead of reimplementing lint in
+the CLI. The stable names are `warnings` (the whole group) and `unused_import`;
+`--deny` makes a match fail the command with the compiler's diagnostic, while
+`--allow` validates a name for scripts. Unknown names are `E8112`. `--json`
+prints `{status, denied_lints, allowed_lints}`. Test-only lints are checked by
+`seal test`, which compiles the `cfg(test)` bodies.
 
 ## Toolchains and targets
 

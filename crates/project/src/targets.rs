@@ -22,7 +22,9 @@ pub(crate) fn build(
         .ok_or_else(|| ProjectError::manifest("a package manifest has no `[package]` table"))?;
 
     if manifest.targets.is_empty() {
-        return infer(root, &package_name, files);
+        let mut inferred = infer(root, &package_name, files)?;
+        merge_reused_sources(&mut inferred)?;
+        return Ok(inferred);
     }
 
     let exclude = manifest
@@ -33,6 +35,7 @@ pub(crate) fn build(
     for (name, declaration) in &manifest.targets {
         targets.push(build_one(root, name, declaration, files, exclude)?);
     }
+    merge_reused_sources(&mut targets)?;
     reject_overlapping_target_sources(&targets, manifest)?;
     Ok(targets)
 }
@@ -72,7 +75,7 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
     let main = root.join("src/main.sl");
     if main.is_file() {
         let primary = source::inside(root, &main)?;
-        return Ok(vec![Target {
+        let target = Target {
             name: package_name.to_owned(),
             kind: TargetKind::Bin,
             entry: Some("root::main".to_owned()),
@@ -80,6 +83,7 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             primary,
             output: None,
             profile: None,
+            reuse: None,
             runtime: None,
             panic: None,
             linker: None,
@@ -92,12 +96,13 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             generator_outputs: Vec::new(),
             generated: Vec::new(),
             native: Vec::new(),
-        }]);
+        };
+        return automatic_tests(root, target);
     }
     let lib = root.join("src/lib.sl");
     if lib.is_file() {
         let primary = source::inside(root, &lib)?;
-        return Ok(vec![Target {
+        let target = Target {
             name: package_name.to_owned(),
             kind: TargetKind::Lib,
             entry: None,
@@ -105,6 +110,7 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             primary,
             output: None,
             profile: None,
+            reuse: None,
             runtime: None,
             panic: None,
             linker: None,
@@ -117,11 +123,116 @@ fn infer(root: &Path, package_name: &str, files: &[PathBuf]) -> ProjectResult<Ve
             generator_outputs: Vec::new(),
             generated: Vec::new(),
             native: Vec::new(),
-        }]);
+        };
+        return automatic_tests(root, target);
     }
     Err(ProjectError::target(format!(
         "the package `{package_name}` has no target: create `src/main.sl` for a program or `src/lib.sl` for a library"
     )))
+}
+
+/// Adds the conventional unit and integration test targets to an inferred
+/// package.
+///
+/// Explicit manifests keep full control of their target list. A package with
+/// no `[targets]` table gets the same discovery a project tool normally offers:
+/// one unit-test target that reuses the package library, every `tests/*.sl`,
+/// and every `benches/*.sl`.
+fn automatic_tests(root: &Path, base: Target) -> ProjectResult<Vec<Target>> {
+    let mut targets = vec![base.clone()];
+    // A unit target merges the library into its own package so tests can reach
+    // private items. A binary has no library to merge, so its tests live in
+    // `tests/*.sl` or an explicit target instead.
+    if base.kind == TargetKind::Lib {
+        let unit_name = if base.name == "unit" {
+            "unit-tests".to_owned()
+        } else {
+            "unit".to_owned()
+        };
+        targets.push(Target {
+            name: unit_name,
+            kind: TargetKind::Test,
+            entry: None,
+            files: base.files.clone(),
+            primary: base.primary.clone(),
+            output: None,
+            profile: None,
+            reuse: Some(base.name.clone()),
+            runtime: None,
+            panic: None,
+            linker: None,
+            sysroot: None,
+            linker_script: None,
+            link_args: Vec::new(),
+            required_features: Vec::new(),
+            when: None,
+            generator_inputs: Vec::new(),
+            generator_outputs: Vec::new(),
+            generated: Vec::new(),
+            native: Vec::new(),
+        });
+    }
+    for (directory, kind) in [("tests", TargetKind::Test), ("benches", TargetKind::Bench)] {
+        for file in source_files_in(&root.join(directory))? {
+            let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if targets.iter().any(|target| target.name == stem) {
+                continue;
+            }
+            targets.push(Target {
+                name: stem.to_owned(),
+                kind,
+                entry: None,
+                files: vec![file.clone()],
+                primary: file,
+                output: None,
+                profile: None,
+                reuse: None,
+                runtime: None,
+                panic: None,
+                linker: None,
+                sysroot: None,
+                linker_script: None,
+                link_args: Vec::new(),
+                required_features: Vec::new(),
+                when: None,
+                generator_inputs: Vec::new(),
+                generator_outputs: Vec::new(),
+                generated: Vec::new(),
+                native: Vec::new(),
+            });
+        }
+    }
+    Ok(targets)
+}
+
+/// Lists the `.sl` files directly inside `directory`, sorted by path.
+fn source_files_in(directory: &Path) -> ProjectResult<Vec<PathBuf>> {
+    if !directory.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(directory).map_err(|error| {
+        ProjectError::source(format!(
+            "cannot read the source directory `{}`: {error}",
+            directory.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            ProjectError::source(format!(
+                "cannot read an entry of `{}`: {error}",
+                directory.display()
+            ))
+        })?;
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|extension| extension == "sl") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn build_one(
@@ -156,7 +267,16 @@ fn build_one(
         )));
     }
 
-    let mut selected: BTreeSet<PathBuf> = if declaration.sources.is_empty() {
+    // Tests, benches, and examples own one primary file unless they declare
+    // sources explicitly. Reusing a library adds its files in a later merge,
+    // after every target has been discovered.
+    let primary_driven = matches!(
+        declaration.kind,
+        TargetKind::Test | TargetKind::Bench | TargetKind::Example
+    ) && declaration.sources.is_empty();
+    let mut selected: BTreeSet<PathBuf> = if primary_driven {
+        BTreeSet::new()
+    } else if declaration.sources.is_empty() {
         base.iter().cloned().collect()
     } else {
         source::target_files(root, &declaration.sources, exclude)?
@@ -166,13 +286,19 @@ fn build_one(
     if !declaration.include.is_empty() {
         selected.extend(source::target_files(root, &declaration.include, exclude)?);
     }
-    if selected.is_empty() {
+    if selected.is_empty() && !primary_driven {
         return Err(ProjectError::source(format!(
             "the target `{name}` has no source files"
         )));
     }
 
-    let primary = choose_primary(root, name, declaration.kind, &selected)?;
+    let primary = choose_primary(
+        root,
+        name,
+        declaration.kind,
+        declaration.reuse.is_some(),
+        &selected,
+    )?;
     selected.insert(primary.clone());
     let files = ordered(&selected.into_iter().collect::<Vec<_>>(), &primary);
 
@@ -245,6 +371,7 @@ fn build_one(
         primary,
         output,
         profile: declaration.profile.clone(),
+        reuse: declaration.reuse.clone(),
         runtime: declaration.runtime.clone(),
         panic: declaration.panic.clone(),
         linker: declaration.linker.clone(),
@@ -263,10 +390,50 @@ fn build_one(
     })
 }
 
+/// Adds the sources of every reused library target to its consumer.
+///
+/// The merge runs after every target exists, so a declaration order never
+/// changes the result. The consumer's primary file stays first.
+fn merge_reused_sources(targets: &mut [Target]) -> ProjectResult<()> {
+    for index in 0..targets.len() {
+        let Some(reused) = targets[index].reuse.clone() else {
+            continue;
+        };
+        let (source_kind, source_files) = {
+            let Some(source) = targets.iter().find(|target| target.name == reused) else {
+                return Err(ProjectError::target(format!(
+                    "the target `{}` reuses the unknown target `{reused}`",
+                    targets[index].name
+                )));
+            };
+            (source.kind, source.files.clone())
+        };
+        if !matches!(
+            source_kind,
+            TargetKind::Lib | TargetKind::Staticlib | TargetKind::Cdylib
+        ) {
+            return Err(ProjectError::target(format!(
+                "the target `{}` reuses `{reused}`, which is not a library target",
+                targets[index].name
+            )));
+        }
+        let mut files = source_files;
+        for file in &targets[index].files {
+            if !files.contains(file) {
+                files.push(file.clone());
+            }
+        }
+        let primary = targets[index].primary.clone();
+        targets[index].files = ordered(&files, &primary);
+    }
+    Ok(())
+}
+
 fn choose_primary(
     root: &Path,
     name: &str,
     kind: TargetKind,
+    reuses_library: bool,
     selected: &BTreeSet<PathBuf>,
 ) -> ProjectResult<PathBuf> {
     let candidates: Vec<PathBuf> = match kind {
@@ -279,26 +446,38 @@ fn choose_primary(
                 root.join("src").join(format!("{name}.sl")),
             ]
         }
-        TargetKind::Test => vec![
-            root.join("tests").join(format!("{name}.sl")),
-            root.join("src/main.sl"),
-        ],
-        TargetKind::Bench => vec![
-            root.join("benches").join(format!("{name}.sl")),
-            root.join("src/main.sl"),
-        ],
+        TargetKind::Test => {
+            let mut candidates = vec![root.join("tests").join(format!("{name}.sl"))];
+            candidates.push(root.join("src/main.sl"));
+            if reuses_library {
+                candidates.push(root.join("src/lib.sl"));
+            }
+            candidates
+        }
+        TargetKind::Bench => {
+            let mut candidates = vec![root.join("benches").join(format!("{name}.sl"))];
+            candidates.push(root.join("src/main.sl"));
+            if reuses_library {
+                candidates.push(root.join("src/lib.sl"));
+            }
+            candidates
+        }
         TargetKind::Example => vec![
             root.join("examples").join(format!("{name}.sl")),
             root.join("src/main.sl"),
         ],
-        TargetKind::Generator => vec![root.join("src/main.sl")],
+        TargetKind::Generator => {
+            let main = root.join("src/main.sl");
+            if selected.contains(&main) {
+                vec![main]
+            } else {
+                selected.iter().cloned().collect()
+            }
+        }
     };
     for candidate in candidates {
         if candidate.is_file() {
-            let canonical = source::inside(root, &candidate)?;
-            if selected.contains(&canonical) {
-                return Ok(canonical);
-            }
+            return source::inside(root, &candidate);
         }
     }
     selected

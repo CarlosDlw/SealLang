@@ -277,6 +277,10 @@ pub(crate) enum Mode {
     Check,
     /// Only executable targets.
     Run,
+    /// Only test targets.
+    Test,
+    /// Only benchmark targets.
+    Bench,
 }
 
 pub(crate) fn select_jobs(
@@ -316,7 +320,7 @@ pub(crate) fn select_jobs(
             if !target.is_active_for(&triple) {
                 continue;
             }
-            let include = if selection.all_targets {
+            let include = if selection.all_targets && !matches!(mode, Mode::Test | Mode::Bench) {
                 true
             } else {
                 match mode {
@@ -328,6 +332,8 @@ pub(crate) fn select_jobs(
                             | TargetKind::Cdylib
                     ),
                     Mode::Run => target.is_executable(),
+                    Mode::Test => target.kind == TargetKind::Test,
+                    Mode::Bench => target.kind == TargetKind::Bench,
                 }
             };
             if include {
@@ -340,8 +346,18 @@ pub(crate) fn select_jobs(
     }
     if jobs.is_empty() {
         return Err(ui::error(
-            "E8003",
-            "the selected packages have no targets for this command",
+            match mode {
+                Mode::Test => "E8100",
+                Mode::Bench => "E8100",
+                Mode::Build | Mode::Check | Mode::Run => "E8003",
+            },
+            if matches!(mode, Mode::Test) {
+                "the selected packages have no test targets"
+            } else if matches!(mode, Mode::Bench) {
+                "the selected packages have no benchmark targets"
+            } else {
+                "the selected packages have no targets for this command"
+            },
         ));
     }
     Ok(jobs)
@@ -581,6 +597,7 @@ pub(crate) fn run_plan(
     mode: Mode,
     emit: &str,
     link_args: &[String],
+    extra: &[String],
 ) -> Result<PathBuf, ExitCode> {
     let sequence = NEXT_PLAN.fetch_add(1, Ordering::Relaxed);
     let path =
@@ -589,12 +606,12 @@ pub(crate) fn run_plan(
         .map_err(|error| ui::error(error.code(), error.message()))?;
     let mut arguments: Vec<String> = vec!["sealc".to_owned()];
     arguments.push(match mode {
-        Mode::Build | Mode::Run => "build".to_owned(),
+        Mode::Build | Mode::Run | Mode::Test | Mode::Bench => "build".to_owned(),
         Mode::Check => "check".to_owned(),
     });
     arguments.push("--plan-file".to_owned());
     arguments.push(path.display().to_string());
-    if matches!(mode, Mode::Build | Mode::Run) {
+    if matches!(mode, Mode::Build | Mode::Run | Mode::Test | Mode::Bench) {
         arguments.push(format!("--emit={emit}"));
     }
     if cli.message_format == MessageFormat::Json {
@@ -605,6 +622,7 @@ pub(crate) fn run_plan(
         arguments.push("--link-arg".to_owned());
         arguments.push(argument.clone());
     }
+    arguments.extend(extra.iter().cloned());
     ui::verbose(cli, &format!("running: {}", arguments.join(" ")));
     let status = seal_driver::run_from(arguments);
     let _ = std::fs::remove_file(&path);

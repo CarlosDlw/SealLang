@@ -44,6 +44,21 @@ pub(crate) fn dim(choice: ColorChoice, text: &str) -> String {
     paint(choice, "2", text)
 }
 
+/// Styles `text` in green when color is enabled.
+pub(crate) fn green(choice: ColorChoice, text: &str) -> String {
+    paint(choice, "32", text)
+}
+
+/// Styles `text` in red when color is enabled.
+pub(crate) fn red(choice: ColorChoice, text: &str) -> String {
+    paint(choice, "31", text)
+}
+
+/// Styles `text` in yellow when color is enabled.
+pub(crate) fn yellow(choice: ColorChoice, text: &str) -> String {
+    paint(choice, "33", text)
+}
+
 fn paint(choice: ColorChoice, code: &str, text: &str) -> String {
     if stdout_enabled(choice) {
         format!("\x1b[{code}m{text}{RESET}")

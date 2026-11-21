@@ -76,6 +76,7 @@ mod export;
 mod extern_decl;
 mod function;
 mod global;
+mod harness;
 mod intrinsic;
 mod linker;
 mod mono;
@@ -101,7 +102,7 @@ pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
 pub use mono::emit_object_from_bitcode;
 pub use object::{ObjectArchive, ObjectLink, archive_objects, link_objects};
-pub use options::{CodegenOptions, Emit};
+pub use options::{CodegenOptions, Emit, HarnessKind};
 
 /// Returns the runtime archive embedded in this compiler build.
 ///

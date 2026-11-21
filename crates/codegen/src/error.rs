@@ -82,6 +82,11 @@ pub enum CodegenError {
         /// The underlying reason, including linker output when applicable.
         detail: String,
     },
+    /// A test or benchmark entry point has an invalid signature.
+    Harness {
+        /// The invalid declaration, ready for the diagnostic.
+        detail: String,
+    },
     /// A compiler invariant was violated.
     Internal(String),
 }
@@ -96,6 +101,13 @@ impl CodegenError {
     pub(crate) fn unsupported_target(triple: impl Into<String>, detail: impl Into<String>) -> Self {
         Self::UnsupportedTarget {
             triple: triple.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// Creates an invalid test or benchmark entry error.
+    pub(crate) fn harness(detail: impl Into<String>) -> Self {
+        Self::Harness {
             detail: detail.into(),
         }
     }
@@ -130,6 +142,7 @@ impl CodegenError {
         match self {
             Self::EntryPoint(_) => Some(codes::E6001.diag_code()),
             Self::UnsupportedTarget { .. } => Some(codes::E6002.diag_code()),
+            Self::Harness { .. } => Some(codes::E8107.diag_code()),
             Self::LinkInput { .. } => Some(codes::E6005.diag_code()),
             Self::LinkerInput { .. } => Some(codes::E8062.diag_code()),
             Self::Artifact { .. } => Some(codes::E6003.diag_code()),
@@ -145,6 +158,7 @@ impl fmt::Display for CodegenError {
             Self::UnsupportedTarget { triple, detail } => {
                 write!(f, "cannot generate code for target `{triple}`: {detail}")
             }
+            Self::Harness { detail } => write!(f, "invalid test harness: {detail}"),
             Self::LinkInput { detail } => write!(f, "invalid link input: {detail}"),
             Self::LinkerInput { detail } => write!(f, "invalid linker input: {detail}"),
             Self::Artifact { path, detail } => {

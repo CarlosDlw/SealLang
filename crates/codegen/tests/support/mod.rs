@@ -246,6 +246,7 @@ fn compile_for_target_with_runtime_and_links(
             search_paths: links.search_paths,
             link_args: links.link_args,
             entry: None,
+            harness: None,
             cgu_count: 1,
         },
     )

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use seal_project::Project;
+use seal_sandbox::Sandbox;
 use seal_target::host_triple;
 use serde::Serialize;
 
@@ -16,8 +17,12 @@ struct Report {
     toolchain: Check,
     target: Check,
     linker: Check,
+    sandbox: Check,
+    registry: Check,
+    manifest: Check,
     cache: Check,
     lockfile: Check,
+    disk: Check,
     warnings: Vec<String>,
 }
 
@@ -47,9 +52,13 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
             detail: "no `cc`, `clang`, or `gcc` on PATH".to_owned(),
         },
     };
+    let sandbox = check_sandbox();
+    let registry = check_registry(&project);
+    let manifest = check_manifest(&project);
     let cache = check_cache(&project, args.fix);
     let lockfile = check_lockfile(&project, &target, args.fix);
-    let warnings: Vec<String> = project
+    let disk = check_disk(&project, args.fix);
+    let mut warnings: Vec<String> = project
         .warnings
         .iter()
         .map(|warning| {
@@ -60,20 +69,31 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
             text
         })
         .collect();
+    if sandbox.ok && sandbox.detail.starts_with("portable") {
+        warnings.push("sandbox isolation is portable; generators can read host files".to_owned());
+    }
     let report = Report {
-        version: 2,
+        version: 3,
         toolchain,
         target: target_check,
         linker,
+        sandbox,
+        registry,
+        manifest,
         cache,
         lockfile,
+        disk,
         warnings,
     };
     let ok = report.toolchain.ok
         && report.target.ok
         && report.linker.ok
+        && report.sandbox.ok
+        && report.registry.ok
+        && report.manifest.ok
         && report.cache.ok
-        && report.lockfile.ok;
+        && report.lockfile.ok
+        && report.disk.ok;
     if args.json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),
@@ -86,8 +106,12 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
             &report.toolchain,
             &report.target,
             &report.linker,
+            &report.sandbox,
+            &report.registry,
+            &report.manifest,
             &report.cache,
             &report.lockfile,
+            &report.disk,
         ] {
             println!(
                 "{} {}: {}",
@@ -245,6 +269,127 @@ fn find_linker_in(directories: &[std::path::PathBuf]) -> Option<String> {
         }
     }
     None
+}
+
+fn check_sandbox() -> Check {
+    let sandbox = Sandbox::detect();
+    if sandbox.namespaces_available() {
+        Check {
+            name: "sandbox".to_owned(),
+            ok: true,
+            detail: format!(
+                "namespaces (bwrap: {})",
+                sandbox
+                    .bwrap()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "unknown".to_owned())
+            ),
+        }
+    } else {
+        Check {
+            name: "sandbox".to_owned(),
+            ok: true,
+            detail: "portable (bubblewrap is unavailable; filesystem isolation is off)".to_owned(),
+        }
+    }
+}
+
+fn check_registry(project: &Project) -> Check {
+    let Some(registry) = &project.registry else {
+        return Check {
+            name: "registry".to_owned(),
+            ok: true,
+            detail: "no registry configured (path dependencies only)".to_owned(),
+        };
+    };
+    let Some(url) = &registry.url else {
+        return Check {
+            name: "registry".to_owned(),
+            ok: false,
+            detail: "the `[registry]` table has no `url`".to_owned(),
+        };
+    };
+    if !url.starts_with("https://") && !(registry.allow_insecure && url.starts_with("http://")) {
+        return Check {
+            name: "registry".to_owned(),
+            ok: false,
+            detail: format!("the registry URL `{url}` needs https or `allow-insecure`"),
+        };
+    }
+    let token = registry
+        .token_env
+        .as_ref()
+        .map(|name| {
+            if std::env::var_os(name).is_some() {
+                format!("token from `{name}`")
+            } else {
+                format!("`{name}` is not set")
+            }
+        })
+        .unwrap_or_else(|| "no token variable".to_owned());
+    Check {
+        name: "registry".to_owned(),
+        ok: true,
+        detail: format!(
+            "{url} ({token}, {}offline)",
+            if registry.offline { "" } else { "not " }
+        ),
+    }
+}
+
+fn check_manifest(project: &Project) -> Check {
+    let path = project.root.join("seal.toml");
+    if !path.is_file() {
+        return Check {
+            name: "manifest".to_owned(),
+            ok: false,
+            detail: format!("`{}` is missing", path.display()),
+        };
+    }
+    Check {
+        name: "manifest".to_owned(),
+        ok: true,
+        detail: format!(
+            "{} package(s), {} warning(s)",
+            project.packages.len(),
+            project.warnings.len()
+        ),
+    }
+}
+
+fn check_disk(project: &Project, fix: bool) -> Check {
+    let root = project.root.join("seal");
+    if fix {
+        let _ = std::fs::create_dir_all(root.join("cache"));
+        let _ = std::fs::create_dir_all(root.join("target"));
+    }
+    let used = directory_size(&root);
+    Check {
+        name: "disk".to_owned(),
+        ok: true,
+        detail: format!("{:.1} MiB under `seal/`", used as f64 / (1024.0 * 1024.0)),
+    }
+}
+
+fn directory_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            total += directory_size(&entry.path());
+        } else if let Ok(metadata) = entry.metadata() {
+            total += metadata.len();
+        }
+    }
+    total
 }
 
 fn check_cache(project: &Project, fix: bool) -> Check {
