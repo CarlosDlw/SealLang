@@ -104,11 +104,11 @@ the median clean build, the median incremental build after editing one function,
 the number of actions that missed the cache, and whether both binaries exit with
 the same status. `SEAL_BENCH_FUNCTIONS` changes the workload (default 800).
 
-The numbers are host-dependent. A small or medium project can be slower with
-several units because `llvm-split` runs serially and each `codegen-cgu` starts a
-process; the benefit appears when the per-unit optimization work dominates the
-split. The incremental column is the important one for the cache contract: an
-edit reruns the frontend, one unit, and the link, while every other unit hits.
+The numbers are host-dependent. On the 4-job reference host, the 800-function
+workload was slower with four units in both columns: `llvm-split` runs serially
+and each `codegen-cgu` starts a process. No clean-build speedup is claimed for
+this host; the incremental column is the measured cache contract: an edit
+reruns the frontend, one unit, and the link, while every other unit hits.
 
 ## Sandbox
 
