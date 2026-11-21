@@ -134,17 +134,35 @@ stays inside the project and `timeout` is in seconds.
 
 ## Dependencies and the lockfile
 
-This phase resolves `path` dependencies inside the project. The alias is the
-name imports use:
+The alias is the name imports use. A dependency is either a path inside the
+project or a registry package:
 
 ```toml
 [dependencies]
 geometry = { path = "../geometry", version = "0.1" }
+foo = "1.2"
+bar = { version = "^3", package = "bar-package", features = ["std"] }
 ```
 
 A missing path, a version that does not match, an edge that leaves the project,
-and a dependency cycle are reported before compilation (`E8002`, `E8006`).
-Registry and git edges are rejected explicitly rather than ignored.
+a registry configuration without a trusted TUF root, and a dependency cycle are
+reported before compilation (`E8021`–`E8024`, `E8006`). Git edges are rejected
+explicitly rather than ignored. See [dependencies.md](dependencies.md) for
+resolution, the lockfile, vendor, audit, and SBOM behavior, and
+[registry.md](registry.md) for the wire protocol and trust chain.
+
+A project with registry dependencies declares `[registry]` in the root manifest
+and pins its trust root:
+
+```toml
+[registry]
+url = "https://registry.example.com/"
+tuf-url = "https://registry.example.com/tuf/"
+tuf-root = "trusted/root.json"
+
+[registry.policy]
+allow-licenses = ["MIT", "Apache-2.0"]
+```
 
 Dependency edges may carry a `when` condition and a per-edge feature list:
 
@@ -187,12 +205,15 @@ The limits are deliberate: they keep the instance graph explainable.
 the resulting instance graph and `seal why` explains each instance and the
 edge that requested it.
 
-`seal.lock` records every path package, its relative source, a checksum over
-its files, the union of its instance features and `cfg`, every concrete
-instance, and its resolved dependency edges. It is sorted, has no timestamps
-or absolute paths, and is written only when its bytes change. `--locked` and
-`--frozen` compare the same per-edge resolution and fail with `E8008` instead of
-rewriting a stale lockfile.
+`seal.lock` records every package with its source, a source checksum, the union
+of its instance features and `cfg`, every concrete instance, and its resolved
+dependency edges. Path sources are relative and hashed over their files; registry
+sources carry the exact index checksum and provenance, and versions coexist when
+they belong to different compatibility lines. The file is sorted, has no
+timestamps or absolute paths, and is written only when its bytes change.
+`--locked` and `--frozen` compare the same per-edge resolution and fail with
+`E8008` instead of rewriting a stale lockfile. A v1 lockfile is migrated in
+memory to v2.
 
 After a successful build, resolved native dependencies are appended as
 `[[native]]` tables with the package, alias, pkg-config name, static flag,
@@ -242,10 +263,36 @@ appear in cache records and logs only as digests.
 | `E8005` | Invalid or contradictory manifest |
 | `E8006` | Dependency cycle |
 | `E8007` | Feature resolution failure |
-| `E8021` | Path dependency escapes the project |
+| `E8020` | Registry configuration error |
+| `E8021` | Dependency integrity check failed |
 | `E8022` | Missing path dependency |
 | `E8023` | Incompatible dependency version |
 | `E8024` | Invalid dependency declaration |
+| `E8025` | Invalid registry index |
+| `E8026` | Dependency resolution failed |
+| `E8027` | Unsafe package archive |
+| `E8028` | Registry lock conflict |
+| `E8029` | Invalid vendor tree |
+| `E8030` | Dependency audit failed |
+| `E8031` | SBOM generation failed |
+| `E8032` | Registry query failed |
+| `E8033` | Dependency version is yanked |
+| `E8034` | Dependency license is not allowed |
+| `E8035` | Dependency source is not allowed |
+| `E8036` | Dependency advisory applies |
+| `E8037` | Dependency provenance is missing |
+| `E8038` | Registry response is too large |
+| `E8039` | Inconsistent registry metadata |
+| `E8080` | TUF verification failed |
+| `E8081` | Registry namespace error |
+| `E8082` | Published version is immutable |
+| `E8083` | Registry publish rejected |
+| `E8084` | Registry credentials unavailable |
+| `E8085` | Offline registry data is missing |
+| `E8086` | Package metadata mismatch |
+| `E8087` | Provenance verification failed |
+| `E8088` | Registry cache error |
+| `E8089` | Corrupt registry cache entry |
 | `E8008` | Lockfile missing, stale, or malformed |
 | `E8009` | Unknown or invalid profile |
 | `E8010` | Structurally invalid compile plan |

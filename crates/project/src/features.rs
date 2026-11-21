@@ -107,7 +107,7 @@ struct Builder<'a> {
     project: &'a Project,
     cfg: &'a CfgEnvironment,
     cache: BTreeMap<(usize, Vec<String>), usize>,
-    counts: BTreeMap<String, usize>,
+    counts: BTreeMap<(String, String), usize>,
     instances: Vec<Instance>,
 }
 
@@ -142,12 +142,15 @@ impl Builder<'_> {
         if let Some(&index) = self.cache.get(&(package_index, key.clone())) {
             return Ok(index);
         }
-        let count = self.counts.entry(package.name.clone()).or_default();
+        let count = self
+            .counts
+            .entry((package.name.clone(), package.version.clone()))
+            .or_default();
         *count += 1;
         if *count > MAX_FEATURE_VARIANTS {
             return Err(ProjectError::feature(format!(
-                "the package `{}` would have {count} feature variants; the limit is {MAX_FEATURE_VARIANTS}; align the features requested by its dependents",
-                package.name
+                "the package `{}` {} would have {count} feature variants; the limit is {MAX_FEATURE_VARIANTS}; align the features requested by its dependents",
+                package.name, package.version
             )));
         }
 

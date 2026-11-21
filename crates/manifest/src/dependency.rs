@@ -44,6 +44,10 @@ pub struct DependencyManifest {
     /// The registry name.
     #[serde(default)]
     pub registry: Option<String>,
+    /// The package name when the local alias differs, as in
+    /// `foo1 = { version = "1", package = "foo" }`.
+    #[serde(default)]
+    pub package: Option<String>,
 }
 
 const fn default_true() -> bool {

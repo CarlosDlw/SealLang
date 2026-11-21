@@ -28,8 +28,8 @@ struct Check {
     detail: String,
 }
 
-pub(crate) fn doctor(_cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };

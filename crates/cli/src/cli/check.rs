@@ -9,7 +9,7 @@ use crate::cli::{CheckArgs, Cli};
 use crate::ui;
 
 pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load_for_selection(cli, root, &args.selection) {
         Ok(project) => project,
         Err(code) => return code,
     };

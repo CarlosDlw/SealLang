@@ -113,6 +113,55 @@ pub struct Dependency {
     pub when: Option<CfgSpec>,
 }
 
+/// Where a package's bytes came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PackageSource {
+    /// A directory inside the project.
+    Path,
+    /// A verified registry archive.
+    Registry(RegistrySource),
+}
+
+/// Registry identity for one package version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistrySource {
+    /// The registry base URL.
+    pub registry: String,
+    /// The archive SHA-256 digest.
+    pub checksum: String,
+    /// Whether the index marks this version yanked.
+    pub yanked: bool,
+    /// Provenance metadata digest, when published.
+    pub provenance: Option<String>,
+}
+
+impl PackageSource {
+    /// Returns the lockfile source string.
+    pub fn lock_source(
+        &self,
+        project_root: &Path,
+        root: &Path,
+        name: &str,
+        version: &str,
+    ) -> String {
+        match self {
+            Self::Path => {
+                if root == project_root {
+                    "path+.".to_owned()
+                } else {
+                    format!(
+                        "path+{}",
+                        root.strip_prefix(project_root).unwrap_or(root).display()
+                    )
+                }
+            }
+            Self::Registry(source) => {
+                format!("registry+{}#{}@{}", source.registry, name, version)
+            }
+        }
+    }
+}
+
 /// One resolved package, in dependency order.
 #[derive(Clone, Debug)]
 pub struct Package {
@@ -122,6 +171,8 @@ pub struct Package {
     pub version: String,
     /// The package root.
     pub root: PathBuf,
+    /// Where the package came from.
+    pub source: PackageSource,
     /// The complete manifest.
     pub manifest: Manifest,
     /// Every base source file, sorted.
@@ -163,12 +214,37 @@ pub struct Project {
     pub lockfile: Lockfile,
     /// Root-level profiles. Members cannot declare hidden profiles.
     pub profiles: std::collections::BTreeMap<String, ProfileManifest>,
+    /// Registry and audit configuration from the root manifest.
+    pub registry: Option<seal_manifest::RegistryManifest>,
+}
+
+/// Options that affect project loading and registry resolution.
+#[derive(Clone, Debug, Default)]
+pub struct ProjectOptions {
+    /// Forbid network access.
+    pub offline: bool,
+    /// Prefer the lowest compatible registry versions.
+    pub minimal_versions: bool,
+    /// Ignore locked version preferences, as `seal update` does.
+    pub update: bool,
+    /// Use only the vendor tree, even when the network is available.
+    pub vendor_only: bool,
+    /// Packages whose locked version may change; empty updates every package
+    /// when `update` is true.
+    pub update_packages: Vec<String>,
+    /// Exact versions requested by `seal update --precise`.
+    pub pinned: std::collections::BTreeMap<String, String>,
 }
 
 impl Project {
     /// Loads the project rooted at `root`.
     pub fn load(root: &Path) -> ProjectResult<Self> {
-        graph::load(root)
+        graph::load(root, &ProjectOptions::default())
+    }
+
+    /// Loads the project with explicit registry options.
+    pub fn load_with(root: &Path, options: &ProjectOptions) -> ProjectResult<Self> {
+        graph::load(root, options)
     }
 
     /// Returns the package at `index`.
@@ -176,12 +252,29 @@ impl Project {
         &self.packages[index]
     }
 
-    /// Returns the package with `name`.
+    /// Returns the newest package with `name`.
     pub fn package_by_name(&self, name: &str) -> Option<(usize, &Package)> {
         self.packages
             .iter()
             .enumerate()
-            .find(|(_, package)| package.name == name)
+            .filter(|(_, package)| package.name == name)
+            .max_by(|(_, left), (_, right)| {
+                semver::Version::parse(&left.version)
+                    .ok()
+                    .cmp(&semver::Version::parse(&right.version).ok())
+            })
+    }
+
+    /// Returns every package instance with `name`, sorted by version.
+    pub fn packages_named(&self, name: &str) -> Vec<(usize, &Package)> {
+        let mut packages: Vec<(usize, &Package)> = self
+            .packages
+            .iter()
+            .enumerate()
+            .filter(|(_, package)| package.name == name)
+            .collect();
+        packages.sort_by(|(_, left), (_, right)| left.version.cmp(&right.version));
+        packages
     }
 
     /// Returns the package declared at the project root, if any.

@@ -17,6 +17,7 @@ mod native;
 mod package;
 mod profile;
 mod project;
+mod registry;
 mod target;
 mod task;
 mod validate;
@@ -30,6 +31,7 @@ pub use native::NativeManifest;
 pub use package::{ApiManifest, PackageManifest};
 pub use profile::ProfileManifest;
 pub use project::ProjectManifest;
+pub use registry::{RegistryManifest, RegistryPolicyManifest};
 pub use target::{TargetKind, TargetManifest};
 pub use task::{TaskManifest, TaskStepManifest};
 pub use validate::{LoadedManifest, load, load_str};
@@ -67,4 +69,7 @@ pub struct Manifest {
     /// Declarative native library dependencies.
     #[serde(default)]
     pub native: std::collections::BTreeMap<String, NativeManifest>,
+    /// Registry and audit configuration; valid only in the root manifest.
+    #[serde(default)]
+    pub registry: Option<RegistryManifest>,
 }

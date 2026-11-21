@@ -27,7 +27,7 @@ pub(crate) struct Job {
 }
 
 pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load_for_selection(cli, root, &args.selection) {
         Ok(project) => project,
         Err(code) => return code,
     };

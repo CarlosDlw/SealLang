@@ -117,18 +117,54 @@ ambiguous (`E8103`); `--bin` or an explicit target name selects one. Arguments
 after `--` are forwarded unchanged, and the process exit status is `seal`'s
 status.
 
+## Dependencies and registry
+
+```console
+$ seal add foo@1.2 --yes
+$ seal add @scope/foo@^2 --features std --dry-run
+$ seal remove foo --yes
+$ seal update
+$ seal update foo --precise foo@1.2.0
+$ seal vendor --clean
+$ seal audit --json
+$ seal deny
+$ seal sbom --output sbom.cdx.json
+$ seal search serde --json
+$ seal info serde
+```
+
+`add` and `remove` edit the selected package manifest with `toml_edit` and
+require `--yes`; `--dry-run` prints the proposed graph without writing anything.
+Both then resolve, write `seal.lock`, and run `seal check`, rolling the manifest
+and lockfile back if the check fails. The global `--offline`,
+`--minimal-versions`, and `--vendor` flags apply to dependency commands as well.
+`update` refreshes every registry edge or only the named packages;
+`--precise package@version` pins one selection and `--dry-run` leaves the
+lockfile untouched.
+
+`vendor` copies every locked registry package into `vendor/` with checksum and
+tree verification, and `--clean` recreates the tree. `audit` (also available as
+`deny`) checks advisories, licenses, sources, yanked versions, checksums, and
+provenance; `--json` emits a report. `sbom` writes CycloneDX 1.5 JSON to stdout
+or `-o/--output`. `search` and `info` query the signed catalog and package
+indexes and support `--json`. See [dependencies.md](dependencies.md) and
+[registry.md](registry.md).
+
 ## Explaining the graph
 
 ```console
 $ seal tree
 $ seal tree -p app --features std
+$ seal tree --duplicates
 $ seal why -p serde --features std
 ```
 
 `tree` prints the resolved package-instance graph. A package requested with two
 different feature sets appears twice, each with its own bracketed feature list.
-`why` prints every instance of a package, its deterministic instance hash, its
-features, and the dependency edges that requested it. Both commands accept
+`--duplicates` lists packages with more than one selected version and exits
+without printing the tree. `why` prints every instance of a package, its
+deterministic instance hash, its features, and the dependency edges that
+requested it. Both commands accept
 `--target`, `--features`, `--all-features`, `--no-default-features`, and
 `--cfg`.
 

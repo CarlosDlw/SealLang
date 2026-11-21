@@ -5,7 +5,7 @@
 //! parse error instead of a condition that silently evaluates to false.
 
 use serde::de::Error as _;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A condition attached to a dependency or target.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +24,52 @@ pub enum CfgSpec {
     Any(Vec<CfgSpec>),
     /// The child must not match.
     Not(Box<CfgSpec>),
+}
+
+impl Serialize for CfgSpec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        to_value(self).serialize(serializer)
+    }
+}
+
+fn to_value(condition: &CfgSpec) -> toml::Value {
+    let mut table = toml::map::Map::new();
+    match condition {
+        CfgSpec::Os(value) => {
+            table.insert("os".to_owned(), toml::Value::String(value.clone()));
+        }
+        CfgSpec::Arch(value) => {
+            table.insert("arch".to_owned(), toml::Value::String(value.clone()));
+        }
+        CfgSpec::Env(value) => {
+            table.insert("env".to_owned(), toml::Value::String(value.clone()));
+        }
+        CfgSpec::PointerWidth(value) => {
+            table.insert(
+                "pointer-width".to_owned(),
+                toml::Value::Integer(i64::from(*value)),
+            );
+        }
+        CfgSpec::All(values) => {
+            table.insert(
+                "all".to_owned(),
+                toml::Value::Array(values.iter().map(to_value).collect()),
+            );
+        }
+        CfgSpec::Any(values) => {
+            table.insert(
+                "any".to_owned(),
+                toml::Value::Array(values.iter().map(to_value).collect()),
+            );
+        }
+        CfgSpec::Not(value) => {
+            table.insert("not".to_owned(), to_value(value));
+        }
+    }
+    toml::Value::Table(table)
 }
 
 impl<'de> Deserialize<'de> for CfgSpec {

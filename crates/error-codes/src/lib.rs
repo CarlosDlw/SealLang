@@ -2360,12 +2360,141 @@ pub const E8010: ErrorCode = ErrorCode {
 A plan names packages in dependency order, exactly one primary package, and one\nprimary source per package. A dependency may only point to an earlier package.\nThe project layer reports this code when its output violates one of those\ninvariants, so the compiler never loads a malformed graph.",
 };
 
-/// A path dependency escapes the project.
+/// A dependency source or checksum violates the project boundary.
 pub const E8021: ErrorCode = ErrorCode {
     code: "E8021",
-    title: "path dependency escapes the project",
+    title: "dependency integrity check failed",
     explanation: "\
-A path dependency must live inside the project root. Allowing it to escape would\nmake the build depend on a directory the project does not own and would make the\nlockfile non-portable.",
+A path dependency must live inside the project root, and registry bytes must\nmatch the SHA-256 digest recorded by the signed index and the lockfile. Either
+check protects the build from a directory or archive the project does not own.\n\nMove the path dependency inside the project, or discard the changed registry\ncache and run the command again without `--offline`.",
+};
+
+/// Registry configuration or transport is invalid.
+pub const E8020: ErrorCode = ErrorCode {
+    code: "E8020",
+    title: "registry configuration error",
+    explanation: "\
+The registry URL, mirror, TLS settings, or transport response is invalid. Seal\naccepts HTTPS and local `file://` registries; plain HTTP requires the explicit\n`allow-insecure` setting used by local test registries.\n\nCheck `[registry]` in the root manifest and the `SEAL_REGISTRY_*` environment\nvariables. Tokens belong in a credential file or an environment variable, never\nin a URL.",
+};
+
+/// A sparse index document is invalid.
+pub const E8025: ErrorCode = ErrorCode {
+    code: "E8025",
+    title: "invalid registry index",
+    explanation: "\
+The sparse index is missing or contains an unsupported format, an invalid\npackage name, a malformed version, an unsafe archive path, or a broken\ndependency declaration. The index is signed metadata, so a malformed document is\nrejected instead of being guessed at.\n\nInspect the package index and the TUF targets metadata, then publish a corrected\nversion.",
+};
+
+/// Version resolution found no consistent solution.
+pub const E8026: ErrorCode = ErrorCode {
+    code: "E8026",
+    title: "dependency resolution failed",
+    explanation: "\
+PubGrub could not choose one version for every registry requirement. The report\nnames the conflicting packages and the requirements that caused the conflict.\nResolution also stops after a bounded number of steps so a hostile index cannot\nconsume unbounded time.\n\nRelax or align the version requirements, or run `seal update --precise` after\nchoosing compatible versions.",
+};
+
+/// A registry archive is unsafe or malformed.
+pub const E8027: ErrorCode = ErrorCode {
+    code: "E8027",
+    title: "unsafe package archive",
+    explanation: "\
+Registry packages are `.tar.zst` archives. Seal rejects absolute paths, `..`\ncomponents, symlinks, hard links, devices, FIFOs, duplicate entries, oversized\nentries, and decompression bombs before any package file is used.\n\nPublish a clean archive that contains `seal.toml` at its root.",
+};
+
+/// A lockfile cannot be reconciled with the registry selection.
+pub const E8028: ErrorCode = ErrorCode {
+    code: "E8028",
+    title: "registry lock conflict",
+    explanation: "\
+The lockfile names a registry package that the current index no longer offers,\nor a lockfile transformation would violate the registry's immutable metadata.\nSeal does not silently replace a locked package with another version.\n\nRun `seal update` with an explicit new requirement, or restore the index entry\nthat the lockfile references.",
+};
+
+/// A vendor tree is inconsistent.
+pub const E8029: ErrorCode = ErrorCode {
+    code: "E8029",
+    title: "invalid vendor tree",
+    explanation: "\
+`vendor/seal-vendor.toml` records every vendored package and a digest of its\ntree. A missing directory, a changed file, or a checksum mismatch means the\noffline build would use bytes the project did not verify.\n\nRun `seal vendor` again while the registry or its cache is available.",
+};
+
+/// Audit policy rejected a package.
+pub const E8030: ErrorCode = ErrorCode {
+    code: "E8030",
+    title: "dependency audit failed",
+    explanation: "\
+`seal audit` checks locked registry packages against advisories, license policy,\nsource policy, yanked versions, checksums, and provenance requirements. A\nfinding is reported with this code and the audit exits unsuccessfully.\n\nUpdate the affected package, change the policy deliberately, or remove the\ndependency.",
+};
+
+/// SBOM generation failed.
+pub const E8031: ErrorCode = ErrorCode {
+    code: "E8031",
+    title: "SBOM generation failed",
+    explanation: "\
+The SBOM is a CycloneDX JSON document derived from the lockfile and plan. Seal\nrejects a package with a non-SHA-256 digest or another value that cannot be\nrepresented in the document.\n\nRegenerate the lockfile and run `seal sbom` again.",
+};
+
+/// Registry search or info failed.
+pub const E8032: ErrorCode = ErrorCode {
+    code: "E8032",
+    title: "registry query failed",
+    explanation: "\
+`seal search` and `seal info` read the signed catalog and package indexes. An\ninvalid catalog, an unknown package, or a malformed response is reported here.\n\nCheck the package name, or refresh the registry metadata.",
+};
+
+/// A yanked version was selected.
+pub const E8033: ErrorCode = ErrorCode {
+    code: "E8033",
+    title: "dependency version is yanked",
+    explanation: "\
+The registry marks this release as yanked. New resolutions do not select yanked\nversions, and an explicit request for one is rejected. An already locked version\nmay continue to build so an existing project does not break unexpectedly.\n\nRun `seal update` to select a supported release.",
+};
+
+/// A license violates the audit policy.
+pub const E8034: ErrorCode = ErrorCode {
+    code: "E8034",
+    title: "dependency license is not allowed",
+    explanation: "\
+The package license is denied, is absent while the policy requires a license, or\nis outside the configured allow-list. Seal treats the policy as a contract and\nnever silently downgrades the finding to a warning.\n\nChange the dependency, or update `[registry.policy]` deliberately.",
+};
+
+/// A source violates the audit policy.
+pub const E8035: ErrorCode = ErrorCode {
+    code: "E8035",
+    title: "dependency source is not allowed",
+    explanation: "\
+The lockfile source does not start with an allowed prefix from\n`[registry.policy] allow-sources`. This prevents a dependency from silently\nmoving from the approved registry to another source.\n\nUpdate the package from the approved registry, or add the source prefix after\nreviewing it.",
+};
+
+/// An advisory affects a locked package.
+pub const E8036: ErrorCode = ErrorCode {
+    code: "E8036",
+    title: "dependency advisory applies",
+    explanation: "\
+The registry advisory feed lists a security advisory whose affected range\nmatches a locked package version. The audit reports the advisory id and\nseverity.\n\nUpdate the package to a fixed version, or record an explicit exception in the\npolicy after assessing the risk.",
+};
+
+/// Required provenance is absent.
+pub const E8037: ErrorCode = ErrorCode {
+    code: "E8037",
+    title: "dependency provenance is missing",
+    explanation: "\
+The policy requires provenance metadata for registry packages, but the signed\nindex entry has none. Provenance binds the published archive to its build\ninputs; without it the audit cannot establish that binding.\n\nUse a registry that publishes provenance, or relax the policy deliberately.",
+};
+
+/// A registry response exceeds a size limit.
+pub const E8038: ErrorCode = ErrorCode {
+    code: "E8038",
+    title: "registry response is too large",
+    explanation: "\
+Seal bounds every registry response: metadata, indexes, advisories, archives,\nand extracted packages all have explicit size limits. A larger response is\nrejected before it can exhaust memory or disk, whether it comes from a broken\nserver or a hostile one.\n\nPublish smaller metadata, or split an oversized package into modules.",
+};
+
+/// Registry metadata is internally inconsistent.
+pub const E8039: ErrorCode = ErrorCode {
+    code: "E8039",
+    title: "inconsistent registry metadata",
+    explanation: "\
+The index, TUF metadata, package manifest, and lockfile must describe the same\npackage name, version, dependencies, and digest. Seal rejects a mismatch rather\nthan combining bytes from two different publications.\n\nRepublish the package and refresh the signed metadata.",
 };
 
 /// A path dependency does not exist.
@@ -2497,6 +2626,86 @@ A `.sealmono` artifact is the versioned output of the frontend. Its magic,
 format version, header, module count, sizes, and blake3 digests must all match;
 a truncated, corrupted, or newer artifact is rejected before LLVM runs.\n\nRebuild the artifact with the same compiler version. `seal cache clean` and a
 fresh `seal build` also recreate it.",
+};
+
+/// TUF metadata failed verification.
+pub const E8080: ErrorCode = ErrorCode {
+    code: "E8080",
+    title: "TUF verification failed",
+    explanation: "\
+The registry's root, timestamp, snapshot, or targets metadata failed signature,\nexpiry, length, digest, rollback, or mix-and-match verification. A missing\ntrusted root is also reported here.\n\nPin the correct `root.json`, make sure the system clock is accurate, and refresh\nthe registry metadata. Never disable verification to work around the error.",
+};
+
+/// Registry namespace operation failed.
+pub const E8081: ErrorCode = ErrorCode {
+    code: "E8081",
+    title: "registry namespace error",
+    explanation: "\
+A registry namespace or package ownership rule rejected the operation. Names\nare a shared public resource, so publishing or transferring one requires the\nowner's authorization.\n\nUse the account that owns the namespace, or choose a different name.",
+};
+
+/// A registry package cannot be overwritten.
+pub const E8082: ErrorCode = ErrorCode {
+    code: "E8082",
+    title: "published version is immutable",
+    explanation: "\
+A version that has been published cannot be replaced in place. Consumers and\nlockfiles rely on the version identifying exactly one archive, so a changed\nversion would make the same lockfile resolve to different bytes.\n\nPublish a new version instead.",
+};
+
+/// A registry publish operation was rejected.
+pub const E8083: ErrorCode = ErrorCode {
+    code: "E8083",
+    title: "registry publish rejected",
+    explanation: "\
+The registry rejected a package publication because of permissions, validation,\nquota, or an unsupported metadata field. The response identifies the rejected\ncondition.\n\nFix the package metadata or request the required permission.",
+};
+
+/// Registry credentials are missing or rejected.
+pub const E8084: ErrorCode = ErrorCode {
+    code: "E8084",
+    title: "registry credentials unavailable",
+    explanation: "\
+The registry requires authentication but no usable token was found, or the\nregistry rejected the token. Seal reads `SEAL_REGISTRY_TOKEN`, the variable named\nby `token-env`, or a credentials file that must have mode 0600 on Unix.\n\nSet a scoped token without putting it in `seal.toml`, and make sure the\ncredentials file is not readable by other users.",
+};
+
+/// An offline operation needs missing bytes.
+pub const E8085: ErrorCode = ErrorCode {
+    code: "E8085",
+    title: "offline registry data is missing",
+    explanation: "\
+`--offline`, `--frozen`, or `[registry] offline = true` forbids network access,\nbut a required index, archive, advisory, or TUF document is not present in the\nlocal cache or vendor tree.\n\nRun the command once with network access, or create a complete vendor tree with\n`seal vendor`.",
+};
+
+/// A downloaded package disagrees with its index entry.
+pub const E8086: ErrorCode = ErrorCode {
+    code: "E8086",
+    title: "package metadata mismatch",
+    explanation: "\
+The archive's `seal.toml` does not describe the name, version, dependencies, or\nother metadata claimed by its signed index entry. Seal verifies the archive\ndigest and then cross-checks the manifest so a valid archive cannot smuggle a\ndifferent dependency graph into the build.\n\nRepublish the package with a matching manifest and index entry.",
+};
+
+/// Registry provenance verification failed.
+pub const E8087: ErrorCode = ErrorCode {
+    code: "E8087",
+    title: "provenance verification failed",
+    explanation: "\
+Provenance metadata is malformed, has an unsupported digest, or does not bind\nthe published archive to the expected build inputs. Seal reports the mismatch\ninstead of treating an unverifiable claim as evidence.\n\nRepublish the package with valid provenance, or use a registry that provides it.",
+};
+
+/// A registry cache operation failed.
+pub const E8088: ErrorCode = ErrorCode {
+    code: "E8088",
+    title: "registry cache error",
+    explanation: "\
+The local registry cache could not be read, written, or replaced atomically.\nThis can happen when the disk is full, permissions changed, or another process\nleft a temporary file behind.\n\nCheck free space and permissions, then remove the temporary file or run the\ncommand again.",
+};
+
+/// A registry cache entry is corrupt.
+pub const E8089: ErrorCode = ErrorCode {
+    code: "E8089",
+    title: "corrupt registry cache entry",
+    explanation: "\
+A cached index, metadata document, or package marker no longer matches the\ndigest recorded for it. The cache is an optimization, never a source of trust,\nso a corrupt entry is rejected or discarded.\n\nRun the command again without `--offline` to rebuild the entry.",
 };
 
 /// Two builds of the same project produced different bytes.
@@ -3896,8 +4105,10 @@ pub static ALL: &[ErrorCode] = &[
     E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
-    E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8040, E8041, E8042, E8043, E8044,
-    E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8103, E8104, E9001, E9002,
+    E8008, E8009, E8010, E8011, E8020, E8021, E8022, E8023, E8024, E8025, E8026, E8027, E8028,
+    E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038, E8039, E8040, E8041,
+    E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8080, E8081, E8082,
+    E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8103, E8104, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

@@ -20,8 +20,18 @@ seal-driver.workspace = true
 seal-manifest.workspace = true
 seal-plan.workspace = true
 seal-project.workspace = true
+seal-registry.workspace = true
 seal-sandbox.workspace = true
 seal-target.workspace = true
 seal-toolchain.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+sha2.workspace = true
+tar.workspace = true
+url.workspace = true
+zstd.workspace = true

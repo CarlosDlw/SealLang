@@ -52,6 +52,12 @@ pub struct LockPackage {
     /// The target and evaluation facts shared by its instances.
     #[serde(default)]
     pub cfg: LockCfg,
+    /// Provenance metadata digest, when published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    /// Whether the registry marks this version yanked.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub yanked: bool,
     /// The resolved dependency edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<LockDependency>,
@@ -67,6 +73,9 @@ pub struct LockDependency {
     pub name: String,
     /// The dependency version.
     pub version: String,
+    /// The dependency source, which distinguishes same-name versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// The features requested on this edge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
@@ -79,6 +88,9 @@ pub struct LockInstance {
     pub name: String,
     /// The package version.
     pub version: String,
+    /// The package source, which distinguishes same-name versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// The deterministic instance hash.
     pub instance: u32,
     /// Enabled features.
@@ -138,7 +150,7 @@ pub struct Lockfile {
 impl Default for Lockfile {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             toolchain: "seal 0.1.0".to_owned(),
             targets: Vec::new(),
             packages: Vec::new(),
@@ -161,11 +173,15 @@ impl Lockfile {
     pub fn parse(text: &str) -> ProjectResult<Self> {
         let lockfile: Self = toml::from_str(text)
             .map_err(|error| ProjectError::lockfile(format!("invalid `seal.lock`: {error}")))?;
-        if lockfile.version != 1 {
+        if lockfile.version != 1 && lockfile.version != 2 {
             return Err(ProjectError::lockfile(format!(
-                "the lockfile version {} is not supported; this compiler understands version 1",
+                "the lockfile version {} is not supported; this compiler understands versions 1 and 2",
                 lockfile.version
             )));
+        }
+        let mut lockfile = lockfile;
+        if lockfile.version == 1 {
+            lockfile.version = 2;
         }
         Ok(lockfile)
     }
@@ -202,9 +218,21 @@ impl Lockfile {
         Ok(true)
     }
 
-    /// Returns the package record for `name`.
+    /// Returns the first package record for `name`.
     pub fn package(&self, name: &str) -> Option<&LockPackage> {
         self.packages.iter().find(|package| package.name == name)
+    }
+
+    /// Returns the record for one name, version, and source.
+    pub fn package_with_source(
+        &self,
+        name: &str,
+        version: &str,
+        source: &str,
+    ) -> Option<&LockPackage> {
+        self.packages.iter().find(|package| {
+            package.name == name && package.version == version && package.source == source
+        })
     }
 
     /// Replaces the native records, sorting them deterministically.
@@ -219,6 +247,8 @@ impl Lockfile {
         self
     }
 }
+
+type PackageRecord = (Vec<String>, LockCfg, Vec<LockDependency>);
 
 pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOptions>) -> Lockfile {
     let triple = seal_target::TargetTriple::parse(target).ok();
@@ -237,11 +267,16 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
     });
 
     let mut instances = Vec::new();
-    let mut by_package: BTreeMap<String, (Vec<String>, LockCfg, Vec<LockDependency>)> =
-        BTreeMap::new();
+    let mut by_package: BTreeMap<(String, String, String), PackageRecord> = BTreeMap::new();
     if let Some(graph) = &graph {
         for instance in &graph.instances {
             let package = project.package(instance.package);
+            let source = package.source.lock_source(
+                &project.root,
+                &package.root,
+                &package.name,
+                &package.version,
+            );
             let cfg = LockCfg {
                 os: cfg_facts.os().to_owned(),
                 arch: cfg_facts.arch().to_owned(),
@@ -262,6 +297,12 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
                         alias: edge.alias.clone(),
                         name: dependency.name.clone(),
                         version: dependency.version.clone(),
+                        source: Some(dependency.source.lock_source(
+                            &project.root,
+                            &dependency.root,
+                            &dependency.name,
+                            &dependency.version,
+                        )),
                         features: edge.features.iter().cloned().collect(),
                     }
                 })
@@ -269,7 +310,11 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
             let feature_list: Vec<String> = instance.features.iter().cloned().collect();
             let hash = crate::plan::instance_hash(package, &feature_list, &cfg_facts, &profile);
             let entry = by_package
-                .entry(package.name.clone())
+                .entry((
+                    package.name.clone(),
+                    package.version.clone(),
+                    source.clone(),
+                ))
                 .or_insert_with(|| (Vec::new(), cfg.clone(), Vec::new()));
             entry.0.extend(instance.features.iter().cloned());
             entry.0.sort();
@@ -278,6 +323,7 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
             instances.push(LockInstance {
                 name: package.name.clone(),
                 version: package.version.clone(),
+                source: Some(source),
                 instance: hash,
                 features: feature_list,
                 cfg,
@@ -288,6 +334,8 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
     instances.sort_by(|left, right| {
         left.name
             .cmp(&right.name)
+            .then_with(|| left.version.cmp(&right.version))
+            .then_with(|| left.source.cmp(&right.source))
             .then_with(|| left.instance.cmp(&right.instance))
     });
 
@@ -295,43 +343,59 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
         .packages
         .iter()
         .map(|package| {
+            let source = package.source.lock_source(
+                &project.root,
+                &package.root,
+                &package.name,
+                &package.version,
+            );
             let (features, cfg, mut dependencies) = by_package
-                .remove(&package.name)
+                .remove(&(
+                    package.name.clone(),
+                    package.version.clone(),
+                    source.clone(),
+                ))
                 .unwrap_or_else(|| (Vec::new(), LockCfg::default(), Vec::new()));
             dependencies.sort_by(|left, right| {
                 left.name
                     .cmp(&right.name)
+                    .then_with(|| left.version.cmp(&right.version))
                     .then_with(|| left.alias.cmp(&right.alias))
                     .then_with(|| left.features.cmp(&right.features))
             });
             dependencies.dedup();
-            let source = if package.root == project.root {
-                "path+.".to_owned()
-            } else {
-                format!(
-                    "path+{}",
-                    package
-                        .root
-                        .strip_prefix(&project.root)
-                        .unwrap_or(&package.root)
-                        .display()
-                )
+            let (checksum, provenance, yanked) = match &package.source {
+                crate::PackageSource::Path => {
+                    (checksum(&package.files, &project.root), None, false)
+                }
+                crate::PackageSource::Registry(registry) => (
+                    registry.checksum.clone(),
+                    registry.provenance.clone(),
+                    registry.yanked,
+                ),
             };
             LockPackage {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 source,
-                checksum: checksum(&package.files, &project.root),
+                checksum,
                 api: None,
                 features,
                 cfg,
+                provenance,
+                yanked,
                 dependencies,
             }
         })
         .collect();
-    packages.sort_by(|left, right| left.name.cmp(&right.name));
+    packages.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.version.cmp(&right.version))
+            .then_with(|| left.source.cmp(&right.source))
+    });
     Lockfile {
-        version: 1,
+        version: 2,
         toolchain: "seal 0.1.0".to_owned(),
         targets: vec![target.to_owned()],
         packages,
@@ -365,7 +429,7 @@ mod tests {
     #[test]
     fn a_lockfile_round_trips() {
         let lockfile = Lockfile {
-            version: 1,
+            version: 2,
             toolchain: "seal 0.1.0".to_owned(),
             targets: vec!["x86_64-unknown-linux-gnu".to_owned()],
             packages: vec![LockPackage {
@@ -376,6 +440,8 @@ mod tests {
                 api: None,
                 features: Vec::new(),
                 cfg: LockCfg::default(),
+                provenance: None,
+                yanked: false,
                 dependencies: Vec::new(),
             }],
             instances: Vec::new(),
@@ -389,5 +455,34 @@ mod tests {
     fn an_unknown_lockfile_version_is_rejected() {
         let error = Lockfile::parse("version = 9\n").unwrap_err();
         assert_eq!(error.code(), "E8008");
+    }
+
+    #[test]
+    fn a_version_one_lockfile_is_migrated_in_memory() {
+        let text = r#"version = 1
+toolchain = "seal 0.1.0"
+targets = ["x86_64-unknown-linux"]
+
+[[package]]
+name = "demo"
+version = "0.1.0"
+source = "path+."
+checksum = "sha256:00"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+source = "path+vendor/foo"
+checksum = "sha256:01"
+
+[[package.dependencies]]
+name = "foo"
+version = "1.0.0"
+"#;
+        let lockfile = Lockfile::parse(text).unwrap();
+        assert_eq!(lockfile.version, 2);
+        assert_eq!(lockfile.packages.len(), 2);
+        assert_eq!(lockfile.packages[1].dependencies[0].source, None);
+        assert!(lockfile.render().unwrap().starts_with("version = 2"));
     }
 }

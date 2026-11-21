@@ -11,7 +11,7 @@ use crate::ui;
 
 /// Runs one named task.
 pub(crate) fn task(cli: &Cli, root: &Path, args: &TaskArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };

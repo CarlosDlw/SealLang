@@ -73,6 +73,36 @@ impl ProjectError {
         Self::new("E8007", message)
     }
 
+    /// Invalid registry configuration (`E8020`).
+    pub fn registry(message: impl Into<String>) -> Self {
+        Self::new("E8020", message)
+    }
+
+    /// A registry failure with its original code.
+    pub fn registry_code(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(code, message)
+    }
+
+    /// Version resolution failed (`E8026`).
+    pub fn resolution(message: impl Into<String>) -> Self {
+        Self::new("E8026", message)
+    }
+
+    /// A yanked version was requested (`E8033`).
+    pub fn yanked(message: impl Into<String>) -> Self {
+        Self::new("E8033", message)
+    }
+
+    /// An offline operation is missing data (`E8085`).
+    pub fn offline(message: impl Into<String>) -> Self {
+        Self::new("E8085", message)
+    }
+
+    /// Inconsistent registry metadata (`E8039`).
+    pub fn metadata(message: impl Into<String>) -> Self {
+        Self::new("E8039", message)
+    }
+
     /// A path dependency that leaves the project (`E8021`).
     pub fn path_escape(message: impl Into<String>) -> Self {
         Self::new("E8021", message)

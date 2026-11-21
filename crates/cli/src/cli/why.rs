@@ -8,7 +8,7 @@ use crate::cli::{Cli, QueryArgs};
 use crate::ui;
 
 pub(crate) fn why(cli: &Cli, root: &std::path::Path, args: &QueryArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };

@@ -10,10 +10,29 @@ use crate::cli::{Cli, QueryArgs};
 use crate::ui;
 
 pub(crate) fn tree(cli: &Cli, root: &std::path::Path, args: &QueryArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };
+    if args.duplicates {
+        let mut seen = std::collections::BTreeMap::<String, Vec<&str>>::new();
+        for package in &project.packages {
+            seen.entry(package.name.clone())
+                .or_default()
+                .push(&package.version);
+        }
+        let mut found = false;
+        for (name, versions) in seen {
+            if versions.len() > 1 {
+                found = true;
+                println!("{name}: {}", versions.join(", "));
+            }
+        }
+        if !found {
+            println!("no duplicate package versions");
+        }
+        return ExitCode::SUCCESS;
+    }
     let plan = match compile(&project, args) {
         Ok(plan) => plan,
         Err(error) => return ui::error(error.code(), error.message()),

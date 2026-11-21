@@ -8,7 +8,7 @@ use crate::ui;
 
 /// Removes `seal/cache` and `seal/target`.
 pub(crate) fn clean(cli: &Cli, root: &Path) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };

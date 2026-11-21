@@ -10,7 +10,7 @@ use crate::ui;
 
 /// Runs one cache operation.
 pub(crate) fn cache(cli: &Cli, root: &Path, args: &CacheArgs) -> ExitCode {
-    let project = match crate::cli::load(root) {
+    let project = match crate::cli::load(cli, root) {
         Ok(project) => project,
         Err(code) => return code,
     };

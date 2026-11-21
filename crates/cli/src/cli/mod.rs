@@ -1,18 +1,28 @@
 //! Argument parsing and command dispatch.
 
+mod add;
+mod audit;
 pub(crate) mod build;
 mod cache;
 mod check;
 mod clean;
+mod dependency;
 mod doctor;
+mod info;
 mod init;
 pub(crate) mod metadata;
 pub(crate) mod new;
+mod registry;
+mod remove;
 mod run;
+mod sbom;
+mod search;
 mod target;
 mod task;
 mod toolchain;
 mod tree;
+mod update;
+mod vendor;
 mod verify_repro;
 mod why;
 
@@ -98,6 +108,22 @@ pub(crate) struct Cli {
     #[arg(long, global = true, value_enum, default_value = "auto")]
     pub(crate) color: ColorChoice,
 
+    /// Forbid network access while loading registry dependencies.
+    #[arg(long, global = true)]
+    pub(crate) offline: bool,
+
+    /// Resolve the lowest compatible registry versions.
+    #[arg(long = "minimal-versions", global = true)]
+    pub(crate) minimal_versions: bool,
+
+    /// Resolve the newest compatible registry versions (the default).
+    #[arg(long, global = true, conflicts_with = "minimal_versions")]
+    pub(crate) latest: bool,
+
+    /// Use only the vendor tree for registry dependencies.
+    #[arg(long = "vendor", global = true)]
+    pub(crate) vendor: bool,
+
     /// The action to perform.
     #[command(subcommand)]
     pub(crate) command: Command,
@@ -136,6 +162,24 @@ pub(crate) enum Command {
     Toolchain(toolchain::ToolchainArgs),
     /// Inspect and install TOML target specifications.
     Target(target::TargetArgs),
+    /// Add a registry dependency and update the lockfile.
+    Add(AddArgs),
+    /// Remove a dependency and update the lockfile.
+    Remove(RemoveArgs),
+    /// Re-resolve registry dependencies.
+    Update(UpdateArgs),
+    /// Copy registry dependencies into `vendor/`.
+    Vendor(VendorArgs),
+    /// Audit locked dependencies.
+    Audit(AuditArgs),
+    /// Audit locked dependencies; an alias for `audit`.
+    Deny(AuditArgs),
+    /// Generate a CycloneDX SBOM.
+    Sbom(SbomArgs),
+    /// Search the registry catalog.
+    Search(SearchArgs),
+    /// Show every version and dependency of one package.
+    Info(InfoArgs),
 }
 
 /// Options shared by build-like commands.
@@ -192,6 +236,27 @@ pub(crate) struct Selection {
     /// Fail if the lockfile would change and forbid network access.
     #[arg(long)]
     pub(crate) frozen: bool,
+}
+
+impl Selection {
+    /// A selection with no filters, used by dependency commands.
+    pub(crate) fn default_for_command() -> Self {
+        Self {
+            targets: Vec::new(),
+            package: None,
+            workspace: false,
+            all_targets: false,
+            profile: None,
+            release: false,
+            target_triple: None,
+            features: Vec::new(),
+            all_features: false,
+            no_default_features: false,
+            cfgs: Vec::new(),
+            locked: false,
+            frozen: false,
+        }
+    }
 }
 
 /// `seal new`.
@@ -301,6 +366,10 @@ pub(crate) struct QueryArgs {
     /// Force a boolean `cfg` fact (`test`, `bench`, `debug_assertions`).
     #[arg(long = "cfg", value_name = "FACT")]
     pub(crate) cfgs: Vec<String>,
+
+    /// Show packages that resolve to more than one version.
+    #[arg(long)]
+    pub(crate) duplicates: bool,
 }
 
 /// `seal metadata`.
@@ -355,6 +424,108 @@ pub(crate) enum CacheCommand {
         /// The action key.
         key: String,
     },
+}
+
+/// `seal add`.
+#[derive(Debug, Args)]
+pub(crate) struct AddArgs {
+    /// A dependency such as `foo`, `foo@1.2`, or `@scope/foo@^2`.
+    pub(crate) spec: String,
+    /// Enable these features on the dependency.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    pub(crate) features: Vec<String>,
+    /// Mark the dependency optional.
+    #[arg(long)]
+    pub(crate) optional: bool,
+    /// Disable the dependency's default feature.
+    #[arg(long)]
+    pub(crate) no_default_features: bool,
+    /// The package whose manifest to edit.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+    /// Print the proposed change without writing anything.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Apply the change without asking for confirmation.
+    #[arg(long)]
+    pub(crate) yes: bool,
+}
+
+/// `seal remove`.
+#[derive(Debug, Args)]
+pub(crate) struct RemoveArgs {
+    /// The dependency alias to remove.
+    pub(crate) name: String,
+    /// The package whose manifest to edit.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+    /// Print the proposed change without writing anything.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Apply the change without asking for confirmation.
+    #[arg(long)]
+    pub(crate) yes: bool,
+}
+
+/// `seal update`.
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Packages to update; empty updates every registry dependency.
+    #[arg(value_name = "PACKAGE")]
+    pub(crate) packages: Vec<String>,
+    /// Pin a package instead of selecting the latest compatible version.
+    #[arg(long, value_name = "PACKAGE@VERSION")]
+    pub(crate) precise: Vec<String>,
+    /// Print the proposed selection without writing the lockfile.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+/// `seal vendor`.
+#[derive(Debug, Args)]
+pub(crate) struct VendorArgs {
+    /// Remove the vendor tree and recreate it.
+    #[arg(long)]
+    pub(crate) clean: bool,
+}
+
+/// `seal audit` and `seal deny`.
+#[derive(Debug, Args)]
+pub(crate) struct AuditArgs {
+    /// Print a JSON report.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// `seal sbom`.
+#[derive(Debug, Args)]
+pub(crate) struct SbomArgs {
+    /// Write the JSON document to this path instead of stdout.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    pub(crate) output: Option<PathBuf>,
+}
+
+/// `seal search`.
+#[derive(Debug, Args)]
+pub(crate) struct SearchArgs {
+    /// Text matched against package names.
+    pub(crate) query: String,
+    /// Print JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Maximum results.
+    #[arg(long, default_value = "20")]
+    pub(crate) limit: usize,
+}
+
+/// `seal info`.
+#[derive(Debug, Args)]
+pub(crate) struct InfoArgs {
+    /// The package name.
+    pub(crate) name: String,
+    /// Print JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 /// `seal task`.
@@ -418,10 +589,55 @@ where
         Command::VerifyRepro(args) => verify_repro::verify_repro(&cli, &project, args),
         Command::Toolchain(args) => toolchain::run(&cli, &project, args),
         Command::Target(args) => target::run(&cli, &project, args),
+        Command::Add(args) => add::run(&cli, &project, args),
+        Command::Remove(args) => remove::run(&cli, &project, args),
+        Command::Update(args) => update::run(&cli, &project, args),
+        Command::Vendor(args) => vendor::run(&cli, &project, args),
+        Command::Audit(args) | Command::Deny(args) => audit::run(&cli, &project, args),
+        Command::Sbom(args) => sbom::run(&cli, &project, args),
+        Command::Search(args) => search::run(&cli, &project, args),
+        Command::Info(args) => info::run(&cli, &project, args),
+    }
+}
+
+/// Builds project-loading options from global flags.
+pub(crate) fn project_options(cli: &Cli) -> seal_project::ProjectOptions {
+    seal_project::ProjectOptions {
+        offline: cli.offline,
+        minimal_versions: cli.minimal_versions,
+        update: false,
+        vendor_only: cli.vendor,
+        update_packages: Vec::new(),
+        pinned: std::collections::BTreeMap::new(),
     }
 }
 
 /// Loads the project, mapping failures to a stable exit status.
-pub(crate) fn load(project: &std::path::Path) -> Result<seal_project::Project, ExitCode> {
-    seal_project::Project::load(project).map_err(|error| ui::error(error.code(), error.message()))
+pub(crate) fn load(
+    cli: &Cli,
+    project: &std::path::Path,
+) -> Result<seal_project::Project, ExitCode> {
+    load_with(cli, project, &project_options(cli))
+}
+
+/// Loads the project for a build-like command, including `--frozen`.
+pub(crate) fn load_for_selection(
+    cli: &Cli,
+    project: &std::path::Path,
+    selection: &Selection,
+) -> Result<seal_project::Project, ExitCode> {
+    let mut options = project_options(cli);
+    options.offline |= selection.frozen;
+    load_with(cli, project, &options)
+}
+
+/// Loads the project with explicit registry options.
+pub(crate) fn load_with(
+    cli: &Cli,
+    project: &std::path::Path,
+    options: &seal_project::ProjectOptions,
+) -> Result<seal_project::Project, ExitCode> {
+    let _ = cli;
+    seal_project::Project::load_with(project, options)
+        .map_err(|error| ui::error(error.code(), error.message()))
 }

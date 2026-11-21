@@ -162,6 +162,80 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
         }
     }
 
+    if let Some(registry) = &manifest.registry {
+        if manifest.project.is_none() {
+            return Err(index.fail(
+                "registry",
+                "`[registry]` is project configuration; declare it in the root manifest",
+            ));
+        }
+        if let Some(name) = &registry.name {
+            validate_identifier(name, index, "registry.name")?;
+        }
+        if let Some(url) = &registry.url
+            && url.trim().is_empty()
+        {
+            return Err(index.fail("registry.url", "the registry URL cannot be empty"));
+        }
+        if let Some(url) = &registry.mirror
+            && url.trim().is_empty()
+        {
+            return Err(index.fail("registry.mirror", "the mirror URL cannot be empty"));
+        }
+        if let Some(url) = &registry.tuf_url
+            && url.trim().is_empty()
+        {
+            return Err(index.fail("registry.tuf-url", "the TUF URL cannot be empty"));
+        }
+        if let Some(url) = &registry.advisories
+            && url.trim().is_empty()
+        {
+            return Err(index.fail("registry.advisories", "the advisory URL cannot be empty"));
+        }
+        if let Some(variable) = &registry.token_env {
+            if variable.trim().is_empty() || variable.contains('=') {
+                return Err(index.fail(
+                    "registry.token-env",
+                    "a token environment variable name cannot be empty or contain `=`",
+                ));
+            }
+        }
+        for (key, path) in [
+            ("registry.credentials", registry.credentials.as_ref()),
+            ("registry.tuf-root", registry.tuf_root.as_ref()),
+        ] {
+            if let Some(path) = path {
+                if path.as_os_str().is_empty() {
+                    return Err(index.fail(key, "a path cannot be empty"));
+                }
+                if path.is_relative() {
+                    validate_relative_path(path, index, key)?;
+                }
+            }
+        }
+        for license in registry
+            .policy
+            .allow_licenses
+            .iter()
+            .chain(&registry.policy.deny_licenses)
+        {
+            if license.trim().is_empty() || license.chars().any(char::is_control) {
+                return Err(index.fail(
+                    "registry.policy",
+                    "a license expression cannot be empty or contain control characters",
+                ));
+            }
+        }
+        for source in &registry.policy.allow_sources {
+            if source.trim().is_empty() || source.chars().any(char::is_control) {
+                return Err(index.fail(
+                    "registry.policy.allow-sources",
+                    "a source prefix cannot be empty or contain control characters",
+                ));
+            }
+        }
+    }
+
     if let Some(package) = &manifest.package {
         validate_name("package", &package.name, index, "package.name")?;
         Version::parse(&package.version).map_err(|error| {
@@ -400,6 +474,14 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
                 })?;
             }
             if let DependencySpec::Detailed(detail) = dependency {
+                if let Some(package) = &detail.package {
+                    validate_name(
+                        "dependency package",
+                        package,
+                        index,
+                        &format!("{path}.package"),
+                    )?;
+                }
                 if detail.path.is_none() && detail.version.is_none() && detail.git.is_none() {
                     return Err(index.fail(
                         &path,
@@ -651,6 +733,39 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
     ];
     check_static(document.as_table(), &root, "", &mut warnings);
 
+    if let Some(registry) = table(document.as_table(), "registry") {
+        check_static(
+            registry,
+            &[
+                "name",
+                "url",
+                "mirror",
+                "token-env",
+                "credentials",
+                "tuf-root",
+                "tuf-url",
+                "advisories",
+                "offline",
+                "allow-insecure",
+                "policy",
+            ],
+            "registry",
+            &mut warnings,
+        );
+        if let Some(policy) = table(registry, "policy") {
+            check_static(
+                policy,
+                &[
+                    "allow-licenses",
+                    "deny-licenses",
+                    "allow-sources",
+                    "require-provenance",
+                ],
+                "registry.policy",
+                &mut warnings,
+            );
+        }
+    }
     if let Some(project) = table(document.as_table(), "project") {
         check_static(
             project,
@@ -735,6 +850,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
                             "optional",
                             "when",
                             "registry",
+                            "package",
                         ],
                         &format!("{section}.{name}"),
                         &mut warnings,
