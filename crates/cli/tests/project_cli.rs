@@ -426,6 +426,27 @@ fn a_missing_manifest_points_at_seal_init() {
 }
 
 #[test]
+fn verify_repro_builds_two_copies_and_finds_them_identical() {
+    let fixture = fixture("verify-repro");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let check = output(
+        seal()
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("verify-repro"),
+    );
+    assert_success(&check);
+    assert!(String::from_utf8_lossy(&check.stdout).contains("reproducible"));
+}
+
+#[test]
 fn paths_with_spaces_and_unicode_work() {
     let fixture = fixture("spaces");
     let root = fixture.root.join("projeto com espaço");

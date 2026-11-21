@@ -13,7 +13,7 @@ assembly output do not require an entry point; executables do.
 ## Pipeline
 
 1. **Declare.** Every instance in the monomorphized program becomes an LLVM
-   function with external linkage and the signature derived from its concrete
+   function with hidden visibility and the signature derived from its concrete
    argument and return types. A non-generic free function is `seal.<name>`; a
    non-generic impl function is `seal.<Type>.<name>`, so same-named methods on
    different types stay distinct. A generic instance appends the stable
@@ -47,10 +47,32 @@ assembly output do not require an entry point; executables do.
    written atomically. An executable is linked from a temporary object with the
    system C toolchain.
 
+### Split frontend and CGU code generation
+
+`sealc build --emit=mono` writes a `.sealmono` archive instead of an object. The
+archive contains a versioned JSON header and one LLVM bitcode unit per code
+generation unit. The frontend marks Seal functions internal, writes the complete
+module to bitcode, and partitions it with
+`llvm-split --round-robin -j <codegen-units>`. The splitter externalizes every
+function or global that another unit calls and keeps hidden visibility, so no
+Seal symbol becomes part of a library's C surface.
+
+`sealc codegen --mono app.sealmono --cgu 2 -o app.2.o` validates the archive and
+parses only that unit. It never lowers HIR, MIR, types, or generic instances; it
+runs the target machine over the frozen IR. The build graph keys each unit by
+the blake3 digest of its own bitcode, so an edit reruns only the unit whose
+bytes changed. A corrupt, truncated, or version-mismatched archive is `E8070`.
+
+The split requires `llvm-split` from the same LLVM installation as the compiler.
+Set `SEAL_LLVM_SPLIT` to select a different executable. `sealc build file.sl`
+without `--emit=mono` keeps the all-in-one path.
+
 ## Command line
 
 ```text
 sealc build [OPTIONS] <INPUT>...
+sealc build --emit=mono --cgu N -o app.sealmono <INPUT>...
+sealc codegen --mono app.sealmono --cgu N -o app.N.o
 sealc check [OPTIONS] <INPUT>...
 sealc run [OPTIONS] <INPUT> [-- <ARGS>...]
 sealc emit-runtime <PATH>

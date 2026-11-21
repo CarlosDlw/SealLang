@@ -450,6 +450,7 @@ dependencies = [
  "seal-codegen",
  "seal-driver",
  "seal-manifest",
+ "seal-metadata",
  "seal-plan",
  "seal-project",
  "seal-sandbox",
@@ -505,6 +506,7 @@ dependencies = [
  "seal-layout",
  "seal-lexer",
  "seal-llvm-ffi",
+ "seal-metadata",
  "seal-methods",
  "seal-mir",
  "seal-mono",
@@ -572,6 +574,7 @@ dependencies = [
  "seal-hir",
  "seal-index",
  "seal-lexer",
+ "seal-metadata",
  "seal-mir",
  "seal-mono",
  "seal-parser",
@@ -672,6 +675,18 @@ dependencies = [
  "serde",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "seal-metadata"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "seal-error-codes",
+ "seal-fs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

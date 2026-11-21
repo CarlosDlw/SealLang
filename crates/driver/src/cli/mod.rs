@@ -9,6 +9,7 @@
 
 mod build;
 mod check;
+mod codegen;
 mod compile;
 mod diagnostics;
 mod emit_runtime;
@@ -30,6 +31,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 pub(crate) use build::BuildArgs;
 pub(crate) use check::CheckArgs;
+pub(crate) use codegen::CodegenArgs;
 pub(crate) use compile::CompileArgs;
 pub(crate) use emit_runtime::EmitRuntimeArgs;
 pub(crate) use explain::ExplainArgs;
@@ -75,6 +77,8 @@ pub(crate) enum CliCommand {
     Run(RunArgs),
     /// Check inputs without writing an artifact.
     Check(CheckArgs),
+    /// Generate one object from a `.sealmono` unit.
+    Codegen(CodegenArgs),
     /// Explain a diagnostic code.
     Explain(ExplainArgs),
     /// Write the embedded runtime archive to a path.

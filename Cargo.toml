@@ -46,6 +46,7 @@ seal-cli = { path = "crates/cli" }
 seal-cas = { path = "crates/cas" }
 seal-sandbox = { path = "crates/sandbox" }
 seal-build = { path = "crates/build" }
+seal-metadata = { path = "crates/metadata" }
 blake3 = "1.8"
 
 clap = { version = "4.6", features = ["derive"] }

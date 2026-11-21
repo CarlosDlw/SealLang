@@ -21,6 +21,7 @@ seal-index.workspace = true
 seal-layout.workspace = true
 seal-llvm-ffi.workspace = true
 seal-methods.workspace = true
+seal-metadata.workspace = true
 seal-mir.workspace = true
 seal-mono.workspace = true
 seal-session.workspace = true

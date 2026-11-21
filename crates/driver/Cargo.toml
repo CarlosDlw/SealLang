@@ -23,6 +23,7 @@ seal-hir.workspace = true
 seal-index.workspace = true
 seal-lexer.workspace = true
 seal-mir.workspace = true
+seal-metadata.workspace = true
 seal-mono.workspace = true
 seal-parser.workspace = true
 seal-error-codes.workspace = true

@@ -30,6 +30,9 @@ pub(crate) fn emit_artifact(
         Emit::Object => write_buffer(module, machine, FileType::Object, &options.output),
         Emit::Assembly => write_buffer(module, machine, FileType::Assembly, &options.output),
         Emit::Executable => link_executable(module, machine, options, runtime, source_libraries),
+        Emit::Mono => Err(CodegenError::internal(
+            "a mono artifact is written by the mono backend, not the artifact writer",
+        )),
     }
 }
 
@@ -87,8 +90,9 @@ fn link_executable(
             format!("cannot write the temporary object file: {error}"),
         )
     })?;
+    let objects = [object_path.as_path()];
     let request = LinkRequest {
-        object: &object_path,
+        objects: &objects,
         runtime: Some(runtime),
         output,
         source_libraries,
@@ -102,7 +106,7 @@ fn link_executable(
 
 /// One link request over an existing object file.
 pub(crate) struct LinkRequest<'a> {
-    pub(crate) object: &'a Path,
+    pub(crate) objects: &'a [&'a Path],
     pub(crate) runtime: Option<&'a [u8]>,
     pub(crate) output: &'a Path,
     pub(crate) source_libraries: &'a [String],
@@ -131,7 +135,11 @@ pub(crate) fn run_linker(request: &LinkRequest<'_>) -> Result<(), CodegenError> 
     ));
     let temporary_path = temporary_executable(output)?;
     let inputs = linker::LinkInputs {
-        object: request.object,
+        objects: request
+            .objects
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect(),
         runtime: &runtime_path,
         output: &temporary_path,
         source_libraries: request.source_libraries,
@@ -203,6 +211,7 @@ static LINK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Returns the libraries named in a link request, for diagnostics.
 fn libraries_text(inputs: &linker::LinkInputs<'_>) -> String {
     let mut names = Vec::new();
+    let _ = inputs.objects.len();
     names.extend(inputs.source_libraries.iter().cloned());
     names.extend(inputs.libraries.iter().cloned());
     if names.is_empty() {

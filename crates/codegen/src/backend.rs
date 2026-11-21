@@ -1,7 +1,9 @@
 //! LLVM module construction and code generation orchestration.
 
 use std::borrow::Cow;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use inkwell::OptimizationLevel;
 use inkwell::attributes::{Attribute, AttributeLoc};
@@ -15,6 +17,10 @@ use seal_const_eval::ConstProgram;
 use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
+use seal_metadata::{
+    MonoLayout, MonoManifest, MonoModule, MonoProfile, MonoSourceFile, MonoSummary,
+    write_archive_file,
+};
 use seal_mir::Body;
 use seal_mono::MonoProgram;
 use seal_session::OptLevel;
@@ -145,12 +151,19 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     // an executable would get. A plain `sealc build --emit=obj` without an
     // entry keeps the historical object layout.
     let entry_point = if options.emit == Emit::Executable
-        || (options.emit == Emit::Object && options.entry.is_some())
+        || options.entry.is_some()
+        || options.emit == Emit::Mono
     {
-        Some(match options.entry {
-            Some(definition) => entry::validate_selected(input.hir, input.mono, definition)?,
-            None => entry::validate(input.hir, input.mono)?,
-        })
+        match options.entry {
+            Some(definition) => Some(entry::validate_selected(input.hir, input.mono, definition)?),
+            None => match entry::validate(input.hir, input.mono) {
+                Ok(entry) => Some(entry),
+                // A library mono artifact has no entry; an executable mono
+                // artifact must still fail when `main` is missing.
+                Err(_) if options.emit == Emit::Mono => None,
+                Err(error) => return Err(error),
+            },
+        }
     } else {
         None
     };
@@ -181,6 +194,11 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
         input.interner,
         &mapper,
         &noalias,
+        if options.emit == Emit::Mono {
+            Linkage::Internal
+        } else {
+            Linkage::External
+        },
     )?;
     // Drop glue is declared and filled before vtables, whose first slot points
     // at the concrete type's glue, and before bodies, whose drop statements call
@@ -293,6 +311,10 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             })?;
     }
 
+    if options.emit == Emit::Mono {
+        return write_mono(input, options, &module);
+    }
+
     let source_libraries: Vec<String> = input
         .hir
         .link_directives()
@@ -309,6 +331,176 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
     Ok(Artifact {
         path: options.output.clone(),
         emit: options.emit,
+    })
+}
+
+/// Writes the per-CGU `.sealmono` archive for an already optimized module.
+fn write_mono(
+    input: CodegenInput<'_>,
+    options: &CodegenOptions,
+    module: &Module<'_>,
+) -> Result<Artifact, CodegenError> {
+    let count = options.cgu_count.max(1);
+    let output = &options.output;
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| {
+        CodegenError::artifact(
+            output,
+            format!("cannot create the artifact directory: {error}"),
+        )
+    })?;
+    let file_name = output
+        .file_name()
+        .ok_or_else(|| CodegenError::artifact(output, "the output path has no file name"))?;
+    let work = parent.join(format!(
+        ".{}.{}.mono.tmp",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work).map_err(|error| {
+        CodegenError::artifact(
+            output,
+            format!("cannot create the mono staging directory: {error}"),
+        )
+    })?;
+    let result = write_mono_parts(input, options, module, count, &work);
+    let _ = fs::remove_dir_all(&work);
+    result
+}
+
+fn write_mono_parts(
+    input: CodegenInput<'_>,
+    options: &CodegenOptions,
+    module: &Module<'_>,
+    count: u32,
+    work: &Path,
+) -> Result<Artifact, CodegenError> {
+    let bitcode = work.join("module.bc");
+    if !module.write_bitcode_to_path(&bitcode) {
+        return Err(CodegenError::artifact(
+            &options.output,
+            "LLVM could not write the frontend bitcode",
+        ));
+    }
+    let parts = if count == 1 {
+        vec![bitcode.clone()]
+    } else {
+        let split = std::env::var_os("SEAL_LLVM_SPLIT")
+            .unwrap_or_else(|| std::ffi::OsString::from("llvm-split"));
+        let prefix = work.join("cgu");
+        let result = Command::new(&split)
+            .arg("--round-robin")
+            .arg("-j")
+            .arg(count.to_string())
+            .arg("-o")
+            .arg(&prefix)
+            .arg(&bitcode)
+            .output();
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                return Err(CodegenError::artifact(
+                    &options.output,
+                    format!(
+                        "cannot run `{}`: {error}; install LLVM or set SEAL_LLVM_SPLIT",
+                        split.to_string_lossy()
+                    ),
+                ));
+            }
+        };
+        if !result.status.success() {
+            return Err(CodegenError::artifact(
+                &options.output,
+                format!(
+                    "`{}` failed ({}): {}",
+                    split.to_string_lossy(),
+                    result.status,
+                    String::from_utf8_lossy(&result.stderr).trim()
+                ),
+            ));
+        }
+        let mut parts = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let path = work.join(format!("cgu{index}"));
+            if !path.is_file() {
+                return Err(CodegenError::artifact(
+                    &options.output,
+                    format!("the splitter produced no module for CGU {index}"),
+                ));
+            }
+            parts.push(path);
+        }
+        parts
+    };
+    let mut modules = Vec::with_capacity(parts.len());
+    for (index, part) in parts.iter().enumerate() {
+        let bytes = fs::read(part).map_err(|error| {
+            CodegenError::artifact(
+                &options.output,
+                format!("cannot read the CGU {index} payload: {error}"),
+            )
+        })?;
+        modules.push(bytes);
+    }
+    let mut manifest = MonoManifest::new(input.target.triple().as_str(), count);
+    manifest.profile = MonoProfile {
+        opt_level: match options.opt_level {
+            OptLevel::O0 => 0,
+            OptLevel::O1 => 1,
+            OptLevel::O2 => 2,
+            OptLevel::O3 => 3,
+        },
+        debug: options.debug_info,
+        codegen_units: count,
+    };
+    manifest.entry = options.entry.map(|def| {
+        input
+            .interner
+            .resolve(input.hir.definitions().get(def).name)
+            .to_owned()
+    });
+    for (id, file) in input.source_map.files() {
+        manifest.source_files.push(MonoSourceFile {
+            path: input
+                .source_map
+                .display_name(id)
+                .unwrap_or_else(|| "seal-input".to_owned()),
+            digest: seal_metadata::digest_bytes(file.text().as_bytes()),
+        });
+    }
+    manifest.layouts = Vec::<MonoLayout>::new();
+    manifest.summary = MonoSummary {
+        types: 0,
+        instances: input.mono.instances().len() as u64,
+        vtables: input.mono.vtables().len() as u64,
+        drop_glues: input.mono.drop_glues().len() as u64,
+        statics: input.mono.statics().len() as u64,
+        constants: input.mono.const_allocations().len() as u64,
+        digest: String::new(),
+    };
+    for (index, bytes) in modules.iter().enumerate() {
+        manifest.modules.push(MonoModule {
+            cgu: index as u32,
+            name: format!("cgu{index}"),
+            digest: String::new(),
+            size: 0,
+            functions: 0,
+        });
+        manifest.modules[index].size = bytes.len() as u64;
+    }
+    write_archive_file(&options.output, &manifest, &modules).map_err(|error| {
+        CodegenError::artifact(
+            &options.output,
+            format!("cannot write the mono artifact: {error}"),
+        )
+    })?;
+    Ok(Artifact {
+        path: options.output.clone(),
+        emit: Emit::Mono,
     })
 }
 
@@ -392,6 +584,7 @@ fn read_runtime_archive(path: &Path, output: &Path) -> Result<Vec<u8>, CodegenEr
     Ok(archive)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn declare_functions<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
@@ -400,6 +593,7 @@ pub(crate) fn declare_functions<'ctx>(
     interner: &Interner,
     mapper: &TypeMapper<'ctx>,
     noalias_functions: &FxHashSet<DefId>,
+    linkage: Linkage,
 ) -> Result<FxHashMap<Instance, FunctionValue<'ctx>>, CodegenError> {
     let mut functions = FxHashMap::default();
     for mono in mono.instances().iter() {
@@ -408,7 +602,16 @@ pub(crate) fn declare_functions<'ctx>(
         let parameters: Vec<TyId> = body.args().map(|parameter| parameter.ty).collect();
         let returns = body.local(Body::return_local()).ty;
         let function_type = mapper.function_type(&parameters, returns)?;
-        let function = module.add_function(&name, function_type, Some(Linkage::External));
+        // A mono module uses internal functions so `llvm-split` can partition
+        // them and externalize each definition with hidden visibility. The
+        // all-in-one path keeps the historical external linkage.
+        let function = module.add_function(&name, function_type, Some(linkage));
+        // Seal symbols are implementation detail. A shared library must not
+        // export them; `llvm-split` preserves visibility when it externalizes a
+        // unit that another CGU calls.
+        function
+            .as_global_value()
+            .set_visibility(inkwell::GlobalVisibility::Hidden);
         add_reference_attributes(
             context,
             function,

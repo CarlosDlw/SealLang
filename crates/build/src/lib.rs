@@ -47,7 +47,9 @@ pub use action::NativeResult;
 pub use error::{BuildError, BuildResult};
 pub use tasks::{TaskOutcome, TaskReport, TaskRequest, TaskRunner};
 
-use action::{Action, FrontendAction, GenerateAction, LinkAction, NativeAction, slash_path};
+use action::{
+    Action, CodegenAction, FrontendAction, GenerateAction, LinkAction, NativeAction, slash_path,
+};
 use context::ActionContext;
 use graph::ActionGraph;
 
@@ -302,34 +304,38 @@ impl<'a> Builder<'a> {
             let plan = self
                 .project
                 .compile_plan(job.package, &job.target, &options)?;
+            let count = plan.profile.codegen_units.max(1);
             let frontend = Arc::new(FrontendAction::new(
                 self.label(job),
                 plan,
+                count,
                 &self.project.root,
                 &context.temp_root,
             )?);
             let key = graph.add(Action::Frontend(frontend), Vec::new())?;
-            frontends.push((*job, key));
+            frontends.push((*job, key, count));
         }
         let records = graph.execute(context, self.options.jobs)?;
         let mut result = Vec::new();
-        for (job, frontend_key) in frontends {
+        for (job, frontend_key, count) in frontends {
             let target = self.target(job);
             let path = target_output(self.project, target);
             let link_key = {
                 let frontend = records.get(&frontend_key).ok_or_else(|| {
                     BuildError::action(format!("the frontend `{}` produced no record", job.target))
                 })?;
-                let object = frontend
-                    .output("object")
-                    .ok_or_else(|| BuildError::action("the frontend produced no object"))?;
+                let mono = frontend
+                    .output("mono")
+                    .ok_or_else(|| BuildError::action("the frontend produced no mono artifact"))?;
                 let metadata = frontend
                     .output("link-metadata")
                     .ok_or_else(|| BuildError::action("the frontend produced no link metadata"))?;
+                let objects =
+                    self.codegen_objects(context, &self.label(job), mono.digest, count)?;
                 let mut link_graph = ActionGraph::new();
                 let link = Arc::new(LinkAction::new(
                     self.label(job),
-                    object.digest,
+                    objects,
                     metadata.digest,
                     Vec::new(),
                     self.options.link_args.clone(),
@@ -450,51 +456,101 @@ impl<'a> Builder<'a> {
                 .output
                 .clone()
                 .unwrap_or_else(|| target_output(self.project, target));
+            let count = if target.is_executable() {
+                plan.profile.codegen_units.max(1)
+            } else {
+                1
+            };
             let frontend = Arc::new(FrontendAction::new(
                 self.label(job),
                 plan,
+                count,
                 &self.project.root,
                 &context.temp_root,
             )?);
             let key = graph.add(Action::Frontend(frontend), Vec::new())?;
-            frontends.push((*job, key, path));
+            frontends.push((*job, key, path, count));
         }
         let records = graph.execute(context, self.options.jobs)?;
+
+        let mut codegen_graph = ActionGraph::new();
+        let mut codegen_keys = Vec::new();
+        for (job, frontend_key, path, count) in &frontends {
+            let frontend = records.get(frontend_key).ok_or_else(|| {
+                BuildError::action(format!("the frontend `{}` produced no record", job.target))
+            })?;
+            let mono = frontend
+                .output("mono")
+                .ok_or_else(|| BuildError::action("the frontend produced no mono artifact"))?;
+            let units = mono_units(context, mono.digest)?;
+            if units.len() != *count as usize {
+                return Err(BuildError::action(format!(
+                    "the frontend for `{}` wrote {} units but the build expected {count}",
+                    job.target,
+                    units.len()
+                )));
+            }
+            let mut keys = Vec::new();
+            for (cgu, unit) in units.into_iter().enumerate() {
+                let action = Arc::new(CodegenAction::new(
+                    self.label(job),
+                    mono.digest,
+                    unit,
+                    cgu as u32,
+                    &context.temp_root,
+                ));
+                keys.push(codegen_graph.add(Action::Codegen(action), Vec::new())?);
+            }
+            codegen_keys.push((*job, *frontend_key, path.clone(), keys));
+        }
+        let codegen_records = codegen_graph.execute(context, self.options.jobs)?;
 
         let mut link_graph = ActionGraph::new();
         let mut links = Vec::new();
         let mut outputs = Vec::new();
-        for (job, frontend_key, path) in &frontends {
+        for (job, frontend_key, path, keys) in &codegen_keys {
             let target = self.target(job);
             let frontend = records.get(frontend_key).ok_or_else(|| {
                 BuildError::action(format!("the frontend `{}` produced no record", job.target))
             })?;
             if !target.is_executable() {
+                let first = keys
+                    .first()
+                    .ok_or_else(|| BuildError::action("the codegen graph produced no unit"))?;
+                let record = codegen_records
+                    .get(first)
+                    .ok_or_else(|| BuildError::action("the codegen produced no record"))?;
                 materialize_record(
                     context,
-                    frontend,
+                    record,
                     "object",
                     path,
                     &format!("target `{}`", job.target),
                 )?;
-                outputs.push(built_target(
-                    self.project,
-                    job,
-                    path,
-                    *frontend_key,
-                    context,
-                ));
+                outputs.push(built_target(self.project, job, path, *first, context));
                 continue;
             }
-            let object = frontend
-                .output("object")
-                .ok_or_else(|| BuildError::action("the frontend produced no object"))?;
+            let objects = keys
+                .iter()
+                .map(|key| {
+                    codegen_records
+                        .get(key)
+                        .and_then(|record| record.output("object"))
+                        .map(|output| output.digest)
+                        .ok_or_else(|| {
+                            BuildError::action(format!(
+                                "the codegen for `{}` produced no object",
+                                job.target
+                            ))
+                        })
+                })
+                .collect::<BuildResult<Vec<_>>>()?;
             let metadata = frontend
                 .output("link-metadata")
                 .ok_or_else(|| BuildError::action("the frontend produced no link metadata"))?;
             let link = Arc::new(LinkAction::new(
                 self.label(job),
-                object.digest,
+                objects,
                 metadata.digest,
                 self.native_for(job, native),
                 self.options.link_args.clone(),
@@ -519,6 +575,47 @@ impl<'a> Builder<'a> {
             outputs.push(built_target(self.project, job, &path, key, context));
         }
         Ok(outputs)
+    }
+
+    /// Runs every code generation unit and returns the object digests in order.
+    fn codegen_objects(
+        &self,
+        context: &Arc<ActionContext>,
+        label: &str,
+        mono: Digest,
+        count: u32,
+    ) -> BuildResult<Vec<Digest>> {
+        let units = mono_units(context, mono)?;
+        if units.len() != count as usize {
+            return Err(BuildError::action(format!(
+                "the frontend for `{label}` wrote {} units but the build expected {count}",
+                units.len()
+            )));
+        }
+        let mut graph = ActionGraph::new();
+        let mut keys = Vec::with_capacity(count as usize);
+        for (cgu, unit) in units.into_iter().enumerate() {
+            let action = Arc::new(CodegenAction::new(
+                label,
+                mono,
+                unit,
+                cgu as u32,
+                &context.temp_root,
+            ));
+            keys.push(graph.add(Action::Codegen(action), Vec::new())?);
+        }
+        let records = graph.execute(context, self.options.jobs)?;
+        keys.iter()
+            .map(|key| {
+                records
+                    .get(key)
+                    .and_then(|record| record.output("object"))
+                    .map(|output| output.digest)
+                    .ok_or_else(|| {
+                        BuildError::action(format!("the codegen for `{label}` produced no object"))
+                    })
+            })
+            .collect()
     }
 
     fn native_for(&self, job: &JobRequest, native: &[NativeResult]) -> Vec<NativeResult> {
@@ -666,6 +763,18 @@ fn target_output(project: &Project, target: &Target) -> PathBuf {
         _ => target.name.clone(),
     };
     directory.join(name)
+}
+
+/// Returns one digest per `.sealmono` unit, in CGU order.
+fn mono_units(context: &ActionContext, mono: Digest) -> BuildResult<Vec<Digest>> {
+    let path = context.cache.cas().object_path(mono);
+    let archive = seal_metadata::read_archive_file(&path)
+        .map_err(|error| BuildError::action(format!("cannot read the mono artifact: {error}")))?;
+    Ok(archive
+        .modules()
+        .iter()
+        .map(|bytes| Digest::of_bytes(bytes))
+        .collect())
 }
 
 fn built_target(

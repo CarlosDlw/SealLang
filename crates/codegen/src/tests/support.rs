@@ -156,6 +156,7 @@ pub(crate) fn module_ir(compiled: &Compiled) -> String {
         compiled.session.interner(),
         &mapper,
         &noalias,
+        inkwell::module::Linkage::External,
     )
     .expect("functions declare");
     module.print_to_string().to_string()
@@ -190,6 +191,7 @@ pub(crate) fn build_module<'ctx>(
         compiled.session.interner(),
         &mapper,
         &noalias,
+        inkwell::module::Linkage::External,
     )
     .expect("functions declare");
     let glues =
@@ -394,6 +396,7 @@ pub(crate) fn resolve_vtable(
         compiled.session.interner(),
         &mapper,
         &noalias,
+        inkwell::module::Linkage::External,
     )
     .expect("functions declare");
     let glues =

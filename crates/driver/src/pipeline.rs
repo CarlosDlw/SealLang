@@ -15,6 +15,7 @@ use std::process::{Command, ExitCode, ExitStatus};
 use seal_codegen::{CodegenInput, CodegenOptions, Emit};
 use seal_def::{DefId, PackageId, PackageInstanceId};
 use seal_index::Idx;
+use seal_metadata::read_archive_file;
 use seal_plan::CompilePlan;
 use seal_session::Session;
 use seal_target::host_triple;
@@ -41,6 +42,7 @@ enum Request<'a> {
         link: &'a LinkArgs,
         planned_output: Option<PathBuf>,
         link_metadata: Option<&'a Path>,
+        cgu_count: Option<u32>,
     },
     /// Write a JSON API snapshot after analysis.
     Api { path: PathBuf },
@@ -109,6 +111,7 @@ pub(crate) fn build(args: &BuildArgs) -> Result<ExitCode, String> {
             link: &args.link,
             planned_output: None,
             link_metadata: args.link_metadata.as_deref(),
+            cgu_count: args.cgu,
         }
     };
     compile(&args.compile, request).map(Outcome::code)
@@ -143,6 +146,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         link: &args.link,
         planned_output: None,
         link_metadata: None,
+        cgu_count: None,
     };
 
     match compile(&compile_arguments, request)? {
@@ -197,6 +201,41 @@ fn program_exit_code(status: ExitStatus) -> Result<ExitCode, String> {
         .code()
         .map(|code| ExitCode::from(code as u8))
         .ok_or_else(|| "the program terminated without an exit status".to_owned())
+}
+
+/// Generates one object from a `.sealmono` unit without lowering again.
+pub(crate) fn codegen(args: &crate::cli::CodegenArgs) -> Result<ExitCode, String> {
+    let archive = match read_archive_file(&args.mono) {
+        Ok(archive) => archive,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return Ok(ExitCode::from(1));
+        }
+    };
+    let manifest = archive.manifest();
+    let Some(bitcode) = archive.module(args.cgu) else {
+        eprintln!(
+            "error: E8070: `{}` has no code generation unit {}; it declares {}",
+            args.mono.display(),
+            args.cgu,
+            manifest.cgu_count()
+        );
+        return Ok(ExitCode::from(1));
+    };
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.mono.with_extension(format!("{}.o", args.cgu)));
+    if let Err(error) = seal_codegen::emit_object_from_bitcode(
+        bitcode,
+        &output,
+        &manifest.target,
+        manifest.profile.opt_level,
+    ) {
+        eprintln!("error: {error}");
+        return Ok(ExitCode::from(1));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Analyzes every input without writing anything.
@@ -651,6 +690,7 @@ fn compile_hir(
         link,
         planned_output,
         link_metadata,
+        cgu_count,
     } = &request
     else {
         if let Request::Api { path } = &request {
@@ -692,6 +732,10 @@ fn compile_hir(
         search_paths: link.search_paths.clone(),
         link_args: link.link_args.clone(),
         entry,
+        cgu_count: cgu_count
+            .as_ref()
+            .copied()
+            .unwrap_or_else(|| profile.map_or(1, |profile| profile.codegen_units)),
     };
     let codegen_input = CodegenInput {
         mono: &mono,

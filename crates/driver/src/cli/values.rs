@@ -24,6 +24,8 @@ pub(crate) enum EmitArg {
     Asm,
     /// Linked native executable.
     Exe,
+    /// A `.sealmono` archive of per-CGU LLVM bitcode.
+    Mono,
     /// A JSON snapshot of the package API and module tree.
     Api,
 }
@@ -34,6 +36,7 @@ impl From<EmitArg> for Emit {
             EmitArg::Obj => Self::Object,
             EmitArg::Asm => Self::Assembly,
             EmitArg::Exe => Self::Executable,
+            EmitArg::Mono => Self::Mono,
             EmitArg::Api => Self::Object,
         }
     }
@@ -167,6 +170,7 @@ mod tests {
         assert_eq!(Emit::from(EmitArg::Obj), Emit::Object);
         assert_eq!(Emit::from(EmitArg::Asm), Emit::Assembly);
         assert_eq!(Emit::from(EmitArg::Exe), Emit::Executable);
+        assert_eq!(Emit::from(EmitArg::Mono), Emit::Mono);
     }
 
     #[test]

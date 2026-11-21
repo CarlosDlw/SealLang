@@ -25,6 +25,7 @@ fn default_output(input: &Path, emit: Emit) -> PathBuf {
         Emit::Object => format!("{stem}.o"),
         Emit::Assembly => format!("{stem}.s"),
         Emit::Executable => stem,
+        Emit::Mono => format!("{stem}.sealmono"),
     };
     input.with_file_name(name)
 }
@@ -83,6 +84,10 @@ mod tests {
         assert_eq!(
             default_output(Path::new("src/main.sl"), Emit::Assembly),
             PathBuf::from("src/main.s")
+        );
+        assert_eq!(
+            default_output(Path::new("src/main.sl"), Emit::Mono),
+            PathBuf::from("src/main.sealmono")
         );
     }
 }

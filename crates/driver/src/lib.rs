@@ -57,6 +57,7 @@ fn run(cli: &cli::Cli) -> Result<ExitCode, String> {
         cli::CliCommand::Build(args) => pipeline::build(args),
         cli::CliCommand::Run(args) => pipeline::run(args),
         cli::CliCommand::Check(args) => pipeline::check(args),
+        cli::CliCommand::Codegen(args) => pipeline::codegen(args),
         cli::CliCommand::Explain(args) => actions::explain(&args.code),
         cli::CliCommand::EmitRuntime(args) => actions::emit_runtime(&args.path),
         cli::CliCommand::Version => actions::version(),

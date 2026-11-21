@@ -68,6 +68,23 @@ least-recently-used objects. `explain` prints the action kind, display command,
 input paths and digests, hashed environment, and output digests; environment
 values are never printed. `clean` removes `seal/cache` and `seal/target`.
 
+## Reproducibility
+
+```console
+$ seal verify-repro
+$ seal verify-repro --keep
+```
+
+`verify-repro` copies a self-contained project into two temporary directories,
+builds both, and compares every file under `seal/target` byte by byte. It exits
+`1` with the first differing artifact and byte offset (`E8104`). `--keep` leaves
+the two trees in place for inspection. Path dependencies outside the project
+root are not copied, so the check targets self-contained projects.
+
+Project builds pass `--remap-path-prefix <project-root>=.` to the frontend, so
+debug paths do not contain the checkout directory. The same inputs therefore
+produce identical bytes under different roots.
+
 ## Tasks
 
 ```console

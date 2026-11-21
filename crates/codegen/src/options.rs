@@ -16,6 +16,8 @@ pub enum Emit {
     /// A linked native executable.
     #[default]
     Executable,
+    /// A `.sealmono` archive of per-CGU LLVM bitcode.
+    Mono,
 }
 
 impl Emit {
@@ -26,6 +28,7 @@ impl Emit {
             Self::Object => "obj",
             Self::Assembly => "asm",
             Self::Executable => "exe",
+            Self::Mono => "mono",
         }
     }
 }
@@ -63,6 +66,8 @@ pub struct CodegenOptions {
     ///
     /// `None` keeps the single-file convention of looking for `main`.
     pub entry: Option<DefId>,
+    /// Number of code generation units to produce for [`Emit::Mono`].
+    pub cgu_count: u32,
 }
 
 impl CodegenOptions {
@@ -79,6 +84,7 @@ impl CodegenOptions {
             search_paths: Vec::new(),
             link_args: Vec::new(),
             entry: None,
+            cgu_count: 1,
         }
     }
 }

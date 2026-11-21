@@ -51,6 +51,7 @@
 //!     search_paths: Vec::new(),
 //!     link_args: Vec::new(),
 //!     entry: None,
+//!     cgu_count: 1,
 //! };
 //! seal_codegen::emit(input, &options)?;
 //! ```
@@ -76,6 +77,7 @@ mod function;
 mod global;
 mod intrinsic;
 mod linker;
+mod mono;
 mod names;
 mod object;
 mod operand;
@@ -95,7 +97,8 @@ mod tests;
 
 pub use backend::{Artifact, CodegenInput, emit};
 pub use error::{CodegenError, EntryPointError};
-pub use object::{ObjectLink, link_object};
+pub use mono::emit_object_from_bitcode;
+pub use object::{ObjectLink, link_objects};
 pub use options::{CodegenOptions, Emit};
 
 /// Returns the runtime archive embedded in this compiler build.

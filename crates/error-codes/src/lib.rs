@@ -2464,6 +2464,29 @@ pub const E8047: ErrorCode = ErrorCode {
 Each artifact path and each generated file has exactly one producer. Two actions\nwriting the same path would make the result depend on execution order.\n\nRename one target or one generated output so every path has a single owner.",
 };
 
+/// A `.sealmono` metadata artifact is invalid.
+pub const E8070: ErrorCode = ErrorCode {
+    code: "E8070",
+    title: "invalid frontend metadata",
+    explanation: "\
+A `.sealmono` artifact is the versioned output of the frontend. Its magic,
+format version, header, module count, sizes, and blake3 digests must all match;
+a truncated, corrupted, or newer artifact is rejected before LLVM runs.\n\nRebuild the artifact with the same compiler version. `seal cache clean` and a
+fresh `seal build` also recreate it.",
+};
+
+/// Two builds of the same project produced different bytes.
+pub const E8104: ErrorCode = ErrorCode {
+    code: "E8104",
+    title: "reproducibility check failed",
+    explanation: "\
+`seal verify-repro` copies a self-contained project into two temporary
+directories, builds both, and compares every file below `seal/target`. A
+difference means a path, timestamp, hash-map order, or host value leaked into an
+artifact.\n\nRun with `--keep` to inspect the two trees and compare the reported
+artifact with `cmp`.",
+};
+
 /// More than one runnable target matches a command.
 pub const E8103: ErrorCode = ErrorCode {
     code: "E8103",
@@ -3850,7 +3873,7 @@ pub static ALL: &[ErrorCode] = &[
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
     E8008, E8009, E8010, E8011, E8021, E8022, E8023, E8024, E8040, E8041, E8042, E8043, E8044,
-    E8045, E8046, E8047, E8103, E9001, E9002,
+    E8045, E8046, E8047, E8070, E8103, E8104, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

@@ -87,6 +87,20 @@ impl<'a, 'ctx> DebugContext<'a, 'ctx> {
             .display_name(file)
             .map(|display| split_display(&display))
             .unwrap_or_else(|| ("seal-input".to_owned(), String::new()));
+        // LLVM refuses debug metadata in bitcode unless the module declares the
+        // metadata version. Object emission adds the flags itself, but the
+        // `.sealmono` path serializes the module before a target machine sees
+        // it, so the frontend must add them here.
+        module.add_basic_value_flag(
+            "Debug Info Version",
+            inkwell::module::FlagBehavior::Warning,
+            context.i32_type().const_int(3, false),
+        );
+        module.add_basic_value_flag(
+            "Dwarf Version",
+            inkwell::module::FlagBehavior::Warning,
+            context.i32_type().const_int(5, false),
+        );
         let (builder, unit) = module.create_debug_info_builder(
             false,
             DWARFSourceLanguage::Rust,

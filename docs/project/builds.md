@@ -5,15 +5,20 @@ has a content key; a repeated build with the same key reads the recorded result
 from the local cache instead of running the command again.
 
 ```
-frontend  one compile plan -> object + link metadata
-link      object + runtime + native libraries -> executable
-generate  generator executable + inputs -> declared files
-native    pkg-config or explicit flags -> a cached probe result
+frontend    one compile plan -> .sealmono (per-CGU LLVM bitcode) + link metadata
+codegen-cgu one bitcode unit -> one native object
+link        objects + runtime + native libraries -> executable
+generate    generator executable + inputs -> declared files
+native      pkg-config or explicit flags -> a cached probe result
 ```
 
-The frontend and link actions are separate so re-linking after a cache hit does
-not re-run analysis, and so a future CGU phase can insert more actions between
-them without changing the cache contract.
+The frontend runs analysis and monomorphization once and partitions the
+resulting LLVM module with `llvm-split --round-robin`. Each `codegen-cgu` action
+reads only its unit, so it never lowers a type, MIR body, or generic instance
+again. Code generation units run in parallel and are cached independently:
+editing one function invalidates the frontend and the unit that contains that
+function, while the other units and the link remain cache hits when the object
+bytes do not change.
 
 ## Where state lives
 
@@ -46,10 +51,10 @@ Environment values are never stored as plaintext, in the record, in logs, or in
 command, and every output digest.
 
 The frontend key includes the normalized compile plan: target, profile, package
-instances, cfg values, entry, and every source file digest. Changing a source
-therefore invalidates exactly the target that uses it; an unrelated file does
-not change the key. The link key includes the object digest, the link metadata
-digest, every native result, and the linker arguments.
+instances, cfg values, entry, and every source file digest. A `codegen-cgu` key
+uses the digest of its own split unit, not the whole archive, so unrelated units
+keep their cache entries. The link key includes every object digest, the link
+metadata digest, every native result, and the linker arguments.
 
 ## Cache behavior
 
@@ -68,6 +73,7 @@ $ seal cache verify       # hash every object and record
 $ seal cache prune --max-size 1073741824 --older-than 604800
 $ seal cache explain <KEY>
 $ seal clean              # remove seal/cache and seal/target
+$ seal verify-repro       # build two copies and compare every artifact
 ```
 
 `cache verify` reports corrupt paths and exits `1`; the next build discards and
@@ -75,10 +81,16 @@ rebuilds them. `cache prune` removes records older than `--older-than` seconds
 and least-recently-used objects until the store fits `--max-size` bytes.
 
 The number of jobs never changes the bytes of an artifact: independent actions
-run in parallel, but each action's output is a pure function of its key. The
-frontend currently serializes LLVM work inside the process until the split
-pipeline of the next phase; links, generators, and probes still run in
-parallel.
+run in parallel, but each action's output is a pure function of its key.
+`codegen-cgu` actions for one target also run in parallel. The frontend still
+serializes its own LLVM analysis per process; the split moved the expensive
+per-unit emission out of that critical section.
+
+`seal verify-repro` copies a self-contained project into two temporary
+directories, builds both, and compares every file below `seal/target`. Project
+builds pass `--remap-path-prefix <root>=.` to the frontend, so debug paths do
+not embed the checkout location. `seal build` itself is deterministic for the
+same inputs; the command makes that contract testable.
 
 ## Sandbox
 
@@ -211,11 +223,19 @@ a shell the task explicitly names.
 | `E8045` | Build action or graph failure |
 | `E8046` | Task failure |
 | `E8047` | Two build outputs claim one path |
+| `E8070` | Invalid `.sealmono` metadata |
+| `E8104` | Reproducibility comparison failed |
 
 ## Current scope
 
-The frontend action emits one object per target and the link action consumes it.
-Code generation per CGU, the `.sealmono` intermediate, reproducible-link checks,
-and staticlib/cdylib emission belong to the next phase; the action boundaries
-and cache keys are already shaped for them. The single-file `sealc` path does
-not use the CAS or the sandbox.
+The frontend emits a `.sealmono` archive with one LLVM bitcode unit per CGU;
+`sealc codegen --mono ... --cgu N` turns one unit into one object, and the link
+action joins every object with the runtime and native libraries. The archive is
+validated (magic, version, count, sizes, and blake3 digests) before LLVM runs;
+invalid metadata is `E8070`. The split requires the `llvm-split` tool from the
+same LLVM installation as the compiler; `SEAL_LLVM_SPLIT` selects another path.
+
+`sealc build file.sl` keeps the all-in-one path and does not use the CAS or the
+sandbox. Staticlib/cdylib emission and C ABI exports are not part of this phase:
+the language has no exported-function declaration yet, so producing a library
+with no callable C surface would be misleading.

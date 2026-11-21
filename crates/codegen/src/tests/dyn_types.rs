@@ -36,7 +36,7 @@ fn dyn_pointer_is_two_pointer_words() {
          func identity(value: *dyn Marker) -> *dyn Marker { value }\n",
     ));
     assert!(
-        ir.contains("declare { ptr, ptr } @seal.identity({ ptr, ptr })"),
+        ir.contains("declare hidden { ptr, ptr } @seal.identity({ ptr, ptr })"),
         "the trait-object ABI must be two pointers: {ir}"
     );
 }

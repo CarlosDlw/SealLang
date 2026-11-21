@@ -30,4 +30,8 @@ pub(crate) struct BuildArgs {
     /// Write the source link directives as JSON for a later link action.
     #[arg(long, value_name = "PATH", hide = true)]
     pub(crate) link_metadata: Option<PathBuf>,
+
+    /// Override the number of code generation units for `--emit=mono`.
+    #[arg(long, value_name = "N", help_heading = "Output")]
+    pub(crate) cgu: Option<u32>,
 }

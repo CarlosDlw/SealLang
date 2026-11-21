@@ -223,7 +223,7 @@ fn a_program_without_extern_declarations_has_no_external_declarations() {
         "a program without extern emits no declarations:\n{ir}"
     );
     assert!(
-        ir.contains("define i32 @seal.main()"),
+        ir.contains("define hidden i32 @seal.main()"),
         "the entry point is still defined:\n{ir}"
     );
     assert_eq!(ir, ir_text(source), "IR generation is deterministic");

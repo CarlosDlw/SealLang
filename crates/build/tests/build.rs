@@ -184,6 +184,65 @@ fn job_count_does_not_change_the_artifact() {
 }
 
 #[test]
+fn cgu_splits_are_parallel_and_only_the_changed_unit_reruns() {
+    let fixture = Fixture::new(
+        "seal-build-cgu",
+        &[
+            (
+                "seal.toml",
+                "[package]\nname = \"cgudemo\"\nversion = \"0.1.0\"\n\n\
+                 [profiles.dev]\ncodegen-units = 4\n",
+            ),
+            (
+                "src/main.sl",
+                "use app::util::value;\n\nfunc main() -> i32 {\n  value()\n}\n",
+            ),
+            (
+                "src/util.sl",
+                "module app::util;\n\ninternal func value() -> i32 {\n  0\n}\n",
+            ),
+        ],
+    );
+    let project = fixture.project();
+    let builder = Builder::new(&project, options(4, true));
+    let first = builder
+        .build(&[job("cgudemo")])
+        .expect("the first build succeeds");
+    let codegen: Vec<_> = first
+        .timings
+        .iter()
+        .filter(|timing| timing.kind == "codegen-cgu")
+        .collect();
+    assert_eq!(codegen.len(), 4, "one action per code generation unit");
+    assert!(codegen.iter().all(|timing| !timing.cached));
+    let artifact = fixture.path("seal/target/dev/cgudemo");
+    assert_eq!(run(&artifact), 0);
+
+    std::fs::write(
+        fixture.path("src/util.sl"),
+        "module app::util;\n\ninternal func value() -> i32 {\n  7\n}\n",
+    )
+    .expect("source change");
+    let second = builder
+        .build(&[job("cgudemo")])
+        .expect("the second build succeeds");
+    let misses: Vec<_> = second
+        .timings
+        .iter()
+        .filter(|timing| timing.kind == "codegen-cgu" && !timing.cached)
+        .collect();
+    assert_eq!(misses.len(), 1, "only the affected unit reruns");
+    assert!(
+        second
+            .timings
+            .iter()
+            .any(|timing| timing.kind == "link" && !timing.cached),
+        "the link consumes the changed object"
+    );
+    assert_eq!(run(&artifact), 7);
+}
+
+#[test]
 fn generators_run_only_when_their_inputs_or_tool_change() {
     let fixture = generator_project();
     let project = fixture.project();

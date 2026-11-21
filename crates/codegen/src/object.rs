@@ -16,8 +16,8 @@ use crate::error::CodegenError;
 /// One request to link an existing object into an executable.
 #[derive(Clone, Debug)]
 pub struct ObjectLink<'a> {
-    /// The object file produced by the frontend action.
-    pub object: &'a Path,
+    /// The object files produced by the code generation actions, in order.
+    pub objects: &'a [PathBuf],
     /// The executable to write.
     pub output: &'a Path,
     /// Runtime archive bytes linked as the final input.
@@ -32,10 +32,11 @@ pub struct ObjectLink<'a> {
     pub linker: Option<&'a OsStr>,
 }
 
-/// Links `object` into `output`, replacing the destination atomically.
-pub fn link_object(request: &ObjectLink<'_>) -> Result<(), CodegenError> {
+/// Links `objects` into `output`, replacing the destination atomically.
+pub fn link_objects(request: &ObjectLink<'_>) -> Result<(), CodegenError> {
+    let objects: Vec<&Path> = request.objects.iter().map(PathBuf::as_path).collect();
     let inner = LinkRequest {
-        object: request.object,
+        objects: &objects,
         runtime: Some(request.runtime),
         output: request.output,
         source_libraries: &[],

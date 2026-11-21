@@ -11,6 +11,7 @@ pub(crate) mod new;
 mod run;
 mod task;
 mod tree;
+mod verify_repro;
 mod why;
 
 use std::ffi::OsString;
@@ -125,6 +126,8 @@ pub(crate) enum Command {
     Cache(CacheArgs),
     /// Run a declarative task from `seal.toml`.
     Task(TaskArgs),
+    /// Build in two directories and compare every artifact byte.
+    VerifyRepro(verify_repro::VerifyReproArgs),
 }
 
 /// Options shared by build-like commands.
@@ -404,6 +407,7 @@ where
         Command::Clean => clean::clean(&cli, &project),
         Command::Cache(args) => cache::cache(&cli, &project, args),
         Command::Task(args) => task::task(&cli, &project, args),
+        Command::VerifyRepro(args) => verify_repro::verify_repro(&cli, &project, args),
     }
 }
 

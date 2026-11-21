@@ -56,7 +56,7 @@ fn a_function_value_uses_the_internal_abi() {
     );
     let sum = function_ir(&ir, "seal.sum");
     assert!(
-        sum.starts_with("define i32 @seal.sum(%seal.adt."),
+        sum.starts_with("define hidden i32 @seal.sum(%seal.adt."),
         "the target takes the aggregate directly:\n{sum}"
     );
     assert!(
@@ -79,7 +79,7 @@ fn a_capture_free_closure_calls_through_an_internal_trampoline() {
     );
     let body = closure_body_ir(&compiled, &ir);
     assert!(
-        body.starts_with("define i32 @seal.main.closure(ptr readonly %0, i32 %1)"),
+        body.starts_with("define hidden i32 @seal.main.closure(ptr readonly %0, i32 %1)"),
         "the lifted body still takes the environment:\n{body}"
     );
     let trampoline = ir
@@ -107,7 +107,7 @@ fn an_fn_environment_is_read_only() {
     );
     let body = closure_body_ir(&compiled, &ir);
     assert!(
-        body.starts_with("define i32 @seal.main.closure(ptr readonly %0)"),
+        body.starts_with("define hidden i32 @seal.main.closure(ptr readonly %0)"),
         "an `Fn` body reads a shared environment:\n{body}"
     );
     assert!(
@@ -157,7 +157,7 @@ fn an_fn_once_environment_is_passed_by_value() {
     let ir = lowered_module_ir(&compiled);
     let body = closure_body_ir(&compiled, &ir);
     assert!(
-        body.starts_with("define %seal.adt."),
+        body.starts_with("define hidden %seal.adt."),
         "an `FnOnce` body returns its captured value:\n{body}"
     );
     let signature = body.lines().next().expect("the body has a signature");

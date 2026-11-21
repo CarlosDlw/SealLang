@@ -16,8 +16,8 @@ use crate::error::CodegenError;
 
 /// One native link request.
 pub(crate) struct LinkInputs<'a> {
-    /// The generated object file.
-    pub(crate) object: &'a Path,
+    /// The generated object files, in deterministic order.
+    pub(crate) objects: Vec<PathBuf>,
     /// The Seal runtime archive.
     pub(crate) runtime: &'a Path,
     /// The executable written by the linker.
@@ -147,7 +147,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
     let mut arguments = Vec::new();
     match flavor(&program) {
         Flavor::Gnu => {
-            arguments.push(inputs.object.as_os_str().to_owned());
+            for object in &inputs.objects {
+                arguments.push(object.as_os_str().to_owned());
+            }
             for path in inputs.search_paths {
                 arguments.push(OsString::from("-L"));
                 arguments.push(path.as_os_str().to_owned());
@@ -162,7 +164,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
         }
         Flavor::MsvcCompiler => {
             arguments.push(OsString::from("/nologo"));
-            arguments.push(inputs.object.as_os_str().to_owned());
+            for object in &inputs.objects {
+                arguments.push(object.as_os_str().to_owned());
+            }
             arguments.push(prefixed("/Fe:", inputs.output));
             arguments.push(OsString::from("/link"));
             for path in inputs.search_paths {
@@ -176,7 +180,9 @@ pub(crate) fn invocation(program: OsString, inputs: &LinkInputs<'_>) -> Invocati
         }
         Flavor::MsvcLinker => {
             arguments.push(OsString::from("/NOLOGO"));
-            arguments.push(inputs.object.as_os_str().to_owned());
+            for object in &inputs.objects {
+                arguments.push(object.as_os_str().to_owned());
+            }
             arguments.push(prefixed("/OUT:", inputs.output));
             for path in inputs.search_paths {
                 arguments.push(prefixed("/LIBPATH:", path));
@@ -244,7 +250,7 @@ mod tests {
         link_args: &'a [OsString],
     ) -> LinkInputs<'a> {
         LinkInputs {
-            object: Path::new("app.o"),
+            objects: vec![PathBuf::from("app.o")],
             runtime: Path::new("seal_rt.lib"),
             output: Path::new("app.exe"),
             source_libraries,

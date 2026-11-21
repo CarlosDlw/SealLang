@@ -27,8 +27,10 @@ use crate::error::{BuildError, BuildResult};
 /// One node of the action graph.
 #[derive(Clone, Debug)]
 pub(crate) enum Action {
-    /// Analyze and generate an object file for one target.
+    /// Analyze one target and write its `.sealmono` artifact.
     Frontend(Arc<FrontendAction>),
+    /// Turn one `.sealmono` unit into one native object.
+    Codegen(Arc<CodegenAction>),
     /// Link one object into an executable.
     Link(Arc<LinkAction>),
     /// Run a generator executable and collect its declared outputs.
@@ -42,6 +44,7 @@ impl Action {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::Frontend(_) => "frontend",
+            Self::Codegen(_) => "codegen-cgu",
             Self::Link(_) => "link",
             Self::Generate(_) => "generate",
             Self::Native(_) => "native-probe",
@@ -52,6 +55,7 @@ impl Action {
     pub(crate) fn label(&self) -> &str {
         match self {
             Self::Frontend(action) => &action.label,
+            Self::Codegen(action) => &action.label,
             Self::Link(action) => &action.label,
             Self::Generate(action) => &action.label,
             Self::Native(action) => &action.label,
@@ -62,6 +66,7 @@ impl Action {
     pub(crate) fn inputs(&self) -> &[ActionInput] {
         match self {
             Self::Frontend(action) => &action.inputs,
+            Self::Codegen(action) => &action.inputs,
             Self::Link(action) => &action.inputs,
             Self::Generate(action) => &action.inputs,
             Self::Native(action) => &action.inputs,
@@ -72,6 +77,7 @@ impl Action {
     pub(crate) fn environment(&self) -> BTreeMap<String, Digest> {
         match self {
             Self::Frontend(action) => action.environment(),
+            Self::Codegen(action) => action.environment(),
             Self::Link(action) => action.environment(),
             Self::Generate(action) => action.environment(),
             Self::Native(action) => action.environment.clone(),
@@ -82,6 +88,7 @@ impl Action {
     pub(crate) fn command(&self) -> Vec<String> {
         match self {
             Self::Frontend(action) => action.command(),
+            Self::Codegen(action) => action.command(),
             Self::Link(action) => action.command(),
             Self::Generate(action) => action.command(),
             Self::Native(action) => action.command(),
@@ -91,6 +98,7 @@ impl Action {
     pub(crate) fn execute(&self, context: &ActionContext) -> BuildResult<ActionRecord> {
         match self {
             Self::Frontend(action) => action.execute(context),
+            Self::Codegen(action) => action.execute(context),
             Self::Link(action) => action.execute(context),
             Self::Generate(action) => action.execute(context),
             Self::Native(action) => action.execute(context),
@@ -103,6 +111,8 @@ impl Action {
 pub(crate) struct FrontendAction {
     label: String,
     plan: CompilePlan,
+    cgu_count: u32,
+    project_root: PathBuf,
     inputs: Vec<ActionInput>,
     temp_root: PathBuf,
 }
@@ -112,10 +122,12 @@ impl FrontendAction {
     pub(crate) fn new(
         label: impl Into<String>,
         mut plan: CompilePlan,
+        cgu_count: u32,
         project_root: &Path,
         temp_root: &Path,
     ) -> BuildResult<Self> {
         plan.mode = BuildMode::Build;
+        plan.profile.codegen_units = cgu_count.max(1);
         let mut key_plan = plan.clone();
         key_plan.output = None;
         let plan_bytes = serde_json::to_vec(&key_plan).map_err(|error| {
@@ -134,6 +146,8 @@ impl FrontendAction {
         Ok(Self {
             label: label.into(),
             plan,
+            cgu_count: cgu_count.max(1),
+            project_root: project_root.to_path_buf(),
             inputs,
             temp_root: temp_root.to_path_buf(),
         })
@@ -147,8 +161,9 @@ impl FrontendAction {
         vec![
             "sealc".to_owned(),
             "build".to_owned(),
-            "--emit=obj".to_owned(),
+            "--emit=mono".to_owned(),
             format!("--target={}", self.plan.target),
+            format!("--cgu={}", self.cgu_count),
             self.label.clone(),
         ]
     }
@@ -163,11 +178,11 @@ impl FrontendAction {
         fs::create_dir_all(&work).map_err(|error| {
             BuildError::action(format!("cannot create `{}`: {error}", work.display()))
         })?;
-        let object = work.join("artifact.o");
+        let mono = work.join("artifact.sealmono");
         let metadata = work.join("link.json");
         let plan_path = work.join("plan.json");
         let mut plan = self.plan.clone();
-        plan.output = Some(object.clone());
+        plan.output = Some(mono.clone());
         plan.write(&plan_path).map_err(|error| {
             BuildError::action(format!("cannot write the compile plan: {error}"))
         })?;
@@ -177,7 +192,9 @@ impl FrontendAction {
             "build".to_owned(),
             "--plan-file".to_owned(),
             plan_path.display().to_string(),
-            "--emit=obj".to_owned(),
+            "--emit=mono".to_owned(),
+            "--remap-path-prefix".to_owned(),
+            format!("{}=.", self.project_root.display()),
             "--link-metadata".to_owned(),
             metadata.display().to_string(),
         ];
@@ -197,7 +214,7 @@ impl FrontendAction {
                 self.label
             )));
         }
-        let object_digest = context.cache.cas().put_file(&object)?;
+        let mono_digest = context.cache.cas().put_file(&mono)?;
         let metadata_bytes = match fs::read(&metadata) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -217,7 +234,7 @@ impl FrontendAction {
             "frontend",
             self.inputs.clone(),
             vec![
-                ActionOutput::data("object", object_digest),
+                ActionOutput::data("mono", mono_digest),
                 ActionOutput::data("link-metadata", metadata_digest),
             ],
         )
@@ -227,11 +244,97 @@ impl FrontendAction {
 
 static FRONTEND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The `link` action: one object plus runtime and native libraries.
+/// The `codegen-cgu` action: one `.sealmono` unit to one object.
+#[derive(Clone, Debug)]
+pub(crate) struct CodegenAction {
+    label: String,
+    mono: Digest,
+    cgu: u32,
+    inputs: Vec<ActionInput>,
+    temp_root: PathBuf,
+}
+
+impl CodegenAction {
+    /// Creates an action for one code generation unit.
+    pub(crate) fn new(
+        label: impl Into<String>,
+        mono: Digest,
+        unit: Digest,
+        cgu: u32,
+        temp_root: &Path,
+    ) -> Self {
+        let label = format!("{}.cgu{cgu}", label.into());
+        Self {
+            label,
+            mono,
+            cgu,
+            inputs: vec![ActionInput {
+                path: format!("mono:cgu{cgu}"),
+                digest: unit,
+            }],
+            temp_root: temp_root.to_path_buf(),
+        }
+    }
+
+    fn environment(&self) -> BTreeMap<String, Digest> {
+        BTreeMap::new()
+    }
+
+    fn command(&self) -> Vec<String> {
+        vec![
+            "sealc".to_owned(),
+            "codegen".to_owned(),
+            format!("--cgu={}", self.cgu),
+            self.label.clone(),
+        ]
+    }
+
+    fn execute(&self, context: &ActionContext) -> BuildResult<ActionRecord> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let work = self.temp_root.join(format!(
+            "codegen-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&work).map_err(|error| {
+            BuildError::action(format!("cannot create `{}`: {error}", work.display()))
+        })?;
+        let mono = context.cache.cas().object_path(self.mono);
+        let object = work.join("artifact.o");
+        let arguments = vec![
+            "sealc".to_owned(),
+            "codegen".to_owned(),
+            "--mono".to_owned(),
+            mono.display().to_string(),
+            "--cgu".to_owned(),
+            self.cgu.to_string(),
+            "-o".to_owned(),
+            object.display().to_string(),
+        ];
+        let status = seal_driver::run_from(arguments);
+        if status != std::process::ExitCode::SUCCESS {
+            let _ = fs::remove_dir_all(&work);
+            return Err(BuildError::action(format!(
+                "the codegen action `{}` failed",
+                self.label
+            )));
+        }
+        let digest = context.cache.cas().put_file(&object)?;
+        let _ = fs::remove_dir_all(&work);
+        Ok(ActionRecord::new(
+            "codegen-cgu",
+            self.inputs.clone(),
+            vec![ActionOutput::data("object", digest)],
+        )
+        .with_command(self.command()))
+    }
+}
+
+/// The `link` action: one or more objects plus runtime and native libraries.
 #[derive(Clone, Debug)]
 pub(crate) struct LinkAction {
     label: String,
-    object: Digest,
+    objects: Vec<Digest>,
     metadata: Digest,
     native: Vec<NativeResult>,
     link_args: Vec<OsString>,
@@ -244,7 +347,7 @@ impl LinkAction {
     /// Creates a link action from a frontend record and resolved native inputs.
     pub(crate) fn new(
         label: impl Into<String>,
-        object: Digest,
+        objects: Vec<Digest>,
         metadata: Digest,
         native: Vec<NativeResult>,
         mut link_args: Vec<OsString>,
@@ -254,16 +357,16 @@ impl LinkAction {
         for entry in &native {
             link_args.extend(entry.link_args.iter().map(OsString::from));
         }
-        let mut inputs = vec![
-            ActionInput {
-                path: "link-metadata".to_owned(),
-                digest: metadata,
-            },
-            ActionInput {
-                path: "object".to_owned(),
-                digest: object,
-            },
-        ];
+        let mut inputs = vec![ActionInput {
+            path: "link-metadata".to_owned(),
+            digest: metadata,
+        }];
+        for (index, object) in objects.iter().enumerate() {
+            inputs.push(ActionInput {
+                path: format!("object:{index}"),
+                digest: *object,
+            });
+        }
         for entry in &native {
             inputs.push(ActionInput {
                 path: format!("native:{}", entry.alias),
@@ -274,7 +377,7 @@ impl LinkAction {
         }
         Self {
             label: label.into(),
-            object,
+            objects,
             metadata,
             native,
             link_args,
@@ -318,11 +421,15 @@ impl LinkAction {
             link_args.extend(native.link_args.iter().map(OsString::from));
         }
         link_args.extend(self.link_args.iter().cloned());
-        let object = context.cache.cas().object_path(self.object);
+        let objects: Vec<PathBuf> = self
+            .objects
+            .iter()
+            .map(|digest| context.cache.cas().object_path(*digest))
+            .collect();
         let runtime = seal_codegen::runtime_archive();
         let linker = self.linker.as_deref();
         let request = ObjectLink {
-            object: &object,
+            objects: &objects,
             output: &output,
             runtime,
             libraries: &libraries,
@@ -330,7 +437,7 @@ impl LinkAction {
             link_args: &link_args,
             linker,
         };
-        if let Err(error) = seal_codegen::link_object(&request) {
+        if let Err(error) = seal_codegen::link_objects(&request) {
             let _ = fs::remove_dir_all(&work);
             return Err(BuildError::action(format!(
                 "the link action `{}` failed: {error}",
