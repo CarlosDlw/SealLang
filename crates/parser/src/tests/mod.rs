@@ -4,6 +4,7 @@ mod arrays;
 mod casts;
 mod cfg;
 mod closures;
+mod docs;
 mod dyn_types;
 mod enums;
 mod errors;

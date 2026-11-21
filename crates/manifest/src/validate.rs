@@ -410,6 +410,14 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
         if task.steps.is_empty() {
             return Err(index.fail(&path, format!("the task `{name}` has no steps")));
         }
+        for dependency in &task.depends_on {
+            if !manifest.tasks.contains_key(dependency) {
+                return Err(index.fail(
+                    &format!("{path}.depends-on"),
+                    format!("the task `{name}` depends on the unknown task `{dependency}`"),
+                ));
+            }
+        }
         for (position, step) in task.steps.iter().enumerate() {
             let step_path = format!("{path}.steps.{position}");
             validate_program_text(
@@ -888,7 +896,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             if let Some(task) = item.as_table_like() {
                 check_table_like(
                     task,
-                    &["description", "steps"],
+                    &["description", "depends-on", "steps"],
                     &format!("tasks.{name}"),
                     &mut warnings,
                 );

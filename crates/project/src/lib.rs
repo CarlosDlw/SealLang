@@ -6,6 +6,7 @@
 
 #![warn(missing_docs)]
 
+mod affected;
 mod cfg;
 mod error;
 mod features;
@@ -13,14 +14,17 @@ mod graph;
 mod lockfile;
 mod plan;
 mod profiles;
+mod query;
 mod source;
 mod targets;
 
 use std::path::{Path, PathBuf};
 
+pub use affected::{AffectedReport, AffectedTarget, affected, affected_from_paths};
 pub use error::{ProjectError, ProjectResult};
 pub use lockfile::{LockCfg, LockDependency, LockInstance, LockNative, LockPackage, Lockfile};
 pub use plan::PlanOptions;
+pub use query::{GraphEdge, GraphKind, GraphNode, ProjectGraph};
 
 use seal_manifest::{
     CfgSpec, LoadedManifest, Manifest, ManifestWarning, ProfileManifest, TargetKind,
@@ -288,22 +292,28 @@ impl Project {
 
     /// Returns the default package for commands without `-p`.
     pub fn default_package(&self) -> ProjectResult<usize> {
+        if !self.default_members.is_empty() {
+            for member in &self.default_members {
+                let path = self.root.join(member);
+                if let Some((index, _)) = self.package_by_name(member) {
+                    return Ok(index);
+                }
+                if let Some((index, _)) = self
+                    .packages
+                    .iter()
+                    .enumerate()
+                    .find(|(_, package)| package.root == path || package.root.ends_with(member))
+                {
+                    return Ok(index);
+                }
+            }
+            return Err(ProjectError::manifest(format!(
+                "the default member `{}` names no package",
+                self.default_members.join(", ")
+            )));
+        }
         if let Some(index) = self.root_package() {
             return Ok(index);
-        }
-        for member in &self.default_members {
-            let name = member.rsplit('/').next().unwrap_or(member);
-            if let Some((index, _)) = self.package_by_name(name) {
-                return Ok(index);
-            }
-            if let Some((index, _)) = self
-                .packages
-                .iter()
-                .enumerate()
-                .find(|(_, package)| package.root.ends_with(member))
-            {
-                return Ok(index);
-            }
         }
         if let Some((index, _)) = self.package_by_name(&self.name) {
             return Ok(index);
@@ -314,6 +324,11 @@ impl Project {
         Err(ProjectError::manifest(
             "the project has several packages; select one with `-p <PACKAGE>` or `--workspace`",
         ))
+    }
+
+    /// Builds a deterministic graph projection of the project.
+    pub fn graph(&self, kind: GraphKind) -> ProjectGraph {
+        ProjectGraph::build(self, kind)
     }
 
     /// Builds one compile plan.

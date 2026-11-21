@@ -11,7 +11,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::error::{ApiError, ApiResult};
-use crate::snapshot::{ApiField, ApiItem, ApiSnapshot, ApiVariant};
+use crate::snapshot::{ApiField, ApiImplementation, ApiItem, ApiSnapshot, ApiVariant};
 
 /// The smallest version bump a change requires.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,16 +198,28 @@ fn compare_item(previous: &ApiItem, next: &ApiItem, diff: &mut ApiDiff) {
             ),
         ));
     }
-    let previous_fields: std::collections::BTreeMap<String, &ApiField> = previous
-        .fields
-        .iter()
-        .map(|field| (field_key(field), field))
-        .collect();
-    let next_fields: std::collections::BTreeMap<String, &ApiField> = next
-        .fields
-        .iter()
-        .map(|field| (field_key(field), field))
-        .collect();
+    // A snapshot from an older tool may not carry layout information. An
+    // unknown layout cannot be proven to have changed, so only compare two
+    // known layouts; otherwise every aggregate would become breaking once the
+    // field was introduced.
+    if let (Some(previous_layout), Some(next_layout)) = (&previous.layout, &next.layout) {
+        if previous_layout != next_layout {
+            diff.breaking.push(Change::new(
+                "layout-changed",
+                key.clone(),
+                format!(
+                    "the layout of `{key}` changed from {} to {}",
+                    layout_text(Some(previous_layout)),
+                    layout_text(Some(next_layout))
+                ),
+            ));
+        }
+    }
+    // Only public struct fields are part of the callable surface. Private
+    // fields are represented through the layout comparison instead, and older
+    // snapshots that recorded them must not turn their removal into breaking.
+    let previous_fields = public_fields(&previous.fields);
+    let next_fields = public_fields(&next.fields);
     for (name, field) in &previous_fields {
         match next_fields.get(name) {
             Some(next_field) => compare_field(&key, name, field, next_field, diff, false),
@@ -218,8 +230,8 @@ fn compare_item(previous: &ApiItem, next: &ApiItem, diff: &mut ApiDiff) {
             )),
         }
     }
-    for (name, field) in &next_fields {
-        if !previous_fields.contains_key(name) && field.visibility == "public" {
+    for name in next_fields.keys() {
+        if !previous_fields.contains_key(name) {
             diff.minor.push(Change::new(
                 "field-added",
                 format!("{key}.{name}"),
@@ -259,6 +271,67 @@ fn compare_item(previous: &ApiItem, next: &ApiItem, diff: &mut ApiDiff) {
             ));
         }
     }
+    compare_implementations(&key, previous, next, diff);
+}
+
+fn compare_implementations(key: &str, previous: &ApiItem, next: &ApiItem, diff: &mut ApiDiff) {
+    let previous_impls = implementation_map(&previous.implementations);
+    let next_impls = implementation_map(&next.implementations);
+    for (name, methods) in &previous_impls {
+        match next_impls.get(name) {
+            Some(next_methods) => {
+                for method in methods {
+                    if !next_methods.contains(method) {
+                        diff.breaking.push(Change::new(
+                            "method-removed",
+                            format!("{key}::{name}::{method}"),
+                            format!("the method `{method}` of `{key}` was removed from `{name}`"),
+                        ));
+                    }
+                }
+                for method in next_methods {
+                    if !methods.contains(method) {
+                        diff.minor.push(Change::new(
+                            "method-added",
+                            format!("{key}::{name}::{method}"),
+                            format!("the method `{method}` was added to `{key}`"),
+                        ));
+                    }
+                }
+            }
+            None => diff.breaking.push(Change::new(
+                "implementation-removed",
+                format!("{key}::{name}"),
+                format!("the implementation `{name}` of `{key}` was removed"),
+            )),
+        }
+    }
+    for name in next_impls.keys() {
+        if !previous_impls.contains_key(name) {
+            diff.minor.push(Change::new(
+                "implementation-added",
+                format!("{key}::{name}"),
+                format!("the implementation `{name}` was added to `{key}`"),
+            ));
+        }
+    }
+}
+
+fn implementation_map(
+    implementations: &[ApiImplementation],
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<&str>> {
+    let mut map: std::collections::BTreeMap<String, std::collections::BTreeSet<&str>> =
+        std::collections::BTreeMap::new();
+    for implementation in implementations {
+        let name = implementation
+            .trait_name
+            .clone()
+            .unwrap_or_else(|| "inherent".to_owned());
+        map.entry(name)
+            .or_default()
+            .extend(implementation.methods.iter().map(String::as_str));
+    }
+    map
 }
 
 fn compare_variant(key: &str, previous: &ApiVariant, next: &ApiVariant, diff: &mut ApiDiff) {
@@ -335,6 +408,21 @@ fn compare_field(
     }
 }
 
+fn layout_text(layout: Option<&crate::ApiLayout>) -> String {
+    match layout {
+        Some(layout) => format!("{} byte(s), align {}", layout.size, layout.align),
+        None => "unknown".to_owned(),
+    }
+}
+
+fn public_fields(fields: &[ApiField]) -> std::collections::BTreeMap<String, &ApiField> {
+    fields
+        .iter()
+        .filter(|field| field.visibility == "public")
+        .map(|field| (field_key(field), field))
+        .collect()
+}
+
 fn field_key(field: &ApiField) -> String {
     field.name.clone().unwrap_or_else(|| "#".to_owned())
 }
@@ -374,7 +462,7 @@ pub fn public_keys(snapshot: &ApiSnapshot) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{ApiModule, ApiVariant};
+    use crate::snapshot::{ApiImplementation, ApiModule, ApiVariant};
 
     fn snapshot(version: &str) -> ApiSnapshot {
         ApiSnapshot {
@@ -386,6 +474,7 @@ mod tests {
                 path: "root".to_owned(),
                 exposed: true,
                 package: 0,
+                docs: None,
             }],
             items: vec![ApiItem {
                 name: "Mode".to_owned(),
@@ -398,7 +487,11 @@ mod tests {
                 variants: vec![ApiVariant {
                     name: "On".to_owned(),
                     fields: Vec::new(),
+                    docs: None,
                 }],
+                docs: None,
+                layout: None,
+                implementations: Vec::new(),
             }],
         }
     }
@@ -424,6 +517,7 @@ mod tests {
         next.items[0].variants.push(ApiVariant {
             name: "Off".to_owned(),
             fields: Vec::new(),
+            docs: None,
         });
         let diff = check(&snapshot("1.0.0"), &next).unwrap();
         assert_eq!(diff.breaking[0].kind, "variant-added");
@@ -436,6 +530,7 @@ mod tests {
             name: Some("x".to_owned()),
             ty: "i32".to_owned(),
             visibility: "public".to_owned(),
+            docs: None,
         });
         let next = snapshot("2.0.0");
         let diff = check(&previous, &next).unwrap();
@@ -453,6 +548,50 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_previous_layout_is_not_breaking_but_a_known_change_is() {
+        let mut next = snapshot("1.1.0");
+        next.items[0].layout = Some(crate::ApiLayout { size: 4, align: 4 });
+        let diff = check(&snapshot("1.0.0"), &next).unwrap();
+        assert!(diff.is_empty());
+
+        let mut later = next.clone();
+        later.package_version = "2.0.0".to_owned();
+        later.items[0].layout = Some(crate::ApiLayout { size: 8, align: 8 });
+        let diff = check(&next, &later).unwrap();
+        assert_eq!(diff.breaking[0].kind, "layout-changed");
+    }
+
+    #[test]
+    fn private_struct_fields_are_not_part_of_the_public_surface() {
+        let mut previous = snapshot("1.0.0");
+        previous.items[0].fields.push(ApiField {
+            name: Some("hidden".to_owned()),
+            ty: "i32".to_owned(),
+            visibility: "private".to_owned(),
+            docs: None,
+        });
+        let diff = check(&previous, &snapshot("1.1.0")).unwrap();
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn method_additions_are_minor_and_removals_are_breaking() {
+        let mut with_method = snapshot("1.1.0");
+        with_method.items[0].implementations = vec![ApiImplementation {
+            trait_name: None,
+            methods: vec!["len".to_owned()],
+        }];
+        let diff = check(&snapshot("1.0.0"), &with_method).unwrap();
+        assert_eq!(diff.required_bump(), Bump::Minor);
+
+        let mut without_method = with_method.clone();
+        without_method.package_version = "2.0.0".to_owned();
+        without_method.items[0].implementations[0].methods.clear();
+        let diff = check(&with_method, &without_method).unwrap();
+        assert_eq!(diff.breaking[0].kind, "method-removed");
+    }
+
+    #[test]
     fn additive_changes_are_minor() {
         let mut next = snapshot("1.1.0");
         next.items.push(ApiItem {
@@ -466,8 +605,12 @@ mod tests {
                 name: Some("x".to_owned()),
                 ty: "i32".to_owned(),
                 visibility: "public".to_owned(),
+                docs: None,
             }],
             variants: Vec::new(),
+            docs: None,
+            layout: None,
+            implementations: Vec::new(),
         });
         let diff = check(&snapshot("1.0.0"), &next).unwrap();
         assert_eq!(diff.required_bump(), Bump::Minor);

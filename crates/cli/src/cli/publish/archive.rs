@@ -76,6 +76,9 @@ pub(crate) fn build(
     let api_bytes = snapshot
         .canonical_bytes()
         .map_err(|error| ui::failure(error.code(), error.message()))?;
+    let documentation = seal_doc::Documentation::from_snapshot(snapshot);
+    let docs_bytes = seal_doc::render_json(&documentation)
+        .map_err(|error| ui::failure(error.code(), error.to_string()))?;
 
     let mut files: Vec<PackageFile> = Vec::new();
     let mut listed = Vec::new();
@@ -95,6 +98,11 @@ pub(crate) fn build(
     files.push(PackageFile {
         path: "seal.api.json".to_owned(),
         contents: api_bytes.clone(),
+        executable: false,
+    });
+    files.push(PackageFile {
+        path: "seal.docs.json".to_owned(),
+        contents: docs_bytes.into_bytes(),
         executable: false,
     });
     files.push(PackageFile {
@@ -201,6 +209,23 @@ fn add_file(
         return Err(ui::failure(
             "E8093",
             format!("`{}` is not a safe package path", relative.display()),
+        ));
+    }
+    let name = relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if matches!(
+        name.as_str(),
+        "seal.api.json" | "seal.docs.json" | "seal.sbom.json"
+    ) {
+        return Err(ui::failure(
+            "E8093",
+            format!("`{name}` is reserved for generated publication metadata"),
         ));
     }
     let path = root.join(relative);

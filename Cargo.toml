@@ -45,6 +45,7 @@ seal-project = { path = "crates/project" }
 seal-registry = { path = "crates/registry" }
 seal-registry-server = { path = "crates/registry-server" }
 seal-api = { path = "crates/api" }
+seal-doc = { path = "crates/doc" }
 seal-driver = { path = "crates/driver" }
 seal-cli = { path = "crates/cli" }
 seal-cas = { path = "crates/cas" }

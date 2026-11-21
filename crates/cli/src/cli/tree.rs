@@ -22,9 +22,15 @@ pub(crate) fn tree(cli: &Cli, root: &std::path::Path, args: &QueryArgs) -> ExitC
                 .push(&package.version);
         }
         let mut found = false;
-        for (name, versions) in seen {
+        for (name, mut versions) in seen {
             if versions.len() > 1 {
                 found = true;
+                versions.sort_by(|left, right| {
+                    semver::Version::parse(left)
+                        .ok()
+                        .cmp(&semver::Version::parse(right).ok())
+                        .then_with(|| left.cmp(right))
+                });
                 println!("{name}: {}", versions.join(", "));
             }
         }
@@ -51,22 +57,7 @@ pub(crate) fn compile(
     project: &Project,
     args: &QueryArgs,
 ) -> seal_project::ProjectResult<CompilePlan> {
-    compile_inner(project, args, true)
-}
-
-pub(crate) fn compile_graph(
-    project: &Project,
-    args: &QueryArgs,
-) -> seal_project::ProjectResult<CompilePlan> {
-    compile_inner(project, args, false)
-}
-
-fn compile_inner(
-    project: &Project,
-    args: &QueryArgs,
-    select_package: bool,
-) -> seal_project::ProjectResult<CompilePlan> {
-    let package = if let Some(name) = args.package.as_ref().filter(|_| select_package) {
+    let package = if let Some(name) = args.package.as_ref() {
         project
             .package_by_name(name)
             .map(|(index, _)| index)

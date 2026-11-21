@@ -6,7 +6,7 @@ use seal_plan::BuildMode;
 
 use crate::cli::build::{Mode, plan_options, select_jobs};
 
-use super::{load, sample_project, selection};
+use super::{load, monorepo, sample_project, selection};
 
 fn job_names(jobs: &[crate::cli::build::Job]) -> BTreeSet<&str> {
     jobs.iter().map(|job| job.target.as_str()).collect()
@@ -81,6 +81,38 @@ fn a_command_line_profile_overrides_the_target_profile() {
         plan_options(&selection, BuildMode::Build, share).profile,
         "release"
     );
+}
+
+#[test]
+fn default_members_select_every_declared_member() {
+    let fixture = monorepo("build-default-members");
+    let project = load(&fixture);
+    let jobs = select_jobs(&project, &selection(), Mode::Build).expect("default members");
+    assert_eq!(job_names(&jobs), BTreeSet::from(["alpha", "beta"]));
+}
+
+#[test]
+fn workspace_and_exclude_select_the_right_packages() {
+    let fixture = monorepo("build-exclude");
+    let project = load(&fixture);
+    let mut selection = selection();
+    selection.workspace = true;
+    selection.exclude = vec!["beta".to_owned(), "app".to_owned()];
+    let jobs = select_jobs(&project, &selection, Mode::Build).expect("workspace selection");
+    assert_eq!(job_names(&jobs), BTreeSet::from(["alpha"]));
+
+    selection.exclude = vec!["missing".to_owned()];
+    assert!(select_jobs(&project, &selection, Mode::Build).is_err());
+}
+
+#[test]
+fn a_selection_that_excludes_everything_is_an_error() {
+    let fixture = monorepo("build-exclude-all");
+    let project = load(&fixture);
+    let mut selection = selection();
+    selection.workspace = true;
+    selection.exclude = vec!["alpha".to_owned(), "beta".to_owned(), "app".to_owned()];
+    assert!(select_jobs(&project, &selection, Mode::Build).is_err());
 }
 
 #[test]

@@ -26,6 +26,9 @@ pub struct ApiModule {
     /// The package index the module belongs to.
     #[serde(default)]
     pub package: usize,
+    /// Documentation attached to the module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
 }
 
 /// One public field.
@@ -39,6 +42,9 @@ pub struct ApiField {
     /// The field visibility, lowercased.
     #[serde(default)]
     pub visibility: String,
+    /// Documentation attached to the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
 }
 
 /// One public enum variant.
@@ -46,9 +52,32 @@ pub struct ApiField {
 pub struct ApiVariant {
     /// The variant name.
     pub name: String,
-    /// Fields in declaration order.
+    /// Fields in canonical (name) order.
     #[serde(default)]
     pub fields: Vec<ApiField>,
+    /// Documentation attached to the variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
+}
+
+/// Size and alignment of an aggregate, in bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ApiLayout {
+    /// Size in bytes, including padding.
+    pub size: u64,
+    /// Alignment in bytes.
+    pub align: u64,
+}
+
+/// One implementation attached to an aggregate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiImplementation {
+    /// The implemented trait, or `None` for an inherent implementation.
+    #[serde(default, rename = "trait", skip_serializing_if = "Option::is_none")]
+    pub trait_name: Option<String>,
+    /// Method names in declaration order.
+    #[serde(default)]
+    pub methods: Vec<String>,
 }
 
 /// One public item.
@@ -69,12 +98,21 @@ pub struct ApiItem {
     /// The rendered signature for functions, methods, and globals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
-    /// Struct fields in declaration order.
+    /// Public struct fields in canonical (name) order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<ApiField>,
-    /// Enum variants in declaration order.
+    /// Enum variants in canonical (name) order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<ApiVariant>,
+    /// Documentation attached to the item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
+    /// Aggregate layout, when the item is a sized struct or enum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<ApiLayout>,
+    /// Inherent and trait implementations attached to the item.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implementations: Vec<ApiImplementation>,
 }
 
 /// The complete public-API snapshot.
@@ -224,6 +262,11 @@ impl ApiSnapshot {
         for item in &mut self.items {
             item.fields.sort();
             item.variants.sort();
+            item.implementations.sort_by(|left, right| {
+                left.trait_name
+                    .cmp(&right.trait_name)
+                    .then_with(|| left.methods.cmp(&right.methods))
+            });
             for variant in &mut item.variants {
                 variant.fields.sort();
             }
@@ -300,6 +343,7 @@ mod tests {
                 path: "root".to_owned(),
                 exposed: true,
                 package: 0,
+                docs: None,
             }],
             items: vec![ApiItem {
                 name: "Point".to_owned(),
@@ -312,8 +356,12 @@ mod tests {
                     name: Some("x".to_owned()),
                     ty: "i32".to_owned(),
                     visibility: "public".to_owned(),
+                    docs: None,
                 }],
                 variants: Vec::new(),
+                docs: None,
+                layout: None,
+                implementations: Vec::new(),
             }],
         }
     }
@@ -350,6 +398,7 @@ mod tests {
             name: Some("y".to_owned()),
             ty: "i64".to_owned(),
             visibility: "public".to_owned(),
+            docs: None,
         });
         second.items[0].fields.sort();
         let mut third = snapshot();
@@ -359,6 +408,7 @@ mod tests {
                 name: Some("y".to_owned()),
                 ty: "i64".to_owned(),
                 visibility: "public".to_owned(),
+                docs: None,
             },
         );
         third.normalize();

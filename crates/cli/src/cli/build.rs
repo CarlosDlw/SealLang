@@ -347,23 +347,83 @@ pub(crate) fn select_jobs(
     Ok(jobs)
 }
 
-fn select_packages(project: &Project, selection: &Selection) -> Result<Vec<usize>, ExitCode> {
-    if selection.workspace {
-        return Ok((0..project.packages.len()).collect());
-    }
-    if let Some(name) = &selection.package {
+pub(crate) fn select_packages(
+    project: &Project,
+    selection: &Selection,
+) -> Result<Vec<usize>, ExitCode> {
+    let mut selected = if selection.workspace {
+        (0..project.packages.len()).collect()
+    } else if let Some(name) = &selection.package {
         let Some((index, _)) = project.package_by_name(name) else {
             return Err(ui::error(
                 "E8005",
                 &format!("the project has no package named `{name}`"),
             ));
         };
-        return Ok(vec![index]);
+        vec![index]
+    } else {
+        default_members(project)?
+    };
+    for excluded in &selection.exclude {
+        let index = match_package(project, excluded).ok_or_else(|| {
+            ui::error(
+                "E8005",
+                &format!("the project has no package named `{excluded}`"),
+            )
+        })?;
+        selected.retain(|candidate| *candidate != index);
     }
+    selected.sort_unstable();
+    selected.dedup();
+    if selected.is_empty() {
+        return Err(ui::error(
+            "E8003",
+            "the selection excludes every package in the project",
+        ));
+    }
+    Ok(selected)
+}
+
+/// Returns the packages selected by `default-members`, or the root/default
+/// package when the manifest declares none.
+fn default_members(project: &Project) -> Result<Vec<usize>, ExitCode> {
+    if project.default_members.is_empty() {
+        return project
+            .default_package()
+            .map(|index| vec![index])
+            .map_err(|error| ui::error(error.code(), error.message()));
+    }
+    let mut selected = Vec::new();
+    for member in &project.default_members {
+        let index = match_package(project, member).ok_or_else(|| {
+            ui::error(
+                "E8005",
+                &format!("the default member `{member}` names no package"),
+            )
+        })?;
+        selected.push(index);
+    }
+    selected.sort_unstable();
+    selected.dedup();
+    Ok(selected)
+}
+
+/// Resolves a package by exact name or by a member path relative to the root.
+fn match_package(project: &Project, spec: &str) -> Option<usize> {
+    if let Some((index, _)) = project.package_by_name(spec) {
+        return Some(index);
+    }
+    let path = project.root.join(spec);
     project
-        .default_package()
-        .map(|index| vec![index])
-        .map_err(|error| ui::error(error.code(), error.message()))
+        .packages
+        .iter()
+        .position(|package| package.root == path)
+        .or_else(|| {
+            project
+                .packages
+                .iter()
+                .position(|package| package.root.ends_with(spec))
+        })
 }
 
 pub(crate) fn plan_options(

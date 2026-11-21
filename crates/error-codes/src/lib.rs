@@ -2529,6 +2529,30 @@ pub const E8011: ErrorCode = ErrorCode {
 The project layer could not read or write a file it needs, such as `seal.toml` or\n`seal.lock`. Check the path, permissions, and that the project root exists.",
 };
 
+/// An affected-path report could not be produced.
+pub const E8012: ErrorCode = ErrorCode {
+    code: "E8012",
+    title: "affected-path query failed",
+    explanation: "\
+`seal affected` maps a Git diff and untracked files to packages and targets.\nThe report is deterministic data, so a failure to serialize it or read the\nrepository means CI cannot trust the selection.\n\nCheck that the project is a Git working tree and that `--since` names a valid\nrevision, then run the command again.",
+};
+
+/// A graph query named a node that does not exist.
+pub const E8013: ErrorCode = ErrorCode {
+    code: "E8013",
+    title: "graph focus not found",
+    explanation: "\
+`seal graph --focus` accepts a node identity or display label from the chosen\ngraph. A focus that names no node cannot produce a meaningful subgraph.\n\nRun the command without `--focus` to list every node, then pass one of those\nidentities or labels.",
+};
+
+/// A selection explanation could not be produced.
+pub const E8014: ErrorCode = ErrorCode {
+    code: "E8014",
+    title: "selection explanation failed",
+    explanation: "\
+`seal why` explains the package, feature, file, or target selected by the\ncompile plan. The query must name a target that belongs to the primary package,\nand its report must serialize as JSON.\n\nRun `seal tree` or `seal metadata` to inspect the available targets, then pass\na valid name.",
+};
+
 /// A cache object or action record is missing, corrupt, or unreadable.
 pub const E8040: ErrorCode = ErrorCode {
     code: "E8040",
@@ -4185,11 +4209,11 @@ pub static ALL: &[ErrorCode] = &[
     E4032, E4033, E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
     E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
     E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
-    E8008, E8009, E8010, E8011, E8020, E8021, E8022, E8023, E8024, E8025, E8026, E8027, E8028,
-    E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038, E8039, E8040, E8041,
-    E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8080, E8081, E8082,
-    E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092, E8093, E8094, E8095,
-    E8096, E8097, E8098, E8099, E8103, E8104, E9001, E9002,
+    E8008, E8009, E8010, E8011, E8012, E8013, E8014, E8020, E8021, E8022, E8023, E8024, E8025,
+    E8026, E8027, E8028, E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038,
+    E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070,
+    E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092,
+    E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8103, E8104, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

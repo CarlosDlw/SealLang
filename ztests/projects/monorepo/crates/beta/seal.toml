@@ -1,0 +1,7 @@
+[package]
+name = "beta"
+version = "0.1.0"
+description = "A package built on alpha"
+
+[dependencies]
+alpha = { path = "../alpha" }

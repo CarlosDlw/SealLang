@@ -1,0 +1,55 @@
+version = 2
+toolchain = "seal 0.1.0"
+targets = ["x86_64-unknown-linux"]
+
+[[package]]
+name = "alpha"
+version = "0.1.0"
+source = "path+crates/alpha"
+checksum = "sha256:1a54366f63774ec7221d961ff0a25a5b8b5e273db79cbb02cddf2ca338681ce9"
+
+[package.cfg]
+os = "linux"
+arch = "x86_64"
+env = ""
+pointer_width = 64
+debug_assertions = true
+
+[[package]]
+name = "app"
+version = "0.1.0"
+source = "path+crates/app"
+checksum = "sha256:93aa19eb0aa3b76f745594d353a310c3ec523f7098254c3ef632eeaac430841e"
+
+[package.cfg]
+os = ""
+arch = ""
+env = ""
+pointer_width = 0
+debug_assertions = false
+
+[[package]]
+name = "beta"
+version = "0.1.0"
+source = "path+crates/beta"
+checksum = "sha256:fea07da677c46b734a671686527122cc3b9d442e588ba2af11726f58646b6e3d"
+
+[package.cfg]
+os = ""
+arch = ""
+env = ""
+pointer_width = 0
+debug_assertions = false
+
+[[instances]]
+name = "alpha"
+version = "0.1.0"
+source = "path+crates/alpha"
+instance = 2346434751
+
+[instances.cfg]
+os = "linux"
+arch = "x86_64"
+env = ""
+pointer_width = 64
+debug_assertions = true

@@ -118,10 +118,15 @@ pkg-config = "zlib"
 static = true
 
 [tasks.ci]
+description = "Check and build the release profile"
+depends-on = ["lint"]
 steps = [
   { program = "seal", args = ["check"] },
   { program = "seal", args = ["build", "--release"], timeout = 600 },
 ]
+
+[tasks.lint]
+steps = [{ program = "seal", args = ["check", "--locked"] }]
 ```
 
 Generator output globs must name a directory so undeclared files can be
@@ -130,7 +135,9 @@ generator cannot consume another generator's outputs. A native declaration is
 either explicit (`libs`, `search-paths`) or a `pkg-config` package; an empty
 declaration, an unknown alias, or a library name containing a path is `E8005`.
 Task steps name a program and an argument vector, never a shell command; `cwd`
-stays inside the project and `timeout` is in seconds.
+stays inside the project and `timeout` is in seconds. `depends-on` runs named
+tasks first, in declaration order, and a cycle is rejected. Arguments after
+`seal task <name> --` are appended to every step.
 
 ## Dependencies and the lockfile
 
@@ -297,6 +304,9 @@ appear in cache records and logs only as digests.
 | `E8009` | Unknown or invalid profile |
 | `E8010` | Structurally invalid compile plan |
 | `E8011` | Project I/O failure |
+| `E8012` | Affected-path query failed |
+| `E8013` | Graph focus not found |
+| `E8014` | Selection explanation failed |
 | `E8040` | Cache object or action record invalid |
 | `E8041` | Sandbox policy or input violation |
 | `E8042` | Generator output contract violated |

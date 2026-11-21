@@ -21,6 +21,7 @@ impl Parser<'_> {
     /// malformed path still produces a node so the file keeps a stable shape
     /// for the build graph.
     pub(crate) fn parse_module_decl(&mut self) -> ItemId {
+        let docs = self.pending_module_docs.take();
         let modifiers = std::mem::take(&mut self.item_modifiers);
         let start = self.current_span();
         self.bump();
@@ -95,8 +96,17 @@ impl Parser<'_> {
         self.saw_any = true;
 
         let span = start.cover(self.previous_span());
-        self.builder
-            .push_module_item(span, ModuleDecl { path, path_span }, modifiers)
+        let item = self.builder.push_module_item(
+            span,
+            ModuleDecl {
+                path,
+                path_span,
+                docs: None,
+            },
+            modifiers,
+        );
+        self.builder.set_module_docs(item, docs);
+        item
     }
 
     /// Parses `use path;`, including groups and aliases.

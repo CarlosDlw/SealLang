@@ -117,6 +117,8 @@ pub struct ModuleData {
     pub exposed: bool,
     /// The span of the declaration that introduced the module.
     pub declaration_span: Span,
+    /// The source range of the module's inner doc comments.
+    pub docs: Option<Span>,
 }
 
 /// One source file that contributes items to a module.
@@ -485,6 +487,7 @@ impl ModuleGraph {
             path: ModulePath::root(),
             exposed: false,
             declaration_span: Span::default(),
+            docs: None,
         });
         id
     }
@@ -501,6 +504,7 @@ impl ModuleGraph {
             path,
             exposed: false,
             declaration_span: span,
+            docs: None,
         });
         self.packages[package].modules.push(id);
         id
@@ -540,6 +544,11 @@ impl ModuleGraph {
         }
 
         let Some((position, declaration, span)) = declaration else {
+            // Several files can contribute to the root module; the first one
+            // owns the module documentation so later files cannot overwrite it.
+            if self.modules[root].docs.is_none() {
+                self.modules[root].docs = ast.module_docs();
+            }
             return root;
         };
         if position != 0 {
@@ -578,6 +587,7 @@ impl ModuleGraph {
                 }
             };
         }
+        self.modules[current].docs = declaration.docs;
         current
     }
 

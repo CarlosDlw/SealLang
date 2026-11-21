@@ -627,6 +627,9 @@ impl<'a> Lowering<'a> {
         self.hir
             .definitions_mut()
             .set_visibility(definition, crate::module::visibility_from(visibility));
+        self.hir
+            .definitions_mut()
+            .set_doc_span(definition, self.ast.item(item_id).docs);
         if let Some(condition) = self.ast.item(item_id).modifiers.cfg {
             let text = crate::cfg::format(self.ast, condition, self.interner);
             let symbol = self.interner.intern(&text);

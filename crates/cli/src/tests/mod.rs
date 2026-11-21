@@ -10,10 +10,14 @@ use seal_project::Project;
 
 use crate::cli::Selection;
 
+mod affected;
 mod build;
+mod docs;
+mod graph;
 mod metadata;
 mod new;
 mod run;
+mod semver;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -86,6 +90,43 @@ pub(super) fn sample_project(name: &str) -> Fixture {
     fixture
 }
 
+/// Writes a three-package workspace with a linear dependency chain.
+pub(super) fn monorepo(name: &str) -> Fixture {
+    let fixture = fixture(name);
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"mono\"\nmembers = [\"crates/*\"]\n\
+         default-members = [\"crates/alpha\", \"crates/beta\"]\n",
+    );
+    write(
+        &fixture.root.join("crates/alpha/seal.toml"),
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &fixture.root.join("crates/alpha/src/lib.sl"),
+        "//! Alpha helpers.\n\n/// Returns one.\npublic func one() -> i32 { 1 }\n",
+    );
+    write(
+        &fixture.root.join("crates/beta/seal.toml"),
+        "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nalpha = { path = \"../alpha\" }\n",
+    );
+    write(
+        &fixture.root.join("crates/beta/src/lib.sl"),
+        "use alpha::one;\n\n/// Returns two.\npublic func two() -> i32 { one() + 1 }\n",
+    );
+    write(
+        &fixture.root.join("crates/app/seal.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nbeta = { path = \"../beta\" }\n",
+    );
+    write(
+        &fixture.root.join("crates/app/src/main.sl"),
+        "use beta::two;\n\nfunc main() -> i32 { two() }\n",
+    );
+    fixture
+}
+
 /// Loads a fixture as a project.
 pub(super) fn load(fixture: &Fixture) -> Project {
     Project::load(&fixture.root).expect("the fixture is a valid project")
@@ -97,6 +138,7 @@ pub(super) fn selection() -> Selection {
         targets: Vec::new(),
         package: None,
         workspace: false,
+        exclude: Vec::new(),
         all_targets: false,
         profile: None,
         release: false,

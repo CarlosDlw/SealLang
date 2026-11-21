@@ -8,7 +8,7 @@ use seal_ast::{
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
 use seal_error_codes::ErrorCode;
-use seal_lexer::{Lexed, Token, TokenKind};
+use seal_lexer::{Lexed, Token, TokenKind, Trivia, TriviaKind};
 use seal_span::Span;
 use seal_symbol::{Interner, Symbol};
 
@@ -29,6 +29,8 @@ pub(crate) const MAX_DEPTH: usize = 256;
 /// One parsing pass over a token stream.
 pub(crate) struct Parser<'a> {
     pub(crate) tokens: &'a [Token],
+    pub(crate) trivia: &'a [Trivia],
+    pub(crate) trivia_index: usize,
     pub(crate) index: usize,
     /// A virtual token produced by splitting a multi-character token. The lexer
     /// emits `>>`, but a nested generic list needs two `>` tokens in source
@@ -53,6 +55,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) saw_any: bool,
     /// Whether a non-import item has been parsed.
     pub(crate) saw_item: bool,
+    /// Outer docs collected for the item currently being parsed.
+    pub(crate) pending_docs: Option<Span>,
+    /// Inner docs collected for the file's module declaration.
+    pub(crate) pending_module_docs: Option<Span>,
 }
 
 impl<'a> Parser<'a> {
@@ -65,6 +71,8 @@ impl<'a> Parser<'a> {
         let previous = tokens.first().map_or(Span::default(), |token| token.span);
         Self {
             tokens,
+            trivia: lexed.trivia.as_slice(),
+            trivia_index: 0,
             index: 0,
             pending: None,
             previous,
@@ -78,7 +86,70 @@ impl<'a> Parser<'a> {
             module_decl: None,
             saw_any: false,
             saw_item: false,
+            pending_docs: None,
+            pending_module_docs: None,
         }
+    }
+
+    /// Collects the outer doc comments that precede the next token.
+    ///
+    /// Trivia is consumed in source order. A non-documentation comment after a
+    /// documentation block ends the attachment, so a comment between docs and a
+    /// declaration does not silently donate the docs to that declaration.
+    pub(crate) fn take_docs(&mut self) -> Option<Span> {
+        let limit = self.current_span().lo();
+        let mut docs: Option<Span> = None;
+        while let Some(trivia) = self.trivia.get(self.trivia_index) {
+            if trivia.span.hi() > limit {
+                break;
+            }
+            self.trivia_index += 1;
+            match trivia.kind {
+                TriviaKind::OuterLineDoc | TriviaKind::OuterBlockDoc => {
+                    docs = Some(match docs {
+                        Some(span) => span.cover(trivia.span),
+                        None => trivia.span,
+                    });
+                }
+                TriviaKind::LineComment | TriviaKind::BlockComment => docs = None,
+                TriviaKind::InnerLineDoc | TriviaKind::InnerBlockDoc => {}
+            }
+        }
+        docs
+    }
+
+    /// Skips trivia that belongs to an item that was just parsed, so comments
+    /// inside a body cannot attach to the following declaration.
+    pub(crate) fn skip_trivia_through(&mut self, end: Span) {
+        while let Some(trivia) = self.trivia.get(self.trivia_index) {
+            if trivia.span.hi() > end.hi() {
+                break;
+            }
+            self.trivia_index += 1;
+        }
+    }
+
+    /// Collects the `//!` comments that appear before the first token.
+    pub(crate) fn take_inner_docs(&mut self) -> Option<Span> {
+        let limit = self.current_span().lo();
+        let mut docs: Option<Span> = None;
+        while let Some(trivia) = self.trivia.get(self.trivia_index) {
+            if trivia.span.hi() > limit {
+                break;
+            }
+            if !matches!(
+                trivia.kind,
+                TriviaKind::InnerLineDoc | TriviaKind::InnerBlockDoc
+            ) {
+                break;
+            }
+            docs = Some(match docs {
+                Some(span) => span.cover(trivia.span),
+                None => trivia.span,
+            });
+            self.trivia_index += 1;
+        }
+        docs
     }
 
     /// Parses every item and returns the finished tree.
@@ -87,13 +158,16 @@ impl<'a> Parser<'a> {
     /// legal before every import and item; a late declaration is diagnosed but
     /// still parsed so later items keep their positions.
     pub(crate) fn parse_program(mut self) -> Ast {
+        self.pending_module_docs = self.take_inner_docs();
         if self.at_name("module") {
             let item = self.parse_module_decl();
             self.items.push(item);
+            self.skip_trivia_through(self.previous_span());
         }
 
         while !self.is_eof() {
             let before = self.index;
+            self.pending_docs = self.take_docs();
             let modifiers = self.parse_modifiers();
 
             if self.at_name("use") {
@@ -104,7 +178,9 @@ impl<'a> Parser<'a> {
                         .emit();
                 }
                 let item = self.parse_use(modifiers);
+                self.builder.set_item_docs(item, self.pending_docs.take());
                 self.items.push(item);
+                self.skip_trivia_through(self.previous_span());
             } else if self.at_name("module") {
                 if modifiers.has_visibility {
                     self.error(
@@ -127,22 +203,26 @@ impl<'a> Parser<'a> {
                 self.item_modifiers = modifiers;
                 let item = self.parse_module_decl();
                 self.items.push(item);
+                self.skip_trivia_through(self.previous_span());
             } else {
                 self.item_modifiers = modifiers;
                 let item = self.parse_item();
                 self.items.push(item);
+                self.skip_trivia_through(self.previous_span());
                 self.saw_item = true;
                 self.saw_any = true;
             }
             self.ensure_progress(before);
         }
 
+        self.builder.set_root_docs(self.pending_module_docs.take());
         let items = std::mem::take(&mut self.items);
         self.builder.finish(items)
     }
 
     /// Parses one non-import item after its modifiers were collected.
     fn parse_item(&mut self) -> ItemId {
+        let docs = self.pending_docs.take();
         let start = self.current_span();
         if self.item_modifiers.export_span.is_some() && !self.at_function_start() {
             self.error(codes::E1001, start, "`export` applies only to functions")
@@ -216,6 +296,7 @@ impl<'a> Parser<'a> {
                 .push_item_with_modifiers(ItemKind::Error, span, Modifiers::none())
         };
         self.item_modifiers = Modifiers::none();
+        self.builder.set_item_docs(item, docs);
         item
     }
 
@@ -661,6 +742,7 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let docs = self.take_docs();
             let mut method_modifiers = self.parse_modifiers();
             if method_modifiers.export_span.is_some() {
                 self.error(
@@ -686,13 +768,19 @@ impl<'a> Parser<'a> {
             } else if self.at(TokenKind::Func) {
                 let start = self.current_span();
                 self.item_modifiers = method_modifiers;
-                functions.push(self.parse_function(false, false, start));
+                let function = self.parse_function(false, false, start);
+                self.builder.set_item_docs(function, docs);
+                functions.push(function);
+                self.skip_trivia_through(self.previous_span());
             } else if self.at(TokenKind::Unsafe) {
                 let start = self.current_span();
                 self.item_modifiers = method_modifiers;
                 let marker = self.bump();
                 if self.at(TokenKind::Func) {
-                    functions.push(self.parse_function(false, true, start));
+                    let function = self.parse_function(false, true, start);
+                    self.builder.set_item_docs(function, docs);
+                    functions.push(function);
+                    self.skip_trivia_through(self.previous_span());
                 } else {
                     self.error(
                         codes::E3071,
@@ -759,6 +847,7 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let docs = self.take_docs();
             let method_modifiers = self.parse_modifiers();
             if !method_modifiers.is_empty() {
                 self.report_trait_method_modifiers(method_modifiers, self.current_span());
@@ -775,12 +864,18 @@ impl<'a> Parser<'a> {
                 .emit();
                 self.skip_declaration();
             } else if self.at(TokenKind::Func) {
-                methods.push(self.parse_trait_method(false, self.current_span()));
+                let method = self.parse_trait_method(false, self.current_span());
+                self.builder.set_item_docs(method, docs);
+                methods.push(method);
+                self.skip_trivia_through(self.previous_span());
             } else if self.at(TokenKind::Unsafe) {
                 let start = self.current_span();
                 let marker = self.bump();
                 if self.at(TokenKind::Func) {
-                    methods.push(self.parse_trait_method(true, start));
+                    let method = self.parse_trait_method(true, start);
+                    self.builder.set_item_docs(method, docs);
+                    methods.push(method);
+                    self.skip_trivia_through(self.previous_span());
                 } else {
                     self.error(
                         codes::E3071,
@@ -939,6 +1034,7 @@ impl<'a> Parser<'a> {
     /// Parses one variant: a name, optionally followed by positional or named
     /// fields.
     fn parse_enum_variant(&mut self) -> VariantDeclId {
+        let docs = self.take_docs();
         let modifiers = self.parse_modifiers();
         if modifiers.has_visibility {
             self.error(
@@ -992,8 +1088,12 @@ impl<'a> Parser<'a> {
         };
 
         let span = name_span.cover(self.previous_span());
-        self.builder
-            .push_variant_with_cfg(name, name_span, fields, span, modifiers.cfg)
+        let variant =
+            self.builder
+                .push_variant_with_cfg(name, name_span, fields, span, modifiers.cfg);
+        self.builder.set_variant_docs(variant, docs);
+        self.skip_trivia_through(self.previous_span());
+        variant
     }
 
     /// Parses a positional field list, starting at `(`.
@@ -1060,14 +1160,17 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let docs = self.take_docs();
             let (field_name, field_name_span) = self.expect_ident("a field name");
             let _ = self.expect(TokenKind::Colon, "`:` after the field name");
             let ty = self.parse_type();
             let field_span = field_name_span.cover(self.builder.ast().ty(ty).span);
-            fields.push(
-                self.builder
-                    .push_field(field_name, field_name_span, ty, field_span),
-            );
+            let field = self
+                .builder
+                .push_field(field_name, field_name_span, ty, field_span);
+            self.builder.set_field_docs(field, docs);
+            fields.push(field);
+            self.skip_trivia_through(self.previous_span());
             if self.eat(TokenKind::Comma) {
                 continue;
             }

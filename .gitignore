@@ -1,4 +1,7 @@
 /target
 *.tmp
-ztests/
+ztests/*
+!ztests/projects/
+ztests/projects/*
+!ztests/projects/monorepo/
 .local/

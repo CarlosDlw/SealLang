@@ -38,6 +38,8 @@ pub struct DefData {
     /// The documentation text attached to the declaration, when the source
     /// carries one.
     pub docs: Option<Symbol>,
+    /// The source range of the attached outer doc comments.
+    pub doc_span: Option<Span>,
     /// The source `cfg(...)` condition, when the declaration has one.
     pub cfg: Option<Symbol>,
     /// The source file that declares the definition, when it has one.
@@ -75,6 +77,7 @@ impl DefData {
             module: ModuleId::from_usize(0),
             visibility: Visibility::Private,
             docs: None,
+            doc_span: None,
             cfg: None,
             file: None,
         }
@@ -153,6 +156,11 @@ impl Definitions {
     /// Panics if `id` did not come from this table.
     pub fn set_docs(&mut self, id: DefId, docs: Option<Symbol>) {
         self.defs[id].docs = docs;
+    }
+
+    /// Records the source range of a declaration's doc comments.
+    pub fn set_doc_span(&mut self, id: DefId, span: Option<Span>) {
+        self.defs[id].doc_span = span;
     }
 
     /// Records the source `cfg(...)` condition of a definition.

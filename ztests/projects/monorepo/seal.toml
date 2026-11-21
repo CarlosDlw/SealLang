@@ -1,0 +1,19 @@
+[project]
+name = "monorepo"
+language = "0.1"
+members = ["crates/*"]
+default-members = ["crates/alpha", "crates/beta"]
+
+[tasks.ci]
+description = "Check every package"
+depends-on = ["check_alpha", "check_beta", "check_app"]
+steps = [{ program = "echo", args = ["ci complete"] }]
+
+[tasks.check_alpha]
+steps = [{ program = "echo", args = ["alpha"] }]
+
+[tasks.check_beta]
+steps = [{ program = "echo", args = ["beta"] }]
+
+[tasks.check_app]
+steps = [{ program = "echo", args = ["app"] }]

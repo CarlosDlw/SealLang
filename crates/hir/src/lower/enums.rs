@@ -34,13 +34,14 @@ impl Lowering<'_> {
             let mut variants = Vec::with_capacity(declaration.variants.len());
             let mut names = FxHashSet::default();
             for variant_id in &declaration.variants {
-                let (name, name_span, field_list, variant_span) = {
+                let (name, name_span, field_list, variant_span, docs) = {
                     let variant = self.ast.variant(*variant_id);
                     (
                         variant.name,
                         variant.name_span,
                         variant.fields.clone(),
                         variant.span,
+                        variant.docs,
                     )
                 };
                 if !names.insert(name) {
@@ -66,6 +67,7 @@ impl Lowering<'_> {
                     Some(definition),
                     false,
                 ));
+                self.hir.definitions_mut().set_doc_span(variant_def, docs);
 
                 let mut fields = Vec::new();
                 match &field_list {
@@ -73,9 +75,15 @@ impl Lowering<'_> {
                     VariantFieldList::Named(field_ids) => {
                         let mut field_names = FxHashSet::default();
                         for field_id in field_ids {
-                            let (field_name, field_name_span, ty_id, field_span) = {
+                            let (field_name, field_name_span, ty_id, field_span, docs) = {
                                 let field = self.ast.field(*field_id);
-                                (field.name, field.name_span, field.ty, field.span)
+                                (
+                                    field.name,
+                                    field.name_span,
+                                    field.ty,
+                                    field.span,
+                                    field.docs,
+                                )
                             };
                             let ty = self.lower_type(ty_id);
                             if !field_names.insert(field_name) {
@@ -100,6 +108,7 @@ impl Lowering<'_> {
                                 Some(variant_def),
                                 false,
                             ));
+                            self.hir.definitions_mut().set_doc_span(field_def, docs);
                             fields.push(FieldDef {
                                 def: field_def,
                                 name: Some(field_name),

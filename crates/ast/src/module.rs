@@ -14,6 +14,9 @@ pub struct ModuleDecl {
     pub path: Vec<Symbol>,
     /// The span from the first segment through the last one.
     pub path_span: Span,
+    /// The source range of the inner doc comments (`//!`) at the start of the
+    /// file that owns this module.
+    pub docs: Option<Span>,
 }
 
 /// One `use` declaration.

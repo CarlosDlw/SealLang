@@ -19,6 +19,8 @@ pub struct Item {
     pub kind: ItemKind,
     /// Visibility, `cfg`, and test modifiers written before the item.
     pub modifiers: Modifiers,
+    /// The source range of the outer doc comments attached to the item.
+    pub docs: Option<Span>,
     /// The item's full source range.
     pub span: Span,
 }
@@ -120,6 +122,8 @@ pub struct VariantDecl {
     pub name: Symbol,
     /// The span of the variant name.
     pub name_span: Span,
+    /// The source range of the outer doc comments attached to the variant.
+    pub docs: Option<Span>,
     /// The declared field list.
     pub fields: VariantFieldList,
     /// A `cfg(...)` condition written on the variant, retained so the rejected
@@ -159,6 +163,8 @@ pub struct FieldDecl {
     pub name: Symbol,
     /// The span of the field name.
     pub name_span: Span,
+    /// The source range of the outer doc comments attached to the field.
+    pub docs: Option<Span>,
     /// The declared field type.
     pub ty: TypeId,
     /// The field's declared visibility.

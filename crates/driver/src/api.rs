@@ -8,11 +8,13 @@
 
 use std::path::Path;
 
-use seal_api::{ApiField, ApiItem, ApiModule, ApiSnapshot, ApiVariant};
-use seal_def::{DefId, DefKind};
+use seal_api::{
+    ApiField, ApiImplementation, ApiItem, ApiLayout, ApiModule, ApiSnapshot, ApiVariant,
+};
+use seal_def::{DefId, DefKind, Visibility};
 use seal_hir::Hir;
 use seal_session::Session;
-use seal_ty::{AdtKind, TyId};
+use seal_ty::{AdtId, AdtKind, TyId, TyKind};
 
 use crate::cli::plan::path_string;
 
@@ -31,14 +33,22 @@ pub(crate) fn write(
     let modules = hir
         .modules()
         .iter()
+        .filter(|module| module.package == hir.primary_package())
         .map(|module| ApiModule {
             path: path_string(&module.path, session.interner()),
             exposed: module.exposed,
-            package: module.package.index() as usize,
+            // A snapshot describes one package; using a project-wide index
+            // would make the same package hash differently in a workspace and
+            // when built alone.
+            package: 0,
+            docs: crate::doc_text::render(session.source_map(), module.docs, session.interner()),
         })
         .collect();
     let mut items = Vec::new();
     for def in hir.public_items() {
+        if hir.definitions().get(*def).package != hir.primary_package() {
+            continue;
+        }
         if let Some(item) = item(session, hir, *def) {
             items.push(item);
         }
@@ -91,6 +101,9 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
         signature: None,
         fields: Vec::new(),
         variants: Vec::new(),
+        docs: crate::doc_text::render(session.source_map(), data.doc_span, session.interner()),
+        layout: None,
+        implementations: Vec::new(),
     };
     match data.kind {
         DefKind::Function | DefKind::ExternFunction => {
@@ -107,7 +120,7 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
             let definition = hir.ty_ctxt().adt(adt);
             match definition.kind {
                 AdtKind::Struct => {
-                    item.fields = fields(session, hir, &definition.fields);
+                    item.fields = fields(session, hir, &definition.fields, true);
                 }
                 AdtKind::Enum => {
                     item.variants = definition
@@ -115,32 +128,114 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
                         .iter()
                         .map(|variant| ApiVariant {
                             name: session.interner().resolve(variant.name).to_owned(),
-                            fields: fields(session, hir, &variant.fields),
+                            // Enum variant fields are part of the variant's
+                            // public constructor even without a `public`
+                            // modifier in the source.
+                            fields: fields(session, hir, &variant.fields, false),
+                            docs: crate::doc_text::render(
+                                session.source_map(),
+                                hir.definitions().get(variant.def).doc_span,
+                                session.interner(),
+                            ),
                         })
                         .collect();
                 }
                 AdtKind::Closure => return None,
             }
+            item.layout = layout(session, hir, adt);
+            item.implementations = implementations(session, hir, def);
         }
         _ => {}
     }
     Some(item)
 }
 
-fn fields(session: &Session, hir: &Hir, fields: &[seal_ty::FieldDef]) -> Vec<ApiField> {
+fn fields(
+    session: &Session,
+    hir: &Hir,
+    fields: &[seal_ty::FieldDef],
+    public_only: bool,
+) -> Vec<ApiField> {
     fields
         .iter()
-        .map(|field| {
+        .filter_map(|field| {
             let data = hir.definitions().get(field.def);
-            ApiField {
+            if public_only && data.visibility != Visibility::Public {
+                return None;
+            }
+            Some(ApiField {
                 name: field
                     .name
                     .map(|name| session.interner().resolve(name).to_owned()),
                 ty: display(session, hir, field.ty),
                 visibility: format!("{:?}", data.visibility).to_lowercase(),
-            }
+                docs: crate::doc_text::render(
+                    session.source_map(),
+                    data.doc_span,
+                    session.interner(),
+                ),
+            })
         })
         .collect()
+}
+
+fn layout(session: &Session, hir: &Hir, adt: AdtId) -> Option<ApiLayout> {
+    let ty = hir.ty_ctxt().adt_ty(adt);
+    let layout = seal_layout::LayoutCtxt::new(hir.ty_ctxt(), session.target().pointer_width())
+        .layout_of(ty)
+        .ok()?;
+    Some(ApiLayout {
+        size: layout.size(),
+        align: layout.align(),
+    })
+}
+
+fn implementations(session: &Session, hir: &Hir, def: DefId) -> Vec<ApiImplementation> {
+    let mut implementations = Vec::new();
+    let matches = |ty: TyId| match hir.ty_ctxt().kind(ty) {
+        TyKind::Adt { adt, .. } => hir.ty_ctxt().adt(adt).def == def,
+        _ => false,
+    };
+    for implementation in hir.inherent_impls() {
+        if !matches(implementation.self_ty) {
+            continue;
+        }
+        let methods: Vec<String> = implementation
+            .methods
+            .iter()
+            .filter(|(_, method)| hir.definitions().get(*method).visibility == Visibility::Public)
+            .map(|(name, _)| session.interner().resolve(*name).to_owned())
+            .collect();
+        if methods.is_empty() {
+            continue;
+        }
+        implementations.push(ApiImplementation {
+            trait_name: None,
+            methods,
+        });
+    }
+    for implementation in hir.trait_impls() {
+        if !matches(implementation.trait_ref.self_ty) {
+            continue;
+        }
+        let trait_name = session
+            .interner()
+            .resolve(
+                hir.definitions()
+                    .get(implementation.trait_ref.trait_def)
+                    .name,
+            )
+            .to_owned();
+        implementations.push(ApiImplementation {
+            trait_name: Some(trait_name),
+            methods: implementation
+                .methods
+                .iter()
+                .map(|(name, _)| session.interner().resolve(*name).to_owned())
+                .collect(),
+        });
+    }
+    implementations
 }
 
 fn signature(session: &Session, hir: &Hir, def: DefId) -> String {

@@ -4,8 +4,8 @@ use std::process::ExitCode;
 
 use seal_plan::BuildMode;
 
-use crate::cli::build::{Mode, select_jobs};
-use crate::cli::{CheckArgs, Cli};
+use crate::cli::build::{Job, Mode, select_jobs};
+use crate::cli::{CheckArgs, Cli, Selection};
 use crate::ui;
 
 pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> ExitCode {
@@ -22,17 +22,28 @@ pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> Exit
         Ok(jobs) => jobs,
         Err(code) => return code,
     };
-    let target_triple = args
-        .selection
+    check_jobs(cli, &project, &jobs, &args.selection)
+}
+
+/// Checks explicit jobs with the options of `selection`.
+///
+/// `affected --run` reuses this so both commands share the toolchain check,
+/// lockfile preparation, and diagnostic handling.
+pub(crate) fn check_jobs(
+    cli: &Cli,
+    project: &seal_project::Project,
+    jobs: &[Job],
+    selection: &Selection,
+) -> ExitCode {
+    let target_triple = selection
         .target_triple
         .clone()
         .unwrap_or_else(|| seal_target::host_triple().as_str().to_owned());
-    let toolchain = match crate::cli::build::toolchain_version(&project, &target_triple) {
+    let toolchain = match crate::cli::build::toolchain_version(project, &target_triple) {
         Ok(toolchain) => toolchain,
         Err(code) => return code,
     };
-    if let Err(code) =
-        crate::cli::build::prepare_lockfile(cli, &project, &target_triple, &args.selection)
+    if let Err(code) = crate::cli::build::prepare_lockfile(cli, project, &target_triple, selection)
     {
         return code;
     }
@@ -41,8 +52,7 @@ pub(crate) fn check(cli: &Cli, root: &std::path::Path, args: &CheckArgs) -> Exit
             .package(job.package)
             .target(&job.target)
             .expect("selection returns existing targets");
-        let mut options =
-            crate::cli::build::plan_options(&args.selection, BuildMode::Check, target);
+        let mut options = crate::cli::build::plan_options(selection, BuildMode::Check, target);
         options.toolchain = toolchain.clone();
         let plan = match project.compile_plan(job.package, &job.target, &options) {
             Ok(plan) => plan,

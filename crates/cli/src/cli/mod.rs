@@ -1,6 +1,7 @@
 //! Argument parsing and command dispatch.
 
 mod add;
+mod affected;
 mod api;
 mod audit;
 pub(crate) mod build;
@@ -8,7 +9,9 @@ mod cache;
 mod check;
 mod clean;
 mod dependency;
+mod doc;
 mod doctor;
+mod graph;
 mod info;
 mod init;
 mod login;
@@ -153,7 +156,11 @@ pub(crate) enum Command {
     /// Print the resolved package-instance graph.
     Tree(QueryArgs),
     /// Explain why packages and features are in the plan.
-    Why(QueryArgs),
+    Why(WhyArgs),
+    /// Print a package, target, action, or module graph.
+    Graph(GraphArgs),
+    /// List packages and targets affected by changes since a revision.
+    Affected(AffectedArgs),
     /// Print the project model as JSON.
     Metadata(MetadataArgs),
     /// Check the toolchain, linker, cache, and lockfile.
@@ -202,6 +209,8 @@ pub(crate) enum Command {
     Api(ApiArgs),
     /// Compare a package API against a baseline version or file.
     SemverCheck(SemverCheckArgs),
+    /// Generate HTML or JSON documentation for a package.
+    Doc(DocArgs),
 }
 
 /// Options shared by build-like commands.
@@ -218,6 +227,10 @@ pub(crate) struct Selection {
     /// Select every package in the project.
     #[arg(long)]
     pub(crate) workspace: bool,
+
+    /// Exclude a package from the selection.
+    #[arg(long, value_name = "PACKAGE")]
+    pub(crate) exclude: Vec<String>,
 
     /// Select all targets, including tests, benches, and examples.
     #[arg(long)]
@@ -267,6 +280,7 @@ impl Selection {
             targets: Vec::new(),
             package: None,
             workspace: false,
+            exclude: Vec::new(),
             all_targets: false,
             profile: None,
             release: false,
@@ -363,7 +377,7 @@ pub(crate) struct CheckArgs {
 }
 
 /// Options shared by `tree` and `why`.
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 pub(crate) struct QueryArgs {
     /// Select one package by name.
     #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
@@ -392,6 +406,115 @@ pub(crate) struct QueryArgs {
     /// Show packages that resolve to more than one version.
     #[arg(long)]
     pub(crate) duplicates: bool,
+}
+
+/// Options for `seal why`.
+#[derive(Debug, Args)]
+pub(crate) struct WhyArgs {
+    /// Select one package by name.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+
+    /// Compile for a target triple.
+    #[arg(long = "target-triple", value_name = "TRIPLE")]
+    pub(crate) target_triple: Option<String>,
+
+    /// Enable features.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    pub(crate) features: Vec<String>,
+
+    /// Enable every feature.
+    #[arg(long, conflicts_with = "features")]
+    pub(crate) all_features: bool,
+
+    /// Disable default features.
+    #[arg(long)]
+    pub(crate) no_default_features: bool,
+
+    /// Force a boolean `cfg` fact (`test`, `bench`, `debug_assertions`).
+    #[arg(long = "cfg", value_name = "FACT")]
+    pub(crate) cfgs: Vec<String>,
+
+    /// Explain why a feature is enabled.
+    #[arg(long, value_name = "FEATURE")]
+    pub(crate) feature: Option<String>,
+
+    /// Explain why a source file is compiled.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) file: Option<String>,
+
+    /// Explain why a target is built.
+    #[arg(long, value_name = "TARGET")]
+    pub(crate) target: Option<String>,
+
+    /// Print a JSON report.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// `seal graph`.
+#[derive(Debug, Args)]
+pub(crate) struct GraphArgs {
+    /// The graph kind: packages, targets, actions, or modules.
+    #[arg(value_name = "KIND", default_value = "packages")]
+    pub(crate) kind: String,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value = "ascii")]
+    pub(crate) format: GraphFormat,
+
+    /// Restrict the graph to a node and its descendants.
+    #[arg(long, value_name = "NODE")]
+    pub(crate) focus: Option<String>,
+
+    /// Follow edges in the reverse direction.
+    #[arg(long)]
+    pub(crate) reverse: bool,
+}
+
+/// Graph output formats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum GraphFormat {
+    /// A human-readable tree.
+    Ascii,
+    /// Graphviz DOT.
+    Dot,
+    /// Mermaid flowchart.
+    Mermaid,
+    /// Versioned JSON.
+    Json,
+}
+
+/// `seal affected`.
+#[derive(Debug, Args)]
+pub(crate) struct AffectedArgs {
+    /// The revision to compare the working tree against.
+    #[arg(long, value_name = "REV")]
+    pub(crate) since: String,
+
+    /// Check every affected target.
+    #[arg(long)]
+    pub(crate) run: bool,
+
+    /// Print a JSON report.
+    #[arg(long)]
+    pub(crate) json: bool,
+
+    /// Compile for a target triple.
+    #[arg(long, alias = "target", value_name = "TRIPLE")]
+    pub(crate) target_triple: Option<String>,
+
+    /// Enable features.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    pub(crate) features: Vec<String>,
+
+    /// Enable every feature.
+    #[arg(long, conflicts_with = "features")]
+    pub(crate) all_features: bool,
+
+    /// Disable default features.
+    #[arg(long)]
+    pub(crate) no_default_features: bool,
 }
 
 /// `seal metadata`.
@@ -629,6 +752,47 @@ pub(crate) struct SemverCheckArgs {
     pub(crate) json: bool,
 }
 
+/// `seal doc`.
+#[derive(Debug, Args)]
+pub(crate) struct DocArgs {
+    /// The package to document; defaults to the current package.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+
+    /// Output directory for HTML.
+    #[arg(short = 'o', long, value_name = "DIR", default_value = "target/doc")]
+    pub(crate) output: PathBuf,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value = "html")]
+    pub(crate) format: DocFormat,
+
+    /// Print the documentation JSON to stdout.
+    #[arg(long)]
+    pub(crate) json: bool,
+
+    /// Open the generated index in the default browser.
+    #[arg(long)]
+    pub(crate) open: bool,
+
+    /// Serve the generated documentation over HTTP.
+    #[arg(long)]
+    pub(crate) serve: bool,
+
+    /// Address used by `--serve`.
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:8000")]
+    pub(crate) address: String,
+}
+
+/// Documentation output formats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum DocFormat {
+    /// A browsable HTML tree.
+    Html,
+    /// A versioned JSON document.
+    Json,
+}
+
 /// `seal sbom`.
 #[derive(Debug, Args)]
 pub(crate) struct SbomArgs {
@@ -665,6 +829,10 @@ pub(crate) struct InfoArgs {
 pub(crate) struct TaskArgs {
     /// The task name.
     pub(crate) name: String,
+
+    /// Arguments appended to every step.
+    #[arg(last = true, value_name = "ARGS")]
+    pub(crate) args: Vec<String>,
 
     /// Continue after a failing step.
     #[arg(long)]
@@ -713,6 +881,8 @@ where
         Command::Check(args) => check::check(&cli, &project, args),
         Command::Tree(args) => tree::tree(&cli, &project, args),
         Command::Why(args) => why::why(&cli, &project, args),
+        Command::Graph(args) => graph::graph(&cli, &project, args),
+        Command::Affected(args) => affected::affected(&cli, &project, args),
         Command::Metadata(args) => metadata::metadata(&cli, &project, args),
         Command::Doctor(args) => doctor::doctor(&cli, &project, args),
         Command::Clean => clean::clean(&cli, &project),
@@ -736,6 +906,7 @@ where
         Command::Logout(args) => logout::run(&cli, &project, args),
         Command::Api(args) => api::run(&cli, &project, args),
         Command::SemverCheck(args) => semver_check::run(&cli, &project, args),
+        Command::Doc(args) => doc::run(&cli, &project, args),
     }
 }
 

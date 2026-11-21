@@ -45,8 +45,10 @@ allowed to depend only on crates below it in the list.
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
 | `seal-plan` | The versioned `CompilePlan` exchanged between the project layer and the driver: target, profile, packages, files, API paths, dependency aliases, cfg values, entry, and output. |
 | `seal-manifest` | `seal.toml` parsing and validation: project/package settings, targets, path dependencies, env, profiles, API exposure, unknown-key warnings, and span-bearing diagnostics. |
-| `seal-project` | Member and source discovery, path-dependency graph and cycles, target selection, deterministic lockfile, metadata model, and one plan per target. |
-| `seal-cli` | The `seal` binary: templates, build/run/check, metadata, doctor, and in-process driver invocation. |
+| `seal-project` | Member and source discovery, path-dependency graph and cycles, target selection, deterministic lockfile, metadata model, graph queries, affected-path mapping, and one plan per target. |
+| `seal-api` | Versioned public-API snapshots, canonical hashing, and semver compatibility classification shared by the CLI and registry. |
+| `seal-doc` | HTML and JSON documentation rendered from public API snapshots, plus a read-only documentation server. |
+| `seal-cli` | The `seal` binary: templates, build/run/check, graph/affected queries, docs/API, metadata, doctor, tasks, and in-process driver invocation. |
 | `seal-driver` | The `sealc` binary and driver library: clap-based subcommands and argument groups, single-file and plan-file pipelines, exit codes, panic policy, and phase wiring. |
 
 ## Compilation pipeline
@@ -89,6 +91,13 @@ path dependencies, detects cycles, builds targets, and writes `seal.lock`;
 the driver in-process, while `sealc --plan-file` loads the same plan directly.
 The driver validates every plan invariant before loading a source file, so a
 malformed graph is `E8001`/`E8010` rather than a partial compilation.
+
+Workspace queries are derived from the same loaded model. `seal graph`
+produces sorted package, target, action, and module projections; `affected`
+maps a VCS diff back through package roots, target files, generators, the
+lockfile, and the toolchain, then follows reverse dependencies. The project
+architecture and phase-10 contracts are documented in
+[`project/architecture.md`](project/architecture.md).
 
 HIR lowering validates trait-impl coherence first, then opt-in `Copy`
 implementations, then `Drop` implementations. `Copy` validation registers

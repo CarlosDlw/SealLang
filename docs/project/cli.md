@@ -38,8 +38,12 @@ $ seal check -p app
 
 `build` selects libraries, binaries, static libraries, and shared libraries and
 writes them under `seal/target/<profile>/`. `check` runs the same analysis and writes no artifact.
-`-p` selects one package; `--workspace` selects every package. `--all-targets`
-adds tests, benches, and examples. A positional target name selects one target.
+`-p` selects one package; without it, every declared `default-members` is
+selected (or the root package). `--workspace` selects every package and
+`--exclude <PACKAGE>` removes one from either selection. Dependencies of a
+selected package are still compiled inside its plan, so `-p app` builds the
+library chain `app` consumes. `--all-targets` adds tests, benches, and examples.
+A positional target name selects one target.
 `--profile` chooses a declared profile and `--release` is shorthand for the
 built-in release profile. `--cfg test`, `--cfg bench`, and
 `--cfg debug_assertions` force the corresponding boolean condition for
@@ -98,11 +102,15 @@ produce identical bytes under different roots.
 ```console
 $ seal task ci
 $ seal task ci --no-fail-fast
+$ seal task ci -- --verbose
 ```
 
-`task` runs the steps of `[tasks.<NAME>]` in order without a shell and through
-the sandbox. A failing step stops the task unless `--no-fail-fast` is given.
-The task exits `1` when any step failed (`E8046`).
+`task` runs a `[tasks.<NAME>]` recipe without a shell. `depends-on` names other
+tasks that run first, in declaration order; a cycle is rejected. Each step names
+a program and an argument vector, and arguments after `--` are appended to every
+step. Steps run through the sandbox with an explicit working directory,
+environment, and optional timeout. A failing step stops the task unless
+`--no-fail-fast` is given. The task exits `1` when any step failed (`E8046`).
 
 ## Running
 
@@ -208,16 +216,56 @@ $ seal tree
 $ seal tree -p app --features std
 $ seal tree --duplicates
 $ seal why -p serde --features std
+$ seal why --file crates/app/src/main.sl
+$ seal graph packages
+$ seal graph targets --format dot
+$ seal graph modules --format mermaid --focus app::root
+$ seal graph actions --format json --reverse
+$ seal affected --since origin/main
+$ seal affected --since HEAD --run
 ```
 
 `tree` prints the resolved package-instance graph. A package requested with two
 different feature sets appears twice, each with its own bracketed feature list.
 `--duplicates` lists packages with more than one selected version and exits
-without printing the tree. `why` prints every instance of a package, its
-deterministic instance hash, its features, and the dependency edges that
-requested it. Both commands accept
-`--target`, `--features`, `--all-features`, `--no-default-features`, and
-`--cfg`.
+without printing the tree. `why` explains a package, feature, source file, or
+target, including the dependency path from the primary package; `--json` emits a
+versioned report. `why` uses `--target-triple` for cross compilation and
+`--target` for the target name it explains.
+
+`graph` prints `packages`, `targets`, `actions`, or `modules` as `ascii`
+(default), `dot`, `mermaid`, or versioned `json`. `--focus` keeps a node and its
+transitive descendants; `--reverse` follows edges in the opposite direction (or
+reverses the whole graph when no focus is given). `affected --since REV` maps
+`git diff` paths to packages and targets through the source graph and follows
+reverse package dependencies; a manifest, lockfile, or toolchain change affects
+the whole workspace. `--run` checks only the affected targets and `--json`
+prints the report.
+
+## Documentation and API
+
+```console
+$ seal doc -p app
+$ seal doc -p app --format json -o target/doc
+$ seal doc -p app --open
+$ seal doc -p app --serve --address 127.0.0.1:8000
+$ seal api -p app --json
+$ seal semver-check 1.2.0 -p app
+$ seal semver-check baseline-api.json -p app --json
+```
+
+`doc` renders outer `///` docs on items and fields, `/** ... */` docs, inner
+`//!` module docs, signatures, `cfg` conditions, layouts, and trait/inherent
+implementations. HTML goes below `target/doc` by default with one page per
+module and links between them; `--format json` writes `index.json`. Private
+items never appear because the renderer consumes the public API snapshot.
+`--open` launches the platform browser and `--serve` starts a read-only static
+server.
+
+`api` prints the same versioned snapshot the registry hashes: modules, public
+items, signatures, fields, variants, `cfg`, docs, layouts, and implementations.
+`semver-check` compares against a published version or a snapshot file, prints
+breaking/minor/patch changes, and exits `1` for a breaking change.
 
 ## Metadata and doctor
 
@@ -228,10 +276,14 @@ $ seal doctor
 $ seal doctor --json --fix
 ```
 
-`metadata` prints versioned, deterministic JSON containing the project, target
-triple, packages, targets, module index, files, features, dependency edges, and
-concrete package instances. It is enough for an editor to list modules and targets without running
-code generation.
+`metadata` prints versioned, deterministic JSON containing the workspace
+(`name`, `root`, members, default members, lockfile state), target triple,
+packages, package source and descriptive fields, targets (including required
+features, generators, generated targets, and native aliases), the module index,
+files, features, dependency edges with resolved names and versions, and concrete
+package instances. It is enough for an editor or CI job to list, select, and
+navigate the workspace without running code generation. `--no-deps` keeps only
+the default package.
 
 `doctor` checks the embedded or pinned toolchain, the host target, a linker on
 `PATH`, a writable `seal/target`, and a current lockfile. A pinned toolchain

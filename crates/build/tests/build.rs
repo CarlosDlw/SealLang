@@ -644,6 +644,7 @@ fn tasks_run_in_order_and_honor_fail_fast() {
         .run(
             &TaskRequest {
                 name: "ci".to_owned(),
+                args: Vec::new(),
             },
             task,
             true,
@@ -655,6 +656,7 @@ fn tasks_run_in_order_and_honor_fail_fast() {
         .run(
             &TaskRequest {
                 name: "ci".to_owned(),
+                args: Vec::new(),
             },
             task,
             false,

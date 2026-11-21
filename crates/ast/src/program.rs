@@ -55,6 +55,7 @@ impl Program {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ast {
     items: IndexVec<ItemId, Item>,
+    module_docs: Option<Span>,
     generic_params: IndexVec<GenericParamId, GenericParamDecl>,
     bounds: IndexVec<BoundId, Bound>,
     params: IndexVec<ParamId, Param>,
@@ -71,6 +72,13 @@ pub struct Ast {
 }
 
 impl Ast {
+    /// Returns the inner doc comments (`//!`) for a file without an explicit
+    /// module declaration.
+    #[inline]
+    pub fn module_docs(&self) -> Option<Span> {
+        self.module_docs
+    }
+
     /// Returns the parsed program.
     #[inline]
     pub fn program(&self) -> &Program {
@@ -267,8 +275,14 @@ impl AstBuilder {
         self.ast.items.push(Item {
             kind,
             modifiers,
+            docs: None,
             span,
         })
+    }
+
+    /// Attaches outer doc comments to an item.
+    pub fn set_item_docs(&mut self, id: ItemId, docs: Option<Span>) {
+        self.ast.items[id].docs = docs;
     }
 
     /// Adds a module declaration and returns its ID.
@@ -386,6 +400,7 @@ impl AstBuilder {
         self.ast.fields.push(FieldDecl {
             name,
             name_span,
+            docs: None,
             ty,
             visibility,
             cfg: None,
@@ -406,11 +421,17 @@ impl AstBuilder {
         self.ast.fields.push(FieldDecl {
             name,
             name_span,
+            docs: None,
             ty,
             visibility,
             cfg,
             span,
         })
+    }
+
+    /// Attaches outer doc comments to a struct or variant field.
+    pub fn set_field_docs(&mut self, id: FieldDeclId, docs: Option<Span>) {
+        self.ast.fields[id].docs = docs;
     }
 
     /// Adds an enum variant declaration and returns its ID.
@@ -424,6 +445,7 @@ impl AstBuilder {
         self.ast.variants.push(VariantDecl {
             name,
             name_span,
+            docs: None,
             fields,
             cfg: None,
             span,
@@ -442,10 +464,23 @@ impl AstBuilder {
         self.ast.variants.push(VariantDecl {
             name,
             name_span,
+            docs: None,
             fields,
             cfg,
             span,
         })
+    }
+
+    /// Attaches outer doc comments to an enum variant.
+    pub fn set_variant_docs(&mut self, id: VariantDeclId, docs: Option<Span>) {
+        self.ast.variants[id].docs = docs;
+    }
+
+    /// Attaches inner doc comments to a module declaration.
+    pub fn set_module_docs(&mut self, id: ItemId, docs: Option<Span>) {
+        if let ItemKind::Module(declaration) = &mut self.ast.items[id].kind {
+            declaration.docs = docs;
+        }
     }
 
     /// Adds a positional field of an enum variant and returns its ID.
@@ -654,6 +689,11 @@ impl AstBuilder {
     #[inline]
     pub fn ast(&self) -> &Ast {
         &self.ast
+    }
+
+    /// Records the inner docs of a file that has no module declaration.
+    pub fn set_root_docs(&mut self, docs: Option<Span>) {
+        self.ast.module_docs = docs;
     }
 
     /// Attaches the program's items and returns the finished tree.

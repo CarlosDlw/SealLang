@@ -19,6 +19,8 @@ use crate::error::{BuildError, BuildResult};
 pub struct TaskRequest {
     /// The task name.
     pub name: String,
+    /// Extra arguments appended to every step.
+    pub args: Vec<String>,
 }
 
 /// The result of one step.
@@ -131,9 +133,12 @@ impl TaskRunner {
             if let Some(seconds) = step.timeout {
                 policy = policy.timeout(Duration::from_secs(seconds));
             }
-            let request_step = SandboxRequest::new(&step.program)
-                .policy(policy)
-                .args(step.args.iter().cloned());
+            let request_step = SandboxRequest::new(&step.program).policy(policy).args(
+                step.args
+                    .iter()
+                    .cloned()
+                    .chain(request.args.iter().cloned()),
+            );
             let start = Instant::now();
             let output = self.sandbox.run(&request_step).map_err(|error| {
                 BuildError::new(

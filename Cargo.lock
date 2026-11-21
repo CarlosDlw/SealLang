@@ -969,6 +969,7 @@ dependencies = [
  "seal-api",
  "seal-build",
  "seal-cas",
+ "seal-doc",
  "seal-driver",
  "seal-manifest",
  "seal-plan",
@@ -1060,6 +1061,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-doc"
+version = "0.1.0"
+dependencies = [
+ "seal-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "seal-driver"
 version = "0.1.0"
 dependencies = [
@@ -1075,6 +1085,7 @@ dependencies = [
  "seal-fs",
  "seal-hir",
  "seal-index",
+ "seal-layout",
  "seal-lexer",
  "seal-metadata",
  "seal-mir",

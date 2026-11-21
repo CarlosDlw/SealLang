@@ -151,6 +151,7 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let docs = self.take_docs();
             let field_modifiers = self.parse_modifiers();
             if field_modifiers.cfg.is_some() {
                 self.error(
@@ -174,14 +175,17 @@ impl Parser<'_> {
             let _ = self.expect(TokenKind::Colon, "`:` after the field name");
             let ty = self.parse_type();
             let span = field_name_span.cover(self.builder.ast().ty(ty).span);
-            fields.push(self.builder.push_field_with_modifiers(
+            let field = self.builder.push_field_with_modifiers(
                 field_name,
                 field_name_span,
                 ty,
                 span,
                 field_modifiers.visibility,
                 field_modifiers.cfg,
-            ));
+            );
+            self.builder.set_field_docs(field, docs);
+            fields.push(field);
+            self.skip_trivia_through(self.previous_span());
 
             if self.eat(TokenKind::Comma) {
                 continue;

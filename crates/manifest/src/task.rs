@@ -17,6 +17,9 @@ pub struct TaskManifest {
     /// A short human-readable description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Tasks that run before this one, in declaration order.
+    #[serde(default, rename = "depends-on")]
+    pub depends_on: Vec<String>,
     /// Steps run in order.
     #[serde(default)]
     pub steps: Vec<TaskStepManifest>,
