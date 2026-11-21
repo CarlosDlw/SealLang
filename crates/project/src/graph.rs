@@ -47,6 +47,7 @@ struct LockCandidate {
     loaded: LoadedManifest,
     yanked: bool,
     provenance: Option<String>,
+    api: Option<String>,
 }
 
 pub(crate) fn load(root: &Path, options: &ProjectOptions) -> ProjectResult<Project> {
@@ -196,6 +197,7 @@ pub(crate) fn load(root: &Path, options: &ProjectOptions) -> ProjectResult<Proje
                             checksum: package.entry.checksum.clone(),
                             yanked: package.entry.yanked,
                             provenance: package.entry.provenance.clone(),
+                            api: package.entry.api.as_ref().map(|api| api.hash.clone()),
                         }),
                     },
                 );
@@ -368,6 +370,7 @@ fn add_lock_specs(
                 loaded,
                 yanked: package.yanked,
                 provenance: package.provenance.clone(),
+                api: package.api.clone(),
             });
     }
 
@@ -410,6 +413,7 @@ fn add_lock_specs(
                 checksum: selected.checksum.clone(),
                 yanked: selected.yanked,
                 provenance: selected.provenance.clone(),
+                api: selected.api.clone(),
             });
             specs.insert(
                 target.clone(),

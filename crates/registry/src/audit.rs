@@ -6,11 +6,13 @@ use std::collections::BTreeSet;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::RegistrySession;
 use crate::client::RegistryClient;
 use crate::config::RegistryConfig;
-use crate::download::verify_cached;
+use crate::download::{digest, verify_cached};
 use crate::error::{RegistryError, RegistryResult};
-use crate::index::validate_checksum;
+use crate::index::{IndexVersion, validate_checksum};
+use crate::provenance::{self, Envelope, VerifyOptions};
 use crate::tuf::TufSession;
 
 /// One advisory from the registry feed.
@@ -229,6 +231,115 @@ pub fn audit(
         violations,
         advisories,
     })
+}
+
+/// Verifies the provenance, SBOM, API snapshot, and transparency inclusion of
+/// one published version.
+///
+/// The check is independent from the lockfile: it can be run before a version is
+/// installed, and it uses only bytes protected by TUF and signatures.
+pub fn verify_attestations(
+    session: &RegistrySession,
+    name: &str,
+    version: &semver::Version,
+    entry: &IndexVersion,
+) -> RegistryResult<()> {
+    let provenance_digest = entry.provenance.as_deref().ok_or_else(|| {
+        RegistryError::provenance(format!("`{name}` {version} has no provenance metadata"))
+    })?;
+    let provenance_file = entry.provenance_file.as_deref().ok_or_else(|| {
+        RegistryError::provenance(format!(
+            "`{name}` {version} does not name its provenance file"
+        ))
+    })?;
+    let publisher = entry.publisher.as_ref().ok_or_else(|| {
+        RegistryError::provenance(format!("`{name}` {version} has no publisher key"))
+    })?;
+    let api = entry.api.as_ref().ok_or_else(|| {
+        RegistryError::provenance(format!("`{name}` {version} has no API snapshot"))
+    })?;
+    let sbom_digest = entry
+        .sbom
+        .as_deref()
+        .ok_or_else(|| RegistryError::provenance(format!("`{name}` {version} has no SBOM")))?;
+    let sbom_file = entry.sbom_file.as_deref().ok_or_else(|| {
+        RegistryError::provenance(format!("`{name}` {version} does not name its SBOM file"))
+    })?;
+    let provenance_bytes = session.fetch(provenance_file)?;
+    if digest(&provenance_bytes) != provenance_digest {
+        return Err(RegistryError::provenance(format!(
+            "the provenance file for `{name}` {version} does not match its digest"
+        )));
+    }
+    let envelope: Envelope = serde_json::from_slice(&provenance_bytes).map_err(|error| {
+        RegistryError::provenance(format!(
+            "the provenance envelope for `{name}` {version} is invalid: {error}"
+        ))
+    })?;
+    let statement = provenance::verify(
+        &envelope,
+        &VerifyOptions {
+            public: Some(&publisher.public),
+            archive_sha256: entry.checksum.trim_start_matches("sha256:"),
+            name,
+            version: &version.to_string(),
+            identity: publisher.identity.as_deref(),
+        },
+    )?;
+    let parameters = &statement.predicate.build_definition.external_parameters;
+    if parameters.sbom != sbom_digest {
+        return Err(RegistryError::provenance(format!(
+            "the provenance for `{name}` {version} signs a different SBOM"
+        )));
+    }
+    if parameters.api != api.hash {
+        return Err(RegistryError::provenance(format!(
+            "the provenance for `{name}` {version} signs a different API snapshot"
+        )));
+    }
+    let sbom = session.fetch(sbom_file)?;
+    if digest(&sbom) != sbom_digest {
+        return Err(RegistryError::provenance(format!(
+            "the SBOM for `{name}` {version} does not match its digest"
+        )));
+    }
+    let api_bytes = session.fetch(&api.snapshot)?;
+    let snapshot = seal_api::ApiSnapshot::parse(&api_bytes)
+        .map_err(|error| RegistryError::provenance(error.message().to_owned()))?;
+    let hash = snapshot
+        .hash()
+        .map_err(|error| RegistryError::provenance(error.message().to_owned()))?;
+    if hash != api.hash {
+        return Err(RegistryError::provenance(format!(
+            "the API snapshot for `{name}` {version} does not match its digest"
+        )));
+    }
+    let inclusion = entry.log.as_ref().ok_or_else(|| {
+        RegistryError::transparency(format!("`{name}` {version} has no transparency entry"))
+    })?;
+    if inclusion.entry.package != name
+        || inclusion.entry.version != version.to_string()
+        || inclusion.entry.checksum != entry.checksum
+    {
+        return Err(RegistryError::transparency(format!(
+            "the transparency entry for `{name}` {version} names a different publication"
+        )));
+    }
+    let head = session.tree_head()?;
+    let log_public = session.tuf().log_public_key()?;
+    crate::log::verify_tree_head(&head, &log_public, None, None)?;
+    if head.signed.tree_size < inclusion.tree_size {
+        return Err(RegistryError::transparency(format!(
+            "the current tree head is smaller than the tree that included `{name}` {version}"
+        )));
+    }
+    crate::log::verify_inclusion(
+        &inclusion.entry,
+        &inclusion.proof,
+        &inclusion.root_hash,
+        inclusion.tree_size,
+    )?;
+    Ok(())
 }
 
 fn license_allowed(license: &str, policy: &seal_manifest::RegistryPolicyManifest) -> bool {

@@ -85,7 +85,11 @@ pub fn load_token(
     token.map(Token::new).transpose()
 }
 
-fn credentials_path(project_root: &Path, explicit: Option<&Path>) -> Option<PathBuf> {
+/// Returns the credentials file used for `registry_name`.
+///
+/// This is the explicit manifest path, `$SEAL_CREDENTIALS`, or the user's
+/// configuration directory, in that order.
+pub fn credentials_path(project_root: &Path, explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = explicit {
         return Some(if path.is_absolute() {
             path.to_path_buf()
@@ -100,6 +104,157 @@ fn credentials_path(project_root: &Path, explicit: Option<&Path>) -> Option<Path
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join("seal").join("credentials.toml"))
+}
+
+/// Writes a token for one registry, creating the file with mode `0600`.
+///
+/// The file is written atomically. Existing entries for other registries are
+/// preserved; the token itself is never printed or formatted.
+pub fn write_token(
+    project_root: &Path,
+    explicit: Option<&Path>,
+    registry_name: &str,
+    token: &Token,
+) -> RegistryResult<PathBuf> {
+    if registry_name.is_empty() || registry_name.chars().any(char::is_control) {
+        return Err(RegistryError::credentials(
+            "the registry name is empty or contains control characters",
+        ));
+    }
+    let path = credentials_path(project_root, explicit).ok_or_else(|| {
+        RegistryError::credentials(
+            "no credentials file location is available; set `SEAL_CREDENTIALS` or `HOME`",
+        )
+    })?;
+    let mut document: toml::Value = if path.is_file() {
+        check_permissions(&path)?;
+        let text = std::fs::read_to_string(&path).map_err(|error| {
+            RegistryError::credentials(format!("cannot read `{}`: {error}", path.display()))
+        })?;
+        toml::from_str(&text).map_err(|error| {
+            RegistryError::credentials(format!(
+                "invalid credentials file `{}`: {error}",
+                path.display()
+            ))
+        })?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = document
+        .as_table_mut()
+        .ok_or_else(|| RegistryError::credentials("the credentials file is not a TOML table"))?;
+    let registries = table
+        .entry("registries")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| RegistryError::credentials("`registries` is not a TOML table"))?;
+    let registry = registries
+        .entry(registry_name.to_owned())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| {
+            RegistryError::credentials(format!("`registries.{registry_name}` is not a TOML table"))
+        })?;
+    registry.insert(
+        "token".to_owned(),
+        toml::Value::String(token.expose().to_owned()),
+    );
+    let text = toml::to_string_pretty(&document).map_err(|error| {
+        RegistryError::credentials(format!("cannot encode the credentials: {error}"))
+    })?;
+    write_private(&path, text.as_bytes())?;
+    Ok(path)
+}
+
+/// Removes the token for one registry, returning whether an entry was removed.
+pub fn remove_token(
+    project_root: &Path,
+    explicit: Option<&Path>,
+    registry_name: &str,
+) -> RegistryResult<bool> {
+    let Some(path) = credentials_path(project_root, explicit) else {
+        return Ok(false);
+    };
+    if !path.is_file() {
+        return Ok(false);
+    }
+    check_permissions(&path)?;
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        RegistryError::credentials(format!("cannot read `{}`: {error}", path.display()))
+    })?;
+    let mut document: toml::Value = toml::from_str(&text).map_err(|error| {
+        RegistryError::credentials(format!(
+            "invalid credentials file `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    let Some(table) = document.as_table_mut() else {
+        return Err(RegistryError::credentials(
+            "the credentials file is not a TOML table",
+        ));
+    };
+    let removed = table
+        .get_mut("registries")
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|registries| registries.remove(registry_name))
+        .is_some();
+    if removed {
+        let text = toml::to_string_pretty(&document).map_err(|error| {
+            RegistryError::credentials(format!("cannot encode the credentials: {error}"))
+        })?;
+        write_private(&path, text.as_bytes())?;
+    }
+    Ok(removed)
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> RegistryResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            RegistryError::credentials(format!("cannot create `{}`: {error}", parent.display()))
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).map_err(
+                |error| {
+                    RegistryError::credentials(format!(
+                        "cannot secure `{}`: {error}",
+                        parent.display()
+                    ))
+                },
+            )?;
+        }
+    }
+    let temporary = path.with_extension(format!("tmp{}", std::process::id()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|error| {
+                RegistryError::credentials(format!(
+                    "cannot create `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+        use std::io::Write;
+        file.write_all(bytes).map_err(|error| {
+            RegistryError::credentials(format!("cannot write `{}`: {error}", temporary.display()))
+        })?;
+        file.sync_all().ok();
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&temporary, bytes).map_err(|error| {
+        RegistryError::credentials(format!("cannot write `{}`: {error}", temporary.display()))
+    })?;
+    std::fs::rename(&temporary, path).map_err(|error| {
+        RegistryError::credentials(format!("cannot replace `{}`: {error}", path.display()))
+    })?;
+    Ok(())
 }
 
 #[cfg(unix)]

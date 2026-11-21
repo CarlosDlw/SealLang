@@ -13,6 +13,8 @@ name = "sealc"
 path = "src/main.rs"
 
 [dependencies]
+seal-api.workspace = true
+seal-ty.workspace = true
 clap.workspace = true
 seal-ast.workspace = true
 seal-borrowck.workspace = true

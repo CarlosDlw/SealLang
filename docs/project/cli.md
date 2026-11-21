@@ -145,10 +145,61 @@ lockfile untouched.
 `vendor` copies every locked registry package into `vendor/` with checksum and
 tree verification, and `--clean` recreates the tree. `audit` (also available as
 `deny`) checks advisories, licenses, sources, yanked versions, checksums, and
-provenance; `--json` emits a report. `sbom` writes CycloneDX 1.5 JSON to stdout
-or `-o/--output`. `search` and `info` query the signed catalog and package
-indexes and support `--json`. See [dependencies.md](dependencies.md) and
+provenance; `--json` emits a report. `--require-provenance` fetches each
+registry package's provenance, SBOM, API snapshot, and transparency proof and
+fails when any of them is missing or invalid. `sbom` writes CycloneDX 1.5 JSON
+to stdout or `-o/--output`. `search` and `info` query the signed catalog and
+package indexes and support `--json`. See [dependencies.md](dependencies.md) and
 [registry.md](registry.md).
+
+## Publishing
+
+```console
+$ seal api
+$ seal api --json -p app
+$ seal semver-check 1.2.0
+$ seal semver-check path/to/previous.api.json
+$ seal publish --dry-run
+$ seal publish -p app --signing-key signing.key
+$ seal publish --workspace --allow-dirty
+$ seal yank @scope/app@1.2.0
+$ seal yank @scope/app@1.2.0 --undo
+```
+
+`api` prints the public snapshot or a summary with its digest. `semver-check`
+classifies the current snapshot against a published version or a local file as
+breaking, minor, or patch, prints every change, and exits `1` when a breaking
+change is present (`E8091`). `publish --dry-run` validates license, readme,
+sources, and signature, then prints the archive contents, size, API diff, SBOM,
+and provenance without writing to the registry. A real publish refuses a dirty
+Git tree (`E8095`), enforces the semver bump (`E8092`), and verifies the
+registry's checksum, attestation digests, signed tree head, and inclusion proof
+before reporting success. `--workspace` publishes in dependency order and skips
+versions that already exist so an interrupted run can be repeated. The signing
+key comes from `--signing-key`, `SEAL_SIGNING_KEY` (64 hex characters), or the
+per-user `~/.config/seal/signing.key`, which is created with mode `0600` when
+absent.
+
+## Namespaces and login
+
+```console
+$ printf '%s' "$TOKEN" | seal login --token-stdin
+$ seal login --registry http://127.0.0.1:8787 --allow-insecure --token-stdin
+$ seal logout
+$ seal owner @scope --claim --proof config
+$ seal owner @scope --claim --proof dns --proof-value <TXT-VALUE>
+$ seal owner @scope --add teammate
+$ seal owner @scope --remove teammate
+$ seal owner @scope --list
+```
+
+`login` validates the token with `GET`-equivalent `POST /api/v1/whoami` before
+storing it, then writes the credentials file with mode `0600`. The token is read
+from stdin with `--token-stdin` or from `SEAL_REGISTRY_TOKEN`; it is never echoed.
+`logout` removes the stored token for the selected registry name. `owner` claims
+or manages a namespace; a namespace that is not owned rejects publishes with
+`E8083`. See [registry.md](registry.md) for the proof kinds, token scopes, and
+the registry server configuration.
 
 ## Explaining the graph
 

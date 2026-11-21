@@ -8,5 +8,5 @@ mod color;
 mod error;
 mod progress;
 
-pub(crate) use error::{error, exit_code, warning};
+pub(crate) use error::{Failure, error, exit_code, failure, warning};
 pub(crate) use progress::{detail, status, verbose};

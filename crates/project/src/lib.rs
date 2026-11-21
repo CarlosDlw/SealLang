@@ -133,6 +133,8 @@ pub struct RegistrySource {
     pub yanked: bool,
     /// Provenance metadata digest, when published.
     pub provenance: Option<String>,
+    /// The published API snapshot digest, when available.
+    pub api: Option<String>,
 }
 
 impl PackageSource {

@@ -364,13 +364,14 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
                     .then_with(|| left.features.cmp(&right.features))
             });
             dependencies.dedup();
-            let (checksum, provenance, yanked) = match &package.source {
+            let (checksum, provenance, api, yanked) = match &package.source {
                 crate::PackageSource::Path => {
-                    (checksum(&package.files, &project.root), None, false)
+                    (checksum(&package.files, &project.root), None, None, false)
                 }
                 crate::PackageSource::Registry(registry) => (
                     registry.checksum.clone(),
                     registry.provenance.clone(),
+                    registry.api.clone(),
                     registry.yanked,
                 ),
             };
@@ -379,7 +380,7 @@ pub(crate) fn resolve(project: &Project, target: &str, options: Option<&PlanOpti
                 version: package.version.clone(),
                 source,
                 checksum,
-                api: None,
+                api,
                 features,
                 cfg,
                 provenance,

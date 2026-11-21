@@ -15,6 +15,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, args: &AuditArgs) -> ExitCode {
         Ok(project) => project,
         Err(code) => return code,
     };
+    let mut session = None;
     let mut inputs = Vec::new();
     for package in &project.packages {
         let PackageSource::Registry(source) = &package.source else {
@@ -52,34 +53,74 @@ pub(crate) fn run(cli: &Cli, root: &Path, args: &AuditArgs) -> ExitCode {
             provenance: source.provenance.clone(),
         });
     }
-    let advisories = if inputs.is_empty() {
+    let advisories = if inputs.is_empty() && !args.require_provenance {
         Vec::new()
     } else {
-        let session =
-            match RegistrySession::open(&project.root, project.registry.as_ref(), cli.offline) {
-                Ok(Some(session)) => session,
-                Ok(None) => {
-                    return ui::error(
-                        "E8020",
-                        "registry packages are present, but no registry is configured",
-                    );
-                }
-                Err(error) => return ui::error(error.code(), error.message()),
-            };
-        match session.advisories() {
+        let opened = match RegistrySession::open(
+            &project.root,
+            project.registry.as_ref(),
+            cli.offline,
+        ) {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                return ui::error(
+                    "E8020",
+                    "registry packages or attestations need `[registry]` or `SEAL_REGISTRY_URL`",
+                );
+            }
+            Err(error) => return ui::error(error.code(), error.message()),
+        };
+        let advisories = match opened.advisories() {
             Ok(advisories) => advisories,
             Err(error) => return ui::error(error.code(), error.message()),
-        }
+        };
+        session = Some(opened);
+        advisories
     };
-    let policy = project
+    let mut policy = project
         .registry
         .as_ref()
         .map(|registry| registry.policy.clone())
         .unwrap_or_default();
-    let report = match audit(&inputs, &advisories, &policy) {
+    if args.require_provenance {
+        policy.require_provenance = true;
+    }
+    let mut report = match audit(&inputs, &advisories, &policy) {
         Ok(report) => report,
         Err(error) => return ui::error(error.code(), error.message()),
     };
+    if args.require_provenance {
+        let Some(session) = session.as_ref() else {
+            return ui::error("E8020", "attestation checks need a registry");
+        };
+        for package in &project.packages {
+            let PackageSource::Registry(_) = &package.source else {
+                continue;
+            };
+            let Ok(version) = semver::Version::parse(&package.version) else {
+                continue;
+            };
+            let index = match session.info(&package.name) {
+                Ok(index) => index,
+                Err(error) => return ui::error(error.code(), error.message()),
+            };
+            let Some(entry) = index.version(&version) else {
+                return ui::error(
+                    "E8090",
+                    &format!("`{}` {} is not in the index", package.name, version),
+                );
+            };
+            if let Err(error) =
+                seal_registry::audit::verify_attestations(session, &package.name, &version, entry)
+            {
+                report.violations.push(seal_registry::audit::Violation {
+                    code: error.code().to_owned(),
+                    package: format!("{} {}", package.name, package.version),
+                    message: error.message().to_owned(),
+                });
+            }
+        }
+    }
     if args.json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),

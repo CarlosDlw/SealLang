@@ -733,7 +733,11 @@ fn compile_hir(
     } = &request
     else {
         if let Request::Api { path } = &request {
-            if let Err(error) = api::write(session, &hir, path) {
+            let package_version = plan
+                .and_then(|plan| plan.packages.get(plan.primary))
+                .map(|package| package.version.as_str())
+                .unwrap_or("0.0.0");
+            if let Err(error) = api::write(session, &hir, package_version, path) {
                 session.diag().bug(error);
             }
         }

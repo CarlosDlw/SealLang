@@ -98,6 +98,41 @@ impl RegistryError {
         Self::new("E8080", message)
     }
 
+    /// A published version already exists (`E8082`).
+    pub fn version_exists(message: impl Into<String>) -> Self {
+        Self::new("E8082", message)
+    }
+
+    /// A namespace is not owned by the caller (`E8083`).
+    pub fn namespace(message: impl Into<String>) -> Self {
+        Self::new("E8083", message)
+    }
+
+    /// A publication request is malformed or rejected (`E8093`).
+    pub fn publish(message: impl Into<String>) -> Self {
+        Self::new("E8093", message)
+    }
+
+    /// Provenance metadata is missing or invalid (`E8096`).
+    pub fn provenance_data(message: impl Into<String>) -> Self {
+        Self::new("E8096", message)
+    }
+
+    /// The transparency log could not be verified (`E8097`).
+    pub fn transparency(message: impl Into<String>) -> Self {
+        Self::new("E8097", message)
+    }
+
+    /// A registry quota or rate limit was exceeded (`E8098`).
+    pub fn quota(message: impl Into<String>) -> Self {
+        Self::new("E8098", message)
+    }
+
+    /// The registry server failed or its state is corrupt (`E8099`).
+    pub fn server(message: impl Into<String>) -> Self {
+        Self::new("E8099", message)
+    }
+
     /// Authentication is missing or rejected (`E8084`).
     pub fn credentials(message: impl Into<String>) -> Self {
         Self::new("E8084", message)

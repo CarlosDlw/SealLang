@@ -166,3 +166,107 @@ These limits are intentional and are part of the client contract:
 
 A project that needs a larger package should split it into modules or publish a
 smaller archive. Disabling a limit is not a supported configuration.
+
+## Publishing
+
+`seal publish` builds the package from its tracked sources, writes a
+reproducible `.tar.zst` (fixed mtime, uid, gid, and mode), and attaches three
+signed artifacts:
+
+- `seal.api.json`, the versioned public-API snapshot (`crates/api`);
+- `seal.sbom.json`, CycloneDX 1.5 for the package and its resolved dependencies;
+- a DSSE envelope containing an in-toto statement with a SLSA v1 predicate.
+
+The provenance subject is the archive SHA-256. The predicate binds the package
+name, version, repository, SBOM digest, and API digest. The publisher key id and
+public Ed25519 key travel with the request; the registry recomputes the key id
+and rejects a mismatch. `--identity` records an OIDC subject, and trusted
+publishing rejects an identity that differs from the authenticated subject.
+
+Publishing is immutable: a second request for the same canonical version is
+`E8082`, even when the bytes are identical. The server cross-checks the archive
+manifest, license, readme, `.sl` sources, and dependency table before storing
+anything. Path and git dependencies cannot be published.
+
+`--workspace` publishes in dependency order. A version already present is
+skipped with a warning so an interrupted run can be repeated; every other error
+stops the run and reports that earlier versions remain published. A dirty Git
+tree is `E8095` unless `--allow-dirty` is given. `--dry-run` builds and prints
+the file list, archive and attestation digests, and API diff without writing to
+the registry; it still validates the package.
+
+A breaking API change requires a major bump (or a minor bump on `0.x`) both in
+the client and on the server. The comparison is against the newest earlier
+published version that has an API snapshot. `seal api --json` prints the
+snapshot and `seal semver-check` compares it with a published version or a local
+file.
+
+## Namespaces and tokens
+
+A scoped package `@scope/name` belongs to the namespace `@scope`. An unscoped
+package belongs to its own name, or to `default-namespace` when the server is
+configured with one. Publishing into an unowned namespace is `E8083`.
+
+Namespaces are claimed with `seal owner --claim --proof`:
+
+- `config` and `org` succeed only for a preapproved namespace or an admin;
+- `oidc` requires a verified OIDC token and records its subject as the owner;
+- `dns` checks a TXT record `_seal.<namespace>` for the supplied token.
+
+Owners are identities (token names or OIDC subjects). `--add`, `--remove`, and
+`--list` manage them; a non-owner cannot change the set. Tokens carry explicit
+`action:namespace` scopes (`publish`, `yank`, `owners`, `read`) and may be
+limited to a namespace list. The server issues dynamic tokens only to an admin
+and stores only their SHA-256 digest.
+
+## Transparency log
+
+The server maintains an RFC 6962 Merkle tree of every publish and yank. Each
+leaf records the operation, package, version, archive/provenance/SBOM/API
+digests, publisher key id, and time. A publication response and the index entry
+carry the exact leaf, its inclusion proof, and a signed tree head (STH). The STH
+is signed with the `log` key published as an extra role in the TUF root.
+
+`seal publish` verifies the STH signature, the tree size and root, and the
+inclusion path before reporting success. `seal audit --require-provenance`
+repeats this for every registry package, and additionally verifies the archive
+digest, DSSE signature, SBOM digest, API digest, and provenance subject. A
+tampered leaf, proof, or head is `E8097`; unverifiable attestations are `E8096`.
+
+## Reference server
+
+`seal-registry-server` serves the sparse index, catalog, archives, TUF metadata,
+advisories, and the write API from one storage directory:
+
+```console
+$ seal-registry-server --config registry.toml
+$ seal-registry-server --bind 127.0.0.1:8787 --storage .seal-registry
+```
+
+| Path | Contents |
+|------|----------|
+| `keys.json` | five Ed25519 seeds, mode `0600` |
+| `state.redb` | namespaces, versions, tokens, log, audit events, quotas |
+| `blobs/<sha256>` | content-addressed archives and attestations |
+| `public/index/` | sparse index and catalog |
+| `public/packages/` | archive, API, SBOM, and provenance files |
+| `public/tuf/` | root, targets, snapshot, timestamp |
+| `public/advisories.json` | advisory feed |
+
+Metadata updates are serialized by a mutation lock and committed in durable
+redb transactions; a restart reloads the state, rebuilds missing public targets
+from the CAS, and keeps the log. The server never executes package code: archives are
+extracted with the bounded client extractor and only their manifest and regular
+files are read.
+
+Limits come from the configuration: `max-body`, `requests-per-minute`,
+`publish-bytes-per-day`, and `max-versions-per-package`. Exceeding a quota or
+rate limit is `E8098`. TLS is enabled by setting `tls-cert` and `tls-key`; both
+must be present. Static tokens and OIDC issuers are configured in the same file,
+and configured secrets are never logged.
+
+Root rotation (`POST /api/v1/tuf/rotate`, admin only) generates five new seeds
+and writes a root signed by both the previous and the new root key. The client
+verifies that chain, replaces its trusted root atomically, and continues using
+the new keys. A rollback, freeze, mix-and-match, bad signature, or missing
+threshold is `E8080`.

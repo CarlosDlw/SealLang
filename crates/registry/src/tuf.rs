@@ -172,7 +172,9 @@ impl TufSession {
                 trusted.signed.version, previous.root_version
             )));
         }
-        let remote_root = fetch_metadata::<Root>(client, config, "root.json")?;
+        let remote_root_bytes = fetch_raw(client, config, "root.json")?;
+        let remote_root: Signed<Root> = serde_json::from_slice(&remote_root_bytes)
+            .map_err(|error| RegistryError::tuf(format!("invalid `root.json`: {error}")))?;
         let root = if remote_root.signed.version < trusted.signed.version {
             return Err(RegistryError::tuf(format!(
                 "root rollback: the registry offers version {}, but {} is trusted",
@@ -184,6 +186,7 @@ impl TufSession {
         } else {
             verify_role(&remote_root, &trusted.signed, "root")?;
             verify_role(&remote_root, &remote_root.signed, "root")?;
+            write_root(root_path, &remote_root_bytes)?;
             remote_root
         };
 
@@ -288,6 +291,24 @@ impl TufSession {
     pub fn state_path(&self) -> &Path {
         &self.state_path
     }
+
+    /// Returns the transparency-log public key from the `log` role.
+    pub fn log_public_key(&self) -> RegistryResult<String> {
+        let role = self
+            .root
+            .signed
+            .roles
+            .get("log")
+            .ok_or_else(|| RegistryError::tuf("the trusted root has no `log` role"))?;
+        let keyid = role
+            .keyids
+            .first()
+            .ok_or_else(|| RegistryError::tuf("the `log` role has no key ids"))?;
+        let key = self.root.signed.keys.get(keyid).ok_or_else(|| {
+            RegistryError::tuf(format!("the `log` role names the unknown key `{keyid}`"))
+        })?;
+        Ok(key.keyval.public.clone())
+    }
 }
 
 fn fetch_metadata<T>(
@@ -298,6 +319,16 @@ fn fetch_metadata<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
+    let bytes = fetch_raw(client, config, name)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| RegistryError::tuf(format!("invalid `{name}`: {error}")))
+}
+
+fn fetch_raw(
+    client: &RegistryClient,
+    config: &RegistryConfig,
+    name: &str,
+) -> RegistryResult<Vec<u8>> {
     let url = endpoint(&config.tuf_url, name)?;
     let bytes = client.fetch_url(&url)?;
     if bytes.len() > MAX_METADATA {
@@ -306,8 +337,7 @@ where
             MAX_METADATA
         )));
     }
-    serde_json::from_slice(&bytes)
-        .map_err(|error| RegistryError::tuf(format!("invalid `{name}`: {error}")))
+    Ok(bytes)
 }
 
 fn fetch_metadata_checked<T>(
@@ -450,6 +480,13 @@ fn verify_meta(path: &str, bytes: &[u8], meta: &MetaFile) -> RegistryResult<()> 
 fn read_state(path: &Path) -> Option<State> {
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+fn write_root(path: &Path, bytes: &[u8]) -> RegistryResult<()> {
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, bytes)
+        .and_then(|()| std::fs::rename(&temporary, path))
+        .map_err(|error| RegistryError::tuf(format!("cannot update `{}`: {error}", path.display())))
 }
 
 fn write_state(path: &Path, state: &State) -> RegistryResult<()> {

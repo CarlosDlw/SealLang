@@ -1,6 +1,7 @@
 //! Argument parsing and command dispatch.
 
 mod add;
+mod api;
 mod audit;
 pub(crate) mod build;
 mod cache;
@@ -10,13 +11,19 @@ mod dependency;
 mod doctor;
 mod info;
 mod init;
+mod login;
+mod logout;
 pub(crate) mod metadata;
 pub(crate) mod new;
+mod owner;
+mod publish;
 mod registry;
 mod remove;
 mod run;
 mod sbom;
 mod search;
+mod semver_check;
+mod snapshot;
 mod target;
 mod task;
 mod toolchain;
@@ -25,6 +32,7 @@ mod update;
 mod vendor;
 mod verify_repro;
 mod why;
+mod yank;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -180,6 +188,20 @@ pub(crate) enum Command {
     Search(SearchArgs),
     /// Show every version and dependency of one package.
     Info(InfoArgs),
+    /// Package and publish one package or a whole workspace.
+    Publish(PublishArgs),
+    /// Yank or restore a published version.
+    Yank(YankArgs),
+    /// Claim a namespace and manage its owners.
+    Owner(OwnerArgs),
+    /// Store a registry token in the credentials file.
+    Login(LoginArgs),
+    /// Remove a stored registry token.
+    Logout(LogoutArgs),
+    /// Print the public API snapshot of a package.
+    Api(ApiArgs),
+    /// Compare a package API against a baseline version or file.
+    SemverCheck(SemverCheckArgs),
 }
 
 /// Options shared by build-like commands.
@@ -495,6 +517,116 @@ pub(crate) struct AuditArgs {
     /// Print a JSON report.
     #[arg(long)]
     pub(crate) json: bool,
+    /// Require and verify signed provenance, SBOM, API snapshots, and log inclusion.
+    #[arg(long)]
+    pub(crate) require_provenance: bool,
+}
+
+/// `seal publish`.
+#[derive(Debug, Args)]
+pub(crate) struct PublishArgs {
+    /// Publish one package by name.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+    /// Publish every package in dependency order.
+    #[arg(long, conflicts_with = "package")]
+    pub(crate) workspace: bool,
+    /// Build and print the publication without contacting the registry.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Publish even when the Git working tree has changes.
+    #[arg(long)]
+    pub(crate) allow_dirty: bool,
+    /// A file containing a 64-character hexadecimal Ed25519 seed.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) signing_key: Option<PathBuf>,
+    /// The OIDC identity to claim in the provenance statement.
+    #[arg(long, value_name = "IDENTITY")]
+    pub(crate) identity: Option<String>,
+}
+
+/// `seal yank`.
+#[derive(Debug, Args)]
+pub(crate) struct YankArgs {
+    /// The version, written `name@version`.
+    pub(crate) spec: String,
+    /// Restore a yanked version instead of yanking it.
+    #[arg(long)]
+    pub(crate) undo: bool,
+}
+
+/// `seal owner`.
+#[derive(Debug, Args)]
+pub(crate) struct OwnerArgs {
+    /// The namespace, such as `@acme` or a preapproved unscoped name.
+    pub(crate) namespace: String,
+    /// List the current owners.
+    #[arg(long, conflicts_with_all = ["add", "remove", "claim"])]
+    pub(crate) list: bool,
+    /// Add an owner identity.
+    #[arg(long, value_name = "IDENTITY", conflicts_with_all = ["remove", "claim"])]
+    pub(crate) add: Option<String>,
+    /// Remove an owner identity.
+    #[arg(long, value_name = "IDENTITY", conflicts_with_all = ["claim"])]
+    pub(crate) remove: Option<String>,
+    /// Claim the namespace with a proof.
+    #[arg(long, conflicts_with_all = ["list", "add", "remove"])]
+    pub(crate) claim: bool,
+    /// The proof kind: `config`, `org`, `oidc`, or `dns`.
+    #[arg(long, value_name = "KIND", requires = "claim")]
+    pub(crate) proof: Option<String>,
+    /// The DNS verification token or OIDC subject.
+    #[arg(long, value_name = "VALUE", requires = "claim")]
+    pub(crate) proof_value: Option<String>,
+}
+
+/// `seal login`.
+#[derive(Debug, Args)]
+pub(crate) struct LoginArgs {
+    /// Override the registry URL.
+    #[arg(long, value_name = "URL")]
+    pub(crate) registry: Option<String>,
+    /// Store the token under this registry name instead of the configured one.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) name: Option<String>,
+    /// Accept a plain `http://` URL for a local registry.
+    #[arg(long)]
+    pub(crate) allow_insecure: bool,
+    /// Read the token from stdin instead of an environment variable.
+    #[arg(long)]
+    pub(crate) token_stdin: bool,
+}
+
+/// `seal logout`.
+#[derive(Debug, Args)]
+pub(crate) struct LogoutArgs {
+    /// Remove the token stored under this registry name.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) name: Option<String>,
+}
+
+/// `seal api`.
+#[derive(Debug, Args)]
+pub(crate) struct ApiArgs {
+    /// The package to inspect; defaults to the current package.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+    /// Print the snapshot JSON instead of a summary.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// `seal semver-check`.
+#[derive(Debug, Args)]
+pub(crate) struct SemverCheckArgs {
+    /// A baseline version or an API snapshot file.
+    pub(crate) baseline: String,
+    /// The package to inspect; defaults to the current package.
+    #[arg(short = 'p', long = "package", value_name = "PACKAGE")]
+    pub(crate) package: Option<String>,
+    /// Print a JSON report.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 /// `seal sbom`.
@@ -597,6 +729,13 @@ where
         Command::Sbom(args) => sbom::run(&cli, &project, args),
         Command::Search(args) => search::run(&cli, &project, args),
         Command::Info(args) => info::run(&cli, &project, args),
+        Command::Publish(args) => publish::run(&cli, &project, args),
+        Command::Yank(args) => yank::run(&cli, &project, args),
+        Command::Owner(args) => owner::run(&cli, &project, args),
+        Command::Login(args) => login::run(&cli, &project, args),
+        Command::Logout(args) => logout::run(&cli, &project, args),
+        Command::Api(args) => api::run(&cli, &project, args),
+        Command::SemverCheck(args) => semver_check::run(&cli, &project, args),
     }
 }
 

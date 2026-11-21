@@ -14,6 +14,8 @@ workspace = true
 
 [dependencies]
 clap.workspace = true
+hex.workspace = true
+seal-api.workspace = true
 seal-build.workspace = true
 seal-cas.workspace = true
 seal-driver.workspace = true
@@ -26,12 +28,12 @@ seal-target.workspace = true
 seal-toolchain.workspace = true
 semver.workspace = true
 serde.workspace = true
+sha2.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
+time.workspace = true
 
 [dev-dependencies]
-hex.workspace = true
-sha2.workspace = true
 tar.workspace = true
 url.workspace = true
 zstd.workspace = true

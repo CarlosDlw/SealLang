@@ -31,6 +31,21 @@ pub trait Transport: Send + Sync {
         token: Option<&Token>,
         etag: Option<&str>,
     ) -> RegistryResult<HttpResponse>;
+
+    /// Performs one POST request with a JSON body.
+    ///
+    /// The default implementation refuses, so a read-only transport cannot
+    /// accidentally claim to publish. HTTP error statuses are responses.
+    fn post(
+        &self,
+        _url: &Url,
+        _token: Option<&Token>,
+        _body: &[u8],
+    ) -> RegistryResult<HttpResponse> {
+        Err(RegistryError::publish(
+            "this registry transport does not support publication",
+        ))
+    }
 }
 
 /// A transport that reads `file://` URLs, used by local fixtures.
@@ -63,6 +78,17 @@ impl Transport for FileTransport {
                 path.display()
             ))),
         }
+    }
+
+    fn post(
+        &self,
+        _url: &Url,
+        _token: Option<&Token>,
+        _body: &[u8],
+    ) -> RegistryResult<HttpResponse> {
+        Err(RegistryError::publish(
+            "a `file://` registry is read-only; start `seal-registry-server` to publish",
+        ))
     }
 }
 
@@ -119,6 +145,31 @@ impl Transport for UreqTransport {
                 .map_err(|error| RegistryError::config(format!("cannot read `{url}`: {error}")))?
         };
         Ok(HttpResponse { status, etag, body })
+    }
+
+    fn post(&self, url: &Url, token: Option<&Token>, body: &[u8]) -> RegistryResult<HttpResponse> {
+        let mut request = self
+            .agent
+            .post(url.as_str())
+            .header("Content-Type", "application/json");
+        if let Some(token) = token {
+            request = request.header("Authorization", format!("Bearer {}", token.expose()));
+        }
+        let mut response = request
+            .send(body)
+            .map_err(|error| RegistryError::publish(format!("cannot post to `{url}`: {error}")))?;
+        let status = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|error| RegistryError::publish(format!("cannot read `{url}`: {error}")))?;
+        Ok(HttpResponse {
+            status,
+            etag: None,
+            body,
+        })
     }
 }
 
@@ -288,6 +339,26 @@ impl RegistryClient {
             ))),
             Err(error) => Err(error),
         }
+    }
+
+    /// Posts a JSON document to a path below the registry base.
+    ///
+    /// The response is returned for every HTTP status so the caller can map a
+    /// structured `{"error": {...}}` body to a diagnostic code.
+    pub fn post_json(
+        &self,
+        config: &RegistryConfig,
+        path: &str,
+        body: &[u8],
+    ) -> RegistryResult<HttpResponse> {
+        if self.offline {
+            return Err(RegistryError::offline(format!(
+                "posting to `{path}` needs network access; run without `--offline`"
+            )));
+        }
+        let url = crate::config::endpoint(&config.url, path)?;
+        let response = self.transport.post(&url, self.token.as_ref(), body)?;
+        Ok(response)
     }
 
     /// Returns the cache directory.

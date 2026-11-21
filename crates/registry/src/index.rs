@@ -44,12 +44,73 @@ pub struct IndexVersion {
     /// Provenance metadata digest, when published.
     #[serde(default)]
     pub provenance: Option<String>,
+    /// The provenance envelope path relative to the registry root.
+    #[serde(default)]
+    pub provenance_file: Option<String>,
+    /// SBOM metadata digest, when published.
+    #[serde(default)]
+    pub sbom: Option<String>,
+    /// The SBOM path relative to the registry root.
+    #[serde(default)]
+    pub sbom_file: Option<String>,
+    /// The public-API snapshot metadata, when published.
+    #[serde(default)]
+    pub api: Option<ApiEntry>,
+    /// The signing identity that published this version.
+    #[serde(default)]
+    pub publisher: Option<Publisher>,
+    /// Transparency-log inclusion metadata.
+    #[serde(default)]
+    pub log: Option<LogInclusion>,
+    /// The RFC 3339 publication time.
+    #[serde(default)]
+    pub published_at: Option<String>,
     /// Dependencies used for resolution.
     #[serde(default)]
     pub dependencies: Vec<IndexDependency>,
     /// Feature declarations, used for validation before download.
     #[serde(default)]
     pub features: BTreeMap<String, Vec<String>>,
+}
+
+/// The API snapshot attached to a published version.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ApiEntry {
+    /// The snapshot digest, `sha256:<hex>`.
+    pub hash: String,
+    /// The snapshot path relative to the registry root.
+    pub snapshot: String,
+}
+
+/// The Ed25519 identity that signed a publication.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Publisher {
+    /// The key id, the SHA-256 digest of the public key.
+    pub keyid: String,
+    /// The 32-byte public key as lowercase hexadecimal.
+    pub public: String,
+    /// The OIDC identity, when trusted publishing was used.
+    #[serde(default)]
+    pub identity: Option<String>,
+}
+
+/// One verified inclusion in the transparency log.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct LogInclusion {
+    /// The exact leaf that was appended.
+    pub entry: crate::log::LogEntry,
+    /// The leaf index.
+    pub index: u64,
+    /// The tree size at publication.
+    pub tree_size: u64,
+    /// The signed tree root, `sha256:<hex>`.
+    pub root_hash: String,
+    /// The audit path from the leaf to the root.
+    #[serde(default)]
+    pub proof: Vec<String>,
 }
 
 /// A dependency edge in an index entry.
@@ -216,6 +277,23 @@ pub fn sparse_path(name: &str) -> RegistryResult<String> {
     Ok(path)
 }
 
+fn safe_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains("..")
+        && !path.contains('\\')
+        && path.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_' | b'@')
+        })
+}
+
+fn valid_public_key(public: &str) -> bool {
+    public.len() == 64
+        && public
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn safe_component(component: &str) -> bool {
     !component.is_empty()
         && component != "."
@@ -269,6 +347,50 @@ pub fn validate(name: &str, package: &IndexPackage) -> RegistryResult<()> {
         }
         if let Some(provenance) = &entry.provenance {
             validate_checksum(provenance)?;
+        }
+        if let Some(path) = &entry.provenance_file
+            && !safe_relative(path)
+        {
+            return Err(RegistryError::index(format!(
+                "the provenance path `{path}` for `{name}` {version} is not safe"
+            )));
+        }
+        if let Some(sbom) = &entry.sbom {
+            validate_checksum(sbom)?;
+        }
+        if let Some(path) = &entry.sbom_file
+            && !safe_relative(path)
+        {
+            return Err(RegistryError::index(format!(
+                "the SBOM path `{path}` for `{name}` {version} is not safe"
+            )));
+        }
+        if let Some(api) = &entry.api {
+            validate_checksum(&api.hash)?;
+            if !safe_relative(&api.snapshot) {
+                return Err(RegistryError::index(format!(
+                    "the API snapshot path `{}` for `{name}` {version} is not a safe relative path",
+                    api.snapshot
+                )));
+            }
+        }
+        if let Some(publisher) = &entry.publisher
+            && !valid_public_key(&publisher.public)
+        {
+            return Err(RegistryError::index(format!(
+                "the publisher key for `{name}` {version} is not a 32-byte lowercase hexadecimal key"
+            )));
+        }
+        if let Some(log) = &entry.log {
+            validate_checksum(&log.root_hash)?;
+            if log.tree_size == 0 || log.index >= log.tree_size {
+                return Err(RegistryError::index(format!(
+                    "the transparency entry for `{name}` {version} is outside its tree"
+                )));
+            }
+            for hash in &log.proof {
+                validate_checksum(hash)?;
+            }
         }
         let mut aliases = std::collections::BTreeSet::new();
         for dependency in &entry.dependencies {

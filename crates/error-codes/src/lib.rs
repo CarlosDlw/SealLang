@@ -2708,6 +2708,86 @@ pub const E8089: ErrorCode = ErrorCode {
 A cached index, metadata document, or package marker no longer matches the\ndigest recorded for it. The cache is an optimization, never a source of trust,\nso a corrupt entry is rejected or discarded.\n\nRun the command again without `--offline` to rebuild the entry.",
 };
 
+/// The public API snapshot could not be produced or read.
+pub const E8090: ErrorCode = ErrorCode {
+    code: "E8090",
+    title: "API snapshot unavailable",
+    explanation: "\
+`seal api`, `seal semver-check`, and `seal publish` read a versioned snapshot of\nthe package's public items. The snapshot is missing, malformed, names an\nunsupported schema, or the package has no library target to describe.\n\nBuild the package successfully first and make sure the snapshot names the\npackage and version being checked.",
+};
+
+/// An API compatibility report could not be produced.
+pub const E8091: ErrorCode = ErrorCode {
+    code: "E8091",
+    title: "API compatibility check failed",
+    explanation: "\
+Seal compares two public API snapshots to classify removals, signature changes,\nand additions as breaking, minor, or patch. The comparison failed because a\nsnapshot is inconsistent, uses a different schema, or names a different package.\n\nRegenerate both snapshots with the same compiler version before comparing them.",
+};
+
+/// A breaking API change needs a larger version bump.
+pub const E8092: ErrorCode = ErrorCode {
+    code: "E8092",
+    title: "breaking change without a version bump",
+    explanation: "\
+The API snapshot removes or changes a public item, but the new version does not\nraise the major component (or the minor component on a `0.x` line). Consumers\nresolve compatible updates by version, so publishing the change would break\nthem without warning.\n\nBump the version according to semantic versioning, or restore the public API.",
+};
+
+/// A publication request was malformed or rejected.
+pub const E8093: ErrorCode = ErrorCode {
+    code: "E8093",
+    title: "publication request rejected",
+    explanation: "\
+`seal publish` or `seal yank` sent a request the registry could not accept. The\npackage name, version, archive, SBOM, provenance, or command arguments are\nmalformed, or the package is not publishable as written.\n\nRead the reported field, fix the package metadata, and retry with a new version\nwhen the previous one was already published.",
+};
+
+/// A namespace is not owned by the caller.
+pub const E8094: ErrorCode = ErrorCode {
+    code: "E8094",
+    title: "namespace is not owned",
+    explanation: "\
+Publishing into a scope requires an owner or a token scoped to that namespace.\nThe caller authenticated successfully but does not control the namespace.\n\nClaim the namespace with `seal owner`, or ask an owner to add the identity.",
+};
+
+/// The working tree has uncommitted changes.
+pub const E8095: ErrorCode = ErrorCode {
+    code: "E8095",
+    title: "dirty working tree",
+    explanation: "\
+`seal publish` records the source tree that produced a version. A dirty Git\nworking tree means the archive may not correspond to any commit, which weakens\nprovenance and reproducibility.\n\nCommit or stash the changes, or pass `--allow-dirty` deliberately.",
+};
+
+/// Provenance or an attestation could not be verified.
+pub const E8096: ErrorCode = ErrorCode {
+    code: "E8096",
+    title: "publication provenance is invalid",
+    explanation: "\
+The DSSE/in-toto provenance envelope, its Ed25519 signature, the SBOM digest, or\nthe API snapshot digest does not match the published archive. The registry and\n`seal audit --require-provenance` reject unverifiable claims.\n\nRepublish with a valid signing key and matching artifacts, or use a package\nwhose provenance verifies.",
+};
+
+/// The transparency log could not be verified.
+pub const E8097: ErrorCode = ErrorCode {
+    code: "E8097",
+    title: "transparency log verification failed",
+    explanation: "\
+The registry's Merkle tree head, its signature, or an inclusion proof does not\nmatch the published entry. A log that cannot prove inclusion is not evidence\nthat a version was published.\n\nRefresh the registry metadata and report the inconsistency to the registry\noperator; never ignore the failure.",
+};
+
+/// A registry quota or rate limit was exceeded.
+pub const E8098: ErrorCode = ErrorCode {
+    code: "E8098",
+    title: "registry quota exceeded",
+    explanation: "\
+The registry limits publication size, versions per package, or requests per\nclient. The request was rejected without changing stored state.\n\nWait for the rate-limit window, remove unneeded versions, or ask the operator\nfor a larger quota.",
+};
+
+/// The registry server failed or its state is corrupt.
+pub const E8099: ErrorCode = ErrorCode {
+    code: "E8099",
+    title: "registry server error",
+    explanation: "\
+The registry server could not complete the request because its persisted state,\nsigning keys, content-addressed store, or HTTP layer failed. The server never\nexecutes package code.\n\nInspect the server log and storage permissions, then retry or restore the\nregistry from a verified backup.",
+};
+
 /// Two builds of the same project produced different bytes.
 pub const E8104: ErrorCode = ErrorCode {
     code: "E8104",
@@ -4108,7 +4188,8 @@ pub static ALL: &[ErrorCode] = &[
     E8008, E8009, E8010, E8011, E8020, E8021, E8022, E8023, E8024, E8025, E8026, E8027, E8028,
     E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038, E8039, E8040, E8041,
     E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8080, E8081, E8082,
-    E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8103, E8104, E9001, E9002,
+    E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092, E8093, E8094, E8095,
+    E8096, E8097, E8098, E8099, E8103, E8104, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

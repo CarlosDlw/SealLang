@@ -11,6 +11,9 @@ pub mod config;
 pub mod download;
 pub mod error;
 pub mod index;
+pub mod log;
+pub mod provenance;
+pub mod publish;
 pub mod resolve;
 pub mod sbom;
 pub mod semver;
@@ -162,6 +165,38 @@ impl RegistrySession {
     /// Loads one package index for `seal info`.
     pub fn info(&self, name: &str) -> RegistryResult<index::IndexPackage> {
         index::load(&self.client, &self.config, Some(&self.tuf), name)
+    }
+
+    /// Posts a JSON document to a registry API path.
+    pub fn post(&self, path: &str, body: &[u8]) -> RegistryResult<client::HttpResponse> {
+        self.client.post_json(&self.config, path, body)
+    }
+
+    /// Fetches a transparency-log proof path below the registry base.
+    pub fn fetch(&self, path: &str) -> RegistryResult<Vec<u8>> {
+        self.client.fetch(&self.config, path)
+    }
+
+    /// Fetches the signed tree head.
+    pub fn tree_head(&self) -> RegistryResult<log::SignedTreeHead> {
+        let bytes = self.fetch("api/v1/log/sth")?;
+        serde_json::from_slice(&bytes).map_err(|error| {
+            RegistryError::transparency(format!("invalid signed tree head: {error}"))
+        })
+    }
+
+    /// Opens a session from an already validated configuration.
+    ///
+    /// This is used by tests and embedding tools that already know the trust
+    /// root and the registry URL.
+    pub fn from_config(config: RegistryConfig) -> RegistryResult<Self> {
+        let client = RegistryClient::new(&config)?;
+        let tuf = TufSession::load(&client, &config)?;
+        Ok(Self {
+            config,
+            client,
+            tuf,
+        })
     }
 }
 

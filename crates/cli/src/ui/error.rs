@@ -2,6 +2,28 @@
 
 use std::process::ExitCode;
 
+/// A user-facing failure that has not been printed yet.
+#[derive(Clone, Debug)]
+pub(crate) struct Failure {
+    code: String,
+    message: String,
+}
+
+impl Failure {
+    /// Prints the failure and returns the standard exit status.
+    pub(crate) fn exit(self) -> ExitCode {
+        error(&self.code, &self.message)
+    }
+}
+
+/// Creates an unprinted failure.
+pub(crate) fn failure(code: &str, message: impl Into<String>) -> Failure {
+    Failure {
+        code: code.to_owned(),
+        message: message.into(),
+    }
+}
+
 /// Reports a user-facing error and returns the failure status.
 pub(crate) fn error(code: &str, message: &str) -> ExitCode {
     eprintln!("error[{code}]: {message}");
