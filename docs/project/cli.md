@@ -294,8 +294,10 @@ only its public API.
 
 `test` builds every selected test target and runs each test in its own process,
 so a panic, signal, or timeout cannot take down the runner. `--filter` keeps
-tests whose full `package::module::name` contains the text and `--exact`
-requires a whole-name match; `--skip` removes matches. `--partition
+tests whose printed name (`module::name`, or just `name` in the package root)
+contains the text and `--exact` requires a whole-name match; `--skip` removes
+matches. The package and target are selected with the normal target/package
+flags, not by the test name. `--partition
 INDEX/TOTAL` (and `hash:INDEX/TOTAL`) selects one CI shard. `--retries`
 reruns failures, `--timeout` kills a test and its process group, and `--stress`
 repeats every selected test. Fail-fast is the default; `--no-fail-fast` reports

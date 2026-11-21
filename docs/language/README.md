@@ -15,6 +15,7 @@ unsafe operations.
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
 | [`first-class-functions.md`](first-class-functions.md) | `func` and `unsafe func` types, closures and capture, `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop and borrow rules, ABI, diagnostics, and limits |
 | [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, and the `--plan` driver |
+| [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
 
 ## Reading conventions
 
