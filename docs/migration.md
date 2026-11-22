@@ -75,6 +75,31 @@ split, keep every `module` declaration as it is: files are fragments of the
 declared module, and imports are absolute exactly as with `--plan`. The only
 change is that the manifest, not the command line, lists the files.
 
+## Default standard library
+
+A hosted package now receives the standard library by default. Hosted targets
+default to `stdlib = "std"`; freestanding targets (`runtime = "none"`) default
+to `stdlib = "core"`. Select it explicitly when the default is not wanted:
+
+```toml
+[package]
+name = "my-program"
+version = "0.1.0"
+stdlib = "std"          # "std" | "core" | "none"
+implicit-prelude = true # false keeps the dependency without implicit names
+```
+
+`std` injects `core` and `std`, `core` injects only `core`, and `none` installs
+nothing. The `core` and `std` dependency aliases are reserved: an existing
+package or dependency alias with either name is `E8136`. Rename that alias
+before upgrading and update its imports.
+
+The selected prelude puts `Option` and `Result` in scope, but variants remain
+qualified (`Option::Some`, `Result::Ok`). There are no methods on either type
+and no `?` operator. To keep the old unqualified behavior, set
+`implicit-prelude = false` or pass `--no-prelude`. See
+[`language/stdlib.md`](language/stdlib.md) and [`project/stdlib.md`](project/stdlib.md).
+
 ## Move a workspace
 
 A directory of independent packages becomes a root project with members:

@@ -18,6 +18,19 @@
   idempotence, spaces, unwritable prefixes, `DESTDIR`, and profile preservation.
   A Linux CI job runs `bash -n`, `shellcheck`, and the acceptance test.
 
+### Standard library and prelude
+
+- `core` and `std` now ship real `Option` and `Result` enums. They are not
+  `Copy`, expose no methods, and the language still has no `?` operator;
+  variants remain qualified as `Option::Some` and `Result::Ok`.
+- Hosted packages default to `stdlib = "std"`; freestanding targets default to
+  `stdlib = "core"`. The selected prelude is implicit unless
+  `implicit-prelude = false` or `--no-prelude` is used. `stdlib = "none"`
+  injects nothing.
+- **Breaking:** `core` and `std` are reserved dependency aliases. A package or
+  dependency alias with either name is `E8136`; rename it and update imports.
+  See [`docs/migration.md`](docs/migration.md).
+
 ### Modules, projects, builds, and packages
 
 Seal now has a complete project layer. The compiler still consumes one package

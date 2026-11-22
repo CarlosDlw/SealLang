@@ -322,6 +322,8 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 41-line acceptance matrix and its executable evidence |
 | [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
+| [`docs/language/prelude.md`](docs/language/prelude.md) | Plan-selected preludes, precedence, opt-out, and diagnostics |
+| [`docs/language/stdlib.md`](docs/language/stdlib.md) | `core`/`std`, `Option`/`Result`, canonical paths, and preludes |
 | [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
 | [`docs/install.md`](docs/install.md) | Building and installing `seal`, `sealc`, and the standard library on Linux |
 | [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |

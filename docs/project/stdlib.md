@@ -122,7 +122,7 @@ $ sealc check --no-prelude main.sl    # std without implicit names
   "stdlib": {
     "language": "0.1",
     "version": "0.1.0",
-    "digest": "20b6..."
+    "digest": "2325ce6c..."
   },
   "packages": [
     {

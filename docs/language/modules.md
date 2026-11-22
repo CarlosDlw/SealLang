@@ -117,11 +117,15 @@ A package plan may name one module as its *prelude*. The public item exports of
 that module are then available in every file of the package without an import:
 
 ```text
-// core.sl
-public struct Option<T> { ... }
+// core/src/option.sl
+module option;
+public enum Option<T> { Some(T), None }
 
 // app.sl
-func main() { let value = Option { ... }; }
+func main() -> i32 {
+    let value = Option::Some(1);
+    match value { Option::Some(inner) => inner, Option::None => 0 }
+}
 ```
 
 Only public items and public `public use` aliases are injected. Modules are not:
@@ -140,10 +144,12 @@ prelude name still warns.
 A package without a prelude compiles as before. The manifest field
 `implicit-prelude` (default `true`) controls the standard prelude, and
 `--no-prelude` disables it for both `seal` and `sealc`. The prelude source is
-data from the compile plan; `core` and `std` themselves carry no prelude. A
-missing module is `E2100`, two names in one namespace are `E2102`, and a cycle
-between package preludes is `E2103`. See [prelude.md](prelude.md) for the full
-rules and versioning notes.
+data from the compile plan; the shipped library provides `core::prelude` and
+`std::prelude`, while its own manifests disable implicit injection. A missing
+module is `E2100`, two names in one namespace are `E2102`, and a cycle between
+package preludes is `E2103`. See [prelude.md](prelude.md) and
+[stdlib.md](stdlib.md) for the full rules, versioning, and the shipped
+`Option`/`Result` surface.
 
 ## Re-exports
 

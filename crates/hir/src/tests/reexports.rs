@@ -136,6 +136,39 @@ fn an_internal_reexport_is_visible_inside_its_package_without_exposing_modules()
 }
 
 #[test]
+fn constants_and_traits_can_be_re_exported_through_an_alias_group() {
+    let fixture = Fixture::package(&[
+        ("main.sl", "func main() {}"),
+        (
+            "api.sl",
+            "module api;\npublic use root::implementation::{VALUE as answer, Show as Display};",
+        ),
+        (
+            "implementation.sl",
+            "module implementation;\npublic const VALUE: i32 = 7;\npublic trait Show {}",
+        ),
+    ]);
+    let hir = fixture.lower_package_exposing(&["api", "implementation"]);
+    fixture.assert_clean();
+
+    let root = root_module(&hir);
+    let implementation = child_module(&hir, &fixture, root, "implementation");
+    let value = item_in_module(&hir, &fixture, implementation, DefKind::Const, "VALUE");
+    let show = item_in_module(&hir, &fixture, implementation, DefKind::Trait, "Show");
+    let aliases = hir.api().aliases();
+    let answer = aliases
+        .iter()
+        .find(|alias| fixture.symbol(alias.name) == "answer")
+        .expect("the constant alias is recorded");
+    let display = aliases
+        .iter()
+        .find(|alias| fixture.symbol(alias.name) == "Display")
+        .expect("the trait alias is recorded");
+    assert_eq!(answer.def, value);
+    assert_eq!(display.def, show);
+}
+
+#[test]
 fn a_public_reexport_of_a_non_public_item_is_rejected() {
     let fixture = Fixture::package(&[
         ("main.sl", "func main() {}"),
