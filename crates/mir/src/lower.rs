@@ -1063,6 +1063,36 @@ impl<'a> BodyLowering<'a> {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
             }
+            ExprKind::OwnedView { owner, source } => {
+                let owner_place = self.place_of_expr(owner);
+                let source_operand = self.lower_operand(source);
+                if let Some(dest) = dest {
+                    self.promote_borrowed_temp(&owner_place, &dest);
+                    let source_ty = self.expr_ty(source);
+                    let kind = match self.hir.ty_ctxt().kind(source_ty) {
+                        TyKind::RawPtr { kind, .. } => match kind {
+                            seal_ty::RawPtrKind::Const => RefKind::Shared,
+                            seal_ty::RawPtrKind::Mut => RefKind::Exclusive,
+                        },
+                        _ => panic!(
+                            "an owned view source was not typed as a raw pointer; \
+                             this is a compiler bug"
+                        ),
+                    };
+                    let ty = self.expr_ty(expr);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::OwnedView {
+                            owner: owner_place,
+                            source: source_operand,
+                            kind,
+                            ty,
+                        },
+                        span,
+                    );
+                }
+            }
+
             ExprKind::Borrow { operand, kind } => {
                 if let Some(dest) = dest {
                     let place = self.place_of_expr(operand);

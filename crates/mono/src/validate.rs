@@ -314,6 +314,10 @@ fn check_rvalue(
             check_type(tcx, instance, *ret_ty)
         }
         Rvalue::Ref { .. } | Rvalue::Discriminant(_) => Ok(()),
+        Rvalue::OwnedView { source, ty, .. } => {
+            check_operand(tcx, instance, source)?;
+            check_type(tcx, instance, *ty)
+        }
         Rvalue::SliceRef { start, end, ty, .. } | Rvalue::StrView { start, end, ty, .. } => {
             check_type(tcx, instance, *ty)?;
             for operand in start.iter().chain(end.iter()) {
@@ -596,6 +600,10 @@ fn check_rvalue_globals(
             check_place_global(program, constants, place)
         }
         Rvalue::Ref { place, .. } => check_place_global(program, constants, place),
+        Rvalue::OwnedView { owner, source, .. } => {
+            check_place_global(program, constants, owner)?;
+            check_operand_global(program, constants, source)
+        }
         Rvalue::SliceRef {
             base, start, end, ..
         }

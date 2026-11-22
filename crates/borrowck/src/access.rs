@@ -61,6 +61,10 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
                 uses.insert(local);
             }
         }
+        Rvalue::OwnedView { owner, source, .. } => {
+            place_uses(owner, uses);
+            operand_uses(source, uses);
+        }
         Rvalue::MakeTraitObject { source, .. } => operand_uses(source, uses),
         Rvalue::TraitObjectReborrow { source, place, .. } => {
             operand_uses(source, uses);

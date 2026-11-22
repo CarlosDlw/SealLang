@@ -80,6 +80,8 @@ pub enum EvalErrorKind {
     FunctionPointerCall,
     /// A constant reads an external static.
     ExternStatic,
+    /// A constant creates an owned view.
+    OwnedView,
     /// A constant panicked, or a compile-time call had an invalid body.
     Panic(String),
     /// An internal evaluator invariant failed.
@@ -116,6 +118,7 @@ impl EvalErrorKind {
             Self::NonConcreteArguments | Self::Panic(_) => codes::E4027,
             Self::ExternCall | Self::FunctionAddress | Self::FunctionPointerCall => codes::E4033,
             Self::ExternStatic => codes::E4034,
+            Self::OwnedView => codes::E4035,
             Self::Internal(_) => return None,
         })
     }
@@ -194,6 +197,11 @@ impl EvalErrorKind {
                 "a constant context cannot call through a function pointer or closure".to_owned()
             }
             Self::ExternStatic => "a constant context cannot read an external static".to_owned(),
+            Self::OwnedView => {
+                "an owned view needs runtime storage and an owner loan, so it cannot appear in a \
+                 constant"
+                    .to_owned()
+            }
             Self::Panic(message) => format!("constant evaluation panicked: {message}"),
             Self::Internal(message) => {
                 format!("internal const-evaluator invariant failed: {message}")
@@ -298,6 +306,7 @@ mod tests {
             (EvalErrorKind::FunctionAddress, Some("E4033")),
             (EvalErrorKind::FunctionPointerCall, Some("E4033")),
             (EvalErrorKind::ExternStatic, Some("E4034")),
+            (EvalErrorKind::OwnedView, Some("E4035")),
             (EvalErrorKind::Panic("boom".to_owned()), Some("E4027")),
             (EvalErrorKind::Internal("bug".to_owned()), None),
         ];

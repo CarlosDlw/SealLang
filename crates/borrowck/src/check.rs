@@ -263,6 +263,17 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             unknown |= context.keys_of(place).is_unknown();
             check_borrow(place, *kind, statement.span, context);
         }
+        Rvalue::OwnedView {
+            owner,
+            source,
+            kind,
+            ..
+        } => {
+            unknown |= context.keys_of(owner).is_unknown();
+            check_borrow(owner, *kind, statement.span, context);
+            unknown |= operand_unknown(source, context);
+            check_operand(statement, source, context);
+        }
         Rvalue::SliceRef {
             base,
             start,

@@ -101,6 +101,12 @@ impl<'a> Interpreter<'a> {
                     element,
                 })
             }
+            Rvalue::OwnedView { .. } => {
+                // A constant cannot carry an owner loan or reference runtime
+                // storage, so the primitive is rejected before it can produce a
+                // value the evaluator cannot represent.
+                Err(self.error(EvalErrorKind::OwnedView, span))
+            }
             Rvalue::StrView { .. } => {
                 // A view carries an offset into a string that a `ConstValue::Str`
                 // cannot represent. Reject it through the whitelist instead of

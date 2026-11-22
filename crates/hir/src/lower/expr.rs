@@ -294,6 +294,8 @@ impl Lowering<'_> {
                             ExprKind::Error
                         }
                     }
+                } else if self.is_owned_view_builtin(callee) {
+                    self.lower_owned_view_builtin(callee, &args, span)
                 } else if let Some(kind) = self.lower_control_builtin(callee, &args, span) {
                     kind
                 } else {
@@ -1195,6 +1197,59 @@ impl Lowering<'_> {
             return false;
         };
         self.interner.resolve(name) == "len"
+            && !self.value_exists(name)
+            && self.scopes.lookup(name).is_none()
+    }
+
+    /// Lowers `owned_view(owner, source)`.
+    ///
+    /// Both arguments are lowered exactly once. Type checking decides whether
+    /// the owner denotes storage and whether the source is a compatible raw
+    /// pointer; the HIR keeps both expressions reachable on error.
+    fn lower_owned_view_builtin(
+        &mut self,
+        callee: AstExprId,
+        args: &[AstExprId],
+        span: Span,
+    ) -> ExprKind {
+        let type_args = match self.ast.expr(callee).kind.clone() {
+            AstExprKind::Path { args, .. } => args,
+            _ => None,
+        };
+        self.reject_type_arguments(type_args.as_ref(), "owned_view");
+        match args {
+            [owner, source] => ExprKind::OwnedView {
+                owner: self.lower_expr(*owner),
+                source: self.lower_expr(*source),
+            },
+            _ => {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "`owned_view` takes exactly two arguments, but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help("pass an owner place and a raw pointer, as in `owned_view(buffer, pointer)`")
+                .emit();
+                for arg in args {
+                    self.lower_expr(*arg);
+                }
+                ExprKind::Error
+            }
+        }
+    }
+
+    /// Returns `true` when `callee` is the built-in `owned_view`.
+    ///
+    /// A user function or binding named `owned_view` shadows the intrinsic,
+    /// exactly like `len` and `drop`.
+    fn is_owned_view_builtin(&self, callee: AstExprId) -> bool {
+        let AstExprKind::Path { name, .. } = self.ast.expr(callee).kind else {
+            return false;
+        };
+        self.interner.resolve(name) == "owned_view"
             && !self.value_exists(name)
             && self.scopes.lookup(name).is_none()
     }

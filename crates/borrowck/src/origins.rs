@@ -406,6 +406,10 @@ fn transfer(
             let origins = keys_of(state, borrowed, const_locals);
             state.assign(place, origins);
         }
+        Rvalue::OwnedView { owner, .. } => {
+            let origins = keys_of(state, owner, const_locals);
+            state.assign(place, origins);
+        }
         Rvalue::SliceRef { base, .. } | Rvalue::StrView { base, .. } => {
             let effective = if matches!(
                 hir.ty_ctxt().kind(place_ty(hir, body, base)),

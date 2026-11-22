@@ -24,6 +24,7 @@ mod match_advanced;
 mod match_expr;
 mod methods;
 mod modules;
+mod owned_views;
 mod packages;
 mod prelude;
 mod protocols;

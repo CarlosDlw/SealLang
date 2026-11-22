@@ -744,6 +744,10 @@ impl Reachability<'_> {
             ExprKind::Unary { operand, .. }
             | ExprKind::Borrow { operand, .. }
             | ExprKind::Deref { operand } => self.check_expr(operand),
+            ExprKind::OwnedView { owner, source } => {
+                self.check_expr(owner);
+                self.check_expr(source);
+            }
             ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
                 self.check_expr(base)
             }

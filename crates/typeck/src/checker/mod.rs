@@ -30,6 +30,7 @@ mod slice_patterns;
 mod stmt;
 mod trait_solver;
 mod types;
+mod view;
 mod visibility;
 
 use seal_def::DefId;

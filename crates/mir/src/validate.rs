@@ -192,6 +192,36 @@ pub enum ValidationError {
         /// The view being built.
         kind: StrViewKind,
     },
+    /// An owned view borrows a place reached through a raw pointer.
+    OwnedViewRawDerefOwner {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
+    /// An owned view names a constant as its owner.
+    OwnedViewConstOwner {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
+    /// An owned view source is not a raw pointer.
+    OwnedViewSourceNotRaw {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
+    /// An owned view result is not a reference.
+    OwnedViewTargetNotReference {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
+    /// An owned view records a reference kind that disagrees with its source.
+    OwnedViewKindMismatch {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
+    /// An owned view changes the pointee type or uses an unsupported pointee.
+    OwnedViewPointeeMismatch {
+        /// The block containing the view.
+        block: BasicBlockId,
+    },
     /// A cast operand's type differs from its recorded source type.
     CastOperandTypeMismatch {
         /// The block containing the cast.
@@ -439,6 +469,30 @@ impl fmt::Display for ValidationError {
                 f,
                 "block {block:?} records invalid bounds for `{}`",
                 kind.as_str()
+            ),
+            Self::OwnedViewRawDerefOwner { block } => write!(
+                f,
+                "block {block:?} creates an owned view whose owner is reached through a raw pointer"
+            ),
+            Self::OwnedViewConstOwner { block } => write!(
+                f,
+                "block {block:?} creates an owned view with a constant owner"
+            ),
+            Self::OwnedViewSourceNotRaw { block } => write!(
+                f,
+                "block {block:?} creates an owned view from a non-raw source"
+            ),
+            Self::OwnedViewTargetNotReference { block } => write!(
+                f,
+                "block {block:?} creates an owned view with a non-reference target"
+            ),
+            Self::OwnedViewKindMismatch { block } => write!(
+                f,
+                "block {block:?} creates an owned view with a reference kind that disagrees with its source"
+            ),
+            Self::OwnedViewPointeeMismatch { block } => write!(
+                f,
+                "block {block:?} creates an owned view that changes its pointee or uses an unsupported pointee"
             ),
             Self::CastOperandTypeMismatch { block } => write!(
                 f,
@@ -1249,6 +1303,50 @@ fn check_rvalue(
             }
             Ok(())
         }
+        Rvalue::OwnedView {
+            owner,
+            source,
+            kind,
+            ty,
+        } => {
+            check_place(hir, body, block, owner.clone())?;
+            if owner.is_raw_deref() {
+                return Err(ValidationError::OwnedViewRawDerefOwner { block });
+            }
+            if matches!(owner.root, crate::place::PlaceRoot::Const(_)) {
+                return Err(ValidationError::OwnedViewConstOwner { block });
+            }
+            check_operand(body, block, source, hir)?;
+            if let Some(hir) = hir {
+                if contains_infer(hir, *ty) {
+                    return Err(ValidationError::InferredRvalueType { block });
+                }
+                let Some(source_ty) = operand_ty(hir, body, source) else {
+                    return Err(ValidationError::OwnedViewSourceNotRaw { block });
+                };
+                if contains_infer(hir, source_ty) {
+                    return Err(ValidationError::InferredRvalueType { block });
+                }
+                let tcx = hir.ty_ctxt();
+                let Some((source_kind, pointee)) = tcx.raw_parts(source_ty) else {
+                    return Err(ValidationError::OwnedViewSourceNotRaw { block });
+                };
+                let Some((target_kind, target_pointee)) = tcx.ref_parts(*ty) else {
+                    return Err(ValidationError::OwnedViewTargetNotReference { block });
+                };
+                let expected_kind = match source_kind {
+                    seal_ty::RawPtrKind::Const => RefKind::Shared,
+                    seal_ty::RawPtrKind::Mut => RefKind::Exclusive,
+                };
+                if expected_kind != *kind || target_kind != *kind {
+                    return Err(ValidationError::OwnedViewKindMismatch { block });
+                }
+                if pointee != target_pointee || !owned_view_pointee_supported(tcx, pointee) {
+                    return Err(ValidationError::OwnedViewPointeeMismatch { block });
+                }
+            }
+            Ok(())
+        }
         Rvalue::StrView {
             kind,
             base,
@@ -1559,6 +1657,20 @@ fn check_rvalue(
 }
 
 /// Returns `true` when `ty` is, or contains, an inference variable.
+/// Returns whether an owned view can preserve this pointee's representation.
+fn owned_view_pointee_supported(tcx: &seal_ty::TyCtxt, pointee: TyId) -> bool {
+    match tcx.kind(pointee) {
+        TyKind::Str | TyKind::Slice { .. } => true,
+        TyKind::Error
+        | TyKind::Infer(_)
+        | TyKind::Opaque { .. }
+        | TyKind::Dyn { .. }
+        | TyKind::FnSig(_)
+        | TyKind::Never => false,
+        _ => tcx.is_sized(pointee),
+    }
+}
+
 fn contains_infer(hir: &Hir, ty: seal_ty::TyId) -> bool {
     let tcx = hir.ty_ctxt();
     match tcx.kind(ty) {

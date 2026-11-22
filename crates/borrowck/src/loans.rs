@@ -28,6 +28,11 @@ pub(crate) fn collect(hir: &Hir, body: &Body) -> (Vec<Loan>, Vec<Vec<Option<Loan
             };
             let (place, kind) = match rvalue {
                 Rvalue::Ref { place, kind } => (place.clone(), *kind),
+                Rvalue::OwnedView {
+                    owner,
+                    kind: view_kind,
+                    ..
+                } => (owner.clone(), *view_kind),
                 Rvalue::SliceRef { base, kind, .. } => {
                     let place = if matches!(
                         hir.ty_ctxt().kind(origins::place_ty(hir, body, base)),
@@ -105,6 +110,7 @@ pub(crate) fn resolve(
             if !matches!(
                 rvalue,
                 Rvalue::Ref { .. }
+                    | Rvalue::OwnedView { .. }
                     | Rvalue::SliceRef { .. }
                     | Rvalue::StrView { .. }
                     | Rvalue::TraitObjectReborrow { .. }

@@ -23,6 +23,7 @@ mod indexing_protocol;
 mod iteration_protocol;
 mod match_expr;
 mod methods;
+mod owned_views;
 mod raw_pointers;
 mod reference_patterns;
 mod slice_patterns;

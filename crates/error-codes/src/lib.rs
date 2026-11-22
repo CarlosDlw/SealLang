@@ -1519,6 +1519,23 @@ pub const E3105: ErrorCode = ErrorCode {
 A variant of a public enum can be constructed and matched from another\npackage, so every type it carries must be public too. Otherwise the variant\ncould be named but never built.\n\nMake the carried type public and expose its module, or change the enum to\n`internal`.",
 };
 
+/// An `owned_view` call is invalid.
+pub const E3106: ErrorCode = ErrorCode {
+    code: "E3106",
+    title: "invalid owned view",
+    explanation: "\
+`owned_view(owner, source)` converts a raw pointer into a safe reference and
+attaches the reference's loan to `owner`. It requires an initialized owner place
+that is not reached through a raw pointer, and a raw source pointer whose
+pointee has a stable representation: a sized type, `[T]`, or `str`. The source's
+raw pointer kind selects the result: `*raw P` becomes `*P`, and `*raw mut P`
+becomes `*mut P`.\n\nThe same diagnostic rejects `&*pointer` and `&mut *pointer` when `pointer` is a
+fat raw pointer. Those expressions have no owner to borrow, so a container method
+must call `owned_view` with its owning place instead.\n\nPass the storage owner, not the pointer field, and make sure the owner is a
+local, a static, or a checked reference dereference. Trait-object pointees are
+reserved for a later extension.",
+};
+
 /// Expression types do not match.
 pub const E3001: ErrorCode = ErrorCode {
     code: "E3001",
@@ -4242,6 +4259,18 @@ Read the static in a runtime function, or pass its value into the constant as
 an explicit argument.",
 };
 
+/// A constant creates an owned view.
+pub const E4035: ErrorCode = ErrorCode {
+    code: "E4035",
+    title: "an owned view cannot appear in a constant",
+    explanation: "\
+`owned_view(owner, source)` returns a reference whose loan keeps the owner
+place borrowed. Constants have no runtime owner storage and cannot carry a loan
+that a later use would have to respect, so the primitive is not available while
+a constant is evaluated.\n\nCreate the view in a runtime function, or store the raw pointer in the constant
+and call `owned_view` where the owning container is available.",
+};
+
 /// A constant reads through a pointer that names no constant allocation.
 pub const E4032: ErrorCode = ErrorCode {
     code: "E4032",
@@ -4640,20 +4669,20 @@ pub static ALL: &[ErrorCode] = &[
     E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071,
     E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085,
     E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097, E3098,
-    E3099, E3100, E3101, E3102, E3103, E3104, E3105, E4001, E4002, E4003, E4004, E4005, E4006,
-    E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018, E4019,
-    E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032, E4033,
-    E4034, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010, E5011, E5012,
-    E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002, E7003, E7004,
-    E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007, E8008, E8009,
-    E8010, E8011, E8012, E8013, E8014, E8020, E8021, E8022, E8023, E8024, E8025, E8026, E8027,
-    E8028, E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038, E8039, E8040,
-    E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070, E8080, E8081,
-    E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092, E8093, E8094,
-    E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105, E8106, E8107,
-    E8108, E8109, E8110, E8111, E8112, E8120, E8121, E8122, E8123, E8124, E8125, E8126, E8127,
-    E8128, E8129, E8130, E8131, E8132, E8133, E8134, E8135, E8136, E8137, E8138, E8139, E8140,
-    E8141, E9001, E9002,
+    E3099, E3100, E3101, E3102, E3103, E3104, E3105, E3106, E4001, E4002, E4003, E4004, E4005,
+    E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018,
+    E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032,
+    E4033, E4034, E4035, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
+    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
+    E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
+    E8008, E8009, E8010, E8011, E8012, E8013, E8014, E8020, E8021, E8022, E8023, E8024, E8025,
+    E8026, E8027, E8028, E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038,
+    E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070,
+    E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092,
+    E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105,
+    E8106, E8107, E8108, E8109, E8110, E8111, E8112, E8120, E8121, E8122, E8123, E8124, E8125,
+    E8126, E8127, E8128, E8129, E8130, E8131, E8132, E8133, E8134, E8135, E8136, E8137, E8138,
+    E8139, E8140, E8141, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -4922,7 +4951,7 @@ mod tests {
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
                 "E3084", "E3085", "E3086", "E3087", "E3088", "E3089", "E3090", "E3091", "E3092",
                 "E3093", "E3094", "E3095", "E3096", "E3097", "E3098", "E3099", "E3100", "E3101",
-                "E3102", "E3103", "E3104", "E3105",
+                "E3102", "E3103", "E3104", "E3105", "E3106",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

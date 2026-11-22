@@ -109,6 +109,15 @@ fn an_external_static_is_not_constant() {
 }
 
 #[test]
+fn an_owned_view_is_not_constant() {
+    let fixture = Fixture::compile(
+        "static DATA: [i32; 1] = [7];\n\
+         const VIEW: *i32 = unsafe { owned_view(DATA, &DATA[0] as *raw i32) };",
+    );
+    fixture.expect_code("E4035");
+}
+
+#[test]
 fn with_len_and_as_str_are_not_constant() {
     let fixture = Fixture::compile(
         r#"const P: *raw u8 = c"abc";

@@ -37,7 +37,16 @@ impl Checker<'_> {
         } else {
             PlaceMode::Borrow
         };
+        // A borrow is the one context where a direct raw dereference may be
+        // looking for a checked view. Let the dereference type its pointee, so
+        // the borrow can report the precise `owned_view` diagnostic instead of
+        // the generic "slice value" error.
+        let previous_place_base = self.checking_place_base;
+        if matches!(self.hir.expr(operand).kind, ExprKind::Deref { .. }) {
+            self.checking_place_base = true;
+        }
         let ty = self.infer_expr_mode(operand, None, flow, mode);
+        self.checking_place_base = previous_place_base;
 
         if !is_place {
             if !self.is_error(ty) {
@@ -66,6 +75,24 @@ impl Checker<'_> {
             return self.error_ty();
         }
 
+        if let Some(pointee) = self.bare_fat_raw_borrow_pointee(operand)
+            && matches!(
+                self.hir.ty_ctxt().kind(pointee),
+                TyKind::Slice { .. } | TyKind::Str | TyKind::Dyn { .. }
+            )
+        {
+            self.error(
+                codes::E3106,
+                self.hir.expr(operand).span,
+                "cannot borrow a fat raw pointer as a safe view",
+            )
+            .help(
+                "use `owned_view(owner, pointer)` so the allocation owner stays borrowed, or a \
+                 container method such as `Box::as_ref`",
+            )
+            .emit();
+            return self.error_ty();
+        }
         if self.is_error(ty) {
             return ty;
         }
@@ -158,6 +185,20 @@ impl Checker<'_> {
         }
         let (kind, pointee) = tcx.raw_parts(pointer_ty)?;
         matches!(tcx.kind(pointee), TyKind::Dyn { .. }).then_some((pointer_ty, kind.is_mut()))
+    }
+
+    /// Returns the pointee of a raw pointer dereferenced directly by a borrow.
+    ///
+    /// `&*pointer` and `&mut *pointer` have no owner place, so they can only
+    /// produce a thin reference. A fat raw pointer needs its metadata copied
+    /// and its allocation owner loaned, which is the `owned_view` contract.
+    fn bare_fat_raw_borrow_pointee(&self, operand: HirExprId) -> Option<TyId> {
+        let ExprKind::Deref { operand: pointer } = self.hir.expr(operand).kind else {
+            return None;
+        };
+        let pointer_ty = self.results.expr_ty(pointer)?;
+        let (_, pointee) = self.hir.ty_ctxt().raw_parts(pointer_ty)?;
+        Some(pointee)
     }
 
     /// Returns `true` when `operand` names a place an exclusive borrow may

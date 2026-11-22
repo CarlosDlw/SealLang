@@ -577,6 +577,7 @@ fn moved_places(rvalue: &Rvalue) -> Vec<&Place> {
         }
         Rvalue::MakeTraitObject { source, .. } => add_move(source, &mut places),
         Rvalue::TraitObjectReborrow { source, .. } => add_move(source, &mut places),
+        Rvalue::OwnedView { source, .. } => add_move(source, &mut places),
         Rvalue::DynamicCall { receiver, args, .. } => {
             add_move(receiver, &mut places);
             for arg in args {

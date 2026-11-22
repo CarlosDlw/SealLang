@@ -110,6 +110,25 @@ pub(super) fn collect_rvalue(
                 }
             }
         }
+        Rvalue::OwnedView {
+            owner,
+            source,
+            kind,
+            ..
+        } => {
+            mark_raw_place(owner, direct);
+            if let Some(path) = GlobalPath::from_place(hir, owner) {
+                if kind.is_exclusive() {
+                    direct.write(path);
+                } else {
+                    direct.read(path);
+                }
+            }
+            collect_operand(hir, source, direct);
+            // The pointer may name storage the reference model does not track,
+            // so this body cannot vouch for `noalias` on its parameters.
+            direct.touches_raw = true;
+        }
         Rvalue::SliceRef {
             base,
             start,

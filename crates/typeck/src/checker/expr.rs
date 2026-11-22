@@ -118,6 +118,9 @@ impl Checker<'_> {
             ExprKind::Borrow { operand, kind } => {
                 self.check_borrow(expr, operand, kind, expected, flow)
             }
+            ExprKind::OwnedView { owner, source } => {
+                self.check_owned_view(owner, source, span, flow)
+            }
             ExprKind::Deref { operand } => {
                 let ty = self.check_deref(operand, flow, span);
                 let raw = self

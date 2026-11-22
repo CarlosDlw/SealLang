@@ -236,6 +236,7 @@ fn transfer(
 
     match rvalue {
         Rvalue::Ref { .. }
+        | Rvalue::OwnedView { .. }
         | Rvalue::SliceRef { .. }
         | Rvalue::StrView { .. }
         | Rvalue::TraitObjectReborrow { .. } => {

@@ -377,6 +377,23 @@ pub enum Rvalue {
         /// Whether the borrow is exclusive.
         kind: seal_ty::RefKind,
     },
+    /// Builds a reference whose loan is attached to an owner place.
+    ///
+    /// This is the MIR form of `owned_view(owner, source)`. `source` is a raw
+    /// pointer already loaded as a value; its representation is copied into the
+    /// destination without allocating or copying the pointee. Borrow checking
+    /// registers the new loan on `owner`, so moving or dropping the owner
+    /// conflicts while the view is live.
+    OwnedView {
+        /// The place whose storage the returned reference borrows.
+        owner: Place,
+        /// The raw pointer value whose bits become the reference.
+        source: Operand,
+        /// Whether the view is shared or exclusive.
+        kind: seal_ty::RefKind,
+        /// The resulting `*P` or `*mut P` type.
+        ty: seal_ty::TyId,
+    },
     /// Builds a slice reference from an array or slice place.
     ///
     /// `start` and `end` are `usize` values; an absent bound means the start of

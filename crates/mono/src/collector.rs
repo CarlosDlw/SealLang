@@ -535,6 +535,10 @@ impl Collector<'_> {
                 self.scan_place(place, span);
             }
             Rvalue::Ref { place, .. } => self.scan_place(place, span),
+            Rvalue::OwnedView { owner, source, .. } => {
+                self.scan_place(owner, span);
+                self.scan_operand(source, span);
+            }
             Rvalue::SliceRef {
                 base, start, end, ..
             }

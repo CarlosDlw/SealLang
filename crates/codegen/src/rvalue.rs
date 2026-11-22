@@ -33,6 +33,16 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             } => self.cast(*kind, operand, *from, *to),
             Rvalue::Discriminant(place) => self.discriminant(place),
             Rvalue::Ref { place, .. } => Ok(self.place_ptr(place)?.into()),
+            Rvalue::OwnedView { source, ty, .. } => {
+                let value = self.load_operand(source)?;
+                let expected = self.mapper.basic(*ty)?;
+                if value.get_type() != expected {
+                    return Err(CodegenError::internal(
+                        "an owned view source and target have different LLVM representations",
+                    ));
+                }
+                Ok(value)
+            }
             Rvalue::SliceRef {
                 base,
                 start,

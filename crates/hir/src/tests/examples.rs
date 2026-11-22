@@ -126,6 +126,10 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
         ExprKind::Unary { operand, .. }
         | ExprKind::Borrow { operand, .. }
         | ExprKind::Deref { operand } => collect_expr(hir, *operand, stmts, exprs),
+        ExprKind::OwnedView { owner, source } => {
+            collect_expr(hir, *owner, stmts, exprs);
+            collect_expr(hir, *source, stmts, exprs);
+        }
         ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
             collect_expr(hir, *base, stmts, exprs)
         }

@@ -30,6 +30,7 @@ mod match_advanced;
 mod match_expr;
 mod methods;
 mod operators;
+mod owned_views;
 mod raw_casts;
 mod raw_deref;
 mod raw_methods;

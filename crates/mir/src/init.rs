@@ -181,6 +181,7 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
         }
         Rvalue::MakeTraitObject { source, .. } => move_operand(source, state),
         Rvalue::TraitObjectReborrow { source, .. } => move_operand(source, state),
+        Rvalue::OwnedView { source, .. } => move_operand(source, state),
         Rvalue::DynamicCall { receiver, args, .. } => {
             move_operand(receiver, state);
             for arg in args {

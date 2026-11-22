@@ -132,6 +132,18 @@ pub enum ExprKind {
         /// Whether the borrow is exclusive (`*mut T`).
         kind: seal_ty::RefKind,
     },
+    /// Builds a reference whose loan is attached to an owning place.
+    ///
+    /// This is the lowered form of the unsafe `owned_view(owner, source)`
+    /// built-in. `owner` is kept as an expression so type checking can require
+    /// it to denote storage, while `source` is the raw pointer value whose
+    /// representation becomes the returned reference.
+    OwnedView {
+        /// The place whose loan keeps the viewed storage alive.
+        owner: HirExprId,
+        /// The raw pointer value to reinterpret as a reference.
+        source: HirExprId,
+    },
     /// A read through a reference, written `*reference`.
     Deref {
         /// The reference being read.
