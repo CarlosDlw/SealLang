@@ -44,12 +44,48 @@ public unsafe func alloc_zeroed(layout: Layout) -> Result<*raw mut u8, AllocErro
   }
 }
 
-// Releases a block returned by `alloc` or `alloc_zeroed`.
+// Resizes a block returned by `alloc` or `realloc`.
+//
+// `pointer` and `old_layout` must describe the current live block, and
+// `new_size` must be greater than zero. On success the returned pointer is
+// aligned to `old_layout.align()`, the first `min(old_size, new_size)` bytes are
+// preserved, and any grown tail is uninitialized. On failure the old block is
+// still live, unchanged, and owned by the caller.
+//
+// A zero `new_size` is rejected with `AllocError` without releasing the block;
+// use `dealloc` to release it. A null pointer is outside this contract; use
+// `alloc` for a first allocation.
+//
+// # Safety
+//
+// The caller must pass a pointer returned by `alloc` or `realloc`, the exact
+// layout that created it, and a non-zero `new_size`. The block must not be used
+// through the old pointer after a successful resize.
+public unsafe func realloc(
+  pointer: *raw mut u8,
+  old_layout: Layout,
+  new_size: usize,
+) -> Result<*raw mut u8, AllocError> {
+  if new_size == 0 {
+    return Result::Err(AllocError {});
+  }
+
+  let resized = unsafe {
+    seal_realloc(pointer, old_layout.size(), old_layout.align(), new_size)
+  };
+  if resized.is_null() {
+    Result::Err(AllocError {})
+  } else {
+    Result::Ok(resized)
+  }
+}
+
+// Releases a block returned by `alloc`, `alloc_zeroed`, or `realloc`.
 //
 // A null pointer and a zero-size layout are no-ops, matching the runtime. For
-// every real block, `layout` must be the exact layout that created it. The
-// pointer is invalid after this call, and releasing the same block twice is
-// undefined behavior.
+// every real block, `layout` must be the exact layout that created the current
+// pointer. The pointer is invalid after this call, and releasing the same block
+// twice is undefined behavior.
 //
 // # Safety
 //

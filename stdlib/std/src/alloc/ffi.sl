@@ -7,5 +7,11 @@ module alloc;
 extern "c" {
   func seal_alloc(size: usize, align: usize) -> *raw mut u8;
   func seal_alloc_zeroed(size: usize, align: usize) -> *raw mut u8;
+  func seal_realloc(
+    pointer: *raw mut u8,
+    old_size: usize,
+    align: usize,
+    new_size: usize,
+  ) -> *raw mut u8;
   func seal_dealloc(pointer: *raw mut u8, size: usize, align: usize);
 }
