@@ -16,6 +16,7 @@ mod plan;
 mod profiles;
 mod query;
 mod source;
+mod stdlib;
 mod targets;
 
 use std::path::{Path, PathBuf};

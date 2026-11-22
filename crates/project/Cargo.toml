@@ -12,6 +12,7 @@ workspace = true
 seal-manifest.workspace = true
 seal-plan.workspace = true
 seal-registry.workspace = true
+seal-stdlib.workspace = true
 seal-target.workspace = true
 globset.workspace = true
 hex.workspace = true

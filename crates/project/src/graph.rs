@@ -110,6 +110,7 @@ pub(crate) fn load(root: &Path, options: &ProjectOptions) -> ProjectResult<Proje
 
     resolve_path_dependencies(&canonical_root, &mut specs, &mut warnings)?;
     reject_duplicate_path_names(&specs)?;
+    reject_reserved_stdlib_names(&specs)?;
 
     let requirements = registry_requirements(&specs)?;
     if !requirements.is_empty() {
@@ -525,6 +526,49 @@ fn reject_duplicate_path_names(specs: &BTreeMap<SpecKey, Spec>) -> ProjectResult
                 previous.display(),
                 spec.root.display()
             )));
+        }
+    }
+    Ok(())
+}
+
+/// Rejects the names the standard library injects into every package.
+///
+/// A user package cannot be called `core` or `std`, and no dependency alias
+/// can use those names. Without this check an implicit library package and a
+/// user dependency would compete for the same import path.
+fn reject_reserved_stdlib_names(specs: &BTreeMap<SpecKey, Spec>) -> ProjectResult<()> {
+    for spec in specs.values() {
+        let Some(package) = &spec.loaded.manifest.package else {
+            continue;
+        };
+        if matches!(package.name.as_str(), "core" | "std") {
+            return Err(ProjectError::new(
+                "E8136",
+                format!(
+                    "the package name `{}` is reserved for the standard library; rename the package",
+                    package.name
+                ),
+            ));
+        }
+        for (section, dependencies) in [
+            ("dependencies", &spec.loaded.manifest.dependencies),
+            ("dev-dependencies", &spec.loaded.manifest.dev_dependencies),
+            (
+                "build-dependencies",
+                &spec.loaded.manifest.build_dependencies,
+            ),
+        ] {
+            for alias in dependencies.keys() {
+                if matches!(alias.as_str(), "core" | "std") {
+                    return Err(ProjectError::new(
+                        "E8136",
+                        format!(
+                            "the dependency alias `{alias}` in `{section}` of `{}` is reserved for the standard library; rename the alias",
+                            package.name
+                        ),
+                    ));
+                }
+            }
         }
     }
     Ok(())

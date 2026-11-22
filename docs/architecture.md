@@ -44,9 +44,10 @@ allowed to depend only on crates below it in the list.
 | `seal-query` | Revisioned incremental query database: named inputs, typed query keys, dependency validation by fingerprint, red-green backdating, statistics, cycle detection, and a versioned persistent byte cache. |
 | `seal-session` | Owns options, target, source map, interner, diagnostics, gates, cancellation, profiler, and the session-scoped query database. |
 | `seal-test-support` | Inline `//~` fixture annotations and structured matching. |
-| `seal-plan` | The versioned `CompilePlan` exchanged between the project layer and the driver: target, profile, packages, files, API paths, dependency aliases, cfg values, entry, and output. |
+| `seal-stdlib` | Standard-library location, descriptor and package validation, stable digesting, prelude selection, and installation verification (`E8133`–`E8141`). |
+| `seal-plan` | The versioned `CompilePlan` exchanged between the project layer and the driver: target, profile, packages, standard-library identity and modes, files, API paths, dependency aliases, cfg values, entry, and output. |
 | `seal-manifest` | `seal.toml` parsing and validation: project/package settings, targets, path dependencies, env, profiles, API exposure, unknown-key warnings, and span-bearing diagnostics. |
-| `seal-project` | Member and source discovery, path-dependency graph and cycles, target selection, deterministic lockfile, metadata model, graph queries, affected-path mapping, and one plan per target. |
+| `seal-project` | Member and source discovery, path-dependency graph and cycles, standard-library mode selection, target selection, deterministic lockfile, metadata model, graph queries, affected-path mapping, and one plan per target. |
 | `seal-api` | Versioned public-API snapshots, canonical hashing, and semver compatibility classification shared by the CLI and registry. |
 | `seal-doc` | HTML and JSON documentation rendered from public API snapshots, plus a read-only documentation server. |
 | `seal-cli` | The `seal` binary: templates, build/run/check, graph/affected queries, docs/API, metadata, doctor, tasks, and in-process driver invocation. |
@@ -158,8 +159,8 @@ later phase, and until then every retained declaration is analyzed.
 `seal_hir::lower_package` lowers every file of a package against one
 `PackagePlan`. The plan lists packages in dependency order, the files of each
 package, the modules exposed as API, and dependency aliases. The driver builds
-the plan for `sealc --plan`; a single-file invocation still uses
-`PackagePlan::single`, so the one-file pipeline is unchanged.
+the plan for `sealc --plan` and for a single file, so both pipelines share the
+same package and standard-library injection path.
 
 `ModuleGraph` is built before any body is lowered. Each file names its module
 with at most one `module path::to::module;` declaration as the first item; a
@@ -193,8 +194,9 @@ a target that cannot be aliased is `E2091`, a visibility widening is `E2092`, an
 unreachable target module or internal hop is `E2093`, and a collision with an
 item or submodule is `E2094`.
 
-Each package entry may also name a prelude source: a package index and a module
-path inside that package. After re-exports and deferred exposures settle, the
+Each package entry may also name a prelude source: either a user package index
+or a standard-library package name, plus a module path inside that package.
+After re-exports and deferred exposures settle, the
 graph collects the public item exports of that module into a `PreludeTable`.
 Only items and public re-export aliases enter; a module export is `E2101`, a
 missing module is `E2100`, a same-namespace collision is `E2102`, and a cycle
@@ -205,6 +207,21 @@ so they never produce `unused_import`; an explicit import that shadows one still
 warns when unused. A package without a prelude uses no implicit names, and
 `core`/`std` plans leave the field absent so the prelude cannot prelude itself.
 The source is plan data, not a hardcoded list, and there is no glob expansion.
+
+### Standard library
+
+A package selects `std`, `core`, or `none` in its manifest. The project layer
+records that mode per package and puts the selected library's language, version,
+and digest—never a path—in `CompilePlan` version 2. The driver locates the local
+installation (`SEAL_STDLIB`, then the sysroot, then the development tree),
+validates it, and injects the library packages before the user packages. User
+package indexes and aliases are preserved; the HIR sees the standard library as
+ordinary packages with reserved `core`/`std` aliases. The digest participates in
+the frontend action key and every library source is an explicit build input, so
+an edited standard library invalidates cached work while a touched timestamp
+does not. Diagnostics use `<stdlib>/...` identities and never expose the
+installation path. Modes without a library (`stdlib = "none"` and no prelude)
+require no installation. See [`project/stdlib.md`](project/stdlib.md).
 
 Inside a body, a multi-segment path resolves its prefix through the module graph
 and its last segment through the value, type, or trait namespace, after the

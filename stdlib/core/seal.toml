@@ -1,0 +1,9 @@
+[package]
+name = "core"
+version = "0.1.0"
+description = "The dependency-free Seal core library"
+stdlib = "none"
+implicit-prelude = false
+
+[package.api]
+expose = ["root", "prelude"]

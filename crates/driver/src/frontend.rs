@@ -152,45 +152,6 @@ pub(crate) fn parse(
     }
 }
 
-/// Lowers a single-file program through the session query database.
-pub(crate) fn lower_single(
-    session: &Session,
-    file_id: FileId,
-    file: &SourceFile,
-    ast: &Ast,
-) -> Option<Lowered> {
-    let (source, input) = match input_dependency(session, file_id, file) {
-        Ok(value) => value,
-        Err(error) => {
-            report(session, &error, "hir");
-            return None;
-        }
-    };
-    let ast_query = match session.queries().query_dependency(&ast_key(&source)) {
-        Ok(dependency) => dependency,
-        Err(error) => {
-            report(session, &error, "hir");
-            return None;
-        }
-    };
-    // The key names the logical unit, not the source generation. A changed file
-    // gets a new `FileId`, but keeping the key stable lets a body-only edit
-    // recompute the HIR value and backdate it, so declarations and unchanged
-    // bodies remain cached.
-    let name = format!("hir:{}:{}", session.target().triple(), file.name());
-    query_hir(session, &name, [input, ast_query], || {
-        query_cache::with_diagnostics(session, |dcx| {
-            Hir::lower_file_with_c_abi(
-                ast,
-                file_id,
-                dcx,
-                session.interner(),
-                session.target().c_abi(),
-            )
-        })
-    })
-}
-
 /// Lowers a complete package through the session query database.
 pub(crate) fn lower_package(
     session: &Session,
@@ -276,7 +237,16 @@ pub(crate) fn declaration_source_fingerprint(session: &Session, hir: &Hir) -> Fi
     // spans stay valid. Only files this HIR actually references are part of its
     // fingerprint; hashing every file in the map would make each edit change
     // the declaration fingerprint through the stale generation alone.
-    let files = hir.source_files();
+    let mut files = hir.source_files();
+    // File identifiers depend on load order, and the standard library is loaded
+    // before the user sources on some paths. Sorting by the stable display name
+    // keeps the declaration fingerprint identical across equivalent runs.
+    files.sort_by_key(|file_id| {
+        session
+            .source_map()
+            .display_name(*file_id)
+            .unwrap_or_default()
+    });
     let mut hasher = StableHasher::new();
     hasher.write_usize(files.len());
     for file_id in files {
@@ -324,7 +294,9 @@ mod tests {
     use seal_session::{Options, Session};
     use seal_span::FileName;
 
-    use super::{lex, lower_single, parse};
+    use seal_hir::PackagePlan;
+
+    use super::{ast_dependency, lex, lower_package, parse};
 
     #[test]
     fn repeated_frontend_requests_hit_the_queries() {
@@ -347,8 +319,20 @@ mod tests {
         let second_ast = parse(&session, file_id, &file, &second_tokens).expect("second parse");
         assert!(Arc::ptr_eq(&first_ast, &second_ast));
 
-        let first_hir = lower_single(&session, file_id, &file, &first_ast).expect("first hir");
-        let second_hir = lower_single(&session, file_id, &file, &second_ast).expect("second hir");
+        let plan = PackagePlan::single(session.interner().intern("main"), file_id);
+        let dependency =
+            ast_dependency(&session, file_id, &file).expect("the parse dependency exists");
+        let loaded = |ast: Arc<seal_ast::Ast>| vec![(file_id, Arc::unwrap_or_clone(ast))];
+        let first_hir = lower_package(
+            &session,
+            "memo",
+            &plan,
+            &loaded(first_ast),
+            [dependency.clone()],
+        )
+        .expect("first hir");
+        let second_hir = lower_package(&session, "memo", &plan, &loaded(second_ast), [dependency])
+            .expect("second hir");
         assert!(Arc::ptr_eq(&first_hir.hir, &second_hir.hir));
 
         let stats = session.queries().stats();

@@ -35,6 +35,7 @@ seal-def.workspace = true
 seal-fs.workspace = true
 seal-hash.workspace = true
 seal-plan.workspace = true
+seal-stdlib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 seal-session.workspace = true

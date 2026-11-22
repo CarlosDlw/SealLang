@@ -27,6 +27,7 @@ seal-project.workspace = true
 seal-remote.workspace = true
 seal-registry.workspace = true
 seal-sandbox.workspace = true
+seal-stdlib.workspace = true
 seal-target.workspace = true
 seal-test.workspace = true
 seal-toolchain.workspace = true

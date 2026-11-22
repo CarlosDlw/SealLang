@@ -35,6 +35,22 @@ pub(crate) struct CompileArgs {
     #[arg(long = "expose", value_name = "PATH", help_heading = "Compilation")]
     pub(crate) expose: Vec<String>,
 
+    /// Inject only `core` instead of the hosted standard library.
+    ///
+    /// Ignored with `--plan-file`, which carries the mode of every package.
+    #[arg(
+        long = "core-only",
+        conflicts_with = "no_stdlib",
+        help_heading = "Compilation"
+    )]
+    pub(crate) core_only: bool,
+
+    /// Do not inject any standard-library package.
+    ///
+    /// Ignored with `--plan-file`, which carries the mode of every package.
+    #[arg(long = "no-stdlib", help_heading = "Compilation")]
+    pub(crate) no_stdlib: bool,
+
     /// Ignore every package prelude named by the compile plan.
     ///
     /// This is the low-level opt-out; `seal` exposes the same switch through

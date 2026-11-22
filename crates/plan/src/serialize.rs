@@ -21,9 +21,26 @@ impl CompilePlan {
     }
 
     /// Parses and validates a plan from JSON text.
+    ///
+    /// Version 1 plans are migrated in place: they gain the version-2 schema
+    /// number, every package keeps `stdlib = "none"`, and the plan names no
+    /// standard library. This preserves the behavior of plans written before
+    /// the standard library existed.
     pub fn from_json(text: &str) -> PlanResult<Self> {
-        let plan: Self = serde_json::from_str(text).map_err(|error| {
+        let mut value: serde_json::Value = serde_json::from_str(text).map_err(|error| {
             PlanError::schema(format!("the compile plan is not valid JSON: {error}"))
+        })?;
+        let version = value
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| PlanError::schema("the compile plan has no integer `version` field"))?;
+        if version == 1 {
+            value["version"] = serde_json::Value::from(crate::FORMAT_VERSION);
+        }
+        let plan: Self = serde_json::from_value(value).map_err(|error| {
+            PlanError::schema(format!(
+                "the compile plan does not match the schema: {error}"
+            ))
         })?;
         plan.validate()?;
         Ok(plan)
@@ -100,8 +117,10 @@ mod tests {
                 dependencies: Vec::new(),
                 cfg: CfgOptions::default(),
                 prelude: None,
+                stdlib: crate::PlanStdlibMode::None,
             }],
             primary: 0,
+            stdlib: None,
             entry: Some("root::main".to_owned()),
             metadata: PlanMetadata::default(),
             output: None,
@@ -113,7 +132,8 @@ mod tests {
     fn a_plan_round_trips_through_json() {
         let mut plan = plan();
         plan.packages[0].prelude = Some(PlanPrelude {
-            package: 0,
+            package: Some(0),
+            stdlib: None,
             module: "root".to_owned(),
         });
         let text = plan.to_json().expect("the plan serializes");
@@ -143,6 +163,55 @@ mod tests {
             "the temporary file is renamed"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_version_one_plan_migrates_to_no_stdlib() {
+        let text = "{\"version\":1,\"target\":\"x86_64-unknown-linux-gnu\",\"profile\":{},\"mode\":\"check\",\"packages\":[{\"name\":\"demo\",\"version\":\"0.1.0\",\"instance\":0,\"root\":\"/demo\",\"files\":[{\"path\":\"/demo/src/main.sl\",\"primary\":true}]}],\"primary\":0}";
+        let plan = CompilePlan::from_json(text).expect("the legacy plan loads");
+        assert_eq!(plan.version, FORMAT_VERSION);
+        assert!(plan.stdlib.is_none());
+        assert_eq!(plan.packages[0].stdlib, crate::PlanStdlibMode::None);
+        assert!(plan.packages[0].prelude.is_none());
+    }
+
+    #[test]
+    fn a_version_two_plan_round_trips_the_standard_library() {
+        let mut plan = plan();
+        plan.stdlib = Some(crate::PlanStdlib {
+            language: "0.1".to_owned(),
+            version: "1.2.3".to_owned(),
+            digest: "a".repeat(64),
+        });
+        plan.packages[0].stdlib = crate::PlanStdlibMode::Std;
+        plan.packages[0].prelude = Some(PlanPrelude {
+            package: None,
+            stdlib: Some("std".to_owned()),
+            module: "prelude".to_owned(),
+        });
+        let text = plan.to_json().expect("the plan serializes");
+        assert_eq!(
+            CompilePlan::from_json(&text).expect("the plan parses"),
+            plan
+        );
+    }
+
+    #[test]
+    fn a_stdlib_mode_without_stdlib_metadata_is_e8141() {
+        let mut plan = plan();
+        plan.packages[0].stdlib = crate::PlanStdlibMode::Std;
+        assert_eq!(plan.validate().unwrap_err().code(), "E8141");
+    }
+
+    #[test]
+    fn an_invalid_stdlib_digest_is_e8141() {
+        let mut plan = plan();
+        plan.stdlib = Some(crate::PlanStdlib {
+            language: "0.1".to_owned(),
+            version: "1.2.3".to_owned(),
+            digest: "not-a-digest".to_owned(),
+        });
+        assert_eq!(plan.validate().unwrap_err().code(), "E8141");
     }
 
     #[test]

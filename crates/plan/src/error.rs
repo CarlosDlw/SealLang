@@ -31,6 +31,20 @@ impl PlanError {
         Self::schema(message)
     }
 
+    /// The plan names a standard library the local installation cannot provide
+    /// (`E8141`).
+    pub fn stdlib_mismatch(message: impl Into<String>) -> Self {
+        Self {
+            code: "E8141",
+            message: message.into(),
+        }
+    }
+
+    /// The plan's standard-library fields contradict each other (`E8141`).
+    pub fn stdlib_inconsistent(message: impl Into<String>) -> Self {
+        Self::stdlib_mismatch(message)
+    }
+
     /// Creates a schema-version failure (`E8001`).
     pub fn version(found: u32) -> Self {
         Self::schema(format!(

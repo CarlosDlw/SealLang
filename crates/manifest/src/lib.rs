@@ -28,7 +28,7 @@ pub use env::EnvValue;
 pub use error::{Location, ManifestError, ManifestResult, ManifestWarning};
 pub use feature::FeatureManifest;
 pub use native::NativeManifest;
-pub use package::{ApiManifest, PackageManifest};
+pub use package::{ApiManifest, PackageManifest, StdlibMode};
 pub use profile::ProfileManifest;
 pub use project::ProjectManifest;
 pub use registry::{RegistryManifest, RegistryPolicyManifest};

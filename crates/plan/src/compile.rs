@@ -3,12 +3,16 @@
 use std::path::PathBuf;
 
 use seal_target::{CAbiDefinition, TargetDefinition, TargetSpec, TargetTriple};
+use seal_version::LanguageVersion;
 use serde::{Deserialize, Serialize};
 
 use crate::{PlanError, PlanResult};
 
 /// The plan schema version understood by this compiler.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 adds the standard library metadata and the per-package mode.
+/// Version 1 plans are read as `stdlib = "none"` with no prelude.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// What the compiler should produce.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,13 +45,51 @@ pub struct PlanDependency {
 }
 
 /// The package prelude selected for one package.
+///
+/// A prelude names exactly one source: either a user package in the plan or a
+/// package of the standard library. The standard-library form keeps the plan
+/// independent of the installed layout; the driver resolves the name after it
+/// loads a standard library with the digest named by the plan.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlanPrelude {
-    /// Index into [`CompilePlan::packages`].
-    pub package: usize,
+    /// Index into [`CompilePlan::packages`], for a prelude from a user package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<usize>,
+    /// Standard-library package name, for a prelude from the standard library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdlib: Option<String>,
     /// Module path inside that package, such as `prelude` or `root`.
     pub module: String,
+}
+
+/// The standard-library mode selected for one package.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlanStdlibMode {
+    /// The hosted standard library, which includes `core`.
+    Std,
+    /// The dependency-free core library.
+    Core,
+    /// No standard library is injected.
+    #[default]
+    None,
+}
+
+/// The standard-library identity a plan depends on.
+///
+/// The plan deliberately carries no absolute standard-library paths and no
+/// sources. The same plan therefore compiles against any installation whose
+/// descriptor, language, version, and digest match.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanStdlib {
+    /// Language version the standard library targets, such as `0.1`.
+    pub language: String,
+    /// Standard-library release version.
+    pub version: String,
+    /// Stable content digest of the descriptor, manifests, and sources.
+    pub digest: String,
 }
 
 /// Configuration values selected for this compilation.
@@ -101,6 +143,9 @@ pub struct PlanPackage {
     /// The module whose public items are implicitly in scope in this package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prelude: Option<PlanPrelude>,
+    /// The standard-library mode injected into this package.
+    #[serde(default)]
+    pub stdlib: PlanStdlibMode,
 }
 
 /// The profile values that affect the artifact.
@@ -278,6 +323,9 @@ pub struct CompilePlan {
     pub packages: Vec<PlanPackage>,
     /// Index of the package being compiled.
     pub primary: usize,
+    /// The standard-library identity every non-`none` package depends on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdlib: Option<PlanStdlib>,
     /// Entry function path, such as `root::main` or `app::main`.
     #[serde(default)]
     pub entry: Option<String>,
@@ -354,6 +402,33 @@ impl CompilePlan {
                 "a build plan must name the artifact path in `output`",
             ));
         }
+        if let Some(stdlib) = &self.stdlib {
+            let language = LanguageVersion::parse(&stdlib.language).map_err(|error| {
+                PlanError::stdlib_mismatch(format!(
+                    "the plan names the standard-library language `{}`, which is invalid: {error}",
+                    stdlib.language
+                ))
+            })?;
+            if language != LanguageVersion::CURRENT {
+                return Err(PlanError::stdlib_mismatch(format!(
+                    "the plan targets standard-library language `{language}`, but this compiler implements `{}`",
+                    LanguageVersion::CURRENT
+                )));
+            }
+            semver::Version::parse(&stdlib.version).map_err(|error| {
+                PlanError::stdlib_mismatch(format!(
+                    "the plan names the standard-library version `{}`, which is not semantic: {error}",
+                    stdlib.version
+                ))
+            })?;
+            if stdlib.digest.len() != 64
+                || !stdlib.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(PlanError::stdlib_mismatch(
+                    "the plan standard-library digest is not 64 hexadecimal digits",
+                ));
+            }
+        }
 
         let mut names = std::collections::BTreeSet::new();
         let mut files: std::collections::BTreeMap<PathBuf, (String, u32)> =
@@ -376,18 +451,53 @@ impl CompilePlan {
                     package.name
                 )));
             }
+            if package.stdlib != PlanStdlibMode::None && self.stdlib.is_none() {
+                return Err(PlanError::stdlib_inconsistent(format!(
+                    "the package `{}` selects the `{}` standard library, but the plan names no standard-library identity",
+                    package.name,
+                    match package.stdlib {
+                        PlanStdlibMode::Std => "std",
+                        PlanStdlibMode::Core => "core",
+                        PlanStdlibMode::None => "none",
+                    }
+                )));
+            }
             if let Some(prelude) = &package.prelude {
-                if prelude.package >= self.packages.len() {
-                    return Err(PlanError::invalid(format!(
-                        "the prelude of package `{}` names package {} outside the plan",
-                        package.name, prelude.package
-                    )));
-                }
                 if prelude.module.is_empty() || prelude.module.split("::").any(str::is_empty) {
-                    return Err(PlanError::invalid(format!(
+                    return Err(PlanError::stdlib_inconsistent(format!(
                         "the prelude of package `{}` names an empty module path",
                         package.name
                     )));
+                }
+                match (&prelude.package, &prelude.stdlib) {
+                    (Some(index), None) => {
+                        if *index >= self.packages.len() {
+                            return Err(PlanError::stdlib_inconsistent(format!(
+                                "the prelude of package `{}` names package {} outside the plan",
+                                package.name, index
+                            )));
+                        }
+                    }
+                    (None, Some(name)) => {
+                        if name.trim().is_empty() {
+                            return Err(PlanError::stdlib_inconsistent(format!(
+                                "the prelude of package `{}` names an empty standard-library package",
+                                package.name
+                            )));
+                        }
+                        if self.stdlib.is_none() || package.stdlib == PlanStdlibMode::None {
+                            return Err(PlanError::stdlib_inconsistent(format!(
+                                "the prelude of package `{}` comes from the standard library, but the package does not select one",
+                                package.name
+                            )));
+                        }
+                    }
+                    _ => {
+                        return Err(PlanError::stdlib_inconsistent(format!(
+                            "the prelude of package `{}` must name exactly one package or standard-library source",
+                            package.name
+                        )));
+                    }
                 }
             }
             if package.files.iter().filter(|file| file.primary).count() > 1 {
@@ -471,8 +581,10 @@ mod tests {
                 dependencies: Vec::new(),
                 cfg: CfgOptions::default(),
                 prelude: None,
+                stdlib: PlanStdlibMode::None,
             }],
             primary: 0,
+            stdlib: None,
             entry: Some("root::main".to_owned()),
             metadata: PlanMetadata::default(),
             output: None,
@@ -501,25 +613,28 @@ mod tests {
     fn a_prelude_must_name_a_package_in_the_plan() {
         let mut plan = plan();
         plan.packages[0].prelude = Some(PlanPrelude {
-            package: 1,
+            package: Some(1),
+            stdlib: None,
             module: "root".to_owned(),
         });
-        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+        assert_eq!(plan.validate().unwrap_err().code(), "E8141");
     }
 
     #[test]
     fn a_prelude_module_path_cannot_be_empty() {
         let mut plan = plan();
         plan.packages[0].prelude = Some(PlanPrelude {
-            package: 0,
+            package: Some(0),
+            stdlib: None,
             module: String::new(),
         });
-        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+        assert_eq!(plan.validate().unwrap_err().code(), "E8141");
         plan.packages[0].prelude = Some(PlanPrelude {
-            package: 0,
+            package: Some(0),
+            stdlib: None,
             module: "a::".to_owned(),
         });
-        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+        assert_eq!(plan.validate().unwrap_err().code(), "E8141");
     }
 
     #[test]

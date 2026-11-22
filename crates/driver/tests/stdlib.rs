@@ -1,0 +1,165 @@
+//! Standard-library injection tests for the low-level driver.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+struct Fixture {
+    root: PathBuf,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn temporary(name: &str) -> Fixture {
+    let root = std::env::temp_dir().join(format!(
+        "seal-driver-stdlib-{}-{}-{name}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("the fixture root is writable");
+    Fixture { root }
+}
+
+fn write(root: &Path, relative: &str, contents: &str) {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("the fixture directory is writable");
+    }
+    std::fs::write(path, contents).expect("the fixture file is writable");
+}
+
+fn run(arguments: &[&str], environment: Option<(&str, &Path)>) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sealc"));
+    command.args(arguments);
+    if let Some((name, value)) = environment {
+        command.env(name, value);
+    }
+    command.output().expect("sealc runs")
+}
+
+fn stdlib_fixture(root: &Path, core_source: &str) {
+    write(
+        root,
+        "stdlib.toml",
+        "format = 1\nlanguage = \"0.1\"\nversion = \"0.1.0\"\npackages = [\"core\", \"std\"]\ndigest = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\n[prelude]\nstd = \"std::prelude\"\ncore = \"core::prelude\"\n",
+    );
+    write(
+        root,
+        "core/seal.toml",
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nstdlib = \"none\"\nimplicit-prelude = false\n\n[package.api]\nexpose = [\"root\", \"prelude\"]\n",
+    );
+    write(root, "core/src/lib.sl", core_source);
+    write(root, "core/src/prelude.sl", "module prelude;\n");
+    write(
+        root,
+        "std/seal.toml",
+        "[package]\nname = \"std\"\nversion = \"0.1.0\"\nstdlib = \"none\"\nimplicit-prelude = false\n\n[dependencies]\ncore = { path = \"../core\" }\n\n[package.api]\nexpose = [\"root\", \"prelude\"]\n",
+    );
+    write(root, "std/src/lib.sl", "// std\n");
+    write(root, "std/src/prelude.sl", "module prelude;\n");
+}
+
+/// Reads the computed digest from the loader's mismatch diagnostic, then writes
+/// it into the descriptor.
+fn seal_digest(root: &Path) {
+    let error = seal_stdlib::Stdlib::load_from(root).expect_err("the placeholder digest differs");
+    let digest = error
+        .message()
+        .split_whitespace()
+        .find(|word| word.len() == 64 && word.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .expect("the diagnostic names the computed digest")
+        .to_owned();
+    write(
+        root,
+        "stdlib.toml",
+        &format!(
+            "format = 1\nlanguage = \"0.1\"\nversion = \"0.1.0\"\npackages = [\"core\", \"std\"]\ndigest = \"{digest}\"\n\n[prelude]\nstd = \"std::prelude\"\ncore = \"core::prelude\"\n"
+        ),
+    );
+}
+
+#[test]
+fn no_stdlib_compiles_without_an_installation() {
+    let fixture = temporary("no-stdlib");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(&source, "func main() -> i32 { 0 }\n").expect("source");
+    let output = run(
+        &["check", "--no-stdlib", &source.display().to_string()],
+        Some(("SEAL_STDLIB", &fixture.root.join("missing"))),
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn core_only_uses_the_core_prelude() {
+    let fixture = temporary("core-only");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(&source, "func main() -> i32 { 0 }\n").expect("source");
+    let output = run(
+        &["check", "--core-only", &source.display().to_string()],
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_plan_with_another_digest_is_e8141() {
+    let fixture = temporary("mismatch");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(&source, "func main() -> i32 { 0 }\n").expect("source");
+    let plan = fixture.root.join("plan.json");
+    std::fs::write(
+        &plan,
+        format!(
+            "{{\"version\":2,\"target\":\"{}\",\"profile\":{{}},\"mode\":\"check\",\"packages\":[{{\"name\":\"app\",\"version\":\"0.1.0\",\"instance\":0,\"root\":\"{}\",\"files\":[{{\"path\":\"{}\",\"primary\":true}}],\"stdlib\":\"std\"}}],\"primary\":0,\"stdlib\":{{\"language\":\"0.1\",\"version\":\"0.1.0\",\"digest\":\"{}\"}}}}",
+            seal_target::host_triple(),
+            fixture.root.display(),
+            source.display(),
+            "0".repeat(64)
+        ),
+    )
+    .expect("plan");
+    let output = run(&["check", "--plan-file", &plan.display().to_string()], None);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E8141"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_standard_library_diagnostic_uses_the_stdlib_placeholder() {
+    let fixture = temporary("diagnostic");
+    let stdlib = fixture.root.join("stdlib");
+    stdlib_fixture(&stdlib, "func broken( {\n");
+    seal_digest(&stdlib);
+    let source = fixture.root.join("main.sl");
+    std::fs::write(&source, "func main() -> i32 { 0 }\n").expect("source");
+    let output = run(
+        &["check", &source.display().to_string()],
+        Some(("SEAL_STDLIB", &stdlib)),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("<stdlib>/core/src/lib.sl"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains(&stdlib.display().to_string()),
+        "the absolute stdlib root leaked: {stderr}"
+    );
+}

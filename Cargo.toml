@@ -43,6 +43,7 @@ seal-test = { path = "crates/test" }
 seal-test-support = { path = "crates/test-support" }
 seal-plan = { path = "crates/plan" }
 seal-manifest = { path = "crates/manifest" }
+seal-stdlib = { path = "crates/stdlib" }
 seal-project = { path = "crates/project" }
 seal-registry = { path = "crates/registry" }
 seal-registry-server = { path = "crates/registry-server" }

@@ -141,6 +141,7 @@ pub(crate) struct FrontendAction {
     pub(crate) project_root: PathBuf,
     content_digest: Digest,
     inputs: Vec<ActionInput>,
+    stdlib_root: Option<PathBuf>,
     temp_root: PathBuf,
 }
 
@@ -171,6 +172,7 @@ impl FrontendAction {
                 inputs.push(ActionInput::from_file(name, &file.path)?);
             }
         }
+        let stdlib_root = standard_library_inputs(&plan, &mut inputs)?;
         let mut identity = plan_digest.to_hex();
         for input in inputs.iter().skip(1) {
             identity.push(':');
@@ -186,6 +188,7 @@ impl FrontendAction {
             project_root: project_root.to_path_buf(),
             content_digest,
             inputs,
+            stdlib_root,
             temp_root: temp_root.to_path_buf(),
         })
     }
@@ -252,7 +255,7 @@ impl FrontendAction {
             BuildError::action(format!("cannot write the compile plan: {error}"))
         })?;
 
-        let arguments = vec![
+        let mut arguments = vec![
             "sealc".to_owned(),
             "build".to_owned(),
             "--plan-file".to_owned(),
@@ -263,6 +266,10 @@ impl FrontendAction {
             "--link-metadata".to_owned(),
             metadata.display().to_string(),
         ];
+        if let Some(root) = &self.stdlib_root {
+            arguments.push("--remap-path-prefix".to_owned());
+            arguments.push(format!("{}=<stdlib>", root.display()));
+        }
         // The driver still shares process-wide LLVM state. Serializing the
         // frontend keeps concurrent links, generators, and probes meaningful
         // while codegen stays single-threaded until the split pipeline lands.
@@ -1150,6 +1157,59 @@ fn materialize_executable(
         })?;
     }
     Ok(())
+}
+
+/// Adds the standard-library sources to a frontend action.
+///
+/// The plan names the standard library by digest, so this function is also the
+/// boundary that proves the installed tree still matches the plan. Source
+/// contents are explicit inputs: a changed file invalidates the action even if
+/// the plan bytes are unchanged.
+fn standard_library_inputs(
+    plan: &CompilePlan,
+    inputs: &mut Vec<ActionInput>,
+) -> BuildResult<Option<PathBuf>> {
+    let Some(info) = &plan.stdlib else {
+        return Ok(None);
+    };
+    if plan
+        .packages
+        .iter()
+        .all(|package| package.stdlib == seal_plan::PlanStdlibMode::None)
+    {
+        return Ok(None);
+    }
+    let stdlib =
+        seal_stdlib::Stdlib::load().map_err(|error| BuildError::action(error.to_string()))?;
+    if stdlib.language() != info.language
+        || stdlib.version() != info.version
+        || stdlib.digest() != info.digest
+    {
+        return Err(BuildError::action(format!(
+            "the compile plan requires standard library {} {}, digest {}, but the installed standard library is {} {}, digest {}",
+            info.language,
+            info.version,
+            info.digest,
+            stdlib.language(),
+            stdlib.version(),
+            stdlib.digest()
+        )));
+    }
+    for package in stdlib.packages() {
+        for file in &package.files {
+            let relative = file.strip_prefix(stdlib.root()).map_err(|_| {
+                BuildError::action(format!(
+                    "the standard-library source `{}` leaves the standard-library root",
+                    file.display()
+                ))
+            })?;
+            inputs.push(ActionInput::from_file(
+                format!("<stdlib>/{}", slash_path(relative)),
+                file,
+            )?);
+        }
+    }
+    Ok(Some(stdlib.root().to_path_buf()))
 }
 
 pub(crate) fn relative_name(path: &Path, root: &Path) -> String {

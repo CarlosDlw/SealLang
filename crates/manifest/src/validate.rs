@@ -798,6 +798,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
                 "features",
                 "metadata",
                 "implicit-prelude",
+                "stdlib",
             ],
             "package",
             &mut warnings,
@@ -1034,6 +1035,16 @@ mod tests {
         let manifest =
             load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nimplicit-prelude = false\n");
         assert!(!manifest.manifest.package.expect("package").implicit_prelude);
+    }
+
+    #[test]
+    fn the_standard_library_mode_is_a_known_package_key() {
+        let manifest = load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nstdlib = \"core\"\n");
+        assert!(manifest.warnings.is_empty());
+        assert_eq!(
+            manifest.manifest.package.expect("package").stdlib,
+            Some(crate::StdlibMode::Core)
+        );
     }
 
     #[test]

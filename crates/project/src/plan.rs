@@ -166,6 +166,15 @@ pub(crate) fn compile_plan(
         }
     }
     let graph = features::resolve(project, package_index, target, options, &cfg)?;
+    let freestanding = spec.is_freestanding();
+    let mut modes = Vec::with_capacity(graph.instances.len() + 1);
+    for instance in &graph.instances {
+        modes.push(crate::stdlib::mode(
+            project.package(instance.package),
+            freestanding,
+        )?);
+    }
+    let loaded_stdlib = crate::stdlib::load(&modes)?;
 
     // An integration test is its own package: it depends on the package
     // library instead of being merged into it, so private items stay
@@ -223,6 +232,23 @@ pub(crate) fn compile_plan(
             })
             .collect();
         let features: Vec<String> = instance.features.iter().cloned().collect();
+        let prelude = match &loaded_stdlib {
+            Some(loaded) => {
+                let manifest = package.manifest.package.as_ref().ok_or_else(|| {
+                    ProjectError::manifest(format!(
+                        "the package `{}` has no `[package]` table",
+                        package.name
+                    ))
+                })?;
+                crate::stdlib::prelude(
+                    &loaded.library,
+                    manifest,
+                    modes[position],
+                    options.no_prelude,
+                )?
+            }
+            None => None,
+        };
         packages.push(seal_plan::PlanPackage {
             name: package.name.clone(),
             version: package.version.clone(),
@@ -231,7 +257,8 @@ pub(crate) fn compile_plan(
             files,
             exposed,
             dependencies,
-            prelude: None,
+            prelude,
+            stdlib: modes[position],
             cfg: CfgOptions {
                 features,
                 target_os: spec.triple().os().as_str().to_owned(),
@@ -288,6 +315,24 @@ pub(crate) fn compile_plan(
                 })
                 .collect();
             let alias = package_alias(&package.name);
+            let test_stdlib = modes[primary];
+            let test_prelude = match &loaded_stdlib {
+                Some(loaded) => {
+                    let manifest = package.manifest.package.as_ref().ok_or_else(|| {
+                        ProjectError::manifest(format!(
+                            "the package `{}` has no `[package]` table",
+                            package.name
+                        ))
+                    })?;
+                    crate::stdlib::prelude(
+                        &loaded.library,
+                        manifest,
+                        test_stdlib,
+                        options.no_prelude,
+                    )?
+                }
+                None => None,
+            };
             let index = packages.len();
             packages.push(seal_plan::PlanPackage {
                 name: package.name.clone(),
@@ -307,7 +352,8 @@ pub(crate) fn compile_plan(
                     package: primary,
                 }],
                 cfg: test_cfg,
-                prelude: None,
+                prelude: test_prelude,
+                stdlib: test_stdlib,
             });
             primary = index;
         }
@@ -336,6 +382,7 @@ pub(crate) fn compile_plan(
         mode: options.mode,
         packages,
         primary,
+        stdlib: loaded_stdlib.map(|loaded| loaded.info),
         entry,
         metadata: PlanMetadata {
             project: project.name.clone(),

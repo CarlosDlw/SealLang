@@ -474,8 +474,8 @@ fn doctor_reports_the_extended_checks_and_rejects_unknown_lints() {
     assert_success(&doctor);
     let report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor JSON report");
-    assert_eq!(report["version"], 3);
-    for key in ["sandbox", "registry", "manifest", "disk"] {
+    assert_eq!(report["version"], 4);
+    for key in ["sandbox", "registry", "manifest", "stdlib", "disk"] {
         assert!(report.get(key).is_some(), "missing {key}: {report}");
     }
 }

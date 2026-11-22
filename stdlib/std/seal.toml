@@ -1,0 +1,12 @@
+[package]
+name = "std"
+version = "0.1.0"
+description = "The hosted Seal standard library facade"
+stdlib = "none"
+implicit-prelude = false
+
+[dependencies]
+core = { path = "../core" }
+
+[package.api]
+expose = ["root", "prelude"]

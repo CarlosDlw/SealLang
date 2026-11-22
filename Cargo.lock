@@ -1551,6 +1551,7 @@ dependencies = [
  "seal-query",
  "seal-remote",
  "seal-sandbox",
+ "seal-stdlib",
  "seal-target",
  "serde",
  "serde_json",
@@ -1586,6 +1587,7 @@ dependencies = [
  "seal-remote",
  "seal-remote-server",
  "seal-sandbox",
+ "seal-stdlib",
  "seal-target",
  "seal-test",
  "seal-toolchain",
@@ -1710,6 +1712,7 @@ dependencies = [
  "seal-remote-server",
  "seal-session",
  "seal-span",
+ "seal-stdlib",
  "seal-symbol",
  "seal-target",
  "seal-ty",
@@ -1882,6 +1885,8 @@ name = "seal-plan"
 version = "0.1.0"
 dependencies = [
  "seal-target",
+ "seal-version",
+ "semver",
  "serde",
  "serde_json",
 ]
@@ -1899,6 +1904,7 @@ dependencies = [
  "seal-manifest",
  "seal-plan",
  "seal-registry",
+ "seal-stdlib",
  "seal-target",
  "semver",
  "serde",
@@ -2030,6 +2036,21 @@ dependencies = [
  "seal-hash",
  "seal-index",
  "seal-unicode",
+]
+
+[[package]]
+name = "seal-stdlib"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "globset",
+ "seal-fs",
+ "seal-manifest",
+ "seal-version",
+ "semver",
+ "serde",
+ "toml",
+ "walkdir",
 ]
 
 [[package]]

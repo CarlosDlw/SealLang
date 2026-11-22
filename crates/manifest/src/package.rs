@@ -4,6 +4,33 @@ use serde::Deserialize;
 
 use crate::feature::FeatureManifest;
 
+/// The standard-library mode selected by a package.
+///
+/// The manifest spells the values `"std"`, `"core"`, and `"none"`. When the
+/// field is absent the project layer derives the mode from the target: hosted
+/// targets receive `std`, and targets with `runtime = "none"` receive `core`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StdlibMode {
+    /// The hosted standard library, including `core`.
+    Std,
+    /// The dependency-free core library.
+    Core,
+    /// No standard library.
+    None,
+}
+
+impl StdlibMode {
+    /// Returns the manifest spelling of the mode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Std => "std",
+            Self::Core => "core",
+            Self::None => "none",
+        }
+    }
+}
+
 /// The `[package]` table.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -39,6 +66,9 @@ pub struct PackageManifest {
     /// Free-form tool metadata.
     #[serde(default)]
     pub metadata: Option<toml::Value>,
+    /// The standard-library mode, or `None` to derive it from the target.
+    #[serde(default)]
+    pub stdlib: Option<StdlibMode>,
     /// Whether the standard library prelude is implicitly in scope.
     #[serde(default = "implicit_prelude_default")]
     pub implicit_prelude: bool,
@@ -58,6 +88,7 @@ impl Default for PackageManifest {
             api: None,
             features: FeatureManifest::default(),
             metadata: None,
+            stdlib: None,
             implicit_prelude: true,
         }
     }

@@ -20,6 +20,7 @@ struct Report {
     sandbox: Check,
     registry: Check,
     manifest: Check,
+    stdlib: Check,
     cache: Check,
     lockfile: Check,
     disk: Check,
@@ -55,6 +56,7 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
     let sandbox = check_sandbox();
     let registry = check_registry(&project);
     let manifest = check_manifest(&project);
+    let stdlib = check_stdlib();
     let cache = check_cache(&project, args.fix);
     let lockfile = check_lockfile(&project, &target, args.fix);
     let disk = check_disk(&project, args.fix);
@@ -73,13 +75,14 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
         warnings.push("sandbox isolation is portable; generators can read host files".to_owned());
     }
     let report = Report {
-        version: 3,
+        version: 4,
         toolchain,
         target: target_check,
         linker,
         sandbox,
         registry,
         manifest,
+        stdlib,
         cache,
         lockfile,
         disk,
@@ -91,6 +94,7 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
         && report.sandbox.ok
         && report.registry.ok
         && report.manifest.ok
+        && report.stdlib.ok
         && report.cache.ok
         && report.lockfile.ok
         && report.disk.ok;
@@ -109,6 +113,7 @@ pub(crate) fn doctor(cli: &Cli, root: &Path, args: &DoctorArgs) -> ExitCode {
             &report.sandbox,
             &report.registry,
             &report.manifest,
+            &report.stdlib,
             &report.cache,
             &report.lockfile,
             &report.disk,
@@ -354,6 +359,36 @@ fn check_manifest(project: &Project) -> Check {
             project.packages.len(),
             project.warnings.len()
         ),
+    }
+}
+
+fn check_stdlib() -> Check {
+    match seal_stdlib::Stdlib::load() {
+        Ok(stdlib) => Check {
+            name: "stdlib".to_owned(),
+            ok: true,
+            detail: format!(
+                "{} {} at `{}` (digest {}, packages {}; hosted default std, freestanding default core)",
+                stdlib.language(),
+                stdlib.version(),
+                stdlib.root().display(),
+                stdlib.digest(),
+                stdlib
+                    .packages()
+                    .iter()
+                    .map(|package| package.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        },
+        Err(error) => Check {
+            name: "stdlib".to_owned(),
+            ok: false,
+            detail: format!(
+                "{}: set `SEAL_STDLIB` or install the standard library",
+                error
+            ),
+        },
     }
 }
 

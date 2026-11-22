@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use seal_manifest::TargetKind;
-use seal_plan::BuildMode;
+use seal_plan::{BuildMode, PlanStdlibMode};
 use seal_project::{PlanOptions, Project};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -39,6 +39,145 @@ fn fixture(files: &[(&str, &str)]) -> Fixture {
 
 fn plan_options() -> PlanOptions {
     PlanOptions::default()
+}
+
+fn single_plan(files: &[(&str, &str)], target: &str) -> seal_plan::CompilePlan {
+    let fixture = fixture(files);
+    let project = Project::load(&fixture.root).expect("project");
+    project
+        .compile_plan(0, target, &plan_options())
+        .expect("plan")
+}
+
+#[test]
+fn a_hosted_package_selects_std_and_its_prelude() {
+    let plan = single_plan(
+        &[
+            (
+                "seal.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+            ),
+            ("src/main.sl", "func main() -> i32 { 0 }\n"),
+        ],
+        "demo",
+    );
+    let info = plan.stdlib.as_ref().expect("the plan names a stdlib");
+    assert_eq!(info.language, "0.1");
+    assert_eq!(plan.packages[0].stdlib, PlanStdlibMode::Std);
+    let prelude = plan.packages[0].prelude.as_ref().expect("std prelude");
+    assert_eq!(prelude.stdlib.as_deref(), Some("std"));
+    assert_eq!(prelude.module, "prelude");
+    assert!(prelude.package.is_none());
+}
+
+#[test]
+fn a_freestanding_target_defaults_to_core() {
+    let plan = single_plan(
+        &[
+            (
+                "seal.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n\
+                 [targets.kernel]\nkind = \"bin\"\nentry = \"root::main\"\n\
+                 runtime = \"none\"\npanic = \"trap\"\n",
+            ),
+            ("src/main.sl", "func main() -> i32 { 0 }\n"),
+        ],
+        "kernel",
+    );
+    assert_eq!(plan.packages[0].stdlib, PlanStdlibMode::Core);
+    let prelude = plan.packages[0].prelude.as_ref().expect("core prelude");
+    assert_eq!(prelude.stdlib.as_deref(), Some("core"));
+}
+
+#[test]
+fn std_on_a_freestanding_target_is_e8138() {
+    let fixture = fixture(&[
+        (
+            "seal.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nstdlib = \"std\"\n\n\
+             [targets.kernel]\nkind = \"bin\"\nentry = \"root::main\"\n\
+             runtime = \"none\"\npanic = \"trap\"\n",
+        ),
+        ("src/main.sl", "func main() -> i32 { 0 }\n"),
+    ]);
+    let project = Project::load(&fixture.root).expect("project");
+    let error = project
+        .compile_plan(0, "kernel", &plan_options())
+        .expect_err("std is rejected freestanding");
+    assert_eq!(error.code(), "E8138");
+}
+
+#[test]
+fn stdlib_none_needs_no_installation_metadata() {
+    let plan = single_plan(
+        &[
+            (
+                "seal.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nstdlib = \"none\"\n",
+            ),
+            ("src/main.sl", "func main() -> i32 { 0 }\n"),
+        ],
+        "demo",
+    );
+    assert_eq!(plan.packages[0].stdlib, PlanStdlibMode::None);
+    assert!(plan.stdlib.is_none());
+    assert!(plan.packages[0].prelude.is_none());
+}
+
+#[test]
+fn implicit_prelude_false_keeps_the_dependency_and_drops_the_names() {
+    let plan = single_plan(
+        &[
+            (
+                "seal.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nimplicit-prelude = false\n",
+            ),
+            ("src/main.sl", "func main() -> i32 { 0 }\n"),
+        ],
+        "demo",
+    );
+    assert_eq!(plan.packages[0].stdlib, PlanStdlibMode::Std);
+    assert!(plan.packages[0].prelude.is_none());
+    assert!(plan.stdlib.is_some());
+}
+
+#[test]
+fn a_package_named_core_is_e8136() {
+    let fixture = fixture(&[
+        (
+            "seal.toml",
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/lib.sl", "func answer() -> i32 { 0 }\n"),
+    ]);
+    let error = Project::load(&fixture.root).expect_err("reserved name");
+    assert_eq!(error.code(), "E8136");
+}
+
+#[test]
+fn a_reserved_dependency_alias_is_e8136() {
+    let fixture = fixture(&[
+        (
+            "seal.toml",
+            "[project]\nname = \"ws\"\nmembers = [\"crates/*\"]\n",
+        ),
+        (
+            "crates/app/seal.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\ncore = { path = \"../dep\" }\n",
+        ),
+        ("crates/app/src/main.sl", "func main() -> i32 { 0 }\n"),
+        (
+            "crates/dep/seal.toml",
+            "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "crates/dep/src/lib.sl",
+            "public func answer() -> i32 { 0 }\n",
+        ),
+    ]);
+    let error = Project::load(&fixture.root).expect_err("reserved alias");
+    assert_eq!(error.code(), "E8136");
 }
 
 #[test]

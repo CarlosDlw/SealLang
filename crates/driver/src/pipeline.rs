@@ -153,6 +153,8 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         plan: false,
         plan_file: None,
         expose: Vec::new(),
+        core_only: false,
+        no_stdlib: false,
         no_prelude: false,
     };
     let request = Request::Build {
@@ -295,7 +297,7 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
         compile_package(&session, request.clone(), arguments);
     } else {
         for input in &arguments.inputs {
-            compile_input(&session, request.clone(), input);
+            compile_input(&session, request.clone(), input, arguments);
         }
     }
 
@@ -342,7 +344,7 @@ const fn plural(count: usize, singular: &'static str, plural: &'static str) -> &
 }
 
 /// Runs the whole pipeline for one input file.
-fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
+fn compile_input(session: &Session, request: Request<'_>, input: &Path, arguments: &CompileArgs) {
     let identity = input.display().to_string();
     let Ok(file_id) = session.load_file_persistent(input, &identity) else {
         return;
@@ -374,9 +376,51 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path) {
     if session.diag().error_count() != errors {
         return;
     }
+    let dependency = match crate::frontend::ast_dependency(session, file_id, &file) {
+        Ok(dependency) => dependency,
+        Err(error) => {
+            session
+                .diag()
+                .bug(format!("the parse dependency is missing: {error}"));
+        }
+    };
+
+    let injection = match inject_single(session, stdlib_mode(arguments), arguments.no_prelude) {
+        Ok(injection) => injection,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return;
+        }
+    };
+    let user = seal_hir::PackagePlanEntry {
+        name: session.interner().intern("main"),
+        instance: PackageInstanceId::from_usize(0),
+        files: vec![seal_hir::PackagePlanFile {
+            file: file_id,
+            primary: true,
+        }],
+        exposed: vec![seal_hir::ModulePath::root()],
+        dependencies: injection.package_dependencies,
+        cfg: seal_hir::CfgEnvironment::default(),
+        prelude: injection.prelude,
+    };
+    let mut packages = injection.entries;
+    packages.push(user);
+    let primary = PackageId::from_usize(packages.len() - 1);
+    let plan = seal_hir::PackagePlan { packages, primary };
+    let mut loaded = injection.loaded;
+    loaded.push((file_id, Arc::unwrap_or_clone(ast)));
+    let mut dependencies = injection.parse_dependencies;
+    dependencies.push(dependency);
 
     let Some(lowered) = session.profiler().time("hir", || {
-        crate::frontend::lower_single(session, file_id, &file, &ast)
+        crate::frontend::lower_package(
+            session,
+            &input.display().to_string(),
+            &plan,
+            &loaded,
+            dependencies,
+        )
     }) else {
         return;
     };
@@ -453,8 +497,8 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
     };
 
     let name = session.interner().intern("main");
-    let mut plan = seal_hir::PackagePlan::single(name, primary_file);
-    let entry = &mut plan.packages[0];
+    let mut packages = seal_hir::PackagePlan::single(name, primary_file).packages;
+    let entry = &mut packages[0];
     entry.files = loaded
         .iter()
         .enumerate()
@@ -465,6 +509,27 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         .collect();
     entry.exposed = expose_paths(session, &arguments.expose);
 
+    let injection = match inject_single(session, stdlib_mode(arguments), arguments.no_prelude) {
+        Ok(injection) => injection,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return;
+        }
+    };
+    entry.dependencies = injection.package_dependencies;
+    entry.prelude = injection.prelude;
+    let mut all_packages = injection.entries;
+    all_packages.append(&mut packages);
+    let primary = PackageId::from_usize(all_packages.len() - 1);
+    let plan = seal_hir::PackagePlan {
+        packages: all_packages,
+        primary,
+    };
+    let mut all_loaded = injection.loaded;
+    all_loaded.append(&mut loaded);
+    let mut all_dependencies = injection.parse_dependencies;
+    all_dependencies.append(&mut dependencies);
+
     let unit_key = arguments
         .inputs
         .iter()
@@ -472,7 +537,7 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
         .collect::<Vec<_>>()
         .join(",");
     let Some(lowered) = session.profiler().time("hir", || {
-        crate::frontend::lower_package(session, &unit_key, &plan, &loaded, dependencies)
+        crate::frontend::lower_package(session, &unit_key, &plan, &all_loaded, all_dependencies)
     }) else {
         return;
     };
@@ -499,6 +564,86 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
     );
 }
 
+/// The standard-library contribution to one single-package compilation.
+struct Injection {
+    entries: Vec<seal_hir::PackagePlanEntry>,
+    loaded: Vec<(seal_span::FileId, seal_ast::Ast)>,
+    parse_dependencies: Vec<seal_query::Dependency>,
+    package_dependencies: Vec<seal_hir::PackagePlanDependency>,
+    prelude: Option<seal_hir::PreludeSource>,
+}
+
+/// Selects the standard-library mode requested on the `sealc` command line.
+fn stdlib_mode(arguments: &CompileArgs) -> seal_plan::PlanStdlibMode {
+    if arguments.no_stdlib {
+        seal_plan::PlanStdlibMode::None
+    } else if arguments.core_only {
+        seal_plan::PlanStdlibMode::Core
+    } else {
+        seal_plan::PlanStdlibMode::Std
+    }
+}
+
+/// Loads the standard-library packages and prelude for one user package.
+fn inject_single(
+    session: &Session,
+    mode: seal_plan::PlanStdlibMode,
+    no_prelude: bool,
+) -> Result<Injection, String> {
+    if mode == seal_plan::PlanStdlibMode::None {
+        return Ok(Injection {
+            entries: Vec::new(),
+            loaded: Vec::new(),
+            parse_dependencies: Vec::new(),
+            package_dependencies: Vec::new(),
+            prelude: None,
+        });
+    }
+    let stdlib = seal_stdlib::Stdlib::load().map_err(|error| error.to_string())?;
+    let needed = crate::stdlib::needed_for_mode(mode);
+    let injected = crate::stdlib::load(session, &stdlib, &needed, crate::stdlib::cfg(session), 1)?;
+    let core = crate::stdlib::package_id(&injected, "core")?;
+    let mut package_dependencies = vec![seal_hir::PackagePlanDependency {
+        alias: session.interner().intern("core"),
+        package: core,
+    }];
+    if mode == seal_plan::PlanStdlibMode::Std {
+        let std = crate::stdlib::package_id(&injected, "std")?;
+        package_dependencies.push(seal_hir::PackagePlanDependency {
+            alias: session.interner().intern("std"),
+            package: std,
+        });
+    }
+    let prelude = if no_prelude {
+        None
+    } else {
+        let package = match mode {
+            seal_plan::PlanStdlibMode::Std => "std",
+            seal_plan::PlanStdlibMode::Core => "core",
+            seal_plan::PlanStdlibMode::None => unreachable!("handled above"),
+        };
+        let path = stdlib.prelude_for(package).ok_or_else(|| {
+            format!("E2100: the standard library declares no prelude for `{package}`")
+        })?;
+        let (source, module) = path.split_once("::").ok_or_else(|| {
+            format!("E2100: the standard-library prelude `{path}` is not a `package::module` path")
+        })?;
+        let module = module_path(session, module)
+            .ok_or_else(|| format!("E2100: the standard-library prelude `{path}` is empty"))?;
+        Some(seal_hir::PreludeSource {
+            package: crate::stdlib::package_id(&injected, source)?,
+            module,
+        })
+    };
+    Ok(Injection {
+        entries: injected.entries,
+        loaded: injected.loaded,
+        parse_dependencies: injected.dependencies,
+        package_dependencies,
+        prelude,
+    })
+}
+
 /// Compiles one package graph from a versioned plan file.
 fn compile_plan_file(
     session: &Session,
@@ -506,11 +651,73 @@ fn compile_plan_file(
     plan: CompilePlan,
     no_prelude: bool,
 ) -> bool {
-    let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> = Vec::new();
-    let mut dependencies = Vec::new();
+    let errors = session.diag().error_count();
+    let mut needed = std::collections::BTreeSet::new();
+    for package in &plan.packages {
+        needed.extend(crate::stdlib::needed_for_mode(package.stdlib));
+        if let Some(prelude) = &package.prelude
+            && let Some(name) = &prelude.stdlib
+        {
+            needed.insert(name.clone());
+        }
+    }
+    let injected = if needed.is_empty() {
+        None
+    } else {
+        let Some(info) = &plan.stdlib else {
+            eprintln!(
+                "error: E8141: the plan requires standard-library packages but names no standard-library identity"
+            );
+            return false;
+        };
+        let stdlib = match seal_stdlib::Stdlib::load() {
+            Ok(stdlib) => stdlib,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return false;
+            }
+        };
+        if stdlib.language() != info.language
+            || stdlib.version() != info.version
+            || stdlib.digest() != info.digest
+        {
+            eprintln!(
+                "error: E8141: the plan requires standard library {} {}, digest {}, but the installed standard library is {} {}, digest {}",
+                info.language,
+                info.version,
+                info.digest,
+                stdlib.language(),
+                stdlib.version(),
+                stdlib.digest()
+            );
+            return false;
+        }
+        let cfg = stdlib_cfg(&plan.packages[plan.primary]);
+        match crate::stdlib::load(session, &stdlib, &needed, cfg, plan.packages.len()) {
+            Ok(injected) => Some(injected),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return false;
+            }
+        }
+    };
+    let (mut package_entries, mut loaded, mut dependencies, indexes) = match injected {
+        Some(injected) => (
+            injected.entries,
+            injected.loaded,
+            injected.dependencies,
+            injected.indexes,
+        ),
+        None => (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::collections::BTreeMap::new(),
+        ),
+    };
+    let injected_count = package_entries.len();
     let mut file_ids = std::collections::BTreeMap::new();
     let mut primary: Option<(seal_span::FileId, PathBuf)> = None;
-    let errors = session.diag().error_count();
     for (index, package) in plan.packages.iter().enumerate() {
         for (file_index, file) in package.files.iter().enumerate() {
             let identity = format!("{}#{index}#{file_index}", file.path.display());
@@ -559,8 +766,8 @@ fn compile_plan_file(
     };
 
     let mut package_plan = seal_hir::PackagePlan {
-        packages: Vec::with_capacity(plan.packages.len()),
-        primary: PackageId::from_usize(plan.primary),
+        packages: std::mem::take(&mut package_entries),
+        primary: PackageId::from_usize(injected_count + plan.primary),
     };
     for (index, package) in plan.packages.iter().enumerate() {
         let name = session.interner().intern(&package.name);
@@ -578,19 +785,45 @@ fn compile_plan_file(
                 primary: file.primary,
             });
         }
-        let exposed = package
-            .exposed
-            .iter()
-            .filter_map(|value| module_path(session, value))
-            .collect();
-        let dependencies = package
-            .dependencies
-            .iter()
-            .map(|dependency| seal_hir::PackagePlanDependency {
+        let mut exposed = Vec::with_capacity(package.exposed.len());
+        for value in &package.exposed {
+            let Some(module) = module_path(session, value) else {
+                eprintln!(
+                    "error: the package `{}` exposes the empty module path `{value}`",
+                    package.name
+                );
+                return false;
+            };
+            exposed.push(module);
+        }
+        let mut aliases = std::collections::BTreeSet::new();
+        let mut hir_dependencies = Vec::with_capacity(package.dependencies.len() + 2);
+        for dependency in &package.dependencies {
+            aliases.insert(dependency.alias.clone());
+            hir_dependencies.push(seal_hir::PackagePlanDependency {
                 alias: session.interner().intern(&dependency.alias),
-                package: PackageId::from_usize(dependency.package),
-            })
-            .collect();
+                package: PackageId::from_usize(injected_count + dependency.package),
+            });
+        }
+        for &(alias, name) in implicit_stdlib_dependencies(package.stdlib) {
+            if !aliases.insert(alias.to_owned()) {
+                eprintln!(
+                    "error: E8136: the package `{}` already uses the reserved dependency alias `{alias}`",
+                    package.name
+                );
+                return false;
+            }
+            let Some(id) = indexes.get(name) else {
+                eprintln!(
+                    "error: E8141: the plan selects the `{name}` standard library, which is not injected"
+                );
+                return false;
+            };
+            hir_dependencies.push(seal_hir::PackagePlanDependency {
+                alias: session.interner().intern(alias),
+                package: PackageId::from_usize(*id),
+            });
+        }
         let cfg = seal_hir::CfgEnvironment {
             features: package.cfg.features.iter().cloned().collect(),
             target_os: package.cfg.target_os.clone(),
@@ -617,8 +850,28 @@ fn compile_plan_file(
                 );
                 return false;
             };
+            let package_id = match (&source.package, &source.stdlib) {
+                (Some(index), None) => PackageId::from_usize(index + injected_count),
+                (None, Some(name)) => match indexes.get(name) {
+                    Some(index) => PackageId::from_usize(*index),
+                    None => {
+                        eprintln!(
+                            "error: E8141: the prelude of package `{}` names the standard-library package `{name}`, which is not injected",
+                            package.name
+                        );
+                        return false;
+                    }
+                },
+                _ => {
+                    eprintln!(
+                        "error: E8141: the prelude of package `{}` must name exactly one package",
+                        package.name
+                    );
+                    return false;
+                }
+            };
             Some(seal_hir::PreludeSource {
-                package: PackageId::from_usize(source.package),
+                package: package_id,
                 module,
             })
         } else {
@@ -629,13 +882,17 @@ fn compile_plan_file(
             instance: PackageInstanceId::from_usize(index),
             files,
             exposed,
-            dependencies,
+            dependencies: hir_dependencies,
             cfg,
             prelude,
         });
     }
+    let stdlib_key = plan
+        .stdlib
+        .as_ref()
+        .map_or("none", |stdlib| stdlib.digest.as_str());
     let unit_key = format!(
-        "plan:{}:{}",
+        "plan:{}:{}:{stdlib_key}",
         plan.target,
         plan.packages
             .iter()
@@ -680,7 +937,33 @@ fn compile_plan_file(
     true
 }
 
-fn module_path(session: &Session, value: &str) -> Option<seal_hir::ModulePath> {
+/// Returns the implicit dependency aliases one mode adds to a user package.
+fn implicit_stdlib_dependencies(
+    mode: seal_plan::PlanStdlibMode,
+) -> &'static [(&'static str, &'static str)] {
+    match mode {
+        seal_plan::PlanStdlibMode::None => &[],
+        seal_plan::PlanStdlibMode::Core => &[("core", "core")],
+        seal_plan::PlanStdlibMode::Std => &[("core", "core"), ("std", "std")],
+    }
+}
+
+/// Derives the target configuration for a standard-library package.
+fn stdlib_cfg(package: &seal_plan::PlanPackage) -> seal_hir::CfgEnvironment {
+    seal_hir::CfgEnvironment {
+        features: std::collections::BTreeSet::new(),
+        target_os: package.cfg.target_os.clone(),
+        target_arch: package.cfg.target_arch.clone(),
+        target_env: package.cfg.target_env.clone(),
+        pointer_width: package.cfg.pointer_width,
+        debug_assertions: package.cfg.debug_assertions,
+        test: false,
+        bench: false,
+        env: std::collections::BTreeMap::new(),
+    }
+}
+
+pub(crate) fn module_path(session: &Session, value: &str) -> Option<seal_hir::ModulePath> {
     if value == "root" {
         return Some(seal_hir::ModulePath::root());
     }

@@ -18,6 +18,7 @@ mod pipeline;
 mod query_cache;
 mod report;
 mod session_cache;
+mod stdlib;
 mod temp;
 
 use std::ffi::OsString;

@@ -3148,6 +3148,104 @@ input tree, launch the sandbox, or collect outputs. The server rejects the
 action instead of running it unsandboxed.\n\nCheck the worker's sandbox backend and filesystem permissions.",
 };
 
+/// The standard library could not be located.
+pub const E8133: ErrorCode = ErrorCode {
+    code: "E8133",
+    title: "standard library not found",
+    explanation: "\
+The compiler could not find a directory containing `stdlib.toml`. It looks at
+`SEAL_STDLIB`, then `<prefix>/lib/seal/stdlib/<language>` and
+`<prefix>/share/seal/stdlib/<language>`, then a development fallback.\n\nSet `SEAL_STDLIB` to the directory that contains `stdlib.toml`, or install the
+standard library next to the compiler binaries.",
+};
+
+/// The standard library targets another language version.
+pub const E8134: ErrorCode = ErrorCode {
+    code: "E8134",
+    title: "standard-library language mismatch",
+    explanation: "\
+The descriptor's `language` is not the language version this compiler
+implements. A standard library compiled for another language version may use
+syntax or semantics the compiler does not accept.\n\nInstall the standard library released for this compiler.",
+};
+
+/// The standard-library descriptor or digest is invalid.
+pub const E8135: ErrorCode = ErrorCode {
+    code: "E8135",
+    title: "invalid standard-library descriptor or digest",
+    explanation: "\
+`stdlib.toml` has an unknown field, a missing field, an invalid package name,
+an invalid prelude path, an unsupported format, or a digest that does not match
+the descriptor, package manifests, and source files. A misspelled key is an
+error instead of silently ignored, and an edited tree no longer matches its
+recorded digest.\n\nFix the descriptor, or rebuild the standard library and update its digest.",
+};
+
+/// A user package uses a reserved standard-library name.
+pub const E8136: ErrorCode = ErrorCode {
+    code: "E8136",
+    title: "reserved standard-library name",
+    explanation: "\
+The names `core` and `std` are injected into every package that selects a
+standard-library mode. A user package cannot be called `core` or `std`, and a
+dependency alias cannot use either name.\n\nRename the package or the dependency alias.",
+};
+
+/// The standard-library package list or dependency graph is invalid.
+pub const E8137: ErrorCode = ErrorCode {
+    code: "E8137",
+    title: "invalid standard-library dependency graph",
+    explanation: "\
+The descriptor lists a package twice, a standard-library package depends on a
+package the descriptor does not list, uses an unsupported dependency option,
+points at the wrong directory, or forms a cycle.\n\nDeclare only internal path dependencies between listed packages and remove the
+cycle.",
+};
+
+/// A package selects a standard-library mode its target cannot use.
+pub const E8138: ErrorCode = ErrorCode {
+    code: "E8138",
+    title: "standard-library mode conflicts with the target",
+    explanation: "\
+A target with `runtime = \"none\"` cannot use `stdlib = \"std\"`, because the
+hosted library assumes an operating system and a runtime. The default for such
+a target is `core`.\n\nSelect `stdlib = \"core\"`, select `stdlib = \"none\"`, or use a hosted target.",
+};
+
+/// A standard-library package, source, or path is invalid.
+pub const E8139: ErrorCode = ErrorCode {
+    code: "E8139",
+    title: "invalid standard-library package",
+    explanation: "\
+A standard-library package directory, manifest, source file, or symlink is
+missing, is not a regular file, escapes the standard-library root, or does not
+match its package name.\n\nThe standard library is trusted content: every path must stay inside its root
+and every source must be a regular file.",
+};
+
+/// `seal stdlib verify` found a mismatch.
+pub const E8140: ErrorCode = ErrorCode {
+    code: "E8140",
+    title: "standard-library verification failed",
+    explanation: "\
+`seal stdlib verify` recomputed the digest of the installed standard library and
+it does not match the descriptor. A source file was edited, removed, or added
+after installation.\n\nReinstall the standard library or restore the matching tree.",
+};
+
+/// A compile plan and the local standard library disagree.
+pub const E8141: ErrorCode = ErrorCode {
+    code: "E8141",
+    title: "compile plan and standard library mismatch",
+    explanation: "\
+The plan records the standard-library language, version, and digest it was
+built against, and the installed standard library has a different identity. The
+plan also fails this code when its own standard-library fields contradict each
+other: a package selects a mode without an identity, a prelude names both
+sources, or a prelude names a library the package did not select.\n\nUse the standard library the plan was built with, rebuild the plan, or set
+`SEAL_STDLIB` to a matching installation.",
+};
+
 /// Two builds of the same project produced different bytes.
 pub const E8104: ErrorCode = ErrorCode {
     code: "E8104",
@@ -4552,7 +4650,8 @@ pub static ALL: &[ErrorCode] = &[
     E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092, E8093, E8094,
     E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105, E8106, E8107,
     E8108, E8109, E8110, E8111, E8112, E8120, E8121, E8122, E8123, E8124, E8125, E8126, E8127,
-    E8128, E8129, E8130, E8131, E8132, E9001, E9002,
+    E8128, E8129, E8130, E8131, E8132, E8133, E8134, E8135, E8136, E8137, E8138, E8139, E8140,
+    E8141, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

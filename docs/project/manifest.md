@@ -34,10 +34,17 @@ commands without `--workspace`.
 `[package]` requires a valid lowercase `name` and a semantic `version`.
 `description`, `license`, `repository`, `readme`, `metadata`, `features`, and
 `[package.api]` are reserved for the project and publishing layers.
-`[package.metadata]` is free-form. `implicit-prelude` (default `true`) selects
-whether the standard library prelude is in scope; `false` leaves every
-unqualified prelude name unresolved. See
-[`../language/prelude.md`](../language/prelude.md).
+`[package.metadata]` is free-form. `stdlib` selects the standard-library mode:
+`"std"` (the default for hosted targets), `"core"` (the default for targets
+with `runtime = "none"`), or `"none"`. `stdlib = "std"` on a freestanding
+target is `E8138`. `implicit-prelude` (default `true`) selects whether the
+selected library's prelude is in scope; `false` leaves every unqualified prelude
+name unresolved. See [`../language/prelude.md`](../language/prelude.md) and
+[`stdlib.md`](stdlib.md).
+
+The `core` and `std` dependency aliases are reserved for every package that
+selects a mode; a user package or dependency alias with either name is
+`E8136`.
 
 ## Sources
 

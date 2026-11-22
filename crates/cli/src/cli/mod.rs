@@ -33,6 +33,7 @@ mod sbom;
 mod search;
 mod semver_check;
 mod snapshot;
+mod stdlib;
 mod target;
 mod task;
 mod test;
@@ -219,6 +220,8 @@ pub(crate) enum Command {
     Affected(AffectedArgs),
     /// Print the project model as JSON.
     Metadata(MetadataArgs),
+    /// Inspect and verify the installed standard library.
+    Stdlib(stdlib::StdlibArgs),
     /// Check the toolchain, linker, cache, and lockfile.
     Doctor(DoctorArgs),
     /// Remove build outputs and the local cache.
@@ -1202,6 +1205,7 @@ where
         Command::Graph(args) => graph::graph(&cli, &project, args),
         Command::Affected(args) => affected::affected(&cli, &project, args),
         Command::Metadata(args) => metadata::metadata(&cli, &project, args),
+        Command::Stdlib(args) => stdlib::run(args),
         Command::Doctor(args) => doctor::doctor(&cli, &project, args),
         Command::Clean => clean::clean(&cli, &project),
         Command::Cache(args) => cache::cache(&cli, &project, args),

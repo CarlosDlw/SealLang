@@ -1,0 +1,9 @@
+format = 1
+language = "0.1"
+version = "0.1.0"
+packages = ["core", "std"]
+digest = "20b69aafa6f85f02632f3a9ca7a914acd8e78c2562e70234c8e998e49c9349c1"
+
+[prelude]
+std = "std::prelude"
+core = "core::prelude"
