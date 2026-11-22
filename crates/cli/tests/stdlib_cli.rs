@@ -45,6 +45,10 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn write(path: &Path, contents: &str) {
+    std::fs::write(path, contents).expect("fixture source");
+}
+
 fn examples() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
 }
@@ -105,5 +109,100 @@ fn both_standard_library_examples_run_and_test() {
                 "{name} did not run `{test}`:\n{stdout}"
             );
         }
+    }
+}
+
+#[test]
+fn string_views_from_bytes_cannot_outlive_their_owner() {
+    let fixture = copy_example("stdlib");
+    write(
+        &fixture.root.join("src/main.sl"),
+        "func escape() -> *str {\n\
+         \x20 let data: [u8; 2] = [104u8, 105u8];\n\
+         \x20 let bytes: *[u8] = &data[..];\n\
+         \x20 match std::str::from_utf8(bytes) {\n\
+         \x20   Option::Some(view) => view,\n\
+         \x20   Option::None => \"\",\n\
+         \x20 }\n\
+         }\n\
+         func main() -> i32 { 0 }\n",
+    );
+    let check = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(
+        check.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        diagnostics.contains("E5004"),
+        "the escaped string view must be rejected:\n{diagnostics}"
+    );
+}
+
+#[test]
+fn string_from_utf8_unchecked_requires_an_unsafe_block() {
+    let fixture = copy_example("stdlib");
+    write(
+        &fixture.root.join("src/main.sl"),
+        "func main() -> i32 {\n\
+         \x20 let data: [u8; 1] = [97u8];\n\
+         \x20 let bytes: *[u8] = &data[..];\n\
+         \x20 let text: *str = std::str::from_utf8_unchecked(bytes);\n\
+         \x20 0\n\
+         }\n",
+    );
+    let check = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(
+        check.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        diagnostics.contains("E3070"),
+        "the unsafe constructor must require an unsafe block:\n{diagnostics}"
+    );
+}
+
+#[test]
+fn string_split_at_panics_with_its_documented_messages() {
+    for (index, message) in [
+        (1, "split_at index is not a char boundary"),
+        (3, "split_at index is out of bounds"),
+    ] {
+        let fixture = copy_example("stdlib");
+        write(
+            &fixture.root.join("src/main.sl"),
+            &format!(
+                "func main() -> i32 {{\n  let text: *str = \"é\";\n  let parts = text.split_at({index});\n  0\n}}\n"
+            ),
+        );
+        let run = output(
+            seal()
+                .arg("run")
+                .arg("--bin")
+                .arg("stdlib")
+                .arg("--project")
+                .arg(&fixture.root),
+        );
+        assert_eq!(run.status.code(), Some(101));
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            stderr.contains(message),
+            "expected `{message}` at index {index}:\n{stderr}"
+        );
     }
 }

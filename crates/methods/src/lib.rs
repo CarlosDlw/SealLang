@@ -251,7 +251,8 @@ pub enum IntrinsicOp {
     Len,
     /// Number of bytes in a string.
     StrLen,
-    /// Whether a byte index is a UTF-8 scalar boundary.
+    /// Whether a byte index is a UTF-8 scalar boundary. Indexes past the
+    /// string length are not boundaries.
     StrIsCharBoundary,
     /// Decode the scalar at a byte index.
     StrCharAt,
