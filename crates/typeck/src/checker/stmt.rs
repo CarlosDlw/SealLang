@@ -28,6 +28,12 @@ pub(super) fn check_block(
         Some(tail) => {
             if let Some(expected) = expected {
                 let found = checker.check_expr_against(tail, expected, &mut flow);
+                // Checking the tail may bind inference variables inside the
+                // expected type. Compare the resolved forms so a field such as
+                // `*raw mut ?T` accepts a tail whose concrete type is
+                // `*raw mut i32` after unification.
+                let expected = checker.resolve_deep(expected);
+                let found = checker.resolve_deep(found);
                 if !checker.is_compatible(expected, found) {
                     checker.error_ty()
                 } else {

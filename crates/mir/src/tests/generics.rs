@@ -78,6 +78,28 @@ fn a_generic_struct_literal_carries_instantiated_arguments() {
 }
 
 #[test]
+fn an_unsafe_cast_into_an_inferred_generic_literal_lowers_to_a_concrete_temporary() {
+    let source = "struct Holder<T> { pointer: *raw mut T } \
+                  func main() -> i32 { \
+                      let holder = Holder { pointer: unsafe { 0usize as *raw mut i32 } }; \
+                      if holder.pointer.is_null() { 0 } else { 1 } \
+                  }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let body = function(&fixture, &hir, &mir, "main");
+    let Rvalue::Cast { to, .. } = body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .map(|statement| assignment(statement).1)
+        .find(|rvalue| matches!(rvalue, Rvalue::Cast { .. }))
+        .expect("main lowers the cast")
+    else {
+        panic!("expected a cast rvalue");
+    };
+    assert_eq!(fixture.ty_text(&hir, *to), "*raw mut i32");
+}
+
+#[test]
 fn a_generic_variant_carries_instantiated_arguments() {
     let source = "enum Maybe<T> { Empty, Full(T) } \
                   func full<T>(value: T) -> Maybe<T> { Maybe::Full(value) }";

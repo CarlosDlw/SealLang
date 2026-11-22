@@ -1,6 +1,6 @@
 //! Generic bodies, inference, bounds, and trait solving.
 
-use seal_hir::ExprKind;
+use seal_hir::{ExprKind, StmtKind};
 
 use crate::MethodKind;
 
@@ -160,6 +160,38 @@ fn a_struct_literal_infers_every_argument() {
     assert_eq!(
         ty_text_with(&fixture, &hir, local_ty(&results, local)),
         "Pair<i32, bool>"
+    );
+}
+
+#[test]
+fn an_unsafe_cast_in_an_inferred_generic_literal_keeps_its_concrete_type() {
+    let source = "struct Holder<T> { pointer: *raw mut T } \
+                  func main() { \
+                      let holder = Holder { pointer: unsafe { 0usize as *raw mut i32 } }; \
+                  }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let statement = statements(&hir, body)[0];
+    let local = let_binding(&hir, statement);
+    assert_eq!(
+        ty_text_with(&fixture, &hir, local_ty(&results, local)),
+        "Holder<i32>"
+    );
+
+    let init = match hir.stmt(statement).kind.clone() {
+        StmtKind::Let {
+            init: Some(init), ..
+        } => init,
+        other => panic!("expected a let with an initializer, got {other:?}"),
+    };
+    let field = match hir.expr(init).kind.clone() {
+        ExprKind::Struct { fields, .. } => fields[0].1,
+        other => panic!("expected a struct literal, got {other:?}"),
+    };
+    assert_eq!(
+        ty_text_with(&fixture, &hir, expr_ty(&results, field)),
+        "*raw mut i32",
+        "the unsafe block must keep the cast's concrete type"
     );
 }
 
