@@ -278,6 +278,71 @@ fn a_diamond_reexport_keeps_both_aliases() {
 }
 
 #[test]
+fn a_re_exported_module_can_be_exposed_by_its_alias_path() {
+    let fixture = Fixture::package(&[
+        ("main.sl", "func main() {}"),
+        (
+            "facade.sl",
+            "module facade;\npublic use root::implementation as impl_api;",
+        ),
+        (
+            "implementation.sl",
+            "module implementation;\npublic func answer() -> i32 { 1 }",
+        ),
+    ]);
+    let hir = fixture.lower_package_exposing(&["facade::impl_api", "implementation"]);
+    fixture.assert_clean();
+    let root = root_module(&hir);
+    let facade = child_module(&hir, &fixture, root, "facade");
+    let implementation = child_module(&hir, &fixture, root, "implementation");
+    assert_eq!(
+        hir.child_module(facade, fixture.interner.intern("impl_api")),
+        Some(implementation)
+    );
+    assert!(hir.api().module_aliases().iter().any(|alias| {
+        alias.module == implementation && alias.path.display(&fixture.interner) == "facade.impl_api"
+    }));
+}
+
+#[test]
+fn an_alias_of_a_root_reexport_is_listed_in_the_api() {
+    let fixture = Fixture::package(&[
+        (
+            "main.sl",
+            "public use root::implementation as impl_api;\nfunc main() -> i32 { root::impl_api::answer() }",
+        ),
+        (
+            "implementation.sl",
+            "module implementation;\npublic func answer() -> i32 { 3 }",
+        ),
+    ]);
+    let hir = fixture.lower_package_exposing(&["root", "implementation"]);
+    fixture.assert_clean();
+    let root = root_module(&hir);
+    let implementation = child_module(&hir, &fixture, root, "implementation");
+    assert!(hir.api().module_aliases().iter().any(|alias| {
+        alias.module == implementation && alias.path.display(&fixture.interner) == "impl_api"
+    }));
+}
+
+#[test]
+fn a_variant_cannot_be_re_exported_as_a_standalone_name() {
+    let fixture = Fixture::package(&[
+        ("main.sl", "func main() {}"),
+        (
+            "api.sl",
+            "module api;\npublic use root::implementation::Choice::One;",
+        ),
+        (
+            "implementation.sl",
+            "module implementation;\npublic enum Choice { One } ",
+        ),
+    ]);
+    let _ = fixture.lower_package_exposing(&["api", "implementation"]);
+    fixture.expect("E2091", "is not a module");
+}
+
+#[test]
 fn a_cfg_disabled_reexport_is_not_part_of_the_graph() {
     let fixture = Fixture::package(&[
         (

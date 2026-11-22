@@ -34,6 +34,7 @@ enum Failure {
     Ambiguous { span: Span, name: Symbol },
     Cycle { span: Span, name: Symbol },
     Inaccessible { span: Span, name: Symbol },
+    InvalidTarget { span: Span, name: Symbol },
 }
 
 /// Resolves every re-export before imports are resolved.
@@ -92,6 +93,16 @@ pub(crate) fn resolve_reexports(
                 .code(codes::E2093.diag_code())
                 .primary(span, "this re-export is internal to its package")
                 .help("re-export the canonical item directly, or use a public re-export")
+                .emit();
+            }
+            Err(Failure::InvalidTarget { span, name }) => {
+                dcx.error(format!(
+                    "`{}` is not a module in this re-export path",
+                    interner.resolve(name)
+                ))
+                .code(codes::E2091.diag_code())
+                .primary(span, "this segment names an item, not a module")
+                .help("re-export the enum or module itself, then name the variant through it")
                 .emit();
             }
             Err(failure) => report_failure(dcx, interner, failure),
@@ -212,6 +223,9 @@ fn child_module(
         Some(lookup) => {
             accessible_export(graph, package, lookup.export, span, name)?;
             Ok(lookup.module)
+        }
+        None if graph.items.contains_key(&(parent, name)) => {
+            Err(Failure::InvalidTarget { span, name })
         }
         None if declared.contains(&(parent, name)) => Err(Failure::Cycle { span, name }),
         None => Err(Failure::MissingModule { span, name }),
@@ -461,6 +475,17 @@ fn report_failure(dcx: &DiagCtxt, interner: &Interner, failure: Failure) {
             .code(codes::E2093.diag_code())
             .primary(span, "this re-export is internal to its package")
             .help("re-export the canonical item directly, or use a public re-export")
+            .emit();
+            return;
+        }
+        Failure::InvalidTarget { span, name } => {
+            dcx.error(format!(
+                "`{}` is not a module in this re-export path",
+                interner.resolve(name)
+            ))
+            .code(codes::E2091.diag_code())
+            .primary(span, "this segment names an item, not a module")
+            .help("re-export the enum or module itself, then name the variant through it")
             .emit();
             return;
         }

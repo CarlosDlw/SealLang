@@ -108,6 +108,7 @@ fn lower_plan(
     crate::cfg::validate_env(plan, asts, dcx, interner);
     let mut graph = crate::module::ModuleGraph::build(plan, asts, dcx, interner);
     reexports::resolve_reexports(&mut graph, asts, dcx, interner);
+    graph.resolve_deferred_exposures(dcx, interner);
     let imports = imports::resolve_imports(&graph, asts, dcx, interner);
     let files: Vec<AstFile<'_>> = asts
         .iter()

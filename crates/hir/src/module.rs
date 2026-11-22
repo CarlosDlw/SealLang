@@ -478,6 +478,8 @@ pub(crate) struct ModuleGraph {
     pub(crate) items: FxHashMap<(ModuleId, Symbol), ItemInfo>,
     pub(crate) exports: FxHashMap<(ModuleId, Symbol), ExportBinding>,
     pub(crate) export_order: Vec<(ModuleId, Symbol)>,
+    /// API paths whose final module can only be resolved after re-exports.
+    deferred_exposures: Vec<(PackageId, ModulePath)>,
     pub(crate) api: ApiTable,
 }
 
@@ -499,6 +501,7 @@ impl ModuleGraph {
             items: FxHashMap::default(),
             exports: FxHashMap::default(),
             export_order: Vec::new(),
+            deferred_exposures: Vec::new(),
             api: ApiTable::default(),
         };
         let ast_of: FxHashMap<FileId, &seal_ast::Ast> =
@@ -570,7 +573,9 @@ impl ModuleGraph {
             }
 
             for path in &entry.exposed {
-                graph.expose_package_module(package_id, path, dcx, interner);
+                if !graph.expose_known_module(package_id, path) {
+                    graph.deferred_exposures.push((package_id, path.clone()));
+                }
             }
         }
 
@@ -783,38 +788,79 @@ impl ModuleGraph {
         }
     }
 
-    /// Marks one module and every ancestor as exposed.
-    fn expose_package_module(
-        &mut self,
-        package: PackageId,
-        path: &ModulePath,
-        dcx: &DiagCtxt,
-        interner: &Interner,
-    ) {
+    /// Exposes `path` when every segment is already a canonical child module.
+    ///
+    /// The prefix that does exist is exposed even when the leaf is a re-export
+    /// that the resolver can only see later, so a public re-export in that
+    /// prefix can pass its API check. The caller defers the unresolved path.
+    fn expose_known_module(&mut self, package: PackageId, path: &ModulePath) -> bool {
         let mut current = self.packages[package].root;
         for segment in path.segments() {
             let Some(next) = self.children.get(&(current, *segment)).copied() else {
-                dcx.error(format!(
-                    "the public API exposes the module `{}`, which does not exist",
-                    path.display(interner)
-                ))
-                .code(codes::E2081.diag_code())
-                .primary(
-                    self.modules[current].declaration_span,
-                    "inside this package",
-                )
-                .help("declare the module with `module ...;` or remove it from the API")
-                .emit();
-                return;
+                self.expose_ancestors(current, path.is_root());
+                return false;
             };
             current = next;
         }
-        // A leaf keeps every ancestor reachable, but the root is part of the
-        // API only when it is listed explicitly. Exposing `app` must not make
-        // root items public just because `app` is a child of the root.
-        let mut exposed = current;
+        self.expose_ancestors(current, path.is_root());
+        true
+    }
+
+    /// Resolves API paths whose final segment is a module re-export.
+    ///
+    /// This runs after re-export resolution, which is what makes a facade such
+    /// as `std::option` configurable in `[package.api] expose`.
+    pub(crate) fn resolve_deferred_exposures(&mut self, dcx: &DiagCtxt, interner: &Interner) {
+        let deferred = std::mem::take(&mut self.deferred_exposures);
+        for (package, path) in deferred {
+            let mut current = self.packages[package].root;
+            let mut resolved = true;
+            for segment in path.segments() {
+                let Some(lookup) = self.module_lookup(current, *segment) else {
+                    resolved = false;
+                    break;
+                };
+                if let Some(export) = lookup.export {
+                    let owner = export.module;
+                    if export.visibility != Visibility::Public
+                        || self.modules[owner].package != package
+                        || !self.modules[owner].exposed
+                    {
+                        resolved = false;
+                        break;
+                    }
+                }
+                current = lookup.module;
+            }
+            if resolved {
+                self.expose_ancestors(current, path.is_root());
+                continue;
+            }
+            dcx.error(format!(
+                "the public API exposes the module `{}`, which does not exist",
+                path.display(interner)
+            ))
+            .code(codes::E2081.diag_code())
+            .primary(
+                self.modules[current].declaration_span,
+                "inside this package",
+            )
+            .help(
+                "declare the module or public re-export with `module ...;` / `public use ...;`, or remove it from the API",
+            )
+            .emit();
+        }
+    }
+
+    /// Marks one module and every ancestor as exposed.
+    ///
+    /// A leaf keeps every ancestor reachable, but the root is part of the API
+    /// only when it is listed explicitly. Exposing `app` must not make root
+    /// items public just because `app` is a child of the root.
+    fn expose_ancestors(&mut self, module: ModuleId, include_root: bool) {
+        let mut exposed = module;
         loop {
-            if !self.modules[exposed].path.is_root() || path.is_root() {
+            if !self.modules[exposed].path.is_root() || include_root {
                 self.api.expose(exposed);
                 self.modules[exposed].exposed = true;
             }

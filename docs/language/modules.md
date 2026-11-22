@@ -147,8 +147,9 @@ are themselves `internal`, but a target from another package must already be
 public and exposed;
 - neither form may expose a `private` item.
 
-A re-export cannot use a glob, `self`, or an enum variant. Re-export the module
-or enum and reach the variant through that name instead. Module and item paths
+A re-export cannot use a glob, `self`, or an enum variant. A path segment that
+names an item where a module is required is `E2091`; re-export the module or
+enum and reach the variant through that name instead. Module and item paths
 also resolve through a re-export:
 
 ```text
@@ -266,6 +267,13 @@ Exposing a module also exposes every ancestor needed to reach it, so
 when at least one `--expose` is given, the root is not exposed unless `root` is
 listed too. When no `--expose` is given, the driver exposes the root, which is
 the right default for a binary crate.
+
+Exposure paths may end in a module re-export, which is how a facade such as
+`std::option` is published. The alias must be a `public use` in an exposed
+module, and its canonical target module must be exposed as well. Prefixes that
+already exist are exposed before re-exports are resolved; the final alias is
+resolved afterwards, so `[package.api] expose = ["std::option"]` and the
+canonical target exposure can be configured together.
 
 `public` promises that an item is reachable from another package. That promise
 is checked against the exposed set:
