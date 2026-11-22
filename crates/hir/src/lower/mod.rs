@@ -190,6 +190,8 @@ pub(crate) struct Lowering<'a> {
 /// One owner's bounds waiting for every type definition to be collected.
 struct PendingBounds {
     owner: DefId,
+    /// The file that owns `params` and the bound IDs.
+    file: usize,
     params: GenericParams,
     supertraits: Vec<seal_ast::TraitPath>,
     where_clause: seal_ast::WhereClause,

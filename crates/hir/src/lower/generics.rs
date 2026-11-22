@@ -120,6 +120,7 @@ impl Lowering<'_> {
     ) {
         self.pending_bounds.push(super::PendingBounds {
             owner,
+            file: self.current_file,
             params: params.clone(),
             supertraits: supertraits.to_vec(),
             where_clause: where_clause.clone(),
@@ -137,11 +138,14 @@ impl Lowering<'_> {
 
     fn lower_owner_bounds(&mut self, pending: &super::PendingBounds) {
         let owner = pending.owner;
+        let previous_file = self.current_file;
+        self.enter_file(pending.file);
         let levels = self.push_generic_scope(owner);
         let saved = self.self_ty;
 
         let Some(mut generics) = self.hir.generics(owner) else {
             self.pop_generic_scope(levels);
+            self.enter_file(previous_file);
             return;
         };
         if let Some(self_ty) = pending.self_ty {
@@ -224,6 +228,7 @@ impl Lowering<'_> {
 
         self.self_ty = saved;
         self.pop_generic_scope(levels);
+        self.enter_file(previous_file);
     }
 
     fn lower_bound_ids(&mut self, target: TyId, ids: &[seal_ast::BoundId]) -> Vec<Bound> {

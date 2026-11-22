@@ -14,6 +14,8 @@ the example stays free of generated artifacts.
 | [`generator/`](generator/) | Generator target, declared inputs/outputs, generated source compilation | exits `42` |
 | [`freestanding/`](freestanding/) | `runtime = "none"`, linker script, `_start`, panic trap | exits `42` |
 | [`registry/`](registry/) | TUF-verified registry dependency, vendoring, offline build | exits `42` |
+| [`stdlib/`](stdlib/) | Hosted standard library, prelude, `Option`/`Result` matches, and tests | exits `0` |
+| [`core-only/`](core-only/) | `stdlib = "core"`, core prelude, same canonical types | exits `0` |
 
 ```console
 $ cp -R examples/multi-module /tmp/multi-module

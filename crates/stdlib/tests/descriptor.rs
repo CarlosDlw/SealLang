@@ -86,6 +86,33 @@ fn the_repository_standard_library_is_valid() {
         ["core", "std"]
     );
     assert_eq!(stdlib.prelude_for("std"), Some("std::prelude"));
+
+    let core = stdlib.package("core").expect("core is loaded");
+    let core_manifest = core.manifest.package.as_ref().expect("core manifest");
+    assert_eq!(core_manifest.stdlib, Some(seal_manifest::StdlibMode::None));
+    assert!(!core_manifest.implicit_prelude);
+    assert!(
+        core.files
+            .iter()
+            .any(|file| file.ends_with("src/option.sl"))
+    );
+    assert!(
+        core.files
+            .iter()
+            .any(|file| file.ends_with("src/result.sl"))
+    );
+
+    let std = stdlib.package("std").expect("std is loaded");
+    assert_eq!(
+        std.dependencies,
+        [seal_stdlib::Dependency {
+            alias: "core".to_owned(),
+            package: "core".to_owned(),
+        }]
+    );
+    let std_manifest = std.manifest.package.as_ref().expect("std manifest");
+    assert_eq!(std_manifest.stdlib, Some(seal_manifest::StdlibMode::None));
+    assert!(!std_manifest.implicit_prelude);
 }
 
 #[test]

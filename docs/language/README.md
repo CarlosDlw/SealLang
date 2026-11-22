@@ -18,6 +18,7 @@ behind unsafe operations.
 | [`first-class-functions.md`](first-class-functions.md) | `func` and `unsafe func` types, closures and capture, `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop and borrow rules, ABI, diagnostics, and limits |
 | [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, `cfg` filtering, cycles, and the `--plan` driver |
 | [`prelude.md`](prelude.md) | Plan-selected preludes, injected item exports, lookup precedence, opt-out, diagnostics, and versioning |
+| [`stdlib.md`](stdlib.md) | `core`/`std`, `Option`/`Result`, canonical paths, re-exports, moves, and the core/std preludes |
 | [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
 
 ## Project guides

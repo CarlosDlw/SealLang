@@ -5,7 +5,9 @@ use seal_ty::{Bound, ParamTyId, TraitRef, TyId, TyKind};
 
 use crate::{ExprKind, ReceiverKind};
 
-use super::support::{Fixture, assert_invariants, function, lower_clean, path_res, tail};
+use super::support::{
+    Fixture, PackageSpec, assert_invariants, function, lower_clean, path_res, tail,
+};
 
 fn named_type(fixture: &Fixture, hir: &crate::Hir, name: &str, kind: DefKind) -> DefId {
     let symbol = fixture.interner.intern(name);
@@ -698,6 +700,51 @@ fn where_bounds_on_parameters_are_recorded_in_the_environment() {
             .any(|bound| matches!(bound, Bound::Trait(_)))
     );
     assert_invariants(&fixture, &hir);
+}
+
+#[test]
+fn bounds_are_read_from_the_owning_package_file() {
+    let fixture = Fixture::from_packages(&[
+        PackageSpec {
+            name: "core",
+            files: &[
+                (
+                    "option.sl",
+                    "module option;\npublic enum Option<T> { Some(T), None }\n",
+                ),
+                (
+                    "result.sl",
+                    "module result;\npublic enum Result<T, E> { Ok(T), Err(E) }\n",
+                ),
+                (
+                    "copy.sl",
+                    "module copy;\npublic struct Wrapper<T: Copy> { value: T }\n",
+                ),
+            ],
+            exposed: &["option", "result", "copy"],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[(
+                "app.sl",
+                "use core::option::Option;\nfunc main() -> i32 {\n  let value = Option::Some(1);\n  0\n}\n",
+            )],
+            exposed: &["root"],
+            dependencies: &[("core", 0)],
+        },
+    ]);
+    let hir = fixture.lower_packages();
+    fixture.assert_clean();
+
+    let wrapper = named_type(&fixture, &hir, "Wrapper", DefKind::Struct);
+    let parameter = param(&fixture, &hir, wrapper, "T");
+    assert!(
+        hir.param_env(wrapper)
+            .bounds(parameter)
+            .iter()
+            .any(|bound| matches!(bound, Bound::Copy))
+    );
 }
 
 #[test]

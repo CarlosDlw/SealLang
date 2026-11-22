@@ -59,11 +59,13 @@ impl Lowering<'_> {
                 continue;
             }
             let owner_path = self.hir.module(owner).path.clone();
+            let owner_package = self.hir.module(owner).package;
             match binding.target {
                 crate::module::ExportTarget::Module { module } => {
                     self.hir
                         .api_mut()
                         .push_module_alias(crate::module::ApiModuleAlias {
+                            package: owner_package,
                             path: owner_path.child(name),
                             module,
                         });
@@ -81,6 +83,7 @@ impl Lowering<'_> {
                     .copied();
                     if let Some(def) = target {
                         self.hir.api_mut().push_alias(crate::module::ApiAlias {
+                            package: owner_package,
                             path: owner_path,
                             name,
                             def,

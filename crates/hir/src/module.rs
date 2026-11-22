@@ -408,6 +408,8 @@ impl ImportTable {
 /// One item exposed under a re-exported path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiAlias {
+    /// The package that declares the alias.
+    pub package: PackageId,
     /// The module path containing the alias.
     pub path: ModulePath,
     /// The alias name.
@@ -419,6 +421,8 @@ pub struct ApiAlias {
 /// One module exposed under a re-exported path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiModuleAlias {
+    /// The package that declares the alias.
+    pub package: PackageId,
     /// The alias path.
     pub path: ModulePath,
     /// The canonical module the alias names.

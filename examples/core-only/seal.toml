@@ -1,0 +1,9 @@
+[project]
+name = "core-only"
+language = "0.1"
+
+[package]
+name = "core-only"
+version = "0.1.0"
+description = "The dependency-free core library and its prelude"
+stdlib = "core"

@@ -291,6 +291,7 @@ The chapters apply the principles in order, from values to projects:
 | [`ffi.md`](ffi.md) | The C ownership and unwinding boundary |
 | [`first-class-functions.md`](first-class-functions.md) | Inline closures, call kinds, and function pointers |
 | [`modules.md`](modules.md) | Names, visibility, configuration, and package APIs |
+| [`stdlib.md`](stdlib.md) | `core`/`std`, `Option`/`Result`, paths, and the prelude |
 | [`testing.md`](testing.md) | Test and benchmark modifiers, harness generation, and assertions |
 | [`../project/manifest.md`](../project/manifest.md) | The project and package contract |
 | [`../project/builds.md`](../project/builds.md) | The deterministic action graph and cache |

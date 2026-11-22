@@ -45,6 +45,9 @@ pub(crate) fn write(
         })
         .collect();
     for alias in hir.api().module_aliases() {
+        if alias.package != hir.primary_package() {
+            continue;
+        }
         let path = path_string(&alias.path, session.interner());
         if modules.iter().any(|module| module.path == path) {
             continue;
@@ -67,6 +70,9 @@ pub(crate) fn write(
         }
     }
     for alias in hir.api().aliases() {
+        if alias.package != hir.primary_package() {
+            continue;
+        }
         let Some(mut aliased) = item(session, hir, alias.def) else {
             continue;
         };
@@ -209,6 +215,11 @@ fn fields(
 }
 
 fn layout(session: &Session, hir: &Hir, adt: AdtId) -> Option<ApiLayout> {
+    // A generic aggregate has one layout per instantiation; the snapshot has
+    // no type environment in which to choose one.
+    if hir.ty_ctxt().adt(adt).generic_count != 0 {
+        return None;
+    }
     let ty = hir.ty_ctxt().adt_ty(adt);
     let layout = seal_layout::LayoutCtxt::new(hir.ty_ctxt(), session.target().pointer_width())
         .layout_of(ty)

@@ -259,6 +259,14 @@ fn test_and_bench_use_the_package_standard_library_mode() {
     assert_success(&api);
     let api: serde_json::Value = serde_json::from_slice(&api.stdout).expect("API JSON");
     assert_eq!(api["package"], "demo");
+    let items = api["items"].as_array().expect("API items");
+    assert_eq!(
+        items.len(),
+        1,
+        "the stdlib must not enter the user API: {api}"
+    );
+    assert_eq!(items[0]["name"], "value");
+    assert_eq!(api["modules"].as_array().map(Vec::len), Some(1));
 }
 
 #[test]

@@ -23,6 +23,8 @@ stdlib/
 │   ├── seal.toml
 │   └── src/
 │       ├── lib.sl
+│       ├── option.sl
+│       ├── result.sl
 │       └── prelude.sl
 └── std/
     ├── seal.toml
@@ -31,9 +33,13 @@ stdlib/
         └── prelude.sl
 ```
 
-Every package directory contains its own `seal.toml` and source tree. The
-standard-library manifest sets `stdlib = "none"` and
-`implicit-prelude = false` so the library never injects itself.
+Every package directory contains its own `seal.toml` and source tree. `core`
+defines `Option` and `Result` in `option` and `result` and exposes both
+modules plus its prelude. `std` re-exports those modules from its root and
+re-exports both types from its prelude. Both manifests set
+`stdlib = "none"` and `implicit-prelude = false` so the library never injects
+itself. The language surface is documented in
+[`../language/stdlib.md`](../language/stdlib.md).
 
 ## Descriptor
 
@@ -42,7 +48,7 @@ format = 1
 language = "0.1"
 version = "0.1.0"
 packages = ["core", "std"]
-digest = "20b69aafa6f85f02632f3a9ca7a914acd8e78c2562e70234c8e998e49c9349c1"
+digest = "2325ce6c855ab0737f3c9c030e8c6228da310a8487f496e7da09ca44797218fc"
 
 [prelude]
 std = "std::prelude"

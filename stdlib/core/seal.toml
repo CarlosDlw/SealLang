@@ -6,4 +6,4 @@ stdlib = "none"
 implicit-prelude = false
 
 [package.api]
-expose = ["root", "prelude"]
+expose = ["root", "option", "result", "prelude"]

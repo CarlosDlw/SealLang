@@ -118,6 +118,112 @@ fn core_only_uses_the_core_prelude() {
 }
 
 #[test]
+fn std_and_core_paths_name_the_same_types() {
+    let fixture = temporary("identity");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        r#"use core::result::Result;
+use std::option::Option;
+
+func core_option(value: Option<i32>) -> core::option::Option<i32> {
+  value
+}
+
+func std_prelude(value: core::prelude::Option<i32>) -> std::prelude::Option<i32> {
+  value
+}
+
+func aliases(value: std::option::Option<i32>) -> core::option::Option<i32> {
+  value
+}
+
+func results(value: std::result::Result<i32, i32>) -> core::result::Result<i32, i32> {
+  value
+}
+
+func main() -> i32 {
+  let value = Option::Some(41);
+  let from_core = core_option(value);
+  let from_std = std_prelude(from_core);
+  let alias = aliases(from_std);
+  let number = match alias {
+    Option::Some(inner) => inner,
+    Option::None => 0,
+  };
+  let ok = Result::<i32, i32>::Ok(number);
+  let result = results(ok);
+  match result {
+    Result::Ok(value) => value - 41,
+    Result::Err(_) => 1,
+  }
+}
+"#,
+    )
+    .expect("source");
+    let output = run(&["check", &source.display().to_string()], None);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn the_core_prelude_exposes_option_and_result() {
+    let fixture = temporary("core-prelude");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        "func main() -> i32 {\n  let some = Option::Some(1);\n  let ok = Result::<i32, i32>::Ok(2);\n  match some {\n    Option::Some(value) => value,\n    Option::None => 0,\n  }\n}\n",
+    )
+    .expect("source");
+    let output = run(
+        &["check", "--core-only", &source.display().to_string()],
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn no_stdlib_does_not_leak_prelude_names() {
+    let fixture = temporary("none-prelude");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        "func main() -> i32 {\n  let value = Option::Some(1);\n  match value {\n    Option::Some(inner) => inner,\n    Option::None => 0,\n  }\n}\n",
+    )
+    .expect("source");
+    let output = run(
+        &["check", "--no-stdlib", &source.display().to_string()],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E2002"), "stderr: {stderr}");
+    assert!(stderr.contains("Option"), "stderr: {stderr}");
+}
+
+#[test]
+fn option_moves_and_is_not_copy() {
+    let fixture = temporary("move");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        "func consume(value: Option<i32>) -> i32 {\n  match value {\n    Option::Some(inner) => inner,\n    Option::None => 0,\n  }\n}\n\nfunc main() -> i32 {\n  let value = Option::Some(1);\n  let first = consume(value);\n  let second = consume(value);\n  first + second\n}\n",
+    )
+    .expect("source");
+    let output = run(&["check", &source.display().to_string()], None);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E5005"), "stderr: {stderr}");
+}
+
+#[test]
 fn a_plan_with_another_digest_is_e8141() {
     let fixture = temporary("mismatch");
     let source = fixture.root.join("main.sl");

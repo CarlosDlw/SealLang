@@ -1,0 +1,9 @@
+[project]
+name = "stdlib"
+language = "0.1"
+
+[package]
+name = "stdlib"
+version = "0.1.0"
+description = "The hosted standard library and its prelude"
+stdlib = "std"

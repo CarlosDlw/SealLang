@@ -7,16 +7,22 @@ item exports of that module. The same mechanism therefore serves a synthetic
 test prelude, the standard library, and a project-specific set of names.
 
 ```text
-// core.sl
-public struct Option<T> { ... }
-public struct Result<T, E> { ... }
+// core/src/option.sl
+module option;
+public enum Option<T> {
+    Some(T),
+    None,
+}
 ```
 
 ```text
 // app.sl
 func main() -> i32 {
-    let value = Option { ... }; // no `use core::Option`
-    0
+    let value = Option::Some(1); // no `use core::option::Option`
+    match value {
+        Option::Some(inner) => inner,
+        Option::None => 0,
+    }
 }
 ```
 
@@ -35,6 +41,21 @@ A package plan has an optional prelude source:
 module path inside that package; `root` names the package root, and `a::b`
 names a nested module. The source module must exist and must not require a
 private module hop; a public module re-export is a valid path.
+
+The standard library uses the `stdlib` form instead of a plan index:
+
+```json
+{
+  "name": "app",
+  "stdlib": "std",
+  "prelude": { "stdlib": "std", "module": "prelude" }
+}
+```
+
+The driver resolves `"std"` against the injected standard-library packages, so
+the plan never stores an installation path. The shipped `core::prelude` and
+`std::prelude` re-export `Option` and `Result` from `core::option` and
+`core::result`. See [stdlib.md](stdlib.md) for the full library surface.
 
 A package without a `prelude` field compiles exactly as before. The field is
 optional in the versioned plan, so plans written before preludes existed remain
