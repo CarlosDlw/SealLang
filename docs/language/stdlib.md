@@ -4,7 +4,7 @@ The standard library is ordinary Seal source split into two packages:
 
 | Package | Contents | Availability |
 |---------|----------|--------------|
-| `core` | `option`, `result`, `str`, an internal `char` helper, and the core prelude | dependency-free; no operating system or runtime |
+| `core` | `option`, `result`, `str`, `mem`, an internal `char` helper, and the core prelude | dependency-free; no operating system or runtime |
 | `std` | a facade over `core`, the hosted prelude, and `std::alloc` | hosted targets |
 
 A package chooses one mode in its manifest:
@@ -113,6 +113,34 @@ panic-message, empty-pattern, and line-ending rules live in
 `as_str` reinterpretation and its distinction from the safe constructor are in
 [`raw-pointers.md`](raw-pointers.md#raw-string-pointers).
 
+## Forgetting
+
+`core::mem::forget<T>(value: T)` takes ownership of a value and runs no
+destructor. `std::mem` is a re-export of the same module, so `std::mem::forget`
+and `core::mem::forget` name the same function. The operation is safe, consumes
+a non-`Copy` value like a move, and leaves a `Copy` value usable:
+
+```seal
+use std::mem::forget;
+
+struct Buffer {
+  pointer: *raw mut u8,
+}
+
+func release_by_leaking(buffer: Buffer) {
+  forget(buffer);
+}
+```
+
+Forgetting is a deliberate leak: the value's fields and any allocation it owns
+are never released. It cannot make a live reference dangling, so no `unsafe`
+block is required. A direct call compiles to no work after its argument is
+evaluated; a call through the function value still consumes the argument at the
+wrapper boundary and runs no destructor. `forget` is not a `const` function
+(`E4011`), and using a consumed value afterwards is `E5005`: the ownership
+rules are the same as for any other move. The complete model is in
+[`../memory-model.md`](../memory-model.md) (D27).
+
 ## Allocation
 
 Heap allocation is hosted-only and explicit. A package reaches the allocator
@@ -189,18 +217,20 @@ pointer to safe code.
 
 ## Paths and identity
 
-`core` exposes its `root`, `option`, `result`, `str`, and `prelude` modules.
-`std` re-exports `core::option`, `core::result`, and `core::str` from its root,
-and exposes `alloc` as its own module, so these paths all name the same
-canonical declarations:
+`core` exposes its `root`, `option`, `result`, `str`, `mem`, and `prelude`
+modules. `std` re-exports `core::option`, `core::result`, `core::str`, and
+`core::mem` from its root, and exposes `alloc` as its own module, so these paths
+all name the same canonical declarations:
 
 ```seal
 core::option::Option<T>
 core::result::Result<T, E>
 core::str::from_utf8
+core::mem::forget
 std::option::Option<T>
 std::result::Result<T, E>
 std::str::from_utf8
+std::mem::forget
 std::alloc::Layout
 std::alloc::RawBuffer
 ```
@@ -256,6 +286,7 @@ keeping the library dependency. With `stdlib = "none"` or `--no-stdlib`, bare
 public use core::option as option;
 public use core::result as result;
 public use core::str as str;
+public use core::mem as mem;
 ```
 
 Its prelude re-exports the item aliases:
@@ -279,8 +310,8 @@ bootstrap honest: `core` and `std` select `stdlib = "none"` and
   program over the primitive string operations, including a checked UTF-8
   constructor.
 - [`examples/stdlib`](../../examples/stdlib/) selects `std`, uses the hosted
-  prelude, and exercises the `core::str` surface from its main program and
-  tests.
+  prelude, and exercises the `core::str` and `core::mem` surfaces from its main
+  program and tests.
 - [`examples/core-only`](../../examples/core-only/) selects `core` and uses the
   same names without the hosted package.
 

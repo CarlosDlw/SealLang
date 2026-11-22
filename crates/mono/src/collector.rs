@@ -501,6 +501,11 @@ impl Collector<'_> {
                         self.scan_place(place, span);
                         self.request_glue(place_ty(self.hir, body, place), 0, chain, span);
                     }
+                    StatementKind::Forget { place } => {
+                        // Forgetting deliberately runs no destructor and must
+                        // not pull its drop glue into the program.
+                        self.scan_place(place, span);
+                    }
                     StatementKind::DropRemaining { place, from } => {
                         self.scan_place(place, span);
                         self.scan_operand(from, span);

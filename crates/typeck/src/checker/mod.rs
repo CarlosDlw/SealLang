@@ -17,6 +17,7 @@ mod ffi;
 mod flow;
 mod fn_traits;
 mod for_loop;
+mod forget;
 mod generics;
 mod iteration;
 mod literal;

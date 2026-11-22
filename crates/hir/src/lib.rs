@@ -50,6 +50,7 @@ mod traits;
 mod tests;
 
 pub use body::{Block, Body, BodyKind, ForSource, ParamData, Stmt, StmtKind};
+pub use builtin::functions::BuiltinFunction;
 pub use builtin::protocols::{Protocol, ProtocolDefs, ProtocolMethod};
 pub use cfg::CfgEnvironment;
 pub use closure::{CaptureDef, CaptureSource, ClosureDef};

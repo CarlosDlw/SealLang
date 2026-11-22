@@ -232,6 +232,7 @@ impl Checker<'_> {
             ExprKind::SizeOf { ty } => self.check_type_layout(ty, span, "a size query"),
             ExprKind::AlignOf { ty } => self.check_type_layout(ty, span, "an alignment query"),
             ExprKind::Drop { operand } => self.check_drop(operand, span, flow),
+            ExprKind::Forget { operand } => self.check_forget(operand, span, flow),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(op, lhs, rhs, expected, flow, span)

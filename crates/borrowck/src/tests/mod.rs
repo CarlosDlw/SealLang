@@ -13,6 +13,7 @@ mod drops;
 mod dyn_types;
 mod examples;
 mod for_loop;
+mod forget_builtin;
 mod generics;
 mod globals;
 mod if_let;

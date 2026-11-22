@@ -23,6 +23,21 @@ impl Checker<'_> {
     /// would move out of borrowed storage, which `E3018` rejects here rather
     /// than later in borrow checking.
     pub(super) fn check_drop(&mut self, operand: HirExprId, span: Span, flow: &mut Flow) -> TyId {
+        self.check_consumed_operand(operand, span, flow);
+        self.hir.ty_ctxt().unit_ty()
+    }
+
+    /// Checks an operand consumed by value and returns its type.
+    ///
+    /// `drop` and `mem::forget` share the same ownership rules: the operand is
+    /// inferred once in place mode, and a non-`Copy` value cannot be moved out
+    /// of a reference. The caller decides what happens after consumption.
+    pub(super) fn check_consumed_operand(
+        &mut self,
+        operand: HirExprId,
+        span: Span,
+        flow: &mut Flow,
+    ) -> TyId {
         let ty = self.infer_expr(operand, None, flow);
         if self.is_error(ty) {
             return self.error_ty();
@@ -35,6 +50,6 @@ impl Checker<'_> {
         if moves_out_of_reference {
             self.report_move_out_of_reference(ty, span);
         }
-        self.hir.ty_ctxt().unit_ty()
+        ty
     }
 }

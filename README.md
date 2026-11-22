@@ -123,8 +123,10 @@ A type may declare `impl Drop` and own the release of what it holds. The
 destructor runs when the value leaves its scope, when a function returns early,
 or when a loop body leaves, and fields, the active enum variant, and array
 elements follow in a fixed order. `drop(value)` releases a value early and
-consumes it like a move, so using it afterwards is `E5005`. A `static` is never
-released, and a constant cannot run a destructor (`E4028`).
+consumes it like a move, so using it afterwards is `E5005`. `mem::forget(value)`
+is the safe, explicit exception: it consumes the value, runs no destructor, and
+leaks whatever the value owns. A `static` is never released, and a constant
+cannot run a destructor (`E4028`).
 
 Tuples are structural product types: `(i32, bool)` is the same type wherever it
 is written, and elements are accessed by position with `.0`, `.1`, and so on.
@@ -323,7 +325,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
 | [`docs/language/prelude.md`](docs/language/prelude.md) | Plan-selected preludes, precedence, opt-out, and diagnostics |
-| [`docs/language/stdlib.md`](docs/language/stdlib.md) | `core`/`std`, `Option`/`Result`, canonical paths, and preludes |
+| [`docs/language/stdlib.md`](docs/language/stdlib.md) | `core`/`std`, `Option`/`Result`, `mem::forget`, canonical paths, and preludes |
 | [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
 | [`docs/install.md`](docs/install.md) | Building and installing `seal`, `sealc`, and the standard library on Linux |
 | [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |

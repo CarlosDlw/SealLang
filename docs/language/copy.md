@@ -300,6 +300,11 @@ func main() -> i32 {
 }
 ```
 
+`mem::forget(copy_value)` is also a no-op for a `Copy` value: no move occurs, no
+destructor exists, and the value remains usable. For a non-`Copy` value,
+`mem::forget` consumes it like a move and suppresses its destructor, so the
+value cannot be used afterwards and its resources leak.
+
 An immutable `static` of a `Copy` type can be read by value. `drop(STATIC)` is
 also a no-op for that type. A non-`Copy` static cannot be moved out (`E3058`).
 Reading a `static mut` by value still requires `unsafe`:
@@ -436,6 +441,7 @@ Behavior
   match/if let/while let binding       copies
   for item in Copy array               copies; source usable
   drop(Copy value)                     no-op; value usable
+  mem::forget(Copy value)              no-op; value usable
   static of Copy type                  readable by value
   Copy + reference field               loan copied with the value
   Copy + raw pointer field             address copied; no checked loan

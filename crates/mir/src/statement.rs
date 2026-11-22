@@ -62,6 +62,16 @@ pub enum StatementKind {
         /// Why the drop exists and how it consumes the place.
         kind: DropKind,
     },
+    /// Consumes the value stored in `place` without running its destructor.
+    ///
+    /// The operand is a real move: the place becomes uninitialized, and every
+    /// live loan of it conflicts exactly as it would with a drop. Unlike a
+    /// drop, the statement runs no destructor, requests no drop glue, and
+    /// generates no machine code.
+    Forget {
+        /// The value whose destruction obligation is cancelled.
+        place: Place,
+    },
     /// Drops the elements `from..length` of the array in `place`, in ascending
     /// index order.
     ///
@@ -92,6 +102,15 @@ impl Statement {
     pub fn drop(place: Place, kind: DropKind, span: Span) -> Self {
         Self {
             kind: StatementKind::Drop { place, kind },
+            span,
+        }
+    }
+
+    /// Creates a statement that consumes a value without dropping it.
+    #[inline]
+    pub fn forget(place: Place, span: Span) -> Self {
+        Self {
+            kind: StatementKind::Forget { place },
             span,
         }
     }

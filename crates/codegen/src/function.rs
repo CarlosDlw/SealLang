@@ -164,6 +164,11 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                         self.emit_drop(place)?;
                         continue;
                     }
+                    StatementKind::Forget { .. } => {
+                        // Forgetting has no runtime representation: it only
+                        // changes ownership and drop-flag state in MIR.
+                        continue;
+                    }
                     StatementKind::DropRemaining { place, from } => {
                         self.emit_drop_remaining(place, from)?;
                         continue;

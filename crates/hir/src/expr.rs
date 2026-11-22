@@ -326,6 +326,15 @@ pub enum ExprKind {
         /// The value whose destructor runs now.
         operand: HirExprId,
     },
+    /// The compiler-backed `mem::forget(value)`, which consumes a value
+    /// without running its destructor.
+    ///
+    /// The operand is evaluated once and then has no owner: a non-`Copy` place
+    /// is moved, a `Copy` value is left usable, and no drop glue runs.
+    Forget {
+        /// The value whose destruction obligation is cancelled.
+        operand: HirExprId,
+    },
     /// A prefix operation.
     Unary {
         /// The operator.

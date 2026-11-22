@@ -40,6 +40,12 @@ pub(super) fn collect(
                         &mut calls,
                     );
                 }
+                StatementKind::Forget { place } => {
+                    // No destructor runs, so the body keeps its precise effect
+                    // summary. The place still exists as a raw access if it
+                    // reaches through a raw pointer.
+                    mark_raw_place(place, &mut direct);
+                }
                 StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
                     mark_raw_place(place, &mut direct);
                     // A destructor is user code that may read or write

@@ -290,7 +290,7 @@ impl Checker<'_> {
         }
     }
 
-    fn report_non_const_call(&self, span: Span) {
+    pub(super) fn report_non_const_call(&self, span: Span) {
         if self.const_fn {
             self.error(
                 codes::E4018,

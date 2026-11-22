@@ -26,7 +26,7 @@ pub fn instantiate_body(hir: &seal_hir::Hir, body: &Body, instance: Instance) ->
             match &mut statement.kind {
                 StatementKind::Assign { rvalue, .. } => substitute_rvalue(tcx, substs, rvalue),
                 // A place names storage, never a type: only operands carry types.
-                StatementKind::Drop { .. } => {}
+                StatementKind::Drop { .. } | StatementKind::Forget { .. } => {}
                 StatementKind::DropRemaining { from, .. } => substitute_operand(tcx, substs, from),
             }
         }

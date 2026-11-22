@@ -297,6 +297,7 @@ fn plan_statement(
             }
             Ok(Action::Keep { drops })
         }
+        StatementKind::Forget { .. } => Ok(Action::Keep { drops: Vec::new() }),
         StatementKind::DropRemaining { .. } => Ok(Action::Keep { drops: Vec::new() }),
     }
 }
@@ -436,6 +437,9 @@ fn rewrite_body(
                     pending.push(statement.clone());
                     if let StatementKind::Assign { place, .. } = &statement.kind {
                         raise_flags(flags, place, statement.span, &mut pending);
+                    }
+                    if let StatementKind::Forget { place } = &statement.kind {
+                        clear_flags(flags, place, statement.span, &mut pending);
                     }
                     if let StatementKind::DropRemaining { place, .. } = &statement.kind {
                         clear_flags(flags, place, statement.span, &mut pending);

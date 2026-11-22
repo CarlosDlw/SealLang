@@ -3,6 +3,7 @@
 mod api;
 mod arrays;
 mod borrows;
+mod builtin_functions;
 mod c_types;
 mod casts;
 mod cfg;

@@ -130,6 +130,10 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
             }
             return;
         }
+        StatementKind::Forget { place } => {
+            drop_place(context, place, state);
+            return;
+        }
         StatementKind::DropRemaining { place, from } => {
             move_operand(from, state);
             drop_place(context, place, state);

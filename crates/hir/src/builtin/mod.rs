@@ -10,6 +10,7 @@
 pub(crate) mod copy;
 pub(crate) mod drop;
 pub(crate) mod fn_traits;
+pub(crate) mod functions;
 pub(crate) mod protocols;
 
 use seal_def::{DefData, DefId, DefKind};

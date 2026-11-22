@@ -220,7 +220,9 @@ fn transfer(
         StatementKind::Assign { place, rvalue } => (place, rvalue),
         // Dropping a place ends every loan its value carried: the storage no
         // longer holds that reference.
-        StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+        StatementKind::Drop { place, .. }
+        | StatementKind::Forget { place }
+        | StatementKind::DropRemaining { place, .. } => {
             state.clear(place);
             return;
         }

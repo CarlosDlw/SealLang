@@ -16,6 +16,7 @@ mod examples;
 mod fn_pointers;
 mod fn_ptrs;
 mod for_loop;
+mod forget;
 mod generics;
 mod globals;
 mod if_let;

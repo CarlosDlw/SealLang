@@ -189,6 +189,9 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
         StatementKind::Drop { place, kind } => {
             return check_drop(place, *kind, statement.span, context);
         }
+        StatementKind::Forget { place } => {
+            return check_forget(place, statement.span, context);
+        }
         StatementKind::DropRemaining { place, from } => {
             return check_drop_remaining(place, from, statement, context);
         }
@@ -522,6 +525,19 @@ fn check_drop(place: &Place, kind: DropKind, span: Span, context: &Context<'_>) 
     } else {
         report_move_conflicts(place, span, context);
     }
+    context.keys_of(place).is_unknown()
+}
+
+/// Checks a forget statement's access to its place.
+///
+/// Forgetting consumes the value exactly like an explicit drop, but runs no
+/// destructor. The read check still applies because a moved or uninitialized
+/// place has no value to consume, and the move checks still forbid moving a
+/// field out of a `Drop` type or an element out of a non-`Copy` array.
+fn check_forget(place: &Place, span: Span, context: &Context<'_>) -> bool {
+    check_read(place, span, context);
+    check_move(place, span, context);
+    report_move_conflicts(place, span, context);
     context.keys_of(place).is_unknown()
 }
 

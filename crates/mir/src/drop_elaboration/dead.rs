@@ -168,16 +168,22 @@ fn transfer(context: &Context, statement: &Statement, dead: bool) -> bool {
             if *kind == DropKind::Overwrite {
                 return dead;
             }
-            match context.effect(place) {
-                Some(effect) => effect == Effect::Dead,
-                None => dead,
-            }
+            consuming_effect(place, dead, context)
         }
+        StatementKind::Forget { place } => consuming_effect(place, dead, context),
         // The statement consumes what is left of the array, which keeps part of
         // it and may still hold a value in the queried place.
         StatementKind::DropRemaining { place, .. } => match context.effect(place) {
             Some(_) => false,
             None => dead,
         },
+    }
+}
+
+/// Applies a consuming statement's effect to the dead state of one place.
+fn consuming_effect(place: &Place, dead: bool, context: &Context) -> bool {
+    match context.effect(place) {
+        Some(effect) => effect == Effect::Dead,
+        None => dead,
     }
 }

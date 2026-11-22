@@ -8,6 +8,8 @@ use seal_span::Span;
 use seal_symbol::Symbol;
 
 use super::Lowering;
+use crate::BuiltinFunction;
+use crate::Res;
 use crate::TraitMethodLookup;
 use crate::expr::{Expr, ExprKind};
 use crate::id::HirExprId;
@@ -296,12 +298,19 @@ impl Lowering<'_> {
                     }
                 } else if self.is_owned_view_builtin(callee) {
                     self.lower_owned_view_builtin(callee, &args, span)
+                } else if self.is_private_forget_builtin(callee) {
+                    self.lower_forget_call("__forget", &args, span)
                 } else if let Some(kind) = self.lower_control_builtin(callee, &args, span) {
                     kind
                 } else {
-                    ExprKind::Call {
-                        callee: self.lower_expr(callee),
-                        args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
+                    let callee = self.lower_expr(callee);
+                    if self.is_core_mem_forget_callee(callee) {
+                        self.lower_forget_call("mem::forget", &args, span)
+                    } else {
+                        ExprKind::Call {
+                            callee,
+                            args: args.iter().map(|arg| self.lower_expr(*arg)).collect(),
+                        }
                     }
                 }
             }
@@ -1354,6 +1363,74 @@ impl Lowering<'_> {
         self.interner.resolve(name) == "drop"
             && !self.value_exists(name)
             && self.scopes.lookup(name).is_none()
+    }
+
+    /// Returns `true` when `callee` is the core-private `__forget` builtin.
+    ///
+    /// The name exists only while lowering the `core` package. The public
+    /// `core::mem::forget` wrapper calls it, and no user package can reach it:
+    /// outside `core` the name is an ordinary unresolved function name.
+    fn is_private_forget_builtin(&self, callee: AstExprId) -> bool {
+        let AstExprKind::Path {
+            name, args: None, ..
+        } = self.ast.expr(callee).kind
+        else {
+            return false;
+        };
+        self.is_core_package()
+            && self.interner.resolve(name) == "__forget"
+            && !self.value_exists(name)
+            && self.scopes.lookup(name).is_none()
+    }
+
+    /// Returns `true` when the lowered callee names the canonical
+    /// `core::mem::forget` function.
+    ///
+    /// A call with explicit type arguments stays an ordinary call: the public
+    /// function body supplies the semantics, and the type arguments are
+    /// checked instead of being silently discarded.
+    fn is_core_mem_forget_callee(&self, callee: HirExprId) -> bool {
+        let ExprKind::Path {
+            res: Res::Function(function),
+            args: None,
+            function_args: None,
+        } = self.hir.expr(callee).kind
+        else {
+            return false;
+        };
+        self.hir.builtin_function(function, self.interner) == Some(BuiltinFunction::Forget)
+    }
+
+    /// Returns whether the current file belongs to the `core` package.
+    fn is_core_package(&self) -> bool {
+        self.interner
+            .resolve(self.hir.package(self.current_package).name)
+            == "core"
+    }
+
+    /// Lowers one `forget` argument and reports the intrinsic arity contract.
+    fn lower_forget_call(&mut self, name: &str, args: &[AstExprId], span: Span) -> ExprKind {
+        match args {
+            [operand] => ExprKind::Forget {
+                operand: self.lower_expr(*operand),
+            },
+            _ => {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "`{name}` takes exactly one argument, but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help("pass the value to forget, as in `mem::forget(value)`")
+                .emit();
+                for arg in args {
+                    self.lower_expr(*arg);
+                }
+                ExprKind::Error
+            }
+        }
     }
 
     /// Lowers a module-qualified value path such as `a::b::run`.

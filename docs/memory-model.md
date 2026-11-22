@@ -65,8 +65,10 @@ copy is safe.
 Each value has one owner. Locals are destroyed in reverse declaration order at
 scope exit, including exits through `return` and `break`; aggregate fields are
 destroyed in declaration order. A move transfers the destruction obligation. No
-exit path may skip a live owner's destructor, and no value is destroyed twice.
-Safe code cannot leak on purpose (`mem::forget` does not exist).
+exit path may skip a live owner's destructor unless the owner was deliberately
+forgotten, and no value is destroyed twice. Safe code can leak on purpose with
+`mem::forget`, which transfers ownership to no owner and suppresses every
+destructor for that value (D27).
 
 ### D4 — `*T` is a reference, not a raw pointer
 
@@ -524,7 +526,9 @@ leaves nothing behind at the source.
 A value may also be released by `drop(value)`, which consumes the operand like a
 move and runs the destructor at the call. A `Copy` value, a reference, or a raw
 pointer is accepted and runs nothing, because no destructor exists and nothing
-is owned.
+is owned. `mem::forget(value)` is the deliberate opposite: it consumes the
+operand but runs no destructor and transfers the obligation to no owner, so the
+value's resources leak (D27).
 
 This ordering is compiled, not observed: MIR drop sites are explicit statements,
 drop elaboration prunes the sites a path can never reach and guards the ones that
@@ -730,6 +734,43 @@ as safe methods that call `owned_view` internally. A future `dyn Trait` arm can
 reuse the same owner loan and representation without adding a second reference
 model or an unchecked cast to safe code.
 
+### D27 — `mem::forget` leaks a value without running its destructor
+
+`std::mem::forget(value)` takes ownership of `value` and ends its ownership
+without running a destructor. The canonical declaration is
+`core::mem::forget<T>(value: T)`; `std::mem` is a re-export of the same module,
+so both paths name one function. The operation is safe: leaking storage cannot
+make a live reference dangling, read uninitialized memory, or violate the
+aliasing rules. It is still a leak, and the resources owned by the value are
+not released.
+
+A direct call to the canonical function lowers to a dedicated HIR `Forget`
+node. Type checking consumes the operand with the ordinary move rules: a
+non-`Copy` value is moved, a `Copy` value is copied and remains usable, a
+non-`Copy` dereference is `E3018`, a static root is `E3058`, and an unsized
+operand is rejected like any other by-value move. A direct call is not
+available in a constant context (`E4011`), and an explicit type-argument call
+or a function value stays an ordinary call to the public wrapper, whose body
+contains the private `__forget` builtin. Wrong arity is `E3008`.
+
+MIR represents the operation as `StatementKind::Forget { place }`, separate from
+`Drop`. A non-`Copy` operand emits the statement; a `Copy` operand emits none,
+because forgetting it changes nothing. A constant is materialized into a
+temporary first, since a const root has no storage to consume. The statement
+consumes the place for initialization, move, and borrow analysis, so using the
+value afterwards is `E5005`, and it never requests drop glue during
+monomorphization. Drop elaboration clears the place's flags and emits no drop
+for it. Code generation lowers the statement to no work at all: a direct call
+disappears after its argument is evaluated, while an indirect call still
+consumes the argument at the wrapper boundary and runs no destructor.
+
+The design keeps leaks explicit rather than adding an unsafe operation or a
+second ownership mode. `forget` does not disable destructors globally, does not
+change the layout of any type, and does not make the forgotten value reachable
+again. It is intentionally not a `const` function: a compile-time leak has no
+meaningful runtime owner, so constant evaluation rejects it with `E4011` instead
+of silently discarding a value.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
@@ -798,7 +839,9 @@ model or an unchecked cast to safe code.
 
 - **HIR** must represent *places* (base plus projections), not only values,
   because moves, assignments, borrows, and drops operate on places. HIR keeps
-  field names symbolic; lowering resolves them once types are known.
+  field names symbolic; lowering resolves them once types are known. A direct
+  `mem::forget` call is a dedicated `Forget` expression so the ownership effect
+  is visible before MIR.
 - **Name resolution** gives every place a `DefId`; the borrow checker never
   resolves syntax.
 - **Type checking** decides the type of every expression and place, resolves
@@ -814,7 +857,8 @@ model or an unchecked cast to safe code.
   from reporting a destructor it never runs. A site that depends on the path is
   guarded by a `bool` flag that an assignment sets and a move or a drop clears,
   and an assignment to an initialized place whose type needs a destructor drops
-  the old value first (`DropKind::Overwrite`).
+  the old value first (`DropKind::Overwrite`). A `Forget` statement consumes its
+  place, clears the same flags, and plans no drop at all.
 - **Borrow checking** runs on MIR, where every move, borrow, and drop is an
   explicit statement in a control-flow graph; regions are inferred from the
   liveness of those statements, and place conflicts compare path prefixes so
@@ -841,11 +885,12 @@ model or an unchecked cast to safe code.
 1. No implicit deep copy and no implicit allocation.
 2. Every live `*T` is non-null and points to initialized, still-live memory.
 3. A moved-from place is never read, reassigned as a read, or dropped.
-4. Every initialized owner is dropped exactly once on every exit path. A drop
-   site whose value is definitely gone is removed instead of guarded, a
-   conditional site tests a `bool` flag that assignments set and moves and drops
-   clear, and an assignment to an initialized place whose type needs a
-   destructor drops the old value first.
+4. Every initialized owner is dropped exactly once on every exit path unless it
+   was consumed by `mem::forget`, which deliberately leaks it. A drop site whose
+   value is definitely gone is removed instead of guarded, a conditional site
+   tests a `bool` flag that assignments set and moves and drops clear, and an
+   assignment to an initialized place whose type needs a destructor drops the
+   old value first.
 5. `Copy` and `Drop` never hold for the same type.
 6. A `Sized` value never contains an unsized value directly.
 7. Type layout and addresses never affect the meaning of safe programs.
@@ -957,6 +1002,11 @@ model or an unchecked cast to safe code.
 39. No value allocates or drops implicitly at the boundary: passing a value to
     C transfers no ownership, and returning one creates no Seal owner for C
     storage.
+40. `mem::forget` is safe, consumes its operand under the ordinary move rules,
+    and runs no destructor. A direct call is lowered to `Forget`, emits no
+    wrapper call or drop glue, and is rejected in a constant context; a `Copy`
+    operand remains usable, while a non-`Copy` operand is moved and cannot be
+    used again.
 
 ## Reserved syntax
 

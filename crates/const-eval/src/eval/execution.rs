@@ -83,6 +83,18 @@ impl<'a> Interpreter<'a> {
                         let value = self.eval_rvalue(rvalue, statement.span, destination.ty)?;
                         self.write_place(&destination, value, statement.span)?;
                     }
+                    StatementKind::Forget { .. } => {
+                        // Type checking rejects `mem::forget` in a constant
+                        // context because the public function is not `const`.
+                        // Reaching this arm means a frontend invariant broke;
+                        // never silently accept ownership consumption here.
+                        return Err(self.error(
+                            EvalErrorKind::Internal(
+                                "`mem::forget` reached constant evaluation".to_owned(),
+                            ),
+                            statement.span,
+                        ));
+                    }
                     StatementKind::Drop { place, .. }
                     | StatementKind::DropRemaining { place, .. } => {
                         // A destructor is user code, and compile time may only

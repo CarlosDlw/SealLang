@@ -21,9 +21,10 @@ pub(crate) fn statement_uses(statement: &Statement, uses: &mut LocalSet) {
             }
             rvalue_uses(rvalue, uses);
         }
-        // Dropping reads the storage the destructor runs on, so the base local
-        // is live at the drop site even though no value is copied out of it.
-        StatementKind::Drop { place, .. } => {
+        // A drop reads the storage its destructor runs on, and a forget
+        // consumes the storage without reading it; both need the base local to
+        // be live at the statement even though no value is copied out of it.
+        StatementKind::Drop { place, .. } | StatementKind::Forget { place } => {
             if let Some(local) = place.local_id() {
                 uses.insert(local);
             }

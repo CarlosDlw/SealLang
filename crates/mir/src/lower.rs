@@ -1301,6 +1301,31 @@ impl<'a> BodyLowering<'a> {
                     self.assign_constant(dest, Constant::Unit, span);
                 }
             }
+            ExprKind::Forget { operand } => {
+                // A non-`Copy` value is consumed even when it has no destructor:
+                // the statement cancels its ownership, not a drop call. A
+                // `Copy` value is evaluated and left usable, so no statement is
+                // needed.
+                let ty = self.expr_ty(operand);
+                let copy = self.hir.ty_ctxt().is_copy_with(ty, &self.param_env);
+                let bounded = self.place_of_expr(operand);
+                let place = if !copy && matches!(bounded.root, PlaceRoot::Const(_)) {
+                    // A constant is a value, not frame storage. Materialize it
+                    // before consuming it; a `Forget` statement cannot root at
+                    // a global.
+                    let temporary = self.new_temp(ty, span);
+                    self.lower_expr_into(operand, Some(temporary.clone()));
+                    temporary
+                } else {
+                    bounded
+                };
+                if !copy {
+                    self.push_statement(Statement::forget(place, span));
+                }
+                if let Some(dest) = dest {
+                    self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
             ExprKind::Slice { .. }
             | ExprKind::Deref { .. }
             | ExprKind::Field { .. }
@@ -1711,20 +1736,22 @@ impl<'a> BodyLowering<'a> {
                 let mut arguments: Vec<Operand> = Vec::with_capacity(args.len() + 1);
                 arguments.push(self.lower_operand(callee));
                 arguments.extend(args.iter().map(|arg| self.lower_operand(*arg)));
-                if let Some(dest) = dest {
-                    self.assign_rvalue(
-                        dest,
-                        Rvalue::Call {
-                            target: CallTarget::FnPtr {
-                                ty: callee_ty,
-                                receiver: None,
-                            },
-                            args: arguments,
-                            arg_spans,
+                // A call is evaluated for its effects even when the result is
+                // discarded. Materialize the result into a temporary instead
+                // of dropping the call from the body.
+                let dest = dest.unwrap_or_else(|| self.new_temp(result_ty, span));
+                self.assign_rvalue(
+                    dest,
+                    Rvalue::Call {
+                        target: CallTarget::FnPtr {
+                            ty: callee_ty,
+                            receiver: None,
                         },
-                        span,
-                    );
-                }
+                        args: arguments,
+                        arg_spans,
+                    },
+                    span,
+                );
                 return;
             }
             if let Some((_, signature)) = self.hir.ty_ctxt().c_fn_ptr_parts(callee_ty) {

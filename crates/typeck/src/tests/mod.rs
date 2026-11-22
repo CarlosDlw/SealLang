@@ -19,6 +19,7 @@ mod flow;
 mod fn_ptrs;
 mod fn_traits;
 mod for_loop;
+mod forget_builtin;
 mod generics;
 mod globals;
 mod if_let;

@@ -786,7 +786,9 @@ impl Reachability<'_> {
                     self.check_expr(end);
                 }
             }
-            ExprKind::Len { operand } | ExprKind::Drop { operand } => self.check_expr(operand),
+            ExprKind::Len { operand }
+            | ExprKind::Drop { operand }
+            | ExprKind::Forget { operand } => self.check_expr(operand),
             ExprKind::Struct { adt, args, fields } => {
                 let data = self.hir.definitions().get(adt);
                 assert_eq!(data.kind, DefKind::Struct);

@@ -212,6 +212,10 @@ impl crate::MonoMir {
                     StatementKind::Drop { place, .. } => {
                         check_drop_site(hir, body, program, place)?;
                     }
+                    StatementKind::Forget { .. } => {
+                        // Forgetting has no glue to look up; the place and the
+                        // local types were validated with the body.
+                    }
                     StatementKind::DropRemaining { place, from } => {
                         check_drop_site(hir, body, program, place)?;
                         check_operand(tcx, instance, from)?;
@@ -559,7 +563,7 @@ fn check_body_globals(
                     check_place_global(program, constants, place)?;
                     check_rvalue_globals(program, constants, rvalue)?;
                 }
-                StatementKind::Drop { place, .. } => {
+                StatementKind::Drop { place, .. } | StatementKind::Forget { place } => {
                     check_place_global(program, constants, place)?;
                 }
                 StatementKind::DropRemaining { place, from } => {

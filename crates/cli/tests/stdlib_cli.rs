@@ -155,6 +155,76 @@ fn std_alloc_is_visible_only_under_the_hosted_standard_library() {
 }
 
 #[test]
+fn mem_forget_runs_and_rejects_use_after_consume() {
+    let fixture = copy_example("stdlib");
+    let source = std::fs::read_to_string(examples().join("054_mem_forget.sl"))
+        .expect("the forget example is readable");
+    write(&fixture.root.join("src/main.sl"), &source);
+
+    for release in [false, true] {
+        let run = output(
+            seal()
+                .arg("run")
+                .arg("--bin")
+                .arg("stdlib")
+                .arg("--project")
+                .arg(&fixture.root)
+                .args(release.then_some("--release")),
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "release={release}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+
+    write(
+        &fixture.root.join("src/main.sl"),
+        "struct Pair { value: i32 }\n\
+         func main() {\n\
+           let pair = Pair { value: 1 };\n\
+           std::mem::forget(pair);\n\
+           let _ = pair.value;\n\
+         }\n",
+    );
+    let rejected = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(rejected.status.code(), Some(1));
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    assert!(
+        diagnostics.contains("E5005"),
+        "a use after forget must be rejected:\n{diagnostics}"
+    );
+}
+
+#[test]
+fn mem_forget_is_not_available_in_a_constant_context() {
+    let fixture = copy_example("stdlib");
+    write(
+        &fixture.root.join("src/main.sl"),
+        "struct Pair { value: i32 }\n\
+         const FORGOTTEN: () = std::mem::forget(Pair { value: 1 });\n\
+         func main() -> i32 { 0 }\n",
+    );
+    let rejected = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(rejected.status.code(), Some(1));
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    assert!(
+        diagnostics.contains("E4011"),
+        "a constant context cannot call forget:\n{diagnostics}"
+    );
+}
+
+#[test]
 fn the_string_surface_runs_in_debug_and_release_profiles() {
     let fixture = copy_example("stdlib");
     write(

@@ -33,6 +33,8 @@ const GLOBAL_EXAMPLES: [&str; 3] = [
     "041_global_mutation.sl",
 ];
 
+const MEM_FORGET_EXAMPLES: [&str; 1] = ["054_mem_forget.sl"];
+
 fn check_examples(names: &[&str]) {
     for name in names {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -84,4 +86,9 @@ fn protocol_examples_check_cleanly() {
 #[test]
 fn global_examples_check_cleanly() {
     check_examples(&GLOBAL_EXAMPLES);
+}
+
+#[test]
+fn mem_forget_example_checks_cleanly() {
+    check_examples(&MEM_FORGET_EXAMPLES);
 }

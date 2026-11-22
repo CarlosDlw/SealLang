@@ -54,7 +54,7 @@ reproduce a binary is not ready for production.
 |------|---------------|------------------------------|
 | **Memory safety without a managed runtime** | No use-after-free, dangling reference, null reference, double drop, uninitialized read, or use-after-move in safe code; no GC or reference counting | Type checking, definite initialization, borrow checking, drop elaboration |
 | **Predictable cost** | No implicit heap allocation, deep copy, synchronization, boxing, or hidden dispatch | Moves, opt-in `Copy`, inline closures, static trait calls, explicit numeric casts |
-| **Deterministic lifetime** | Every scope-owned value is released exactly once on every normal exit path, in a defined order | `Drop`, lexical drop scopes, guarded MIR drop sites, no unwinding |
+| **Deterministic lifetime** | Every scope-owned value is released exactly once on every normal exit path, in a defined order, unless it is deliberately forgotten | `Drop`, lexical drop scopes, guarded MIR drop sites, `mem::forget`, no unwinding |
 | **No lifetime annotations** | Regions are inferred from liveness; the source never writes region parameters | Borrow checker over MIR, outlives constraints, diagnostics at the conflicting use |
 | **Explicit unsafe and foreign boundaries** | Unchecked operations and C calls state their contract at the operation and at the call site | `unsafe` blocks, `unsafe func`, `extern "c"`, raw pointers with provenance |
 | **Deterministic layout and builds** | Field order, enum layout, plans, lockfiles, and artifacts are stable for the same inputs | `seal-layout`, sorted project resolution, content-addressed action graph, `seal verify-repro` |
@@ -74,7 +74,7 @@ keeps the program's behavior visible in the source.
 | Question | Seal's answer |
 |----------|---------------|
 | What does assignment do? | Moves the value, unless its type is `Copy`, in which case it duplicates the bits |
-| Who releases a value? | Its owner, when the owning scope ends; fields in declaration order, locals in reverse declaration order |
+| Who releases a value? | Its owner, when the owning scope ends; fields in declaration order, locals in reverse declaration order. `mem::forget` instead transfers it to no owner and leaks it |
 | Can a reference be null? | No. Nullability belongs to `*raw T`/`*raw mut T`, which require `unsafe` to dereference |
 | How is aliasing controlled? | Shared XOR exclusive: many `*T` or one `*mut T`; the kind is part of the type |
 | When is memory initialized? | Definite-initialization analysis tracks each move path; reading an uninitialized path is an error |
@@ -157,7 +157,8 @@ A value is released when its scope ends, when control leaves through `return`,
 declaration order; parameters follow the body's locals; struct fields drop in
 declaration order; an enum drops only its active variant; an array drops its
 elements in increasing index order. `drop(value)` consumes a value and releases
-it early.
+it early. `mem::forget(value)` is the explicit safe exception: it consumes the
+value and runs no destructor, so the value's resources leak on purpose.
 
 Seal has no exceptions and no unwinding. On a hosted target, a panic writes a
 diagnostic and ends the process with status 101; the `panic(message)` built-in
@@ -253,6 +254,7 @@ Every design choice has a cost. These are accepted, not accidental:
 | Move by default; `Copy` is opt-in | An annotation on aggregates that should copy; adding a non-`Copy` field removes the implementation | Implicit deep copy, implicit reference semantics, or Swift-style default copying |
 | No lifetime annotations | Conservative rejection where a reference's target is unknown or a whole-program proof is unavailable | Lexical lifetimes that reject valid programs, or runtime borrow tracking |
 | No unwinding | Destructors do not run on panic; cleanup on failure is explicit | Exceptions or unwinding that make drop order dynamic |
+| Safe explicit leak via `mem::forget` | A forgotten value's resources are never released; the leak is visible at the call | An unsafe cleanup escape hatch or a hidden leak in ordinary ownership |
 | No implicit numeric conversions | Explicit `as` at every width or signedness change | Silent truncation or sign changes |
 | File-scoped absolute imports | Repetition across fragments; no glob imports | Relative imports and globs that hide name provenance |
 | Deterministic layout without reordering | Larger structs when padding could be reduced | Field reordering that changes offsets and ABI |
@@ -268,7 +270,8 @@ For a program that passes all checks, and absent `unsafe` or foreign code:
 - a live reference is non-null and points to initialized, still-live memory;
 - a moved-from place is never read, reassigned as a read, or dropped;
 - every initialized value owned by a scope is dropped exactly once on every
-  normal exit path;
+  normal exit path, unless it was consumed by `mem::forget`; forgetting is safe
+  and leaks the value's resources;
 - an exclusive loan excludes every other use of the same storage except the
   reborrows it authorizes;
 - no language operation allocates, deep-copies, boxes, or synchronizes

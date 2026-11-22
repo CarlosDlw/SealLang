@@ -680,6 +680,9 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
                     check_rvalue(body, block, place, rvalue, hir)?;
                 }
                 StatementKind::Drop { place, .. } => check_drop(hir, body, block, place)?,
+                StatementKind::Forget { place } => {
+                    check_forget(hir, body, block, place)?;
+                }
                 StatementKind::DropRemaining { place, from } => {
                     check_place(hir, body, block, place.clone())?;
                     check_droppable_root(block, place)?;
@@ -808,6 +811,27 @@ fn check_drop(
 ) -> Result<(), ValidationError> {
     check_place(hir, body, block, place.clone())?;
     check_droppable_root(block, place)
+}
+
+/// Checks a forget statement's place.
+///
+/// Forgetting is a move from frame storage, so it follows the same root rule as
+/// a drop. It also requires a sized value: moving an unsized place by value is
+/// what [`ValidationError::MoveFromUnsizedPlace`] already rejects for operands.
+fn check_forget(
+    hir: Option<&Hir>,
+    body: &Body,
+    block: BasicBlockId,
+    place: &Place,
+) -> Result<(), ValidationError> {
+    check_place(hir, body, block, place.clone())?;
+    check_droppable_root(block, place)?;
+    if let Some(hir) = hir
+        && !hir.ty_ctxt().is_sized(place_ty(hir, body, place))
+    {
+        return Err(ValidationError::MoveFromUnsizedPlace { block });
+    }
+    Ok(())
 }
 
 /// Requires a dropped place to name frame storage.

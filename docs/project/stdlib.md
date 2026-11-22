@@ -25,6 +25,7 @@ stdlib/
 │       ├── lib.sl
 │       ├── option.sl
 │       ├── result.sl
+│       ├── mem.sl
 │       └── prelude.sl
 └── std/
     ├── seal.toml
@@ -41,15 +42,16 @@ stdlib/
 ```
 
 Every package directory contains its own `seal.toml` and source tree. `core`
-defines `Option` and `Result` in `option` and `result` and exposes both
-modules plus its prelude. `std` re-exports those modules from its root,
-re-exports both types from its prelude, and exposes its own `alloc` module.
-`std::alloc` contains the validated layout and error types, the private runtime
-ABI declarations, the unsafe allocation wrappers, and `RawBuffer`; the module
-files are listed in `std/seal.toml` under `[package.api] expose = ["root",
-"prelude", "alloc"]`. Both manifests set `stdlib = "none"` and
-`implicit-prelude = false` so the library never injects itself. The language
-surface is documented in [`../language/stdlib.md`](../language/stdlib.md).
+defines `Option` and `Result` in `option` and `result`, the safe `forget`
+wrapper in `mem`, and exposes those modules plus its prelude. `std` re-exports
+those modules from its root, re-exports both types from its prelude, and exposes
+its own `alloc` module. `std::alloc` contains the validated layout and error
+types, the private runtime ABI declarations, the unsafe allocation wrappers, and
+`RawBuffer`; the module files are listed in `std/seal.toml` under
+`[package.api] expose = ["root", "prelude", "alloc"]`. Both manifests set
+`stdlib = "none"` and `implicit-prelude = false` so the library never injects
+itself. The language surface is documented in
+[`../language/stdlib.md`](../language/stdlib.md).
 
 ## Descriptor
 
@@ -58,7 +60,7 @@ format = 1
 language = "0.1"
 version = "0.1.0"
 packages = ["core", "std"]
-digest = "c38ca2f4bf5d1c28abe61f2e7c16388da573f68bb56d34a6b6d1e868c614f4ad"
+digest = "864afa825e5ba8e889bd23ae9206f0f1c1e06da8825c74619f8790b241bcbd54"
 
 [prelude]
 std = "std::prelude"
@@ -132,7 +134,7 @@ $ sealc check --no-prelude main.sl    # std without implicit names
   "stdlib": {
     "language": "0.1",
     "version": "0.1.0",
-    "digest": "c38ca2f4..."
+    "digest": "864afa82..."
   },
   "packages": [
     {

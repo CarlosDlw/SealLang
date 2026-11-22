@@ -387,7 +387,9 @@ fn transfer(
         StatementKind::Assign { place, rvalue } => (place, rvalue),
         // A dropped place no longer reaches any storage, so the origins it
         // carried are gone.
-        StatementKind::Drop { place, .. } | StatementKind::DropRemaining { place, .. } => {
+        StatementKind::Drop { place, .. }
+        | StatementKind::Forget { place }
+        | StatementKind::DropRemaining { place, .. } => {
             state.clear(place);
             return;
         }
