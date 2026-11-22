@@ -322,11 +322,33 @@ impl ImportTable {
     }
 }
 
+/// One item exposed under a re-exported path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApiAlias {
+    /// The module path containing the alias.
+    pub path: ModulePath,
+    /// The alias name.
+    pub name: Symbol,
+    /// The canonical item the alias names.
+    pub def: DefId,
+}
+
+/// One module exposed under a re-exported path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApiModuleAlias {
+    /// The alias path.
+    pub path: ModulePath,
+    /// The canonical module the alias names.
+    pub module: ModuleId,
+}
+
 /// The modules a package exposes and the items they make public.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApiTable {
     exposed: FxHashSet<ModuleId>,
     items: Vec<DefId>,
+    aliases: Vec<ApiAlias>,
+    module_aliases: Vec<ApiModuleAlias>,
 }
 
 impl ApiTable {
@@ -349,6 +371,18 @@ impl ApiTable {
         &self.items
     }
 
+    /// Returns every item exposed through a re-export.
+    #[inline]
+    pub fn aliases(&self) -> &[ApiAlias] {
+        &self.aliases
+    }
+
+    /// Returns every module exposed through a re-export.
+    #[inline]
+    pub fn module_aliases(&self) -> &[ApiModuleAlias] {
+        &self.module_aliases
+    }
+
     pub(crate) fn expose(&mut self, module: ModuleId) {
         self.exposed.insert(module);
     }
@@ -356,6 +390,68 @@ impl ApiTable {
     pub(crate) fn push_item(&mut self, def: DefId) {
         self.items.push(def);
     }
+
+    pub(crate) fn push_alias(&mut self, alias: ApiAlias) {
+        self.aliases.push(alias);
+    }
+
+    pub(crate) fn push_module_alias(&mut self, alias: ApiModuleAlias) {
+        self.module_aliases.push(alias);
+    }
+}
+
+/// What a re-export names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportTarget {
+    /// A module, usable as a path prefix.
+    Module {
+        /// The target module.
+        module: ModuleId,
+    },
+    /// One item of a module.
+    Item {
+        /// The module that declares the item.
+        module: ModuleId,
+        /// The declared name.
+        name: Symbol,
+        /// The item's namespace.
+        namespace: Namespace,
+    },
+}
+
+/// One resolved `public use` or `internal use` binding.
+///
+/// A re-export is an alias, not a new definition: `target` always names the
+/// canonical item or module. The declaring module and visibility are kept for
+/// reachability checks and API snapshots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportBinding {
+    /// The canonical target.
+    pub target: ExportTarget,
+    /// The visibility written on the re-export.
+    pub visibility: Visibility,
+    /// The span of the re-export path.
+    pub span: Span,
+    /// The source file that declared the re-export.
+    pub source_file: FileId,
+    /// The module that owns the re-export binding.
+    pub module: ModuleId,
+}
+
+/// The target of a module lookup, including whether it came from an export.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModuleLookup {
+    pub(crate) module: ModuleId,
+    pub(crate) export: Option<ExportBinding>,
+}
+
+/// The target of an item lookup, including whether it came from an export.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ItemLookup {
+    pub(crate) info: ItemInfo,
+    pub(crate) export: Option<ExportBinding>,
+    pub(crate) module: ModuleId,
+    pub(crate) name: Symbol,
 }
 
 /// A top-level declaration known to the module graph before lowering.
@@ -380,6 +476,8 @@ pub(crate) struct ModuleGraph {
     pub(crate) file_package: FxHashMap<FileId, PackageId>,
     pub(crate) children: FxHashMap<(ModuleId, Symbol), ModuleId>,
     pub(crate) items: FxHashMap<(ModuleId, Symbol), ItemInfo>,
+    pub(crate) exports: FxHashMap<(ModuleId, Symbol), ExportBinding>,
+    pub(crate) export_order: Vec<(ModuleId, Symbol)>,
     pub(crate) api: ApiTable,
 }
 
@@ -399,6 +497,8 @@ impl ModuleGraph {
             file_package: FxHashMap::default(),
             children: FxHashMap::default(),
             items: FxHashMap::default(),
+            exports: FxHashMap::default(),
+            export_order: Vec::new(),
             api: ApiTable::default(),
         };
         let ast_of: FxHashMap<FileId, &seal_ast::Ast> =
@@ -475,6 +575,60 @@ impl ModuleGraph {
         }
 
         graph
+    }
+
+    /// Looks up a module, falling back to a resolved module re-export.
+    pub(crate) fn module_lookup(&self, parent: ModuleId, name: Symbol) -> Option<ModuleLookup> {
+        if let Some(module) = self.children.get(&(parent, name)).copied() {
+            return Some(ModuleLookup {
+                module,
+                export: None,
+            });
+        }
+        let export = self.exports.get(&(parent, name)).copied()?;
+        let ExportTarget::Module { module } = export.target else {
+            return None;
+        };
+        Some(ModuleLookup {
+            module,
+            export: Some(export),
+        })
+    }
+
+    /// Looks up an item, falling back to a resolved item re-export.
+    pub(crate) fn item_lookup(&self, parent: ModuleId, name: Symbol) -> Option<ItemLookup> {
+        if let Some(info) = self.items.get(&(parent, name)).copied() {
+            return Some(ItemLookup {
+                info,
+                export: None,
+                module: parent,
+                name,
+            });
+        }
+        let export = self.exports.get(&(parent, name)).copied()?;
+        let ExportTarget::Item {
+            module,
+            name: target,
+            namespace,
+        } = export.target
+        else {
+            return None;
+        };
+        let info = self.items.get(&(module, target)).copied()?;
+        debug_assert_eq!(info.namespace, namespace);
+        Some(ItemLookup {
+            info,
+            export: Some(export),
+            module,
+            name: target,
+        })
+    }
+
+    /// Records one re-export after its target and visibility were validated.
+    pub(crate) fn insert_export(&mut self, module: ModuleId, name: Symbol, binding: ExportBinding) {
+        if self.exports.insert((module, name), binding).is_none() {
+            self.export_order.push((module, name));
+        }
     }
 
     fn create_root(&mut self, package: PackageId) -> ModuleId {

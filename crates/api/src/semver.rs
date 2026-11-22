@@ -176,6 +176,18 @@ pub fn check(previous: &ApiSnapshot, next: &ApiSnapshot) -> ApiResult<ApiDiff> {
 
 fn compare_item(previous: &ApiItem, next: &ApiItem, diff: &mut ApiDiff) {
     let key = previous.key();
+    // A re-export can keep its public name while pointing at a different item.
+    // Snapshots from older tools do not record a target, so only compare known
+    // targets; a missing one cannot be proven to have changed.
+    if let (Some(previous_target), Some(next_target)) = (&previous.canonical, &next.canonical) {
+        if previous_target != next_target {
+            diff.breaking.push(Change::new(
+                "target-changed",
+                key.clone(),
+                format!("`{key}` now refers to `{next_target}` instead of `{previous_target}`"),
+            ));
+        }
+    }
     if previous.signature != next.signature {
         diff.breaking.push(Change::new(
             "signature-changed",
@@ -480,6 +492,7 @@ mod tests {
                 name: "Mode".to_owned(),
                 kind: "enum".to_owned(),
                 module: "root".to_owned(),
+                canonical: None,
                 visibility: "public".to_owned(),
                 cfg: None,
                 signature: None,
@@ -592,12 +605,32 @@ mod tests {
     }
 
     #[test]
+    fn changing_a_reexport_target_is_breaking() {
+        let previous = snapshot("1.0.0");
+        let mut next = snapshot("2.0.0");
+        next.items[0].canonical = Some("canonical::old".to_owned());
+        let previous = {
+            let mut previous = previous;
+            previous.items[0].canonical = Some("canonical::old".to_owned());
+            previous
+        };
+        let diff = check(&previous, &next).unwrap();
+        assert!(diff.is_empty());
+
+        let mut changed = next.clone();
+        changed.items[0].canonical = Some("canonical::new".to_owned());
+        let diff = check(&next, &changed).unwrap();
+        assert_eq!(diff.breaking[0].kind, "target-changed");
+    }
+
+    #[test]
     fn additive_changes_are_minor() {
         let mut next = snapshot("1.1.0");
         next.items.push(ApiItem {
             name: "Point".to_owned(),
             kind: "struct".to_owned(),
             module: "root".to_owned(),
+            canonical: None,
             visibility: "public".to_owned(),
             cfg: None,
             signature: None,

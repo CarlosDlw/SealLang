@@ -89,6 +89,9 @@ pub struct ApiItem {
     pub kind: String,
     /// The declaring module path.
     pub module: String,
+    /// The canonical `module::name` target of a re-exported item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<String>,
     /// The item visibility, lowercased.
     #[serde(default)]
     pub visibility: String,
@@ -349,6 +352,7 @@ mod tests {
                 name: "Point".to_owned(),
                 kind: "struct".to_owned(),
                 module: "root".to_owned(),
+                canonical: None,
                 visibility: "public".to_owned(),
                 cfg: None,
                 signature: None,

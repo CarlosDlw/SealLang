@@ -111,23 +111,31 @@ impl Parser<'_> {
 
     /// Parses `use path;`, including groups and aliases.
     ///
-    /// Imports accept only `cfg` before them. Visibility and `test` are rejected
-    /// with one diagnostic and do not leave the parser stuck.
+    /// A plain import is file-scoped. `public use` and `internal use` are
+    /// re-exports from the declaring module; `private use` has no meaning and is
+    /// rejected. `test` and `bench` are rejected with one diagnostic.
     pub(crate) fn parse_use(&mut self, mut modifiers: Modifiers) -> ItemId {
         let start = self.current_span();
         self.bump();
 
-        if modifiers.has_visibility {
-            self.error(
-                codes::E2079,
-                start,
-                "an import cannot have a visibility modifier",
-            )
-            .help("remove `public`, `internal`, or `private`; imports are private to the file")
-            .emit();
-            modifiers.visibility = Visibility::Private;
-            modifiers.has_visibility = false;
-        }
+        let visibility = if modifiers.has_visibility {
+            match modifiers.visibility {
+                Visibility::Public | Visibility::Internal => Some(modifiers.visibility),
+                Visibility::Private => {
+                    self.error(codes::E2079, start, "`private use` is not a re-export")
+                        .help(
+                            "use `public use` or `internal use` to re-export, or omit the \
+                         visibility for a file-scoped import",
+                        )
+                        .emit();
+                    modifiers.visibility = Visibility::Private;
+                    modifiers.has_visibility = false;
+                    None
+                }
+            }
+        } else {
+            None
+        };
         if modifiers.is_test {
             self.error(codes::E2079, start, "an import cannot be a test")
                 .help("remove `test`; it applies to functions")
@@ -266,6 +274,7 @@ impl Parser<'_> {
                     alias_span,
                     span: path_span,
                 },
+                visibility,
             },
             modifiers,
         )

@@ -70,7 +70,12 @@ impl Lowering<'_> {
                 else {
                     return self.hir.ty_ctxt_mut().error_ty();
                 };
-                if let Some(definition) = self.types.get(&(module, last.name)).copied() {
+                if let Some((definition, export)) =
+                    self.module_item(module, last.name, crate::module::Namespace::Type)
+                {
+                    if !self.export_reachable(export, last.name_span) {
+                        return self.hir.ty_ctxt_mut().error_ty();
+                    }
                     if !self.require_visible(definition, last.name_span) {
                         return self.hir.ty_ctxt_mut().error_ty();
                     }
@@ -84,7 +89,10 @@ impl Lowering<'_> {
                     );
                 }
                 let name = self.interner.resolve(last.name);
-                if self.traits.contains_key(&(module, last.name)) {
+                if self
+                    .module_item(module, last.name, crate::module::Namespace::Trait)
+                    .is_some()
+                {
                     self.error(
                         codes::E2027,
                         span,
@@ -92,7 +100,10 @@ impl Lowering<'_> {
                     )
                     .help("name the struct that implements it, or call a method on a value")
                     .emit();
-                } else if self.globals.contains_key(&(module, last.name)) {
+                } else if self
+                    .module_item(module, last.name, crate::module::Namespace::Value)
+                    .is_some()
+                {
                     self.error(
                         codes::E2011,
                         span,

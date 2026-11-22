@@ -108,9 +108,67 @@ other in a cycle. What cannot happen is an import that does not resolve:
 | A glob (`use a::*;`) is written | `E2076` |
 | An imported name is never used | `unused_import` warning |
 
-An import has no visibility of its own. `public use` and `internal use` are
-rejected as invalid modifiers (`E2079`); a module re-exports names by declaring
-its own items, not by re-exporting imports.
+A plain import has no visibility of its own. Adding `private` or `test` to a
+`use` is rejected as an invalid modifier (`E2079`).
+
+## Re-exports
+
+`public use` and `internal use` are re-exports. Unlike a plain import, they do
+not bind a local name in the file. They make the target reachable through the
+declaring module:
+
+```text
+// facade.sl
+module app::facade;
+
+public use app::util::double;
+public use app::util::Point as Vec2;
+public use app::util as utility;
+```
+
+Another file can now write `app::facade::double`, `app::facade::Vec2`, and
+`app::facade::utility::double`. A re-export of a module exposes that module
+under the alias and keeps the module's own children reachable below it.
+
+A re-export is an alias, not a definition. Types keep their canonical identity:
+`app::facade::Vec2` and `app::util::Point` are the same type to the type checker
+and to the generated program, and re-exporting a function does not create a
+second function. Because aliases can name other aliases, re-exports are resolved
+to a fixed point before imports and bodies are lowered. Chains and diamonds are
+valid; a path that only reaches other aliases and never a declaration is a
+cycle.
+
+Visibility narrows through a re-export, never widens:
+
+- a `public use` needs its declaring module exposed, a public target item, and
+exposed modules on the target path;
+- an `internal use` is usable anywhere in its package, including targets that
+are themselves `internal`, but a target from another package must already be
+public and exposed;
+- neither form may expose a `private` item.
+
+A re-export cannot use a glob, `self`, or an enum variant. Re-export the module
+or enum and reach the variant through that name instead. Module and item paths
+also resolve through a re-export:
+
+```text
+func main() -> i32 { app::facade::double(21) }
+```
+
+| Situation | Code |
+|-----------|------|
+| A `public use` lives in a module the package does not expose | `E2088` |
+| Re-exports form a cycle with no concrete target | `E2089` |
+| Two re-exports declare the same name in one module | `E2090` |
+| The path does not name a module or item that can be aliased | `E2091` |
+| The target item is `internal` or `private` where the alias needs `public` | `E2092` |
+| The target module is not exposed, or a hop crosses an internal alias | `E2093` |
+| The alias collides with an item or submodule of the declaring module | `E2094` |
+
+The API snapshot lists aliases separately from canonical items and records the
+canonical target of each item alias. Changing which item an alias names is a
+breaking API change even when the alias name is unchanged; adding an alias is a
+compatible addition.
 
 ## Qualified paths
 

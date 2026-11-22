@@ -1016,7 +1016,12 @@ impl Lowering<'_> {
         let Some((module, Some(last))) = self.resolve_module_path(root, root_span, segments) else {
             return ExprKind::Error;
         };
-        if let Some(definition) = self.globals.get(&(module, last.name)).copied() {
+        if let Some((definition, export)) =
+            self.module_item(module, last.name, crate::module::Namespace::Value)
+        {
+            if !self.export_reachable(export, last.name_span) {
+                return ExprKind::Error;
+            }
             if !self.require_visible(definition, last.name_span) {
                 return ExprKind::Error;
             }
@@ -1037,7 +1042,10 @@ impl Lowering<'_> {
         }
 
         let name = self.interner.resolve(last.name);
-        if self.types.contains_key(&(module, last.name)) {
+        if self
+            .module_item(module, last.name, crate::module::Namespace::Type)
+            .is_some()
+        {
             self.error(
                 codes::E2010,
                 last.name_span,
@@ -1045,7 +1053,10 @@ impl Lowering<'_> {
             )
             .help("construct it with a struct literal, or name a function")
             .emit();
-        } else if self.traits.contains_key(&(module, last.name)) {
+        } else if self
+            .module_item(module, last.name, crate::module::Namespace::Trait)
+            .is_some()
+        {
             self.error(
                 codes::E2027,
                 last.name_span,
@@ -1087,9 +1098,14 @@ impl Lowering<'_> {
         let Some((module, Some(last))) = self.resolve_module_path(root, root_span, segments) else {
             return ExprKind::Error;
         };
-        let Some(definition) = self.types.get(&(module, last.name)).copied() else {
+        let Some((definition, export)) =
+            self.module_item(module, last.name, crate::module::Namespace::Type)
+        else {
             let name = self.interner.resolve(last.name);
-            if self.traits.contains_key(&(module, last.name)) {
+            if self
+                .module_item(module, last.name, crate::module::Namespace::Trait)
+                .is_some()
+            {
                 self.error(
                     codes::E2027,
                     last.name_span,
@@ -1097,7 +1113,10 @@ impl Lowering<'_> {
                 )
                 .help("build a value of a struct that implements it")
                 .emit();
-            } else if self.globals.contains_key(&(module, last.name)) {
+            } else if self
+                .module_item(module, last.name, crate::module::Namespace::Value)
+                .is_some()
+            {
                 self.error(
                     codes::E2011,
                     last.name_span,
@@ -1117,7 +1136,9 @@ impl Lowering<'_> {
             let _ = span;
             return ExprKind::Error;
         };
-        if !self.require_visible(definition, last.name_span) {
+        if !self.export_reachable(export, last.name_span)
+            || !self.require_visible(definition, last.name_span)
+        {
             return ExprKind::Error;
         }
         let type_args = self.lower_nominal_arguments(definition, last.args.as_ref().or(args));

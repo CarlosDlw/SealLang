@@ -113,8 +113,23 @@ fn root_is_reserved_after_the_first_segment() {
 }
 
 #[test]
-fn imports_reject_visibility_and_test_modifiers() {
-    for source in ["public use geometry::Circle;", "test use geometry::Circle;"] {
+fn imports_accept_reexport_visibility_and_reject_other_modifiers() {
+    for (source, expected) in [
+        ("public use geometry::Circle;", seal_ast::Visibility::Public),
+        (
+            "internal use geometry::Circle;",
+            seal_ast::Visibility::Internal,
+        ),
+    ] {
+        let (fixture, ast) = parse_clean(source);
+        let declaration = sole_use(&ast);
+        assert_eq!(declaration.visibility, Some(expected), "source: {source}");
+        assert_invariants(&fixture, &ast);
+    }
+    for source in [
+        "private use geometry::Circle;",
+        "test use geometry::Circle;",
+    ] {
         let fixture = Fixture::new(source);
         fixture.parse();
         assert_eq!(fixture.codes(), ["E2079"], "source: {source}");

@@ -203,6 +203,72 @@ fn a_structurally_invalid_plan_is_e8010() {
 }
 
 #[test]
+fn plan_mode_lists_reexports_in_the_api_snapshot() {
+    let (fixture, source) = fixture("func main() -> i32 { root::api::answer() }\n");
+    let api = fixture.root.join("api.sl");
+    let implementation = fixture.root.join("implementation.sl");
+    std::fs::write(
+        &api,
+        "module api;\npublic use root::implementation::answer;\npublic use root::implementation as impl_api;\n",
+    )
+    .expect("api");
+    std::fs::write(
+        &implementation,
+        "module implementation;\npublic func answer() -> i32 { 7 }\n",
+    )
+    .expect("implementation");
+    let mut plan = plan(&source, Some("root::main"), BuildMode::Check, None);
+    plan.packages[0].exposed = vec![
+        "root".to_owned(),
+        "api".to_owned(),
+        "implementation".to_owned(),
+    ];
+    plan.packages[0].files = vec![
+        PlanFile {
+            path: source.clone(),
+            primary: true,
+        },
+        PlanFile {
+            path: api,
+            primary: false,
+        },
+        PlanFile {
+            path: implementation,
+            primary: false,
+        },
+    ];
+    let path = write_plan(&fixture.root, &plan);
+    let output_path = fixture.root.join("api.json");
+    let output = run(&[
+        "build",
+        "--emit=api",
+        "--plan-file",
+        &path.display().to_string(),
+        "-o",
+        &output_path.display().to_string(),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&output_path).expect("api file")).expect("api json");
+    let modules = snapshot["modules"].as_array().expect("modules");
+    assert!(
+        modules
+            .iter()
+            .any(|module| module["path"] == "api::impl_api")
+    );
+    let items = snapshot["items"].as_array().expect("items");
+    let alias = items
+        .iter()
+        .find(|item| item["module"] == "api" && item["name"] == "answer")
+        .expect("the re-exported item is listed");
+    assert_eq!(alias["canonical"], "implementation::answer");
+}
+
+#[test]
 fn plan_mode_emits_an_api_snapshot() {
     let (fixture, source) = fixture("func main() -> i32 { 0 }\n");
     let plan = plan(&source, Some("root::main"), BuildMode::Check, None);

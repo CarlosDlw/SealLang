@@ -18,6 +18,7 @@ fn snapshot(signature: &str) -> ApiSnapshot {
             name: "value".to_owned(),
             kind: "function".to_owned(),
             module: "root".to_owned(),
+            canonical: None,
             visibility: "public".to_owned(),
             cfg: None,
             signature: Some(signature.to_owned()),

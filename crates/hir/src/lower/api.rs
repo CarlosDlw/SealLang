@@ -48,6 +48,47 @@ impl Lowering<'_> {
             self.hir.api_mut().push_item(def);
             self.validate_item(def, data.kind, data.name_span, data.span);
         }
+
+        let exports: Vec<_> = self
+            .hir
+            .module_exports()
+            .map(|(owner, name, binding)| (owner, name, *binding))
+            .collect();
+        for (owner, name, binding) in exports {
+            if binding.visibility != Visibility::Public || !self.hir.module(owner).exposed {
+                continue;
+            }
+            let owner_path = self.hir.module(owner).path.clone();
+            match binding.target {
+                crate::module::ExportTarget::Module { module } => {
+                    self.hir
+                        .api_mut()
+                        .push_module_alias(crate::module::ApiModuleAlias {
+                            path: owner_path.child(name),
+                            module,
+                        });
+                }
+                crate::module::ExportTarget::Item {
+                    module,
+                    name: target_name,
+                    namespace,
+                } => {
+                    let target = match namespace {
+                        crate::module::Namespace::Value => self.globals.get(&(module, target_name)),
+                        crate::module::Namespace::Type => self.types.get(&(module, target_name)),
+                        crate::module::Namespace::Trait => self.traits.get(&(module, target_name)),
+                    }
+                    .copied();
+                    if let Some(def) = target {
+                        self.hir.api_mut().push_alias(crate::module::ApiAlias {
+                            path: owner_path,
+                            name,
+                            def,
+                        });
+                    }
+                }
+            }
+        }
     }
 
     fn validate_item(&mut self, def: DefId, kind: DefKind, name_span: Span, span: Span) {

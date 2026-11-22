@@ -15,14 +15,14 @@ use seal_symbol::{Interner, Symbol};
 
 use crate::module::{ImportBinding, ImportTable, ImportTarget, ModuleGraph};
 
-/// One fully expanded import.
+/// One fully expanded import or re-export.
 #[derive(Clone)]
-struct Leaf {
-    root: UseRoot,
-    root_span: Span,
-    names: Vec<(Symbol, Span)>,
-    alias: Option<(Symbol, Span)>,
-    span: Span,
+pub(super) struct Leaf {
+    pub(super) root: UseRoot,
+    pub(super) root_span: Span,
+    pub(super) names: Vec<(Symbol, Span)>,
+    pub(super) alias: Option<(Symbol, Span)>,
+    pub(super) span: Span,
 }
 
 /// Resolves every `use` declaration of every file.
@@ -49,6 +49,11 @@ pub(crate) fn resolve_imports(
             let ItemKind::Use(declaration) = &item.kind else {
                 continue;
             };
+            // `public use` and `internal use` are re-exports; they expose a
+            // module binding, but they do not import anything into this file.
+            if declaration.visibility.is_some() {
+                continue;
+            }
             if item
                 .modifiers
                 .cfg
@@ -86,7 +91,7 @@ fn resolve_declaration(
 }
 
 /// Expands groups into one leaf per imported name.
-fn expand(path: &UsePath) -> Vec<Leaf> {
+pub(super) fn expand(path: &UsePath) -> Vec<Leaf> {
     let mut leaves = vec![Leaf {
         root: path.root,
         root_span: path.root_span,
@@ -144,8 +149,13 @@ fn resolve_leaf(
     };
 
     for (name, span) in prefix {
-        match graph.children.get(&(current, *name)).copied() {
-            Some(child) => current = child,
+        match graph.module_lookup(current, *name) {
+            Some(lookup) => {
+                if !export_reachable(graph, package, lookup.export, *span, dcx, interner) {
+                    return;
+                }
+                current = lookup.module;
+            }
             None => {
                 unresolved(dcx, interner, *span, *name);
                 return;
@@ -160,13 +170,13 @@ fn resolve_leaf(
             |(alias, _)| alias,
         );
         bind_module(
-            graph, table, package, module, current, local, leaf, dcx, interner,
+            graph, table, package, module, current, None, local, leaf, dcx, interner,
         );
         return;
     };
 
-    let child = graph.children.get(&(current, name)).copied();
-    let item = graph.items.get(&(current, name)).copied();
+    let child = graph.module_lookup(current, name);
+    let item = graph.item_lookup(current, name);
     match (child, item) {
         (Some(_), Some(_)) => {
             dcx.error(format!(
@@ -181,17 +191,27 @@ fn resolve_leaf(
         (Some(child), None) => {
             let local = leaf.alias.map_or(name, |(alias, _)| alias);
             bind_module(
-                graph, table, package, module, child, local, leaf, dcx, interner,
+                graph,
+                table,
+                package,
+                module,
+                child.module,
+                child.export,
+                local,
+                leaf,
+                dcx,
+                interner,
             );
         }
-        (None, Some(info)) => {
+        (None, Some(item)) => {
             let accessible = visible(
                 graph,
                 package,
                 module,
-                current,
-                info.visibility,
-                info.span,
+                item.module,
+                item.info.visibility,
+                item.export,
+                item.info.span,
                 dcx,
                 interner,
             );
@@ -207,11 +227,12 @@ fn resolve_leaf(
                 local,
                 local_span,
                 ImportTarget::Item {
-                    module: current,
-                    name,
-                    namespace: info.namespace,
+                    module: item.module,
+                    name: item.name,
+                    namespace: item.info.namespace,
                 },
-                info.visibility,
+                item.export
+                    .map_or(item.info.visibility, |binding| binding.visibility),
                 leaf.span,
                 dcx,
                 interner,
@@ -232,8 +253,11 @@ fn resolve_root(
     match leaf.root {
         UseRoot::Root => Some(root),
         UseRoot::Name(name) => {
-            if let Some(module) = graph.children.get(&(root, name)).copied() {
-                return Some(module);
+            if let Some(lookup) = graph.module_lookup(root, name) {
+                if !export_reachable(graph, package, lookup.export, leaf.root_span, dcx, interner) {
+                    return None;
+                }
+                return Some(lookup.module);
             }
             if let Some(dependency) = graph.packages[package]
                 .dependencies
@@ -262,11 +286,15 @@ fn bind_module(
     package: PackageId,
     module: ModuleId,
     target: ModuleId,
+    export: Option<crate::module::ExportBinding>,
     local: Symbol,
     leaf: &Leaf,
     dcx: &DiagCtxt,
     interner: &Interner,
 ) {
+    if !export_reachable(graph, package, export, leaf.span, dcx, interner) {
+        return;
+    }
     let target_package = graph.modules[target].package;
     if target_package != package && !graph.modules[target].exposed {
         dcx.error(format!(
@@ -305,10 +333,14 @@ fn visible(
     from: ModuleId,
     target_module: ModuleId,
     visibility: Visibility,
+    export: Option<crate::module::ExportBinding>,
     item_span: Span,
     dcx: &DiagCtxt,
     interner: &Interner,
 ) -> bool {
+    if !export_reachable(graph, package, export, item_span, dcx, interner) {
+        return false;
+    }
     let target_package = graph.modules[target_module].package;
     if target_package != package {
         if visibility != Visibility::Public {
@@ -406,6 +438,44 @@ fn insert(
             visibility,
         },
     );
+}
+
+/// Checks that a re-export used by an import is reachable from the importing
+/// package. A `public` export needs its declaring module in the API; an
+/// `internal` export is usable only inside its package.
+fn export_reachable(
+    graph: &ModuleGraph,
+    package: PackageId,
+    export: Option<crate::module::ExportBinding>,
+    span: Span,
+    dcx: &DiagCtxt,
+    interner: &Interner,
+) -> bool {
+    let Some(export) = export else {
+        return true;
+    };
+    let owner = export.module;
+    let owner_package = graph.modules[owner].package;
+    if export.visibility == Visibility::Internal && owner_package != package {
+        dcx.error("the re-export is internal to its package")
+            .code(codes::E2072.diag_code())
+            .primary(span, "this re-export is not visible outside its package")
+            .help("use a public re-export, or keep the import inside the package")
+            .emit();
+        return false;
+    }
+    if owner_package != package && !graph.modules[owner].exposed {
+        dcx.error(format!(
+            "the re-export module `{}` is not exposed",
+            graph.modules[owner].path.display(interner)
+        ))
+        .code(codes::E2080.diag_code())
+        .primary(span, "this re-export is not reachable")
+        .help("expose the module in `[package.api]`")
+        .emit();
+        return false;
+    }
+    true
 }
 
 fn unresolved(dcx: &DiagCtxt, interner: &Interner, span: Span, name: Symbol) {

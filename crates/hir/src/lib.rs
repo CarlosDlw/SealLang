@@ -156,6 +156,7 @@ pub struct Hir {
     modules: IndexVec<ModuleId, module::ModuleData>,
     file_modules: FxHashMap<FileId, ModuleId>,
     module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
+    module_exports: FxHashMap<(ModuleId, seal_symbol::Symbol), module::ExportBinding>,
     imports: FxHashMap<FileId, module::ImportTable>,
     api: module::ApiTable,
     primary_package: PackageId,
@@ -268,8 +269,35 @@ impl Hir {
     }
 
     /// Returns the child module `name` of `parent`.
+    ///
+    /// A resolved module re-export is a child for path resolution purposes.
     pub fn child_module(&self, parent: ModuleId, name: seal_symbol::Symbol) -> Option<ModuleId> {
-        self.module_children.get(&(parent, name)).copied()
+        if let Some(module) = self.module_children.get(&(parent, name)).copied() {
+            return Some(module);
+        }
+        let export = self.module_exports.get(&(parent, name))?;
+        let module::ExportTarget::Module { module } = export.target else {
+            return None;
+        };
+        Some(module)
+    }
+
+    /// Returns the re-export binding under `parent::name`, when any.
+    pub fn module_export(
+        &self,
+        parent: ModuleId,
+        name: seal_symbol::Symbol,
+    ) -> Option<&module::ExportBinding> {
+        self.module_exports.get(&(parent, name))
+    }
+
+    /// Returns every module re-export with its declaring module and name.
+    pub fn module_exports(
+        &self,
+    ) -> impl Iterator<Item = (ModuleId, seal_symbol::Symbol, &module::ExportBinding)> + '_ {
+        self.module_exports
+            .iter()
+            .map(|((module, name), binding)| (*module, *name, binding))
     }
 
     /// Returns the imports of one file.
@@ -937,6 +965,7 @@ impl Hir {
             modules: IndexVec::new(),
             file_modules: FxHashMap::default(),
             module_children: FxHashMap::default(),
+            module_exports: FxHashMap::default(),
             imports: FxHashMap::default(),
             api: module::ApiTable::default(),
             primary_package: PackageId::from_usize(0),
@@ -961,6 +990,7 @@ impl Hir {
         file_modules: FxHashMap<FileId, ModuleId>,
         api: module::ApiTable,
         module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
+        module_exports: FxHashMap<(ModuleId, seal_symbol::Symbol), module::ExportBinding>,
         imports: FxHashMap<FileId, module::ImportTable>,
         primary_package: PackageId,
     ) {
@@ -970,6 +1000,7 @@ impl Hir {
         self.file_modules = file_modules;
         self.api = api;
         self.module_children = module_children;
+        self.module_exports = module_exports;
         self.imports = imports;
     }
 

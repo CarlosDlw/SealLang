@@ -26,6 +26,7 @@ mod methods;
 mod modules;
 mod packages;
 mod protocols;
+mod reexports;
 mod resolve;
 mod slices;
 mod structs;

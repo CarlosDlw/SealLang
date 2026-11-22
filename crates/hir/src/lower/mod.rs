@@ -46,6 +46,7 @@ mod opaque;
 mod params;
 mod paths;
 mod patterns;
+mod reexports;
 mod scope;
 mod stmt;
 mod structs;
@@ -105,7 +106,8 @@ fn lower_plan(
     c_abi: CAbiProperties,
 ) -> Hir {
     crate::cfg::validate_env(plan, asts, dcx, interner);
-    let graph = crate::module::ModuleGraph::build(plan, asts, dcx, interner);
+    let mut graph = crate::module::ModuleGraph::build(plan, asts, dcx, interner);
+    reexports::resolve_reexports(&mut graph, asts, dcx, interner);
     let imports = imports::resolve_imports(&graph, asts, dcx, interner);
     let files: Vec<AstFile<'_>> = asts
         .iter()
@@ -213,6 +215,7 @@ impl<'a> Lowering<'a> {
             graph.file_module,
             graph.api,
             graph.children,
+            graph.exports,
             imports_by_file,
             primary_package,
         );
@@ -479,6 +482,73 @@ impl<'a> Lowering<'a> {
         self.module_def(Namespace::Trait, name)
             .or_else(|| self.imported(name, Namespace::Trait))
             .or_else(|| self.builtin_traits.get(&name).copied())
+    }
+
+    /// Resolves one item directly in `module` or through a resolved re-export.
+    pub(super) fn module_item(
+        &self,
+        module: ModuleId,
+        name: Symbol,
+        namespace: Namespace,
+    ) -> Option<(DefId, Option<crate::module::ExportBinding>)> {
+        let direct = match namespace {
+            Namespace::Value => self.globals.get(&(module, name)).copied(),
+            Namespace::Type => self.types.get(&(module, name)).copied(),
+            Namespace::Trait => self.traits.get(&(module, name)).copied(),
+        };
+        if let Some(definition) = direct {
+            return Some((definition, None));
+        }
+        let export = self.hir.module_export(module, name).copied()?;
+        let crate::module::ExportTarget::Item {
+            module: target_module,
+            name: target_name,
+            namespace: target_namespace,
+        } = export.target
+        else {
+            return None;
+        };
+        if target_namespace != namespace {
+            return None;
+        }
+        let definition = match namespace {
+            Namespace::Value => self.globals.get(&(target_module, target_name)).copied(),
+            Namespace::Type => self.types.get(&(target_module, target_name)).copied(),
+            Namespace::Trait => self.traits.get(&(target_module, target_name)).copied(),
+        }?;
+        Some((definition, Some(export)))
+    }
+
+    /// Checks that a re-export used by a qualified path is reachable here.
+    pub(super) fn export_reachable(
+        &mut self,
+        export: Option<crate::module::ExportBinding>,
+        span: Span,
+    ) -> bool {
+        let Some(export) = export else {
+            return true;
+        };
+        let owner = export.module;
+        let owner_package = self.hir.module(owner).package;
+        if export.visibility == seal_def::Visibility::Internal
+            && owner_package != self.current_package
+        {
+            self.error(
+                codes::E2072,
+                span,
+                "the re-export is internal to its package",
+            )
+            .help("use a public re-export, or keep the path inside the package")
+            .emit();
+            return false;
+        }
+        if owner_package != self.current_package && !self.hir.module(owner).exposed {
+            self.error(codes::E2080, span, "the re-export module is not exposed")
+                .help("expose the module in `[package.api]`")
+                .emit();
+            return false;
+        }
+        true
     }
 
     /// Returns `true` when the current module or an import names a value.

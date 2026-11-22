@@ -104,6 +104,10 @@ impl Lowering<'_> {
                 .emit();
                 return None;
             };
+            let export = self.hir.module_export(current, segment.name).copied();
+            if !self.export_reachable(export, segment.name_span) {
+                return None;
+            }
             if !self.module_reachable(child, segment.name_span) {
                 return None;
             }
@@ -147,6 +151,10 @@ impl Lowering<'_> {
             return Some(root_module);
         }
         if let Some(module) = self.hir.child_module(root_module, root) {
+            let export = self.hir.module_export(root_module, root).copied();
+            if !self.export_reachable(export, span) {
+                return None;
+            }
             return self.module_if_reachable(module, span);
         }
         if let Some(module) = self.imported_module(root) {

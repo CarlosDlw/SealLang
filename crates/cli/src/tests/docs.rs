@@ -21,6 +21,7 @@ fn snapshot() -> ApiSnapshot {
             name: "Point".to_owned(),
             kind: "struct".to_owned(),
             module: "root".to_owned(),
+            canonical: None,
             visibility: "public".to_owned(),
             cfg: Some("target.os == \"linux\"".to_owned()),
             signature: None,

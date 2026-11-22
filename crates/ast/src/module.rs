@@ -7,6 +7,8 @@
 use seal_span::Span;
 use seal_symbol::Symbol;
 
+use crate::modifiers::Visibility;
+
 /// The `module path::to::module;` declaration at the start of a file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModuleDecl {
@@ -20,10 +22,15 @@ pub struct ModuleDecl {
 }
 
 /// One `use` declaration.
+///
+/// A plain import is private to its file. `public use` and `internal use`
+/// re-export the target from the declaring module instead.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UseDecl {
     /// The imported path.
     pub path: UsePath,
+    /// The re-export visibility, or `None` for a plain file-scoped import.
+    pub visibility: Option<Visibility>,
 }
 
 /// The first segment of an import path.

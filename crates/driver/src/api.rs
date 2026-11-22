@@ -30,7 +30,7 @@ pub(crate) fn write(
         .get(hir.primary_package())
         .map(|package| session.interner().resolve(package.name).to_owned())
         .unwrap_or_else(|| "package".to_owned());
-    let modules = hir
+    let mut modules: Vec<ApiModule> = hir
         .modules()
         .iter()
         .filter(|module| module.package == hir.primary_package())
@@ -44,6 +44,19 @@ pub(crate) fn write(
             docs: crate::doc_text::render(session.source_map(), module.docs, session.interner()),
         })
         .collect();
+    for alias in hir.api().module_aliases() {
+        let path = path_string(&alias.path, session.interner());
+        if modules.iter().any(|module| module.path == path) {
+            continue;
+        }
+        let target = hir.module(alias.module);
+        modules.push(ApiModule {
+            path,
+            exposed: true,
+            package: 0,
+            docs: crate::doc_text::render(session.source_map(), target.docs, session.interner()),
+        });
+    }
     let mut items = Vec::new();
     for def in hir.public_items() {
         if hir.definitions().get(*def).package != hir.primary_package() {
@@ -51,6 +64,21 @@ pub(crate) fn write(
         }
         if let Some(item) = item(session, hir, *def) {
             items.push(item);
+        }
+    }
+    for alias in hir.api().aliases() {
+        let Some(mut aliased) = item(session, hir, alias.def) else {
+            continue;
+        };
+        let canonical = Some(format!("{}::{}", aliased.module, aliased.name));
+        aliased.module = path_string(&alias.path, session.interner());
+        aliased.name = session.interner().resolve(alias.name).to_owned();
+        aliased.canonical = canonical;
+        let duplicate = items
+            .iter()
+            .any(|item| item.module == aliased.module && item.name == aliased.name);
+        if !duplicate {
+            items.push(aliased);
         }
     }
     let mut snapshot = ApiSnapshot {
@@ -96,6 +124,7 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
         name,
         kind: kind.to_owned(),
         module,
+        canonical: None,
         visibility,
         cfg,
         signature: None,

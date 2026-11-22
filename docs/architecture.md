@@ -134,9 +134,9 @@ use root::geometry::shapes::Circle;
 contextual names. They are recognized only in the modifier prefix of an item,
 field, method, or import, so existing bindings, functions, and types spelled
 with those names keep parsing unchanged. Visibility is a property of items,
-fields, and inherent methods; variants inherit their enum's visibility, and
-trait methods inherit their trait's. A module is always internal to its package
-and cannot take a modifier.
+fields, inherent methods, and re-exports; a plain import is file-scoped. Variants
+inherit their enum's visibility, and trait methods inherit their trait's. A
+module is always internal to its package and cannot take a modifier.
 
 `cfg(...)` is a typed boolean expression over `feature("name")`, `env("NAME")`,
 `target.{os,arch,env,pointer_width}`, `debug_assertions`, `test`, and `bench`,
@@ -180,6 +180,18 @@ against its `ModuleGraph`: an unknown module is `E2070`, an unknown item is
 that collides with another import is `E2078`, and one that collides with an item
 or submodule is `E2077`. Importing a name that resolution never uses emits the
 `unused_import` warning.
+
+`public use` and `internal use` are re-exports, resolved to a fixed point before
+any plain import. A re-export is an alias, not a declaration: the graph stores
+the canonical target module or item, and import, qualified-path, and API
+resolution all share that target. `public use` requires the declaring module to
+be exposed, the target item to be public, and every module on the target path to
+be exposed; `internal use` may target `internal` items inside the package, while
+a target from another package must still be public and exposed. Re-export
+chains and diamonds are valid; a cycle is `E2089`, a duplicate name is `E2090`,
+a target that cannot be aliased is `E2091`, a visibility widening is `E2092`, an
+unreachable target module or internal hop is `E2093`, and a collision with an
+item or submodule is `E2094`.
 
 Inside a body, a multi-segment path resolves its prefix through the module graph
 and its last segment through the value, type, or trait namespace, after the
