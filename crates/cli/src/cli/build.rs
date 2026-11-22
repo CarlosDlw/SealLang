@@ -58,6 +58,10 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
             .unwrap_or(1),
     };
     let progress = build_progress(cli, args.timings);
+    let remote = match crate::cli::remote::options(cli) {
+        Ok(remote) => remote,
+        Err(code) => return code,
+    };
     let options = BuildOptions {
         jobs: jobs_parallel,
         use_cache: !args.no_cache,
@@ -65,6 +69,7 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
         cache_root: None,
         link_args: args.link_args.iter().map(OsString::from).collect(),
         progress,
+        remote,
     };
     let requests: Vec<JobRequest> = jobs
         .iter()
@@ -123,7 +128,15 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
                 timing.key,
                 timing.kind,
                 timing.millis,
-                if timing.cached { "  cached" } else { "" },
+                if timing.cached && timing.remote {
+                    "  remote cached"
+                } else if timing.cached {
+                    "  cached"
+                } else if timing.remote {
+                    "  remote"
+                } else {
+                    ""
+                },
                 if timing.label.is_empty() {
                     String::new()
                 } else {
@@ -176,6 +189,12 @@ fn build_progress(cli: &Cli, timings: bool) -> Option<Arc<seal_build::ProgressFn
             if verbose && !command.is_empty() {
                 eprintln!("  command: {}", command.join(" "));
             }
+        }
+        ProgressEvent::RemoteHit { kind, label, key } => {
+            println!("Remote cached {kind} {label} ({})", &key[..12]);
+        }
+        ProgressEvent::RemoteUnavailable { reason } => {
+            eprintln!("warning: remote access disabled: {reason}");
         }
         ProgressEvent::Finished {
             kind,

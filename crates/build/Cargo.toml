@@ -11,6 +11,7 @@ seal-codegen.workspace = true
 seal-driver.workspace = true
 seal-manifest.workspace = true
 seal-query.workspace = true
+seal-remote.workspace = true
 seal-metadata.workspace = true
 seal-plan.workspace = true
 seal-project.workspace = true

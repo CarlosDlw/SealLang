@@ -36,8 +36,86 @@ not change.
 Cache directories are owner-only (`0700`) and objects are `0600`. Objects are
 written to a unique temporary file, flushed, and renamed into place, so a
 reader never observes a partial object. Two concurrent builds may write the
-same object; both bytes are content-addressed, so keeping either is correct. A
-remote or shared cache is deliberately out of scope in this phase.
+same object; both bytes are content-addressed, so keeping either is correct.
+
+## Remote cache and execution
+
+The local cache is always authoritative and the build never requires a network.
+A REAPI v2 endpoint is opt-in through flags, `SEAL_REMOTE_*` environment
+variables, or the `remote` table in the user configuration. Command-line values
+win over environment values, then user configuration, then defaults.
+
+| Setting | Flag | Environment |
+|---------|------|-------------|
+| Endpoint URL | `--remote <URL>` | `SEAL_REMOTE_URL` |
+| Remote execution | `--remote-execution` | `SEAL_REMOTE_EXECUTION` |
+| Strict mode | `--require-remote` | `SEAL_REMOTE_REQUIRE` |
+| Instance | `--remote-instance <NAME>` | `SEAL_REMOTE_INSTANCE` |
+| Request timeout | `--remote-timeout <SECONDS>` | `SEAL_REMOTE_TIMEOUT` |
+| Retry limit | `--remote-retries <N>` | `SEAL_REMOTE_RETRIES` |
+| CA bundle | `--remote-ca-cert <PATH>` | `SEAL_REMOTE_CA_CERT` |
+| TLS server name | `--remote-tls-domain <NAME>` | `SEAL_REMOTE_TLS_DOMAIN` |
+| Bearer token | none | `SEAL_REMOTE_TOKEN` |
+
+The token is accepted only from the environment. It is sent only in the
+gRPC `authorization` header, never placed in a command, action, input tree,
+record, or log, and `Debug` output for the token and endpoint configuration is
+redacted. HTTPS uses the host root store unless `--remote-ca-cert` names a
+bundle; certificate verification cannot be disabled.
+
+A lookup hashes the local action key into a canonical REAPI `Action` whose
+`salt` is that key and whose `Command` commits the action kind, sorted input
+paths and digests, hashed environment, display command, and expected outputs. A
+remote hit downloads every declared output, verifies its digest and size, and
+writes it to the local CAS before the action is considered cached. A miss runs
+the action and uploads the successful record. Small objects use bounded
+`BatchUpdateBlobs`/`BatchReadBlobs` calls with Zstandard when the server
+advertises it and the compressed form is smaller; larger objects use ByteStream
+in 64 KiB identity chunks.
+
+With `--remote-execution`, the frontend and `codegen-cgu` actions run on the
+worker instead of locally. The client uploads a canonical `Directory` tree,
+`Command`, and `Action`, consumes `Execute`/`WaitExecution`, checks the returned
+files, stdout, stderr, and exit status, and only then records the result. Link,
+generator, and native-probe actions stay local because they consume host
+toolchains, native libraries, or package files outside their declared inputs.
+Platform properties (`os`, `arch`, `tool`) travel with every action and are
+checked by the worker before it runs anything.
+
+Network, authentication, capability, and timeout failures produce a warning and
+disable remote access for the rest of the build, which continues from the local
+cache. A remote action that ran and failed is never retried locally: compiler
+errors are reported as remote failures. `--require-remote` turns any remote
+failure into a build failure instead of falling back. `--offline` together with
+any configured endpoint is `E8128`, and strict modes without an endpoint are
+`E8129`.
+
+## Running a reference endpoint
+
+`seal-remote-server` is an in-process and self-hosted REAPI v2 endpoint for
+tests and small deployments. It stores verified blobs and action results under
+`--root`, uses owner-only files and atomic renames, survives restarts, requires
+a token unless `--allow-anonymous` is explicit, and can serve TLS with
+`--tls-cert`/`--tls-key`.
+
+```console
+$ SEAL_REMOTE_TOKEN=... seal-remote-server \
+    --root /var/lib/seal-remote \
+    --listen 127.0.0.1:8980 \
+    --tool-path /opt/seal/bin
+$ SEAL_REMOTE_TOKEN=... seal build \
+    --remote https://cache.example:8980 \
+    --remote-execution --require-remote
+```
+
+The worker resolves `sealc` through `--tool-path` or `PATH`, materializes inputs
+into a fresh private work directory, runs the sandbox with no network and an
+empty environment plus declared variables, and rejects missing, directory,
+symlink, or escaping outputs. A relative program containing a slash must stay
+inside the work tree, and an absolute program is accepted only below
+`--tool-path`. Directories, symlink outputs, and multi-tenant scheduling are
+outside the reference endpoint's contract; the client reports unsupported
+capabilities as `E8126` rather than silently degrading a result.
 
 ## Action keys
 

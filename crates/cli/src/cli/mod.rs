@@ -26,6 +26,7 @@ pub(crate) mod new;
 mod owner;
 mod publish;
 mod registry;
+pub(crate) mod remote;
 mod remove;
 mod run;
 mod sbom;
@@ -141,6 +142,38 @@ pub(crate) struct Cli {
     /// Use only the vendor tree for registry dependencies.
     #[arg(long = "vendor", global = true)]
     pub(crate) vendor: bool,
+
+    /// Use a REAPI v2 remote cache endpoint.
+    #[arg(long, global = true, value_name = "URL")]
+    pub(crate) remote: Option<String>,
+
+    /// Execute compiler actions on the remote endpoint.
+    #[arg(long = "remote-execution", global = true)]
+    pub(crate) remote_execution: bool,
+
+    /// Fail instead of falling back when the remote endpoint is unavailable.
+    #[arg(long = "require-remote", global = true)]
+    pub(crate) require_remote: bool,
+
+    /// The REAPI instance name.
+    #[arg(long = "remote-instance", global = true, value_name = "NAME")]
+    pub(crate) remote_instance: Option<String>,
+
+    /// The remote request timeout in seconds.
+    #[arg(long = "remote-timeout", global = true, value_name = "SECONDS")]
+    pub(crate) remote_timeout: Option<u64>,
+
+    /// The number of transient remote request retries.
+    #[arg(long = "remote-retries", global = true, value_name = "N")]
+    pub(crate) remote_retries: Option<u32>,
+
+    /// A PEM certificate authority bundle for the remote endpoint.
+    #[arg(long = "remote-ca-cert", global = true, value_name = "PATH")]
+    pub(crate) remote_ca_cert: Option<PathBuf>,
+
+    /// The TLS server name when it differs from the URL host.
+    #[arg(long = "remote-tls-domain", global = true, value_name = "NAME")]
+    pub(crate) remote_tls_domain: Option<String>,
 
     /// The action to perform.
     #[command(subcommand)]

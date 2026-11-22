@@ -29,6 +29,8 @@ mod action;
 mod context;
 mod error;
 mod graph;
+mod remote;
+mod remote_action;
 mod tasks;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -112,6 +114,20 @@ pub enum ProgressEvent {
         /// Why the record was discarded.
         reason: String,
     },
+    /// A remote result was served without running the action locally.
+    RemoteHit {
+        /// The action kind.
+        kind: String,
+        /// The human-readable label.
+        label: String,
+        /// The content key.
+        key: String,
+    },
+    /// Remote access failed or was disabled and the build continues locally.
+    RemoteUnavailable {
+        /// The redacted reason.
+        reason: String,
+    },
 }
 
 /// A progress callback shared by all workers.
@@ -130,6 +146,8 @@ pub struct ActionTiming {
     pub millis: u64,
     /// Whether the action was served from the cache.
     pub cached: bool,
+    /// Whether the result came from the remote endpoint.
+    pub remote: bool,
 }
 
 /// Options for one builder.
@@ -147,6 +165,8 @@ pub struct BuildOptions {
     pub link_args: Vec<OsString>,
     /// An optional progress callback.
     pub progress: Option<Arc<ProgressFn>>,
+    /// Optional remote cache and execution endpoint.
+    pub remote: Option<seal_remote::RemoteConfig>,
 }
 
 impl Default for BuildOptions {
@@ -160,6 +180,7 @@ impl Default for BuildOptions {
             cache_root: None,
             link_args: Vec::new(),
             progress: None,
+            remote: None,
         }
     }
 }
@@ -171,6 +192,7 @@ impl std::fmt::Debug for BuildOptions {
             .field("use_cache", &self.use_cache)
             .field("cache_root", &self.cache_root)
             .field("link_args", &self.link_args)
+            .field("remote", &self.remote)
             .finish_non_exhaustive()
     }
 }
@@ -240,12 +262,36 @@ impl<'a> Builder<'a> {
         fs::create_dir_all(&temp_root).map_err(|error| {
             BuildError::cache(format!("cannot create `{}`: {error}", temp_root.display()))
         })?;
+        let remote = match self.options.remote.clone() {
+            Some(config) => {
+                let require_remote = config.require_remote;
+                let token = config.token.clone();
+                match remote::RemoteSession::open(config, cache.cas().clone()) {
+                    Ok(session) => Some(session),
+                    Err(error) if require_remote => {
+                        return Err(BuildError::new(
+                            error.code(),
+                            redacted_remote_message(token.as_ref(), &error),
+                        ));
+                    }
+                    Err(error) => {
+                        emit_remote_unavailable(
+                            &self.options.progress,
+                            &redacted_remote_message(token.as_ref(), &error),
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         let context = Arc::new(ActionContext::new(
             cache,
             self.options.sandbox.clone(),
             temp_root,
             self.options.use_cache,
             self.options.progress.clone(),
+            remote,
         ));
 
         let (generators, regular): (Vec<&JobRequest>, Vec<&JobRequest>) = jobs
@@ -876,6 +922,24 @@ fn set_mode(path: &Path, mode: u32) -> BuildResult<()> {
     }
     let _ = mode;
     Ok(())
+}
+
+fn redacted_remote_message(
+    token: Option<&seal_remote::RemoteToken>,
+    error: &seal_remote::RemoteError,
+) -> String {
+    token.map_or_else(
+        || error.message().to_owned(),
+        |token| token.redact(error.message()),
+    )
+}
+
+fn emit_remote_unavailable(progress: &Option<Arc<ProgressFn>>, reason: &str) {
+    if let Some(progress) = progress {
+        progress(ProgressEvent::RemoteUnavailable {
+            reason: reason.to_owned(),
+        });
+    }
 }
 
 fn which(program: &str) -> Option<PathBuf> {

@@ -1,0 +1,302 @@
+// Remote Execution API v2, reduced to the services Seal uses.
+//
+// Message names, field names, and field numbers match the canonical protocol
+// so a standard REAPI server can serve this client. Services and fields that
+// Seal does not call are intentionally omitted; protobuf ignores unknown
+// fields, so the subset remains wire-compatible.
+syntax = "proto3";
+
+package build.bazel.remote.execution.v2;
+
+import "google/longrunning/operations.proto";
+import "google/protobuf/duration.proto";
+import "google/rpc/status.proto";
+
+service Execution {
+  rpc Execute(ExecuteRequest) returns (stream google.longrunning.Operation);
+  rpc WaitExecution(WaitExecutionRequest) returns (stream google.longrunning.Operation);
+}
+
+service ActionCache {
+  rpc GetActionResult(GetActionResultRequest) returns (ActionResult);
+  rpc UpdateActionResult(UpdateActionResultRequest) returns (ActionResult);
+}
+
+service ContentAddressableStorage {
+  rpc FindMissingBlobs(FindMissingBlobsRequest) returns (FindMissingBlobsResponse);
+  rpc BatchUpdateBlobs(BatchUpdateBlobsRequest) returns (BatchUpdateBlobsResponse);
+  rpc BatchReadBlobs(BatchReadBlobsRequest) returns (BatchReadBlobsResponse);
+}
+
+service Capabilities {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (ServerCapabilities);
+}
+
+message Digest {
+  string hash = 1;
+  int64 size_bytes = 2;
+}
+
+message Action {
+  Digest command_digest = 1;
+  Digest input_root_digest = 2;
+  google.protobuf.Duration timeout = 6;
+  bool do_not_cache = 7;
+  bytes salt = 9;
+  Platform platform = 10;
+}
+
+message Command {
+  message EnvironmentVariable {
+    string name = 1;
+    string value = 2;
+  }
+
+  enum OutputDirectoryFormat {
+    TREE_ONLY = 0;
+    DIRECTORY_ONLY = 1;
+    TREE_AND_DIRECTORY = 2;
+  }
+
+  repeated string arguments = 1;
+  repeated EnvironmentVariable environment_variables = 2;
+  repeated string output_files = 3 [deprecated = true];
+  repeated string output_directories = 4 [deprecated = true];
+  repeated string output_paths = 7;
+  Platform platform = 5 [deprecated = true];
+  string working_directory = 6;
+  repeated string output_node_properties = 8;
+  OutputDirectoryFormat output_directory_format = 9;
+}
+
+message Platform {
+  message Property {
+    string name = 1;
+    string value = 2;
+  }
+
+  repeated Property properties = 1;
+}
+
+message Directory {
+  repeated FileNode files = 1;
+  repeated DirectoryNode directories = 2;
+  repeated SymlinkNode symlinks = 3;
+}
+
+message FileNode {
+  string name = 1;
+  Digest digest = 2;
+  bool is_executable = 4;
+}
+
+message DirectoryNode {
+  string name = 1;
+  Digest digest = 2;
+}
+
+message SymlinkNode {
+  string name = 1;
+  string target = 2;
+}
+
+message ActionResult {
+  repeated OutputFile output_files = 2;
+  repeated OutputDirectory output_directories = 3;
+  int32 exit_code = 4;
+  bytes stdout_raw = 5;
+  Digest stdout_digest = 6;
+  bytes stderr_raw = 7;
+  Digest stderr_digest = 8;
+  repeated OutputSymlink output_symlinks = 12;
+}
+
+message OutputFile {
+  string path = 1;
+  Digest digest = 2;
+  bool is_executable = 4;
+  bytes contents = 5;
+}
+
+message OutputDirectory {
+  string path = 1;
+  Digest tree_digest = 2;
+}
+
+message OutputSymlink {
+  string path = 1;
+  string target = 2;
+}
+
+message Tree {
+  Directory root = 1;
+  repeated Directory children = 2;
+}
+
+message ExecuteRequest {
+  string instance_name = 1;
+  bool skip_cache_lookup = 3;
+  Digest action_digest = 6;
+  ExecutionPolicy execution_policy = 7;
+  ResultsCachePolicy results_cache_policy = 8;
+  DigestFunction.Value digest_function = 9;
+  bool inline_stdout = 10;
+  bool inline_stderr = 11;
+  repeated string inline_output_files = 12;
+}
+
+message ExecutionPolicy {
+  int32 priority = 1;
+}
+
+message ResultsCachePolicy {
+  int32 priority = 1;
+}
+
+message ExecuteResponse {
+  ActionResult result = 1;
+  bool cached_result = 2;
+  google.rpc.Status status = 3;
+  string message = 5;
+}
+
+message ExecutionStage {
+  enum Value {
+    UNKNOWN = 0;
+    CACHE_CHECK = 1;
+    QUEUED = 2;
+    EXECUTING = 3;
+    COMPLETED = 4;
+  }
+}
+
+message ExecuteOperationMetadata {
+  ExecutionStage.Value stage = 1;
+  Digest action_digest = 2;
+  string stdout_stream_name = 3;
+  string stderr_stream_name = 4;
+  DigestFunction.Value digest_function = 6;
+}
+
+message WaitExecutionRequest {
+  string name = 1;
+}
+
+message GetActionResultRequest {
+  string instance_name = 1;
+  Digest action_digest = 2;
+  bool inline_stdout = 3;
+  bool inline_stderr = 4;
+  repeated string inline_output_files = 5;
+  DigestFunction.Value digest_function = 6;
+}
+
+message UpdateActionResultRequest {
+  string instance_name = 1;
+  Digest action_digest = 2;
+  ActionResult action_result = 3;
+  ResultsCachePolicy results_cache_policy = 4;
+  DigestFunction.Value digest_function = 5;
+}
+
+message FindMissingBlobsRequest {
+  string instance_name = 1;
+  repeated Digest blob_digests = 2;
+  DigestFunction.Value digest_function = 3;
+}
+
+message FindMissingBlobsResponse {
+  repeated Digest missing_blob_digests = 2;
+}
+
+message BatchUpdateBlobsRequest {
+  message Request {
+    Digest digest = 1;
+    bytes data = 2;
+    Compressor.Value compressor = 3;
+  }
+
+  string instance_name = 1;
+  repeated Request requests = 2;
+  DigestFunction.Value digest_function = 5;
+}
+
+message BatchUpdateBlobsResponse {
+  message Response {
+    Digest digest = 1;
+    google.rpc.Status status = 2;
+  }
+
+  repeated Response responses = 1;
+}
+
+message BatchReadBlobsRequest {
+  string instance_name = 1;
+  repeated Digest digests = 2;
+  repeated Compressor.Value acceptable_compressors = 3;
+  DigestFunction.Value digest_function = 4;
+}
+
+message BatchReadBlobsResponse {
+  message Response {
+    Digest digest = 1;
+    bytes data = 2;
+    google.rpc.Status status = 3;
+    Compressor.Value compressor = 4;
+  }
+
+  repeated Response responses = 1;
+}
+
+message GetCapabilitiesRequest {
+  string instance_name = 1;
+}
+
+message ServerCapabilities {
+  CacheCapabilities cache_capabilities = 1;
+  ExecutionCapabilities execution_capabilities = 2;
+}
+
+message DigestFunction {
+  enum Value {
+    UNKNOWN = 0;
+    SHA256 = 1;
+    SHA1 = 2;
+    MD5 = 3;
+    VSO = 4;
+    SHA384 = 5;
+    SHA512 = 6;
+    MURMUR3 = 7;
+    SHA256TREE = 8;
+    BLAKE3 = 9;
+    GITSHA1 = 10;
+  }
+}
+
+message ActionCacheUpdateCapabilities {
+  bool update_enabled = 1;
+}
+
+message Compressor {
+  enum Value {
+    IDENTITY = 0;
+    ZSTD = 1;
+    DEFLATE = 2;
+    BROTLI = 3;
+  }
+}
+
+message CacheCapabilities {
+  repeated DigestFunction.Value digest_functions = 1;
+  ActionCacheUpdateCapabilities action_cache_update_capabilities = 2;
+  int64 max_batch_total_size_bytes = 4;
+  repeated Compressor.Value supported_compressors = 6;
+  repeated Compressor.Value supported_batch_update_compressors = 7;
+  int64 max_cas_blob_size_bytes = 8;
+}
+
+message ExecutionCapabilities {
+  DigestFunction.Value digest_function = 1;
+  bool exec_enabled = 2;
+  repeated DigestFunction.Value digest_functions = 5;
+}

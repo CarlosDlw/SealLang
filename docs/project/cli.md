@@ -367,9 +367,13 @@ $ seal lint --deny warnings
 `config` resolves each key through one fixed order: command line, environment,
 project manifest, user configuration, then the built-in default. The keys are
 `target`, `profile`, `jobs`, `offline`, `registry.url`, `cache.dir`, `color`,
-and `message-format`; `SEAL_TARGET`, `SEAL_PROFILE`, `SEAL_JOBS`,
-`SEAL_OFFLINE`, `SEAL_REGISTRY_URL`, `SEAL_CACHE_DIR`, `SEAL_COLOR`, and
-`SEAL_MESSAGE_FORMAT` supply the environment layer. The user file is
+`message-format`, `remote.url`, `remote.execution`, `remote.require`,
+`remote.instance`, `remote.timeout`, `remote.retries`, `remote.ca-cert`, and
+`remote.tls-domain`; `SEAL_TARGET`, `SEAL_PROFILE`, `SEAL_JOBS`,
+`SEAL_OFFLINE`, `SEAL_REGISTRY_URL`, `SEAL_CACHE_DIR`, `SEAL_COLOR`,
+`SEAL_MESSAGE_FORMAT`, and the corresponding `SEAL_REMOTE_*` variables supply
+the environment layer. The bearer token is read only from `SEAL_REMOTE_TOKEN`
+and is never part of resolved configuration output. The user file is
 `$SEAL_CONFIG`, or `$XDG_CONFIG_HOME/seal/config.toml`, or
 `~/.config/seal/config.toml`. `--origin` prints the winning layer, `--json`
 prints `{key, value, origin}` objects, and `--key` narrows the output.

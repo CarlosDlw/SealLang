@@ -102,6 +102,7 @@ fn build(root: &Root, jobs: usize, cache: bool) -> (Duration, usize) {
             cache_root: None,
             link_args: Vec::new(),
             progress: None,
+            remote: None,
         },
     );
     let report = builder

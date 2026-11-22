@@ -106,15 +106,39 @@ impl Action {
             Self::Native(action) => action.execute(context),
         }
     }
+
+    /// Returns the output names this action must produce, or an empty list for
+    /// actions whose outputs are discovered at execution time.
+    pub(crate) fn output_names(&self) -> Vec<String> {
+        match self {
+            Self::Frontend(_) => vec!["mono".to_owned(), "link-metadata".to_owned()],
+            Self::Codegen(_) => vec!["object".to_owned()],
+            Self::Link(action) => vec![action.kind.output_name().to_owned()],
+            Self::Generate(_) | Self::Native(_) => Vec::new(),
+        }
+    }
+
+    /// Returns whether this action can run on a remote worker.
+    pub(crate) fn supports_remote_execution(&self) -> bool {
+        matches!(self, Self::Frontend(_) | Self::Codegen(_))
+    }
+
+    /// Builds the remote command for an action that supports remote execution.
+    pub(crate) fn remote_spec(
+        &self,
+        context: &ActionContext,
+    ) -> BuildResult<Option<seal_remote::RemoteExecutionRequest>> {
+        crate::remote_action::spec(self, context)
+    }
 }
 
 /// The `frontend` action: one compile plan to one object and link metadata.
 #[derive(Clone, Debug)]
 pub(crate) struct FrontendAction {
-    label: String,
-    plan: CompilePlan,
+    pub(crate) label: String,
+    pub(crate) plan: CompilePlan,
     cgu_count: u32,
-    project_root: PathBuf,
+    pub(crate) project_root: PathBuf,
     content_digest: Digest,
     inputs: Vec<ActionInput>,
     temp_root: PathBuf,
@@ -332,9 +356,9 @@ fn read_link_metadata(metadata: &Path, label: &str) -> BuildResult<Vec<u8>> {
 /// The `codegen-cgu` action: one `.sealmono` unit to one object.
 #[derive(Clone, Debug)]
 pub(crate) struct CodegenAction {
-    label: String,
-    mono: Digest,
-    cgu: u32,
+    pub(crate) label: String,
+    pub(crate) mono: Digest,
+    pub(crate) cgu: u32,
     inputs: Vec<ActionInput>,
     temp_root: PathBuf,
 }
@@ -1128,7 +1152,7 @@ fn materialize_executable(
     Ok(())
 }
 
-fn relative_name(path: &Path, root: &Path) -> String {
+pub(crate) fn relative_name(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .map(slash_path)
         .unwrap_or_else(|_| path.display().to_string())

@@ -2924,6 +2924,139 @@ name `warnings`. An unknown name is rejected rather than silently ignored,
 because a typo would otherwise disable the policy the user intended.\n\nRun `seal lint --help` to list the supported names.",
 };
 
+/// The remote endpoint configuration is invalid.
+pub const E8120: ErrorCode = ErrorCode {
+    code: "E8120",
+    title: "invalid remote configuration",
+    explanation: "\
+The remote endpoint URL, instance name, certificate, timeout, retry limit, or
+token is invalid. Remote settings come from command-line flags, `SEAL_REMOTE_*`
+environment variables, and the user configuration; the token is read only from
+`SEAL_REMOTE_TOKEN` so it never appears in process listings.\n\nRun `seal config --list` to see the effective values and their origins.",
+};
+
+/// The remote endpoint could not be reached.
+pub const E8121: ErrorCode = ErrorCode {
+    code: "E8121",
+    title: "remote transport failed",
+    explanation: "\
+The remote cache or execution service refused a connection, closed the stream,
+or returned an invalid gRPC response. Without `--require-remote` the build
+reports a warning and continues with the local cache and local execution.\n\nCheck the endpoint URL, network path, and TLS settings, then retry.",
+};
+
+/// A remote digest did not match its bytes.
+pub const E8122: ErrorCode = ErrorCode {
+    code: "E8122",
+    title: "remote digest mismatch",
+    explanation: "\
+Every blob and action record is identified by its content digest. The remote
+endpoint returned bytes that do not hash to the requested digest, so the result
+is rejected instead of being written to the local CAS.\n\nThis indicates a corrupt server, proxy, or storage backend. Do not disable the
+check; repair the endpoint.",
+};
+
+/// The remote endpoint rejected the credentials.
+pub const E8123: ErrorCode = ErrorCode {
+    code: "E8123",
+    title: "remote authentication failed",
+    explanation: "\
+The remote service requires a bearer token and rejected the request. Set
+`SEAL_REMOTE_TOKEN` to a valid token; the value is sent only in the
+`authorization` header and is redacted from diagnostics.\n\nWithout `--require-remote`, authentication failures degrade to local builds.",
+};
+
+/// A remote action or cache record is missing an output.
+pub const E8124: ErrorCode = ErrorCode {
+    code: "E8124",
+    title: "remote output missing",
+    explanation: "\
+An action declared an output that the remote worker or cache record did not
+produce. Declared outputs must exist, be regular files, and stay inside the
+working directory. The result is rejected because continuing would feed an
+incomplete artifact to the next action.\n\nInspect the remote worker logs and the action's output list.",
+};
+
+/// A remote action failed.
+pub const E8125: ErrorCode = ErrorCode {
+    code: "E8125",
+    title: "remote action failed",
+    explanation: "\
+The remote worker ran the action and it exited with a nonzero status. The
+diagnostic includes the remote stderr, with the bearer token redacted. Remote
+execution does not mask compiler or code generation failures with a local
+retry.\n\nFix the action's input or command, or disable remote execution for it.",
+};
+
+/// The remote endpoint does not support a required capability.
+pub const E8126: ErrorCode = ErrorCode {
+    code: "E8126",
+    title: "remote capability unavailable",
+    explanation: "\
+The endpoint does not advertise the CAS, ActionCache, Execution, or ByteStream
+capability needed by the requested operation. Remote execution also requires
+`--remote-execution` and an endpoint whose capabilities allow it.\n\nUse a REAPI v2 endpoint that implements the requested service.",
+};
+
+/// The remote cache rejected an update.
+pub const E8127: ErrorCode = ErrorCode {
+    code: "E8127",
+    title: "remote cache update failed",
+    explanation: "\
+The local action succeeded but the remote cache refused the action result or
+one of its blobs. Without `--require-remote` the artifact is kept locally and
+the build continues; with it, the build fails.\n\nCheck endpoint quotas, permissions, and storage health.",
+};
+
+/// Offline mode and a remote endpoint were both requested.
+pub const E8128: ErrorCode = ErrorCode {
+    code: "E8128",
+    title: "remote access conflicts with offline mode",
+    explanation: "\
+`--offline` forbids network access, while a remote endpoint was configured by a
+flag, environment variable, or user configuration. Remove one of the two.\n\nOffline builds always use the local cache and local execution.",
+};
+
+/// A strict remote mode was requested without an endpoint.
+pub const E8129: ErrorCode = ErrorCode {
+    code: "E8129",
+    title: "remote endpoint required",
+    explanation: "\
+`--remote-execution` and `--require-remote` make the remote endpoint part of the
+build contract, but no endpoint was configured. Set `--remote` or
+`SEAL_REMOTE_URL`.\n\nThe build refuses to silently fall back to local execution in strict mode.",
+};
+
+/// The remote endpoint violated the REAPI protocol.
+pub const E8130: ErrorCode = ErrorCode {
+    code: "E8130",
+    title: "remote protocol error",
+    explanation: "\
+The remote endpoint returned a malformed REAPI message, an unexpected operation
+state, or an internal server error. The client rejects the response rather than
+interpreting partial data.\n\nCheck the server version and the `remote_execution.proto` compatibility.",
+};
+
+/// A remote request exceeded its deadline.
+pub const E8131: ErrorCode = ErrorCode {
+    code: "E8131",
+    title: "remote request timed out",
+    explanation: "\
+A remote request exceeded `--remote-timeout` or the worker's execution
+deadline. Without `--require-remote` the action is retried locally; with it, the
+build fails.\n\nIncrease the timeout for large actions or investigate the endpoint latency.",
+};
+
+/// The remote worker could not run an action in its sandbox.
+pub const E8132: ErrorCode = ErrorCode {
+    code: "E8132",
+    title: "remote sandbox failed",
+    explanation: "\
+The worker could not create an isolated working directory, materialize the
+input tree, launch the sandbox, or collect outputs. The server rejects the
+action instead of running it unsandboxed.\n\nCheck the worker's sandbox backend and filesystem permissions.",
+};
+
 /// Two builds of the same project produced different bytes.
 pub const E8104: ErrorCode = ErrorCode {
     code: "E8104",
@@ -4326,7 +4459,8 @@ pub static ALL: &[ErrorCode] = &[
     E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070,
     E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092,
     E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105,
-    E8106, E8107, E8108, E8109, E8110, E8111, E8112, E9001, E9002,
+    E8106, E8107, E8108, E8109, E8110, E8111, E8112, E8120, E8121, E8122, E8123, E8124, E8125,
+    E8126, E8127, E8128, E8129, E8130, E8131, E8132, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.

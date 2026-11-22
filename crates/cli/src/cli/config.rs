@@ -46,7 +46,7 @@ struct Entry {
 /// The `$SEAL_CONFIG` or XDG user configuration.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
-struct UserConfig {
+pub(crate) struct UserConfig {
     target: Option<String>,
     profile: Option<String>,
     jobs: Option<usize>,
@@ -55,12 +55,27 @@ struct UserConfig {
     message_format: Option<String>,
     cache_dir: Option<PathBuf>,
     registry: UserRegistry,
+    pub(crate) remote: UserRemote,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 struct UserRegistry {
     url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub(crate) struct UserRemote {
+    pub(crate) url: Option<String>,
+    pub(crate) execution: Option<bool>,
+    pub(crate) require: Option<bool>,
+    pub(crate) instance: Option<String>,
+    pub(crate) timeout: Option<u64>,
+    pub(crate) retries: Option<u32>,
+    #[serde(rename = "ca-cert")]
+    pub(crate) ca_certificate: Option<PathBuf>,
+    pub(crate) tls_domain: Option<String>,
 }
 
 pub(crate) fn run(cli: &Cli, root: &Path, args: &ConfigArgs) -> ExitCode {
@@ -211,6 +226,75 @@ fn resolve(cli: &Cli, project: &Project, user: &UserConfig, args: &ConfigArgs) -
             user.message_format.clone(),
             Some("human".to_owned()),
         ),
+        pick(
+            "remote.url",
+            cli.remote.clone(),
+            env("SEAL_REMOTE_URL"),
+            None,
+            user.remote.url.clone(),
+            None,
+        ),
+        pick(
+            "remote.execution",
+            cli.remote_execution.then(|| "true".to_owned()),
+            env("SEAL_REMOTE_EXECUTION"),
+            None,
+            user.remote.execution.map(|value| value.to_string()),
+            Some("false".to_owned()),
+        ),
+        pick(
+            "remote.require",
+            cli.require_remote.then(|| "true".to_owned()),
+            env("SEAL_REMOTE_REQUIRE"),
+            None,
+            user.remote.require.map(|value| value.to_string()),
+            Some("false".to_owned()),
+        ),
+        pick(
+            "remote.instance",
+            cli.remote_instance.clone(),
+            env("SEAL_REMOTE_INSTANCE"),
+            None,
+            user.remote.instance.clone(),
+            Some(seal_remote::DEFAULT_INSTANCE.to_owned()),
+        ),
+        pick(
+            "remote.timeout",
+            cli.remote_timeout.map(|value| value.to_string()),
+            env("SEAL_REMOTE_TIMEOUT"),
+            None,
+            user.remote.timeout.map(|value| value.to_string()),
+            Some("300".to_owned()),
+        ),
+        pick(
+            "remote.retries",
+            cli.remote_retries.map(|value| value.to_string()),
+            env("SEAL_REMOTE_RETRIES"),
+            None,
+            user.remote.retries.map(|value| value.to_string()),
+            Some("2".to_owned()),
+        ),
+        pick(
+            "remote.ca-cert",
+            cli.remote_ca_cert
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            env("SEAL_REMOTE_CA_CERT"),
+            None,
+            user.remote
+                .ca_certificate
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            None,
+        ),
+        pick(
+            "remote.tls-domain",
+            cli.remote_tls_domain.clone(),
+            env("SEAL_REMOTE_TLS_DOMAIN"),
+            None,
+            user.remote.tls_domain.clone(),
+            None,
+        ),
     ]
 }
 
@@ -251,7 +335,7 @@ fn env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn load_user() -> Result<UserConfig, ExitCode> {
+pub(crate) fn load_user() -> Result<UserConfig, ExitCode> {
     let Some(path) = user_path() else {
         return Ok(UserConfig::default());
     };
@@ -278,7 +362,7 @@ fn load_user() -> Result<UserConfig, ExitCode> {
     })
 }
 
-fn user_path() -> Option<PathBuf> {
+pub(crate) fn user_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SEAL_CONFIG") {
         return Some(PathBuf::from(path));
     }
@@ -286,4 +370,21 @@ fn user_path() -> Option<PathBuf> {
         return Some(PathBuf::from(config).join("seal/config.toml"));
     }
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/seal/config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UserConfig;
+
+    #[test]
+    fn the_user_remote_table_uses_the_documented_ca_cert_key() {
+        let user: UserConfig =
+            toml::from_str("[remote]\nca-cert = \"/tmp/ca.pem\"\ntls-domain = \"cache.example\"\n")
+                .expect("the remote table is valid");
+        assert_eq!(
+            user.remote.ca_certificate.as_deref(),
+            Some(std::path::Path::new("/tmp/ca.pem"))
+        );
+        assert_eq!(user.remote.tls_domain.as_deref(), Some("cache.example"));
+    }
 }

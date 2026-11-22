@@ -46,3 +46,5 @@ seal-version.workspace = true
 
 [dev-dependencies]
 seal-plan.workspace = true
+seal-remote.workspace = true
+seal-remote-server = { path = "../remote-server" }

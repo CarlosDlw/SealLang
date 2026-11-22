@@ -53,6 +53,8 @@ seal-cli = { path = "crates/cli" }
 seal-cas = { path = "crates/cas" }
 seal-sandbox = { path = "crates/sandbox" }
 seal-build = { path = "crates/build" }
+seal-remote = { path = "crates/remote" }
+seal-remote-server = { path = "crates/remote-server" }
 seal-metadata = { path = "crates/metadata" }
 blake3 = "1.8"
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
@@ -67,6 +69,11 @@ base64 = "0.23"
 redb = "2.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1.16"
+prost = "0.13"
+prost-types = "0.13"
+tonic = { version = "0.12.3", default-features = false, features = ["transport", "codegen", "prost"] }
+tokio = "1.48"
+tokio-stream = { version = "0.1", default-features = false }
 
 clap = { version = "4.6", features = ["derive"] }
 ctrlc = "3.5.3"

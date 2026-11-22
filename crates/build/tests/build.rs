@@ -54,6 +54,7 @@ fn options(jobs: usize, cache: bool) -> BuildOptions {
         cache_root: None,
         link_args: Vec::new(),
         progress: None,
+        remote: None,
     }
 }
 

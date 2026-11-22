@@ -83,6 +83,7 @@ pub(crate) fn build(
         .map(|value| value.get())
         .unwrap_or(1);
     let progress = build_progress(cli, human);
+    let remote = crate::cli::remote::options(cli)?;
     let options = BuildOptions {
         jobs: parallel,
         use_cache: !no_cache,
@@ -90,6 +91,7 @@ pub(crate) fn build(
         cache_root: None,
         link_args: Vec::new(),
         progress,
+        remote,
     };
     let requests: Vec<JobRequest> = jobs
         .iter()
@@ -189,6 +191,12 @@ fn build_progress(cli: &Cli, human: bool) -> Option<Arc<seal_build::ProgressFn>>
         }
         ProgressEvent::Cached { kind, label, .. } => {
             println!("Cached {kind} {label}");
+        }
+        ProgressEvent::RemoteHit { kind, label, .. } => {
+            println!("Remote cached {kind} {label}");
+        }
+        ProgressEvent::RemoteUnavailable { reason } => {
+            eprintln!("warning: remote access disabled: {reason}");
         }
         ProgressEvent::Finished {
             kind,

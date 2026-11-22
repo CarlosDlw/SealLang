@@ -1,0 +1,29 @@
+[package]
+name = "seal-remote-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "seal-remote-server"
+path = "src/main.rs"
+
+[dependencies]
+seal-cas.workspace = true
+seal-remote = { workspace = true, features = ["client", "server", "tls"] }
+seal-sandbox.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tonic = { workspace = true }
+zstd.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rcgen = "0.13"

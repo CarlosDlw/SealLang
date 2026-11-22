@@ -24,6 +24,7 @@ seal-driver.workspace = true
 seal-manifest.workspace = true
 seal-plan.workspace = true
 seal-project.workspace = true
+seal-remote.workspace = true
 seal-registry.workspace = true
 seal-sandbox.workspace = true
 seal-target.workspace = true
@@ -38,6 +39,7 @@ time.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+seal-remote-server = { path = "../remote-server" }
 tar.workspace = true
 url.workspace = true
 zstd.workspace = true

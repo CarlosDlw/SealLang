@@ -1,0 +1,29 @@
+[package]
+name = "seal-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = ["client", "tls"]
+client = []
+server = []
+tls = ["tonic/tls-native-roots"]
+
+[dependencies]
+seal-cas.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "net", "macros", "sync"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tonic = { workspace = true, features = ["transport", "tls"] }
+url.workspace = true
+zstd.workspace = true
+
+[build-dependencies]
+prost-build = "0.13"
+tonic-build = "0.12.3"
+
+[lints]
+workspace = true

@@ -1200,6 +1200,35 @@ survives, the frontend action restores both files into the CAS without running
 the compiler again. The source digests are part of the key, so an edit can never
 serve a stale artifact.
 
+### Remote trust boundary
+
+`seal-remote` is a synchronous REAPI v2 client over a private Tokio runtime.
+Every remote value crosses a trust boundary: response digests and sizes are
+checked against the requested digest before bytes enter the local CAS, action
+results are checked against the outputs the local action declared, and action
+request paths are normalized relative paths. The wire action key is a canonical
+REAPI `Action` whose salt is the local action key; its `Command` commits the
+kind, inputs, hashed environment, display command, and outputs. A server cannot
+alias two locally distinct actions.
+
+Remote execution uploads a canonical `Directory` tree plus `Command`/`Action`
+and consumes the `Execute` stream. Only the frontend and `codegen-cgu` actions
+are remote: link and generator actions depend on host toolchains and native
+libraries that are not part of their declared inputs. The client checks every
+returned output before building an `ActionRecord`; a missing output, digest
+mismatch, or nonzero remote exit is a typed failure. Infrastructure failures
+disable remote access for the rest of the build and fall back locally, while
+`--require-remote` makes the same failures fatal.
+
+The reference `seal-remote-server` is a process-local service with persistent
+content-addressed storage. It validates bearer metadata in constant time,
+enforces instance names, request and blob limits, and action timeouts, and runs
+actions in a private work directory through the same sandbox as local
+generators. Input names, output names, working directories, and relative program
+paths are validated before any join, and absolute programs are limited to the
+configured tool directory, so a malicious `Directory` or command cannot escape
+the work tree.
+
 ### Measurements
 
 Measured on 2026-11-21 with `cargo bench -p seal-query` in release mode on the
