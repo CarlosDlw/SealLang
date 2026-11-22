@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Installation
+
+- `install.sh` installs `seal`, `sealc`, and the standard library into one Linux
+  prefix without root. It builds with `cargo build --release --locked`, stages
+  every file, verifies the staged standard library, and replaces the previous
+  binaries and standard-library language directory with rollback on failure.
+- `--prefix`, `PREFIX`, `DESTDIR`, `--no-build`, and `--dry-run` cover user
+  installs, system prefixes, packaging staging, and inspection. The installer
+  does not edit `PATH` or shell profiles.
+- Installed binaries find the standard library at
+  `<prefix>/lib/seal/stdlib/<language>/`; `SEAL_STDLIB` remains an explicit
+  development override.
+- `scripts/test-install.sh` installs into temporary prefixes and covers
+  idempotence, spaces, unwritable prefixes, `DESTDIR`, and profile preservation.
+  A Linux CI job runs `bash -n`, `shellcheck`, and the acceptance test.
+
 ### Modules, projects, builds, and packages
 
 Seal now has a complete project layer. The compiler still consumes one package

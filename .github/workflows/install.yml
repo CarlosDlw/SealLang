@@ -1,0 +1,33 @@
+name: Linux installer
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Check shell syntax
+        run: bash -n install.sh scripts/test-install.sh
+
+      - name: Lint shell scripts
+        run: shellcheck install.sh scripts/test-install.sh
+
+      - name: Run the installer acceptance test
+        run: scripts/test-install.sh

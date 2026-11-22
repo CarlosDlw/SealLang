@@ -14,6 +14,28 @@ Rust.
 | Artifacts | LLVM object, assembly, or a linked native executable |
 | Diagnostics | Stable error codes with long-form explanations (`sealc explain`) |
 
+## Install on Linux
+
+The repository includes an installer for `seal`, `sealc`, and the standard
+library. It builds from the checkout, stages the complete prefix, verifies the
+installed toolchain, and does not modify `PATH` or shell profiles:
+
+```console
+$ ./install.sh --prefix "$HOME/.local"
+```
+
+For a system-wide installation, build as your user and install with `sudo`:
+
+```console
+$ cargo build --release --locked --bin seal --bin sealc
+$ sudo ./install.sh --no-build
+```
+
+The default prefix is `/usr/local`; `--prefix`, `PREFIX`, and `DESTDIR` are
+supported. The layout is `<prefix>/bin/seal`, `<prefix>/bin/sealc`, and
+`<prefix>/lib/seal/stdlib/<language>/`. See [`docs/install.md`](docs/install.md)
+for upgrades, verification, manual uninstall, and limitations.
+
 ## Quick start
 
 ```text
@@ -301,6 +323,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
 | [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
+| [`docs/install.md`](docs/install.md) | Building and installing `seal`, `sealc`, and the standard library on Linux |
 | [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
 | [`examples/README.md`](examples/README.md) | Runnable multi-module, workspace, features, generator, freestanding, and registry projects |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
