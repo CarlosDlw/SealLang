@@ -68,9 +68,16 @@ pub(crate) fn specialize(
     if let Some(dependency) = mir_dependency {
         dependencies.push(dependency);
     }
+    // Distinct methods may share a declared name, module, and instance hash;
+    // the definition index keeps their memoized specializations separate. The
+    // fingerprint still keys value invalidation and generated symbols.
     let key = QueryKey::new(
         QueryKind::MonoInstance,
-        format!("mono-instance:{}:{fingerprint}", context.unit_key),
+        format!(
+            "mono-instance:{}:{}:{fingerprint}",
+            context.unit_key,
+            instance.def.index()
+        ),
     );
     let dependencies_for_query = dependencies.clone();
     let output = session.queries().query(key, dependencies_for_query, || {
