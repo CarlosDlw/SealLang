@@ -92,6 +92,7 @@ mod raw_intrinsic;
 mod relocation;
 mod runtime;
 mod rvalue;
+mod str_char;
 mod trait_object;
 mod type_info;
 mod types;

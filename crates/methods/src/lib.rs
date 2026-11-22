@@ -11,6 +11,15 @@
 
 #![warn(missing_docs)]
 
+/// Panic message for a `str::char_at` index at or past the string length.
+pub const STR_CHAR_AT_OUT_OF_BOUNDS: &str = "char_at index is out of bounds";
+
+/// Panic message for a `str::char_at` index inside a multibyte scalar.
+pub const STR_CHAR_AT_NOT_BOUNDARY: &str = "char_at index is not a char boundary";
+
+/// Panic message for malformed bytes reached through an unchecked string.
+pub const STR_INVALID_UTF8: &str = "string contains invalid UTF-8";
+
 /// A stable identifier for one entry in [`METHODS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MethodId(u16);

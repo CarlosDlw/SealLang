@@ -3,7 +3,9 @@
 //! Every operation mirrors `seal-codegen`; a difference here would make a
 //! compile-time result disagree with the same method at run time.
 
-use seal_methods::{IntrinsicOp, MethodId, MethodOwner};
+use seal_methods::{
+    IntrinsicOp, MethodId, MethodOwner, STR_CHAR_AT_NOT_BOUNDARY, STR_CHAR_AT_OUT_OF_BOUNDS,
+};
 use seal_mir::{IntrinsicReceiver, Operand};
 use seal_span::Span;
 use seal_ty::{TyId, TyKind};
@@ -177,6 +179,40 @@ impl<'a> Interpreter<'a> {
                 };
                 Ok(result)
             }
+            IntrinsicOp::StrCharAt => {
+                let [index] = args else {
+                    return Err(self.error(
+                        EvalErrorKind::Internal("`str::char_at` takes exactly one index".into()),
+                        span,
+                    ));
+                };
+                let ConstValue::Str { value, .. } = value else {
+                    return Err(self.error(EvalErrorKind::IntrinsicNotWhitelisted, span));
+                };
+                let index_value = self.read_operand(index, span)?;
+                let index = self.as_u128(&index_value, span)?;
+                let text = self.interner.resolve(*value);
+                if index >= text.len() as u128 {
+                    return Err(self.error(
+                        EvalErrorKind::Panic(STR_CHAR_AT_OUT_OF_BOUNDS.to_owned()),
+                        span,
+                    ));
+                }
+                let index = index as usize;
+                if !text.is_char_boundary(index) {
+                    return Err(self.error(
+                        EvalErrorKind::Panic(STR_CHAR_AT_NOT_BOUNDARY.to_owned()),
+                        span,
+                    ));
+                }
+                let Some(character) = text[index..].chars().next() else {
+                    return Err(self.error(
+                        EvalErrorKind::Panic(STR_CHAR_AT_OUT_OF_BOUNDS.to_owned()),
+                        span,
+                    ));
+                };
+                Ok(ConstValue::Char(character))
+            }
             IntrinsicOp::StrLen => {
                 let ConstValue::Str { value, .. } = value else {
                     return Err(self.error(EvalErrorKind::IntrinsicNotWhitelisted, span));
@@ -212,7 +248,6 @@ impl<'a> Interpreter<'a> {
             }
             IntrinsicOp::BoolToggle
             | IntrinsicOp::Len
-            | IntrinsicOp::StrCharAt
             | IntrinsicOp::StrSlice
             | IntrinsicOp::StrAsBytes
             | IntrinsicOp::SliceAsStrUnchecked

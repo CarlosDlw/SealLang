@@ -19,6 +19,13 @@ fn flag(fixture: &Fixture, name: &str) -> bool {
     }
 }
 
+fn character(fixture: &Fixture, name: &str) -> char {
+    match fixture.value(name) {
+        ConstValue::Char(value) => *value,
+        other => panic!("`{name}` is not a char: {other:?}"),
+    }
+}
+
 #[test]
 fn scalars_keep_their_types_and_bits() {
     let fixture = clean(
@@ -55,6 +62,28 @@ fn string_len_and_boundaries_are_evaluated() {
     assert!(flag(&fixture, "START"));
     assert!(!flag(&fixture, "MIDDLE"));
     assert!(flag(&fixture, "END"));
+}
+
+#[test]
+fn char_at_decodes_every_utf8_width() {
+    let fixture = clean(
+        r#"const ASCII: char = "A".char_at(0);
+           const ONE: char = "\u{7f}".char_at(0);
+           const TWO_LOW: char = "\u{80}".char_at(0);
+           const TWO_HIGH: char = "\u{7ff}".char_at(0);
+           const THREE_LOW: char = "\u{800}".char_at(0);
+           const THREE_HIGH: char = "\u{ffff}".char_at(0);
+           const FOUR_LOW: char = "\u{10000}".char_at(0);
+           const FOUR_HIGH: char = "\u{10ffff}".char_at(0);"#,
+    );
+    assert_eq!(character(&fixture, "ASCII"), 'A');
+    assert_eq!(character(&fixture, "ONE"), '\u{7f}');
+    assert_eq!(character(&fixture, "TWO_LOW"), '\u{80}');
+    assert_eq!(character(&fixture, "TWO_HIGH"), '\u{7ff}');
+    assert_eq!(character(&fixture, "THREE_LOW"), '\u{800}');
+    assert_eq!(character(&fixture, "THREE_HIGH"), '\u{ffff}');
+    assert_eq!(character(&fixture, "FOUR_LOW"), '\u{10000}');
+    assert_eq!(character(&fixture, "FOUR_HIGH"), '\u{10ffff}');
 }
 
 #[test]

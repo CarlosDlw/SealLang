@@ -317,6 +317,28 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 Ok(result.into())
             }
             IntrinsicOp::CharToU32 => Ok(value.into_int_value().into()),
+            IntrinsicOp::StrCharAt => {
+                let [index] = args else {
+                    return Err(CodegenError::internal(
+                        "`str::char_at` takes exactly one index",
+                    ));
+                };
+                let fat = value.into_struct_value();
+                let data = self
+                    .build(
+                        self.builder.build_extract_value(fat, 0, "string data"),
+                        "string data",
+                    )?
+                    .into_pointer_value();
+                let length = self
+                    .build(
+                        self.builder.build_extract_value(fat, 1, "string length"),
+                        "string length",
+                    )?
+                    .into_int_value();
+                let index = self.load_operand(index)?.into_int_value();
+                self.str_char_at(data, length, index, span)
+            }
             IntrinsicOp::StrLen => {
                 let fat = value.into_struct_value();
                 let length = self
@@ -420,7 +442,6 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 "`bool::toggle` reached the value path after its special case",
             )),
             IntrinsicOp::Len
-            | IntrinsicOp::StrCharAt
             | IntrinsicOp::StrSlice
             | IntrinsicOp::StrAsBytes
             | IntrinsicOp::SliceAsStrUnchecked
@@ -1408,7 +1429,7 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
         self.mapper.empty_type().const_zero().into()
     }
 
-    fn check_or_panic(
+    pub(crate) fn check_or_panic(
         &self,
         condition: IntValue<'ctx>,
         span: Span,

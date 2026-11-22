@@ -20,6 +20,18 @@ fn dividing_the_signed_minimum_by_minus_one_is_reported() {
 }
 
 #[test]
+fn char_at_rejects_a_continuation_index_in_a_constant() {
+    let fixture = Fixture::compile("const VALUE: char = \"é\".char_at(1);");
+    fixture.expect_code("E4027");
+}
+
+#[test]
+fn char_at_rejects_an_out_of_bounds_index_in_a_constant() {
+    let fixture = Fixture::compile("const VALUE: char = \"abc\".char_at(3);");
+    fixture.expect_code("E4027");
+}
+
+#[test]
 fn a_string_view_is_not_constant() {
     let fixture = Fixture::compile("const VIEW: *str = \"hello\".slice(0, 2);");
     fixture.expect_code("E4022");

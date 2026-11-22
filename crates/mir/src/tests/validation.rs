@@ -224,6 +224,26 @@ fn a_string_view_requires_a_string_pointer() {
 }
 
 #[test]
+fn a_string_view_base_is_never_a_str_place() {
+    let source = "func main(text: *str) -> *str { text.slice(0, 1) }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let block = str_view_block(&body);
+    let Rvalue::StrView { base, .. } = str_view_mut(&mut body) else {
+        unreachable!();
+    };
+    let dereferenced = base.clone().deref();
+    *base = dereferenced;
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::StrViewBaseTypeMismatch {
+            block,
+            kind: StrViewKind::Substring,
+        })
+    );
+}
+
+#[test]
 fn a_string_view_must_produce_its_declared_pointer() {
     let source = "func main(text: *str) -> *str { text.slice(0, 1) }";
     let (fixture, hir, mir) = lower_clean(source);
