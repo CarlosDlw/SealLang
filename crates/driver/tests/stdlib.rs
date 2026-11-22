@@ -190,6 +190,44 @@ fn the_core_prelude_exposes_option_and_result() {
 }
 
 #[test]
+fn alloc_is_exposed_only_by_the_hosted_standard_library() {
+    let fixture = temporary("alloc-surface");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        "use std::alloc::Layout;\n\nfunc main() -> usize {\n  Layout::new::<u8>().size()\n}\n",
+    )
+    .expect("source");
+
+    let hosted = run(&["check", &source.display().to_string()], None);
+    assert!(
+        hosted.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&hosted.stderr)
+    );
+
+    let core = run(
+        &["check", "--core-only", &source.display().to_string()],
+        None,
+    );
+    assert_eq!(core.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&core.stderr);
+    assert!(stderr.contains("E2073"), "stderr: {stderr}");
+    assert!(stderr.contains("std"), "stderr: {stderr}");
+    assert!(!stderr.contains("E2070"), "cascading error: {stderr}");
+
+    let none = run(
+        &["check", "--no-stdlib", &source.display().to_string()],
+        Some(("SEAL_STDLIB", &fixture.root.join("missing"))),
+    );
+    assert_eq!(none.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&none.stderr);
+    assert!(stderr.contains("E2073"), "stderr: {stderr}");
+    assert!(stderr.contains("std"), "stderr: {stderr}");
+    assert!(!stderr.contains("E2070"), "cascading error: {stderr}");
+}
+
+#[test]
 fn no_stdlib_rejects_string_methods_without_crashing() {
     let fixture = temporary("no-stdlib-string");
     let source = fixture.root.join("main.sl");

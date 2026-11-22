@@ -9,4 +9,4 @@ implicit-prelude = false
 core = { path = "../core" }
 
 [package.api]
-expose = ["root", "prelude"]
+expose = ["root", "prelude", "alloc"]
