@@ -16,11 +16,12 @@ func option_or(value: Option<i32>, fallback: i32) -> i32 {
 They expose no methods and the language has no `?` operator.
 `std::option::Option` and `core::option::Option` name the same type.
 
-Borrowed strings live in `std::str`. Their indices are byte offsets, and the
-safe `get`/`slice` pair validates UTF-8 boundaries. `std::str::from_utf8`
-validates external bytes before producing a `*str`, while
-`std::str::from_utf8_unchecked` is an `unsafe func` for already validated
-bytes.
+Borrowed strings live in `core::str`; `std::str` is a re-export of the same
+module. Their indices are byte offsets, and the safe `get`/`slice` pair
+validates UTF-8 boundaries. `core::str::from_utf8` (also reachable as
+`std::str::from_utf8`) validates external bytes before producing a `*str`,
+while `from_utf8_unchecked` is an `unsafe func` for already validated bytes.
+The main program exercises the canonical `core::str` path.
 
 Strings iterate, search, split, and trim without allocating. `for ch in text`
 visits Unicode scalar values; `text.bytes()` visits the exact UTF-8 bytes; and

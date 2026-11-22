@@ -334,7 +334,7 @@ pointee. The **unsafe** column is the gate required at the call site.
 | `len` | `(self) -> usize` | no | `*raw str`, `*raw [T]` | Length metadata |
 | `data` | `(self) -> *raw U` | no | all | Thin data pointer; `U` is the element, `u8`, or `()` |
 | `with_len` | `(self, length: usize) -> *raw [U]` | yes | thin, sized pointee | Build a slice pointer from a data pointer and a length |
-| `as_str` | `(self) -> *raw str` | yes | `*raw [u8]`, `*raw mut [u8]` | Reinterpret a byte slice pointer as a string pointer |
+| `as_str` | `(self) -> *raw str` | yes | `*raw [u8]`, `*raw mut [u8]` | Reinterpret a byte slice pointer as a string pointer without validation |
 | `add` | `(self, count: usize) -> Same` | yes | sized pointee | Forward by whole elements |
 | `sub` | `(self, count: usize) -> Same` | yes | sized pointee | Backward by whole elements |
 | `offset` | `(self, count: isize) -> Same` | yes | sized pointee | Forward or backward by signed element count |
@@ -386,6 +386,32 @@ The mutability is preserved: `*raw mut [u8].as_str()` is `*raw mut str`. Only
 `[u8]` is accepted; `*raw [i32]` is `E3075`. The caller promises that the bytes
 are valid UTF-8, because the string operations trust that invariant. The data
 and length words are unchanged, so no allocation or copy occurs.
+
+`as_str` is a **raw reinterpretation**, not a validator. It produces a raw
+`*raw str` with no checked loan and no UTF-8 check. Safe code should use the
+standard-library constructors instead:
+
+```seal
+let bytes: *[u8] = &data[..];
+
+// Safe: validates the complete UTF-8 encoding. The returned view borrows bytes.
+let checked: *str = match std::str::from_utf8(bytes) {
+  Option::Some(text) => text,
+  Option::None => return 1,
+};
+
+// Unsafe: only after the caller has already established UTF-8.
+let unchecked: *str = unsafe { std::str::from_utf8_unchecked(bytes) };
+```
+
+`from_utf8` returns `Option<*str>` and keeps the checked loan on the byte
+storage; invalid input returns `Option::None`. `from_utf8_unchecked` skips the
+validation but still returns a checked `*str` view, so it is the normal unsafe
+constructor for already validated bytes. The underlying compiler intrinsic is
+`*[u8].as_str_unchecked()`: it is unsafe as well, and unlike raw `as_str` it
+preserves the shared loan. Use raw `as_str` only when a raw string pointer is
+actually required, such as at a low-level boundary; never use it to bypass
+validation in safe code.
 
 ## 5. Arithmetic and bounds
 
@@ -602,7 +628,8 @@ Before an unchecked operation, establish all of these:
 10. For a value with ownership, the program does not drop or move it twice.
 11. For `with_len`, the length covers live initialized elements in the
     allocation and the address is valid for that range.
-12. For `as_str`, the bytes are valid UTF-8.
+12. For `as_str` and `from_utf8_unchecked`/`as_str_unchecked`, the bytes are
+    valid UTF-8.
 
 The `unsafe` block is where the compiler stops asking. It is not a place to
 stop thinking; a short comment naming the invariant is part of good style.

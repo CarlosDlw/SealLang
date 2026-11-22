@@ -4,7 +4,7 @@ The standard library is ordinary Seal source split into two packages:
 
 | Package | Contents | Availability |
 |---------|----------|--------------|
-| `core` | `option`, `result`, and the core prelude | dependency-free; no operating system or runtime |
+| `core` | `option`, `result`, `str`, an internal `char` helper, and the core prelude | dependency-free; no operating system or runtime |
 | `std` | a facade over `core` and the hosted prelude | hosted targets |
 
 A package chooses one mode in its manifest:
@@ -75,17 +75,57 @@ func main() -> i32 {
 puts the type names `Option` and `Result` in scope; it does not add the
 variants.
 
+## Strings
+
+`core::str` owns the borrowed `str` surface. It exposes inherent methods for
+substrings, UTF-8 scalar decoding, iteration, search, splitting, trimming, and
+ASCII case comparison; `std::str` is a re-export of the same module, so both
+paths name the same functions.
+
+```seal
+func main() -> i32 {
+  let text: *str = "a🦀é";
+  let crab = text.get(1, 5);
+  let separator = text.find("🦀");
+  let words = " one\ttwo ".trim().split_whitespace();
+  0
+}
+```
+
+All indices are byte offsets, and every returned view borrows its source. The
+core operations are:
+
+- `len`, `is_empty`, `is_char_boundary`, and `char_at` for scalar boundaries;
+- `slice` (panics on an invalid range) and `get` (returns
+  `Option<*str>` instead);
+- `split_at`, `as_bytes`, `bytes`, `chars`, and `char_indices`;
+- `starts_with`, `ends_with`, `contains`, and `find`; search is Two-Way with a
+  worst-case `O(n + m)` bound;
+- `split`, `split_once`, `lines`, and `split_whitespace`;
+- `trim`, `trim_start`, and `trim_end` over Unicode whitespace;
+- `eq_ignore_ascii_case`.
+
+`from_utf8(*[u8]) -> Option<*str>` validates external bytes in place and returns
+a borrowing view; `from_utf8_unchecked` is an `unsafe func` for bytes the caller
+already validated. Neither constructor allocates. The full byte-index,
+panic-message, empty-pattern, and line-ending rules live in
+[`../types.md#string-methods`](../types.md#string-methods). The raw-pointer
+`as_str` reinterpretation and its distinction from the safe constructor are in
+[`raw-pointers.md`](raw-pointers.md#raw-string-pointers).
+
 ## Paths and identity
 
-`core` exposes its `root`, `option`, `result`, and `prelude` modules. `std`
-re-exports `core::option` and `core::result` from its root, so these paths all
-name the same canonical declarations:
+`core` exposes its `root`, `option`, `result`, `str`, and `prelude` modules.
+`std` re-exports `core::option`, `core::result`, and `core::str` from its root,
+so these paths all name the same canonical declarations:
 
 ```seal
 core::option::Option<T>
 core::result::Result<T, E>
+core::str::from_utf8
 std::option::Option<T>
 std::result::Result<T, E>
+std::str::from_utf8
 ```
 
 The prelude aliases are canonical too:
@@ -138,6 +178,7 @@ keeping the library dependency. With `stdlib = "none"` or `--no-stdlib`, bare
 // std/src/lib.sl
 public use core::option as option;
 public use core::result as result;
+public use core::str as str;
 ```
 
 Its prelude re-exports the item aliases:
@@ -157,11 +198,15 @@ bootstrap honest: `core` and `std` select `stdlib = "none"` and
 
 ## Examples
 
-- [`examples/stdlib`](../../examples/stdlib/) selects `std` and uses the hosted
-  prelude.
+- [`examples/052_strings.sl`](../../examples/052_strings.sl) is a self-contained
+  program over the primitive string operations, including a checked UTF-8
+  constructor.
+- [`examples/stdlib`](../../examples/stdlib/) selects `std`, uses the hosted
+  prelude, and exercises the `core::str` surface from its main program and
+  tests.
 - [`examples/core-only`](../../examples/core-only/) selects `core` and uses the
   same names without the hosted package.
 
-Both examples run with `seal run --bin <name> --project .` and test `Some`,
+Both projects run with `seal run --bin <name> --project .` and test `Some`,
 `None`, `Ok`, and `Err` with `seal test --project .`. `--bin` selects the
 program when the package also has test targets.

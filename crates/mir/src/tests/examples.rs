@@ -6,7 +6,7 @@ use crate::terminator::TerminatorKind;
 
 use super::support::{function, lower_clean};
 
-const EXAMPLES: [&str; 35] = [
+const EXAMPLES: [&str; 36] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -42,6 +42,7 @@ const EXAMPLES: [&str; 35] = [
     "039_const_static.sl",
     "040_global_data.sl",
     "041_global_mutation.sl",
+    "052_strings.sl",
 ];
 
 fn source(name: &str) -> String {

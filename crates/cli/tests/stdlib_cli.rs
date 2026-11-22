@@ -163,6 +163,36 @@ fn the_string_surface_runs_in_debug_and_release_profiles() {
 }
 
 #[test]
+fn the_strings_example_runs_in_debug_and_release_profiles() {
+    let source = std::fs::read_to_string(examples().join("052_strings.sl"))
+        .expect("the strings example is readable");
+    let fixture = copy_example("stdlib");
+    write(&fixture.root.join("src/main.sl"), &source);
+
+    let check = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_success(&check);
+
+    for release in [false, true] {
+        let run = output(
+            seal()
+                .arg("run")
+                .arg("--bin")
+                .arg("stdlib")
+                .arg("--project")
+                .arg(&fixture.root)
+                .args(release.then_some("--release")),
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "release={release}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+#[test]
 fn string_views_from_bytes_cannot_outlive_their_owner() {
     let fixture = copy_example("stdlib");
     write(

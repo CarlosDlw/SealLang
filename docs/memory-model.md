@@ -150,15 +150,17 @@ raw pointers opt into this runtime contract inside `unsafe`.
 
 There is no implicit heap. String literals are `*str` fat pointers (data and
 length) into static read-only memory, so `str` is an **unsized pointee** and is
-only usable behind a reference. The runtime provides the internal allocation
-substrate (`seal_alloc`, `seal_alloc_zeroed`, `seal_realloc`, `seal_dealloc`)
-and reports failure as `NULL`. Owned heap data arrives with the allocator API as
-a distinct owning type that implements `Drop`; allocation failure there is
-returned as a value, not hidden behind an abort. Reallocation and growth are
-explicit operations of that type, never implicit on assignment. A trait object
-also does not allocate: its vtable is a constant built at compile time per
-concrete type and trait reference, and coercing to it copies only the data and
-vtable words.
+only usable behind a reference. Safe string operations never allocate: `slice`,
+`get`, `split`, `lines`, `trim`, and the iterators produce borrowed views, and
+`from_utf8` validates bytes in place before returning a view. The runtime
+provides the internal allocation substrate (`seal_alloc`, `seal_alloc_zeroed`,
+`seal_realloc`, `seal_dealloc`) and reports failure as `NULL`. Owned heap data
+arrives with the allocator API as a distinct owning type that implements
+`Drop`; allocation failure there is returned as a value, not hidden behind an
+abort. Reallocation and growth are explicit operations of that type, never
+implicit on assignment. A trait object also does not allocate: its vtable is a
+constant built at compile time per concrete type and trait reference, and
+coercing to it copies only the data and vtable words.
 
 ### D8 — Bindings are immutable by default
 
@@ -291,16 +293,29 @@ conversion, not a copy: it keeps the same data address, derives the length from
 the array type, and records the same loan. A slice is neither `Copy`, `Sized`,
 nor owning; its reference is `Copy` and carries the loan.
 
+The same view rule governs `str`. A `*str` is a fat borrowed view whose length
+is a byte count, and every safe operation that returns a string view
+(`slice`, `get`, `split_at`, `split`, `split_once`, `lines`,
+`split_whitespace`, `trim*`, and `from_utf8`) records a loan on the source
+storage. The view cannot outlive that storage, and an exclusive source cannot
+overlap a live shared view. The UTF-8 invariant is part of the type's safety
+contract: safe code can reach a `*str` only from a literal, a checked view, or
+`from_utf8`; `from_utf8_unchecked` and raw `as_str` are the explicit unsafe
+escape hatches. No view allocates or copies the text.
+
 ### D15 — Method dispatch borrows through the receiver
 
 Method lookup has two sources. An inherent method declared in an `impl` block
-is found on the receiver's nominal struct; intrinsic methods are a closed
-compiler catalog over integers, floats, `bool`, `char`, arrays, and slices. In
-both cases the owner is the receiver's type after every reference layer is
-followed. There is no method value: a static user method lowers to a direct
-`Rvalue::Call` with the receiver as its first argument, an intrinsic lowers to a
-semantic `Rvalue::Intrinsic` whose operation the backend chooses, and a call
-through a trait object lowers to `Rvalue::DynamicCall`, which loads a vtable slot
+is found on the receiver's nominal struct, and the reserved `str` implementation
+surface contributes inherent methods for string receivers; intrinsic methods are
+a closed compiler catalog over integers, floats, `bool`, `char`, arrays,
+slices, and strings. In all cases the owner is the receiver's type after every
+reference layer is followed. For `str`, an inherent method wins over a trait
+method, which in turn wins over a catalog entry with the same name. There is no
+method value: a static user method lowers to a direct `Rvalue::Call` with the
+receiver as its first argument, an intrinsic lowers to a semantic
+`Rvalue::Intrinsic` whose operation the backend chooses, and a call through a
+trait object lowers to `Rvalue::DynamicCall`, which loads a vtable slot
 (D16). The receiver borrow is visible to the same checker in every form.
 
 Traits use the same path. A trait declaration contributes signatures and

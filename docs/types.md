@@ -419,6 +419,77 @@ is `E3090`, because C would stop at the first NUL and the rest of the literal
 would be unreachable; end the string instead. An empty C string is valid and
 points at one NUL byte.
 
+### String methods
+
+Methods on `str` are called through a `*str` and never allocate. Every index is
+a **byte offset**, never a scalar count. A valid index is in `0..=len`; an index
+at `len` names the end, while any index past it is invalid. A slice is
+end-exclusive, so `slice(start, end)` covers `end - start` bytes.
+
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `len` | `(self) -> usize` | Byte length |
+| `is_empty` | `(self) -> bool` | Whether the byte length is zero |
+| `is_char_boundary` | `(self, index: usize) -> bool` | Whether `index` is a scalar boundary; true at `0` and `len` |
+| `char_at` | `(self, index: usize) -> char` | Decodes the scalar starting at a boundary; panics otherwise |
+| `slice` | `(self, start: usize, end: usize) -> *str` | Checked borrowed substring; panics on an invalid range |
+| `get` | `(self, start: usize, end: usize) -> Option<*str>` | Total counterpart of `slice`; returns `Option::None` instead of panicking |
+| `split_at` | `(self, index: usize) -> (*str, *str)` | Two borrowed halves at a boundary; panics otherwise |
+| `as_bytes` | `(self) -> *[u8]` | Borrowed byte view with the same loan |
+| `bytes` | `(self) -> Bytes` | Iterator over the exact UTF-8 bytes |
+| `chars` | `(self) -> Chars` | Iterator over Unicode scalar values |
+| `char_indices` | `(self) -> CharIndices` | Iterator over `(byte offset, char)` pairs |
+| `starts_with` | `(self, prefix: *str) -> bool` | Prefix test; the empty prefix matches |
+| `ends_with` | `(self, suffix: *str) -> bool` | Suffix test; the empty suffix matches |
+| `contains` | `(self, needle: *str) -> bool` | Whether `find` succeeds |
+| `find` | `(self, needle: *str) -> Option<usize>` | First byte index, or `Option::None` |
+| `split` | `(self, separator: *str) -> Split` | Iterator over the pieces between separators |
+| `split_once` | `(self, separator: *str) -> Option<(*str, *str)>` | The first split only |
+| `lines` | `(self) -> Lines` | Iterator over `\n`-separated lines |
+| `split_whitespace` | `(self) -> SplitWhitespace` | Iterator over Unicode-whitespace-separated words |
+| `trim` | `(self) -> *str` | Both ends trimmed of Unicode whitespace |
+| `trim_start` | `(self) -> *str` | Leading Unicode whitespace trimmed |
+| `trim_end` | `(self) -> *str` | Trailing Unicode whitespace trimmed |
+| `eq_ignore_ascii_case` | `(self, other: *str) -> bool` | ASCII-only case folding; non-ASCII bytes compare exactly |
+
+`slice` panics only for a range that is reversed, ends past `len`, or starts or
+ends inside a multibyte scalar. The messages are `slice range starts after it
+ends`, `slice range end is out of bounds`, `slice range starts inside a
+character`, and `slice range ends inside a character`. `get` performs the same
+checks and accepts every `usize` pair without panicking. `char_at` panics with
+`char_at index is out of bounds` at or past `len` and with `char_at index is
+not a char boundary` inside a scalar. `split_at` panics with `split_at index is
+out of bounds` or `split_at index is not a char boundary`.
+
+Every view returned by `slice`, `get`, `split_at`, `split`, `split_once`,
+`lines`, `split_whitespace`, or `trim` borrows the source storage and cannot
+outlive it. Iterator `next` is called only while `has_next` is true; `for`
+maintains that contract. `Split` and `Lines` panic with `split iterator is
+exhausted` and `lines iterator is exhausted` if `next` is called directly after
+exhaustion. Search uses Two-Way, so `find` and everything built on it is
+`O(n + m)` in the worst case with constant preprocessing space. `find("")` is
+`Option::Some(0)`. A non-empty separator preserves leading, trailing, and
+consecutive empty pieces; the empty separator visits every scalar with an empty
+piece at each end, so splitting an empty string on `""` yields two empty pieces.
+`lines` removes a `\r` immediately before `\n` and does not produce a final
+empty line for a trailing newline. `split_whitespace` uses the Unicode
+`White_Space` property and never yields empty items.
+
+`from_utf8(*[u8]) -> Option<*str>` is the safe constructor: it validates the
+complete encoding, rejects lone continuation bytes, truncated sequences,
+overlong encodings, surrogates, and values above `U+10FFFF`, and returns a view
+whose loan keeps the bytes alive. The unsafe function
+`from_utf8_unchecked(*[u8]) -> *str` skips validation and is valid only when the
+caller has already established UTF-8; it still returns a borrowing view. `*[u8].as_str_unchecked()` is the
+underlying unsafe intrinsic. The raw-pointer operation `*raw [u8].as_str()` is
+different: it produces a `*raw str` with no checked loan, and it also trusts the
+caller's UTF-8 promise. Safe code should use `from_utf8`.
+
+No method on `str` allocates, formats, or copies the text. An owning `String`
+can be added later without changing `str`'s layout or safety contract: it will
+need an owning buffer, an allocator API, and a loan-preserving `String::as_str`.
+`str` exposes no `Deref` coercion, so `String` will use an explicit `.as_str()`.
+
 ## References
 
 | Kind | Spelling | Read | Write | Overlap rule | Codegen attribute |
@@ -1156,11 +1227,12 @@ returning it from a `const func`, is allowed.
 ## Methods
 
 A method call has the postfix form `.name(arguments)` and resolves from the
-receiver's type. On a struct, an inherent method declared in an `impl` block is
-tried first; on scalars, sequences, and references to them, lookup uses the
-closed compiler-owned intrinsic catalog. Every reference layer is followed
-before lookup, so `(*reference).abs()` and `reference.abs()` resolve to the same
-scalar method, and a `*Point` can call a `Point` method written for `*Point`.
+receiver's type. On a struct or `str`, an inherent method declared in an `impl`
+block is tried first; on scalars, sequences, strings, and references to them,
+lookup uses the closed compiler-owned intrinsic catalog. Every reference layer
+is followed before lookup, so `(*reference).abs()` and `reference.abs()` resolve
+to the same scalar method, and a `*Point` can call a `Point` method written for
+`*Point`.
 There is no method value. A call on a nominal type, a type parameter, or an
 intrinsic receiver is static: a trait method on a concrete type is a direct call
 to the implementing function or to the trait's default body when the impl omits
@@ -1238,8 +1310,10 @@ not define the same name and a function may not be both associated and an
 instance method (`E2017`). Different types may use the same method names; the
 receiver's type selects the impl, and the generated symbol includes the type.
 `self` must be the first parameter (`E2016`), and the impl target must be a
-struct (`E2015`). The ordinary borrow checker sees the automatic receiver borrow
-as a real loan, so a live conflicting loan is `E5008`.
+struct (`E2015`); the compiler-owned `core::str` module is the reserved
+exception that supplies the inherent string surface. The ordinary borrow checker
+sees the automatic receiver borrow as a real loan, so a live conflicting loan is
+`E5008`.
 
 ### Traits and static dispatch
 
@@ -1287,12 +1361,13 @@ clause). Every `T: Sub` therefore also proves `Super`, and the requirement is
 transitive. A cycle in that relation is rejected (`E2064`), and a duplicate
 requirement is kept once.
 
-Lookup is ordered: an inherent method on the struct wins, then the bounds
-visible on a type parameter, then the trait methods implemented for a concrete
-type, and finally the intrinsic catalog for receivers with no user method. A
-concrete candidate is either the function an impl supplies or, when the impl
-omits a method that has a default body, that default body, so a static trait
-call is a direct call with no vtable involved. A call through a type parameter
+Lookup is ordered: an inherent method on the struct or `str` wins, then the
+bounds visible on a type parameter, then the trait methods implemented for a
+concrete type, and finally the intrinsic catalog for receivers with no user
+method. For `str`, the registered inherent methods are checked before trait
+impls and the catalog. A concrete candidate is either the function an impl
+supplies or, when the impl omits a method that has a default body, that default
+body, so a static trait call is a direct call with no vtable involved. A call through a type parameter
 has no known impl yet; it records the trait method and its arguments for
 monomorphization instead. When two implemented traits declare the same method
 name and nothing earlier resolves it, the call is ambiguous (`E2028`). Seal has

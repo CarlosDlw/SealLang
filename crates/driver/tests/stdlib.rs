@@ -190,6 +190,25 @@ fn the_core_prelude_exposes_option_and_result() {
 }
 
 #[test]
+fn no_stdlib_rejects_string_methods_without_crashing() {
+    let fixture = temporary("no-stdlib-string");
+    let source = fixture.root.join("main.sl");
+    std::fs::write(
+        &source,
+        "func main() -> i32 {\n  let text: *str = \"a\";\n  let mut chars = text.chars();\n  if chars.has_next() { 1 } else { 0 }\n}\n",
+    )
+    .expect("source");
+    let output = run(
+        &["check", "--no-stdlib", &source.display().to_string()],
+        Some(("SEAL_STDLIB", &fixture.root.join("missing"))),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E3027"), "stderr: {stderr}");
+    assert!(stderr.contains("chars"), "stderr: {stderr}");
+}
+
+#[test]
 fn no_stdlib_does_not_leak_prelude_names() {
     let fixture = temporary("none-prelude");
     let source = fixture.root.join("main.sl");

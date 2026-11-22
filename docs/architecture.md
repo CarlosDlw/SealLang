@@ -27,7 +27,7 @@ allowed to depend only on crates below it in the list.
 | `seal-ast` | Syntax tree: typed arena IDs, nodes with exact spans, and the `AstBuilder` the parser writes through. |
 | `seal-parser` | Recursive descent for items and statements, Pratt parsing for expressions, recovery, `E1xxx` diagnostics. |
 | `seal-ty` | Interned semantic types, nominal aggregates, structural tuples, arrays, slices, references, raw pointers, and trait objects; inference variables, unification, the `Copy`/`Sized`/`Drop` queries from the memory model, the shared initialization lattice, and the single classification of numeric and pointer cast pairs. |
-| `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, unsafe gates, and semantic operations shared by type checking, MIR, and code generation, including the raw pointer methods. |
+| `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, unsafe gates, and semantic operations shared by type checking, MIR, and code generation, including the string and raw pointer methods. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
 | `seal-hir` | AST lowering and name resolution: one body per function, trait default method, constant, or static, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, match patterns, and the control-flow and introspection built-ins, `E2xxx` diagnostics. |
@@ -640,25 +640,28 @@ vtable, heap object, or runtime lookup.
     proof.
 63. **Method dispatch resolves through per-type, catalog, and object lookup.**
     A method call is a dedicated AST and HIR node, not a desugared field access.
-    Type checking first looks up `(struct, name)` in the inherent impl registry
-    and then, for non-struct receivers, the intrinsic catalog after following
-    the receiver's reference layers. It validates the signature and writability
-    and records whether the call is a user function, a trait function, an
-    intrinsic, or a dynamic slot, the receiver adjustment, dereference count,
-    and result type. A static user or trait method lowers to a direct
-    `Rvalue::Call` whose first argument is the receiver, with an explicit
-    `Rvalue::Ref` when the receiver is borrowed automatically; an intrinsic
-    lowers to `Rvalue::Intrinsic`. A dynamic call lowers to
+    Type checking first looks up `(struct, name)` in the inherent impl registry,
+    then the registered inherent `str` methods for a string receiver, then the
+    applicable trait impls, and finally the intrinsic catalog, after following
+    the receiver's reference layers in every case. It validates the signature and
+    writability and records whether the call is a user function, a trait
+    function, an intrinsic, or a dynamic slot, the receiver adjustment,
+    dereference count, and result type. A static user or trait method lowers to
+    a direct `Rvalue::Call` whose first argument is the receiver, with an
+    explicit `Rvalue::Ref` when the receiver is borrowed automatically; an
+    intrinsic lowers to `Rvalue::Intrinsic`. A dynamic call lowers to
     `Rvalue::DynamicCall`, which carries the principal trait reference, selected
     slot, receiver value, and argument types; the receiver is reborrowed as the
     method declares, and the borrow checker sees the same loan as a written
     borrow. Code generation consumes the recorded form and never re-infers
-    ownership or the receiver shape. The lookups are ordered, so a struct method
-    shadows an intrinsic with the same name. Trait methods add one layer to the
-    nominal lookup: the inherent registry wins, then the functions bound by the
-    type's `impl Trait` blocks, and a name two implemented traits declare is
-    ambiguous (`E2028`). An omitting impl contributes the trait's default body
-    as its candidate, so the same lookup selects either an override or the
+    ownership or the receiver shape. The lookups are ordered, so a struct or
+    `str` method shadows an intrinsic with the same name. For `str`, the
+    per-name inherent map is checked first, then trait impls, then the catalog.
+    Trait methods add one layer to the nominal lookup: the inherent registry
+    wins, then the functions bound by the type's `impl Trait` blocks, and a name
+    two implemented traits declare is ambiguous (`E2028`). An omitting impl
+    contributes the trait's default body as its candidate, so the same lookup
+    selects either an override or the
     default before monomorphization. Each implementation is validated as a contract
     (`E2021`–`E2026`) with `Self` substituted by the implementing type, and it
     lives beside the inherent registry rather than in it, so an inherent method
