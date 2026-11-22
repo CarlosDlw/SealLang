@@ -202,6 +202,117 @@ fn mem_forget_runs_and_rejects_use_after_consume() {
     );
 }
 
+fn assert_forget_rejected(fixture: &Fixture, source: &str, code: &str) -> String {
+    write(&fixture.root.join("src/main.sl"), source);
+    let rejected = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(rejected.status.code(), Some(1));
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    assert!(
+        diagnostics.contains(code),
+        "expected {code} for this source:\n{diagnostics}"
+    );
+    diagnostics
+}
+
+#[test]
+fn mem_forget_rejects_invalid_ownership_cases() {
+    let fixture = copy_example("stdlib");
+
+    assert_forget_rejected(
+        &fixture,
+        "struct Pair { value: i32 }\n\
+         func main() {\n\
+           let pair = Pair { value: 1 };\n\
+           let mut iteration = 0;\n\
+           while iteration < 1 {\n\
+             std::mem::forget(pair);\n\
+             iteration += 1;\n\
+           }\n\
+           let _ = pair.value;\n\
+         }\n",
+        "E5005",
+    );
+
+    assert_forget_rejected(
+        &fixture,
+        "struct Inner { value: i32 }\n\
+         struct Pair { inner: Inner, count: i32 }\n\
+         func main() {\n\
+           let pair = Pair { inner: Inner { value: 1 }, count: 2 };\n\
+           std::mem::forget(pair.inner);\n\
+           std::mem::forget(pair);\n\
+         }\n",
+        "E5005",
+    );
+
+    let duplicate = assert_forget_rejected(
+        &fixture,
+        "struct Pair { value: i32 }\n\
+         func main() {\n\
+           let pair = Pair { value: 1 };\n\
+           std::mem::forget(pair);\n\
+           std::mem::forget(pair);\n\
+         }\n",
+        "E5005",
+    );
+    assert_eq!(
+        duplicate.matches("E5005").count(),
+        1,
+        "a second forget of a moved value must report one clear diagnostic:\n{duplicate}"
+    );
+
+    assert_forget_rejected(
+        &fixture,
+        "struct Pair { value: i32 }\n\
+         func main() {\n\
+           let pair = Pair { value: 1 };\n\
+           let view = &pair;\n\
+           std::mem::forget(pair);\n\
+           let _ = (*view).value;\n\
+         }\n",
+        "E5002",
+    );
+
+    assert_forget_rejected(
+        &fixture,
+        "struct Pair { value: i32 }\n\
+         func main() {\n\
+           let mut pair = Pair { value: 1 };\n\
+           let view = &mut pair;\n\
+           std::mem::forget(pair);\n\
+           (*view).value = 2;\n\
+         }\n",
+        "E5008",
+    );
+
+    assert_forget_rejected(
+        &fixture,
+        "struct Inner { value: i32 }\n\
+         struct Pair { inner: Inner }\n\
+         impl Drop for Pair {\n\
+           func drop(self: *mut Pair) {}\n\
+         }\n\
+         func main() {\n\
+           let pair = Pair { inner: Inner { value: 1 } };\n\
+           std::mem::forget(pair.inner);\n\
+         }\n",
+        "E5014",
+    );
+
+    assert_forget_rejected(
+        &fixture,
+        "func main() {\n\
+           let value = 1;\n\
+           __forget(value);\n\
+         }\n",
+        "E2002",
+    );
+}
+
 #[test]
 fn mem_forget_is_not_available_in_a_constant_context() {
     let fixture = copy_example("stdlib");

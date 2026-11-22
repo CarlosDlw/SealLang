@@ -61,6 +61,20 @@ fn a_direct_core_mem_forget_call_lowers_to_a_dedicated_node() {
 }
 
 #[test]
+fn an_imported_alias_lowers_to_the_same_node() {
+    let fixture = app_with_core(
+        "use core::mem::forget as release;\n\
+         struct Pair { value: i32 }\n\
+         func main() { let pair = Pair { value: 1 }; release(pair); }",
+    );
+    let hir = fixture.lower_packages();
+    fixture.assert_clean();
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = expr_statement(&hir, hir.block(body.root).statements[1]);
+    assert!(matches!(hir.expr(call).kind, ExprKind::Forget { .. }));
+}
+
+#[test]
 fn a_forget_call_with_explicit_type_arguments_stays_a_call() {
     let fixture = app_with_core(
         "use core::mem::forget;\n\

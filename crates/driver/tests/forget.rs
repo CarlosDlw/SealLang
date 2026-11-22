@@ -64,6 +64,52 @@ fn the_forget_example_runs_at_o0_and_o2() {
 }
 
 #[test]
+fn forgetting_a_droppable_type_collects_no_drop_glue() {
+    let source = TempOutput::new("forget-only.sl");
+    std::fs::write(
+        &source.0,
+        "struct ForgetOnly { value: i32 }\n\
+         static mut COUNT: i32 = 0;\n\
+         impl Drop for ForgetOnly {\n\
+           func drop(self: *mut ForgetOnly) {\n\
+             unsafe { COUNT += 1; }\n\
+           }\n\
+         }\n\
+         func main() -> i32 {\n\
+           std::mem::forget(ForgetOnly { value: 1 });\n\
+           0\n\
+         }\n",
+    )
+    .expect("the probe source is writable");
+    let assembly = TempOutput::new("forget-only.s");
+    let compile = Command::new(env!("CARGO_BIN_EXE_sealc"))
+        .arg("build")
+        .arg("--emit=asm")
+        .arg("-O0")
+        .arg(&source.0)
+        .arg("-o")
+        .arg(&assembly.0)
+        .output()
+        .expect("the compiler runs");
+    assert!(
+        compile.status.success(),
+        "the probe failed to compile: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let assembly = std::fs::read_to_string(&assembly.0).expect("the assembly is readable");
+    assert!(
+        !assembly.contains("seal.drop.glue"),
+        "a type used only through forget must not collect drop glue"
+    );
+    assert!(
+        !assembly
+            .lines()
+            .any(|line| line.contains("call") && line.contains("seal.ForgetOnly.drop")),
+        "the destructor must not be called by a forgotten value"
+    );
+}
+
+#[test]
 fn a_direct_forget_emits_no_wrapper_symbol() {
     let output = TempOutput::new("forget.s");
     let compile = build(&[
