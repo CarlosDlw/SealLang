@@ -187,7 +187,10 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
                 move_operand(arg, state);
             }
         }
-        Rvalue::Discriminant(_) | Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
+        Rvalue::Discriminant(_)
+        | Rvalue::Ref { .. }
+        | Rvalue::SliceRef { .. }
+        | Rvalue::StrView { .. } => {}
     }
     if let Some((local, fields)) = path_of(place) {
         state.assign(local, &fields);

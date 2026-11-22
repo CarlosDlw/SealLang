@@ -177,10 +177,41 @@ impl<'a> Interpreter<'a> {
                 };
                 Ok(result)
             }
+            IntrinsicOp::StrLen => {
+                let ConstValue::Str { value, .. } = value else {
+                    return Err(self.error(EvalErrorKind::IntrinsicNotWhitelisted, span));
+                };
+                Ok(ConstValue::Int {
+                    bits: self.interner.resolve(*value).len() as u128,
+                    ty: result_ty,
+                })
+            }
+            IntrinsicOp::StrIsCharBoundary => {
+                let [index] = args else {
+                    return Err(self.error(
+                        EvalErrorKind::Internal(
+                            "`str::is_char_boundary` takes exactly one index".into(),
+                        ),
+                        span,
+                    ));
+                };
+                let ConstValue::Str { value, .. } = value else {
+                    return Err(self.error(EvalErrorKind::IntrinsicNotWhitelisted, span));
+                };
+                let index_value = self.read_operand(index, span)?;
+                let index = self.as_u128(&index_value, span)? as u64;
+                let bytes = self.interner.resolve(*value).as_bytes();
+                let boundary = if index > bytes.len() as u64 {
+                    false
+                } else if index == bytes.len() as u64 {
+                    true
+                } else {
+                    bytes[index as usize] & 0xc0 != 0x80
+                };
+                Ok(ConstValue::Bool(boundary))
+            }
             IntrinsicOp::BoolToggle
             | IntrinsicOp::Len
-            | IntrinsicOp::StrLen
-            | IntrinsicOp::StrIsCharBoundary
             | IntrinsicOp::StrCharAt
             | IntrinsicOp::StrSlice
             | IntrinsicOp::StrAsBytes

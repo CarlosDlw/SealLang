@@ -129,6 +129,17 @@ pub(super) fn collect_rvalue(
                 collect_operand(hir, operand, direct);
             }
         }
+        Rvalue::StrView {
+            base, start, end, ..
+        } => {
+            mark_raw_place(base, direct);
+            if let Some(path) = GlobalPath::from_place(hir, base) {
+                direct.read(path);
+            }
+            for operand in start.iter().chain(end.iter()) {
+                collect_operand(hir, operand, direct);
+            }
+        }
         Rvalue::Discriminant(place) => {
             mark_raw_place(place, direct);
             if let Some(path) = GlobalPath::from_place(hir, place) {

@@ -1,16 +1,49 @@
 //! Structural validation of MIR bodies.
 
-use seal_ty::{InferTyId, Instance};
+use seal_ty::{InferTyId, Instance, UintTy};
 
 use crate::body::{Body, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
+use crate::operand::{Constant, Operand};
 use crate::place::Place;
-use crate::rvalue::{AggregateKind, CallTarget, Rvalue};
+use crate::rvalue::{AggregateKind, CallTarget, Rvalue, StrViewKind};
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 use crate::validate::ValidationError;
 
 use super::support::{function, lower_clean};
+
+fn str_view_block(body: &Body) -> BasicBlockId {
+    body.blocks
+        .iter_enumerated()
+        .find(|(_, block)| {
+            block.statements.iter().any(|statement| {
+                matches!(
+                    statement.kind,
+                    StatementKind::Assign {
+                        rvalue: Rvalue::StrView { .. },
+                        ..
+                    }
+                )
+            })
+        })
+        .map(|(block, _)| block)
+        .expect("the body builds a string view")
+}
+
+fn str_view_mut(body: &mut Body) -> &mut Rvalue {
+    body.blocks
+        .iter_mut()
+        .flat_map(|block| block.statements.iter_mut())
+        .find_map(|statement| match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue: rvalue @ Rvalue::StrView { .. },
+                ..
+            } => Some(rvalue),
+            _ => None,
+        })
+        .expect("the body builds a string view")
+}
 
 fn main_body(source: &str) -> Body {
     let (fixture, hir, mir) = lower_clean(source);
@@ -161,6 +194,72 @@ fn a_leftover_inference_variable_is_rejected() {
         body.validate_with(&hir),
         Err(ValidationError::InferredType {
             local: Body::return_local()
+        })
+    );
+}
+
+#[test]
+fn a_string_view_requires_a_string_pointer() {
+    let source = "func main(text: *str, index: usize) -> *str { text.slice(index, index) }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let index = body
+        .locals
+        .iter_enumerated()
+        .find(|(_, local)| hir.ty_ctxt().display(local.ty).to_string() == "usize")
+        .map(|(local, _)| local)
+        .expect("the index parameter has type usize");
+    let block = str_view_block(&body);
+    let Rvalue::StrView { base, .. } = str_view_mut(&mut body) else {
+        unreachable!();
+    };
+    *base = Place::local(index);
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::StrViewBaseTypeMismatch {
+            block,
+            kind: StrViewKind::Substring,
+        })
+    );
+}
+
+#[test]
+fn a_string_view_must_produce_its_declared_pointer() {
+    let source = "func main(text: *str) -> *str { text.slice(0, 1) }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let block = str_view_block(&body);
+    let Rvalue::StrView { ty, .. } = str_view_mut(&mut body) else {
+        unreachable!();
+    };
+    *ty = hir.ty_ctxt().uint_ty(UintTy::Usize);
+    assert_eq!(
+        body.validate_with(&hir),
+        Err(ValidationError::StrViewTargetTypeMismatch {
+            block,
+            kind: StrViewKind::Substring,
+        })
+    );
+}
+
+#[test]
+fn a_string_view_cannot_record_bounds_it_does_not_use() {
+    let source = "func main(text: *str) -> *[u8] { text.as_bytes() }";
+    let (fixture, hir, mir) = lower_clean(source);
+    let mut body = function(&fixture, &hir, &mir, "main").clone();
+    let block = str_view_block(&body);
+    let Rvalue::StrView { start, .. } = str_view_mut(&mut body) else {
+        unreachable!();
+    };
+    *start = Some(Operand::Constant(Constant::Int {
+        value: 0,
+        ty: hir.ty_ctxt().uint_ty(UintTy::Usize),
+    }));
+    assert_eq!(
+        body.validate(),
+        Err(ValidationError::StrViewRangeMismatch {
+            block,
+            kind: StrViewKind::Bytes,
         })
     );
 }

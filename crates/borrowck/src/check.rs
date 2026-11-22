@@ -289,6 +289,28 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
                 check_operand(statement, operand, context);
             }
         }
+        Rvalue::StrView {
+            base, start, end, ..
+        } => {
+            let borrow_place = if matches!(
+                context
+                    .hir
+                    .ty_ctxt()
+                    .kind(origins::place_ty(context.hir, context.body, base)),
+                TyKind::Ref { .. }
+            ) {
+                check_read(base, statement.span, context);
+                base.clone().deref()
+            } else {
+                base.clone()
+            };
+            unknown |= context.keys_of(&borrow_place).is_unknown();
+            check_borrow(&borrow_place, RefKind::Shared, statement.span, context);
+            for operand in start.iter().chain(end.iter()) {
+                unknown |= operand_unknown(operand, context);
+                check_operand(statement, operand, context);
+            }
+        }
         Rvalue::Len { slice } => {
             unknown |= operand_unknown(slice, context);
             check_operand(statement, slice, context);

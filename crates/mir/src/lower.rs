@@ -13,6 +13,7 @@ use seal_hir::{
     Res, StmtKind,
 };
 use seal_index::{Idx, IndexVec};
+use seal_methods::{IntrinsicOp, MethodId, MethodOwner};
 use seal_span::Span;
 use seal_ty::{ClosureKind, Instance, ParamEnv, RefKind, SubstsId, TyId, TyKind};
 use seal_typeck::{
@@ -26,7 +27,7 @@ use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
 use crate::place::{Place, PlaceRoot, Projection};
 use crate::rvalue::{
-    AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, TypeInfoKind, UnOp,
+    AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, StrViewKind, TypeInfoKind, UnOp,
 };
 use crate::statement::{DropKind, Statement};
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
@@ -2230,6 +2231,10 @@ impl<'a> BodyLowering<'a> {
             method,
             resolved,
         } = call;
+        if let Some(kind) = str_view_kind(method.def().intrinsic) {
+            self.lower_str_view(kind, receiver, resolved, args, dest, span);
+            return;
+        }
         let receiver = match resolved.receiver_form {
             seal_typeck::ReceiverForm::Value => {
                 IntrinsicReceiver::Value(self.lower_operand(receiver))
@@ -2262,6 +2267,112 @@ impl<'a> BodyLowering<'a> {
             },
             span,
         );
+    }
+
+    /// Lowers a string or byte-slice view into a borrowed fat pointer.
+    ///
+    /// The receiver is the pointer value itself, not its pointee: views copy
+    /// the data address and length from that pointer. A checked substring
+    /// borrows the length and evaluates both bounds before the two UTF-8
+    /// boundary checks, so a bad range never reads outside the string.
+    fn lower_str_view(
+        &mut self,
+        kind: StrViewKind,
+        receiver: HirExprId,
+        resolved: &ResolvedMethod,
+        args: &[HirExprId],
+        dest: Option<Place>,
+        span: Span,
+    ) {
+        let dest = dest.unwrap_or_else(|| self.new_temp(resolved.ret_ty, span));
+        let receiver_span = self.hir.expr(receiver).span;
+        let mut base = if let Some(place) = self.typeck.place(receiver) {
+            let place = place.clone();
+            self.resolved_place(&place)
+        } else {
+            let ty = self.expr_ty(receiver);
+            let temp = self.new_temp(ty, receiver_span);
+            self.lower_expr_into(receiver, Some(temp.clone()));
+            temp
+        };
+        // Method lookup already stripped the pointer layers down to `str` or
+        // `[u8]`; the view needs the pointer immediately below that target, so
+        // all but the final dereference are part of selecting the base.
+        for _ in 0..resolved.receiver_derefs.saturating_sub(1) {
+            base = base.deref();
+        }
+        self.promote_borrowed_temp(&base, &dest);
+
+        let (start, end) = match kind {
+            StrViewKind::Substring => {
+                let [start, end] = args else {
+                    panic!("`str::slice` takes two bounds; type checking should reject it")
+                };
+                let start = self.lower_operand(*start);
+                let end = self.lower_operand(*end);
+                let length_ty = self.usize_ty();
+                let length = self.new_temp(length_ty, span);
+                self.assign_rvalue(
+                    length.clone(),
+                    Rvalue::Intrinsic {
+                        method: self.str_method("len"),
+                        receiver: IntrinsicReceiver::Value(Operand::Copy(base.clone())),
+                        args: Vec::new(),
+                        span,
+                    },
+                    span,
+                );
+                self.emit_le_check(
+                    start.clone(),
+                    end.clone(),
+                    span,
+                    "slice range starts after it ends",
+                );
+                self.emit_le_check(
+                    end.clone(),
+                    Operand::Copy(length),
+                    span,
+                    "slice range end is out of bounds",
+                );
+                self.emit_char_boundary_check(
+                    start.clone(),
+                    base.clone(),
+                    span,
+                    "slice range starts inside a character",
+                );
+                self.emit_char_boundary_check(
+                    end.clone(),
+                    base.clone(),
+                    span,
+                    "slice range ends inside a character",
+                );
+                (Some(start), Some(end))
+            }
+            StrViewKind::Bytes | StrViewKind::FromBytes => {
+                if !args.is_empty() {
+                    panic!("this string view takes no arguments; type checking should reject it");
+                }
+                (None, None)
+            }
+        };
+
+        self.assign_rvalue(
+            dest,
+            Rvalue::StrView {
+                kind,
+                base,
+                start,
+                end,
+                ty: resolved.ret_ty,
+            },
+            span,
+        );
+    }
+
+    /// Returns the catalog method with the given name on `str`.
+    fn str_method(&self, name: &str) -> MethodId {
+        seal_methods::find(MethodOwner::Str, name)
+            .unwrap_or_else(|| panic!("the intrinsic catalog has no `str::{name}`"))
     }
 
     /// Returns the complete instantiation type checking recorded for `expr`.
@@ -2922,7 +3033,30 @@ impl<'a> BodyLowering<'a> {
             Rvalue::Binary { op, lhs, rhs, span },
             span,
         );
+        self.emit_condition_check(condition, span, message);
+    }
 
+    fn emit_char_boundary_check(&mut self, index: Operand, base: Place, span: Span, message: &str) {
+        let bool_ty = self
+            .hir
+            .ty_ctxt()
+            .lookup(TyKind::Bool)
+            .expect("HIR lowering interns every primitive type");
+        let condition = self.new_temp(bool_ty, span);
+        self.assign_rvalue(
+            condition.clone(),
+            Rvalue::Intrinsic {
+                method: self.str_method("is_char_boundary"),
+                receiver: IntrinsicReceiver::Value(Operand::Copy(base)),
+                args: vec![index],
+                span,
+            },
+            span,
+        );
+        self.emit_condition_check(condition, span, message);
+    }
+
+    fn emit_condition_check(&mut self, condition: Place, span: Span, message: &str) {
         let success = self.new_block();
         let panic = self.new_block();
         self.terminate(
@@ -2970,6 +3104,15 @@ impl<'a> BodyLowering<'a> {
 enum LogicalOp {
     And,
     Or,
+}
+
+fn str_view_kind(op: IntrinsicOp) -> Option<StrViewKind> {
+    match op {
+        IntrinsicOp::StrSlice => Some(StrViewKind::Substring),
+        IntrinsicOp::StrAsBytes => Some(StrViewKind::Bytes),
+        IntrinsicOp::SliceAsStrUnchecked => Some(StrViewKind::FromBytes),
+        _ => None,
+    }
 }
 
 fn logical_op(op: BinaryOp) -> LogicalOp {

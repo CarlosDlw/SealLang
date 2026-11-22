@@ -92,7 +92,7 @@ fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
             *ret_ty = tcx.substitute(*ret_ty, substs);
         }
         Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
-        Rvalue::SliceRef { start, end, ty, .. } => {
+        Rvalue::SliceRef { start, end, ty, .. } | Rvalue::StrView { start, end, ty, .. } => {
             if let Some(start) = start {
                 substitute_operand(tcx, substs, start);
             }

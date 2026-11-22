@@ -5,13 +5,13 @@ use std::fmt;
 use seal_def::{DefId, DefKind};
 use seal_hir::Hir;
 use seal_layout::VtableLayout;
-use seal_ty::{CastKind, TraitRef, TyId, TyKind};
+use seal_ty::{CastKind, RefKind, TraitRef, TyId, TyKind, UintTy};
 
 use crate::body::{Body, BodyKind, LocalKind};
 use crate::id::{BasicBlockId, LocalId};
 use crate::operand::Operand;
 use crate::place::Place;
-use crate::rvalue::{CallTarget, IntrinsicReceiver, Rvalue};
+use crate::rvalue::{CallTarget, IntrinsicReceiver, Rvalue, StrViewKind};
 use crate::statement::StatementKind;
 use crate::terminator::TerminatorKind;
 
@@ -170,6 +170,27 @@ pub enum ValidationError {
     RvalueOperandTypeMismatch {
         /// The block containing the rvalue.
         block: BasicBlockId,
+    },
+    /// A string view reads a pointer of the wrong type or sharedness.
+    StrViewBaseTypeMismatch {
+        /// The block containing the view.
+        block: BasicBlockId,
+        /// The view being built.
+        kind: StrViewKind,
+    },
+    /// A string view produces a pointer of the wrong type or sharedness.
+    StrViewTargetTypeMismatch {
+        /// The block containing the view.
+        block: BasicBlockId,
+        /// The view being built.
+        kind: StrViewKind,
+    },
+    /// A string view records bounds that do not belong to it.
+    StrViewRangeMismatch {
+        /// The block containing the view.
+        block: BasicBlockId,
+        /// The view being built.
+        kind: StrViewKind,
     },
     /// A cast operand's type differs from its recorded source type.
     CastOperandTypeMismatch {
@@ -403,6 +424,21 @@ impl fmt::Display for ValidationError {
             Self::RvalueOperandTypeMismatch { block } => write!(
                 f,
                 "block {block:?} uses an operand whose type differs from the recorded rvalue type"
+            ),
+            Self::StrViewBaseTypeMismatch { block, kind } => write!(
+                f,
+                "block {block:?} builds `{}` from a pointer with the wrong type or sharedness",
+                kind.as_str()
+            ),
+            Self::StrViewTargetTypeMismatch { block, kind } => write!(
+                f,
+                "block {block:?} builds `{}` with a result type it does not produce",
+                kind.as_str()
+            ),
+            Self::StrViewRangeMismatch { block, kind } => write!(
+                f,
+                "block {block:?} records invalid bounds for `{}`",
+                kind.as_str()
             ),
             Self::CastOperandTypeMismatch { block } => write!(
                 f,
@@ -767,6 +803,57 @@ fn check_operand(
                 return Err(ValidationError::ClosureFnPtrMismatch { block });
             }
         }
+    }
+    Ok(())
+}
+
+/// Checks that a string view's base and result use the pointer types its
+/// method contract requires.
+fn check_str_view_types(
+    body: &Body,
+    block: BasicBlockId,
+    kind: StrViewKind,
+    base: &Place,
+    target: TyId,
+    hir: &Hir,
+) -> Result<(), ValidationError> {
+    let tcx = hir.ty_ctxt();
+    if contains_infer(hir, target) {
+        return Err(ValidationError::InferredRvalueType { block });
+    }
+    let base_ty = place_ty(hir, body, base);
+    let Some((base_kind, base_pointee)) = tcx.ref_parts(base_ty) else {
+        return Err(ValidationError::StrViewBaseTypeMismatch { block, kind });
+    };
+    let Some((target_kind, target_pointee)) = tcx.ref_parts(target) else {
+        return Err(ValidationError::StrViewTargetTypeMismatch { block, kind });
+    };
+    if !matches!(base_kind, RefKind::Shared) || !matches!(target_kind, RefKind::Shared) {
+        return Err(ValidationError::StrViewBaseTypeMismatch { block, kind });
+    }
+    let base_ok = match kind {
+        StrViewKind::Substring | StrViewKind::Bytes => {
+            matches!(tcx.kind(base_pointee), TyKind::Str)
+        }
+        StrViewKind::FromBytes => matches!(
+            tcx.kind(base_pointee),
+            TyKind::Slice { element } if matches!(tcx.kind(element), TyKind::Uint(UintTy::U8))
+        ),
+    };
+    let target_ok = match kind {
+        StrViewKind::Substring | StrViewKind::FromBytes => {
+            matches!(tcx.kind(target_pointee), TyKind::Str)
+        }
+        StrViewKind::Bytes => matches!(
+            tcx.kind(target_pointee),
+            TyKind::Slice { element } if matches!(tcx.kind(element), TyKind::Uint(UintTy::U8))
+        ),
+    };
+    if !base_ok {
+        return Err(ValidationError::StrViewBaseTypeMismatch { block, kind });
+    }
+    if !target_ok {
+        return Err(ValidationError::StrViewTargetTypeMismatch { block, kind });
     }
     Ok(())
 }
@@ -1159,6 +1246,32 @@ fn check_rvalue(
             }
             if let Some(end) = end {
                 check_operand(body, block, end, hir)?;
+            }
+            Ok(())
+        }
+        Rvalue::StrView {
+            kind,
+            base,
+            start,
+            end,
+            ty,
+        } => {
+            check_place(hir, body, block, base.clone())?;
+            if let Some(start) = start {
+                check_operand(body, block, start, hir)?;
+            }
+            if let Some(end) = end {
+                check_operand(body, block, end, hir)?;
+            }
+            let bounds_match = match kind {
+                StrViewKind::Substring => start.is_some() && end.is_some(),
+                StrViewKind::Bytes | StrViewKind::FromBytes => start.is_none() && end.is_none(),
+            };
+            if !bounds_match {
+                return Err(ValidationError::StrViewRangeMismatch { block, kind: *kind });
+            }
+            if let Some(hir) = hir {
+                check_str_view_types(body, block, *kind, base, *ty, hir)?;
             }
             Ok(())
         }

@@ -76,6 +76,9 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
         }
         Rvalue::SliceRef {
             base, start, end, ..
+        }
+        | Rvalue::StrView {
+            base, start, end, ..
         } => {
             place_uses(base, uses);
             for operand in start.iter().chain(end.iter()) {

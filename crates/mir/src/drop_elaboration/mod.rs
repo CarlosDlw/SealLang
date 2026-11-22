@@ -583,7 +583,10 @@ fn moved_places(rvalue: &Rvalue) -> Vec<&Place> {
                 add_move(arg, &mut places);
             }
         }
-        Rvalue::Discriminant(_) | Rvalue::Ref { .. } | Rvalue::SliceRef { .. } => {}
+        Rvalue::Discriminant(_)
+        | Rvalue::Ref { .. }
+        | Rvalue::SliceRef { .. }
+        | Rvalue::StrView { .. } => {}
     }
     places
 }

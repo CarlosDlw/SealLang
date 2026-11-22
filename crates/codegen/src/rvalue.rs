@@ -40,6 +40,13 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 ty,
                 ..
             } => self.slice_ref(base, start.as_ref(), end.as_ref(), *ty),
+            Rvalue::StrView {
+                kind,
+                base,
+                start,
+                end,
+                ty,
+            } => self.str_view(*kind, base, start.as_ref(), end.as_ref(), *ty),
             Rvalue::Len { slice } => self.slice_len(slice),
             Rvalue::TypeInfo {
                 query,
@@ -211,31 +218,97 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             "slice length",
         )?;
 
+        self.make_fat_pointer(ty, data, length, "slice data", "slice length")
+    }
+
+    fn str_view(
+        &self,
+        kind: seal_mir::StrViewKind,
+        base: &seal_mir::Place,
+        start: Option<&seal_mir::Operand>,
+        end: Option<&seal_mir::Operand>,
+        ty: seal_ty::TyId,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        let base_ty = self.place_type(base)?;
+        if !matches!(
+            self.tcx.kind(base_ty),
+            TyKind::Ref {
+                kind: seal_ty::RefKind::Shared,
+                ..
+            }
+        ) {
+            return Err(CodegenError::internal(format!(
+                "a string view reads non-shared pointer `{base_ty:?}`"
+            )));
+        }
+        let fat = self
+            .load_operand(&seal_mir::Operand::Copy(base.clone()))?
+            .into_struct_value();
+        let mut data = self
+            .build(
+                self.builder.build_extract_value(fat, 0, "string data"),
+                "string data",
+            )?
+            .into_pointer_value();
+        let mut length = self
+            .build(
+                self.builder.build_extract_value(fat, 1, "string length"),
+                "string length",
+            )?
+            .into_int_value();
+
+        if kind == seal_mir::StrViewKind::Substring {
+            let (Some(start), Some(end)) = (start, end) else {
+                return Err(CodegenError::internal(
+                    "a substring view has no complete byte range".to_owned(),
+                ));
+            };
+            let start = self.load_operand(start)?.into_int_value();
+            let end = self.load_operand(end)?.into_int_value();
+            let bytes = self.tcx.uint_ty(seal_ty::UintTy::U8);
+            data = self.index_ptr(data, start, bytes)?;
+            length = self.build(
+                self.builder.build_int_sub(end, start, "string length"),
+                "string length",
+            )?;
+        }
+
+        self.make_fat_pointer(ty, data, length, "string data", "string length")
+    }
+
+    /// Builds a slice-like fat pointer from its data address and length.
+    fn make_fat_pointer(
+        &self,
+        ty: seal_ty::TyId,
+        data: inkwell::values::PointerValue<'ctx>,
+        length: IntValue<'ctx>,
+        data_name: &str,
+        length_name: &str,
+    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let fat_type = self.mapper.basic(ty)?.into_struct_type();
         let mut fat = fat_type.get_undef();
         let data: BasicValueEnum<'ctx> = data.into();
         let next = self.build(
-            self.builder.build_insert_value(fat, data, 0, "slice data"),
-            "slice data",
+            self.builder.build_insert_value(fat, data, 0, data_name),
+            data_name,
         )?;
         fat = match next {
             inkwell::values::AggregateValueEnum::StructValue(value) => value,
             other => {
                 return Err(CodegenError::internal(format!(
-                    "slice construction produced {other:?}"
+                    "fat pointer construction produced {other:?}"
                 )));
             }
         };
         let length: BasicValueEnum<'ctx> = length.into();
         let next = self.build(
-            self.builder
-                .build_insert_value(fat, length, 1, "slice length"),
-            "slice length",
+            self.builder.build_insert_value(fat, length, 1, length_name),
+            length_name,
         )?;
         match next {
             inkwell::values::AggregateValueEnum::StructValue(value) => Ok(value.into()),
             other => Err(CodegenError::internal(format!(
-                "slice construction produced {other:?}"
+                "fat pointer construction produced {other:?}"
             ))),
         }
     }

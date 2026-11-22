@@ -20,6 +20,12 @@ fn dividing_the_signed_minimum_by_minus_one_is_reported() {
 }
 
 #[test]
+fn a_string_view_is_not_constant() {
+    let fixture = Fixture::compile("const VIEW: *str = \"hello\".slice(0, 2);");
+    fixture.expect_code("E4022");
+}
+
+#[test]
 fn a_pointer_address_is_not_computable_in_a_constant() {
     let fixture = Fixture::compile(
         "static LIMIT: i32 = 7; \

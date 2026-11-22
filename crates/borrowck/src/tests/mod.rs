@@ -22,6 +22,7 @@ mod match_expr;
 mod methods;
 mod returns;
 mod slices;
+mod str_views;
 mod structs;
 mod support;
 mod tuples;

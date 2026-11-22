@@ -235,7 +235,10 @@ fn transfer(
         .is_some_and(|local| hir.ty_ctxt().contains_reference(body.local(local).ty));
 
     match rvalue {
-        Rvalue::Ref { .. } | Rvalue::SliceRef { .. } | Rvalue::TraitObjectReborrow { .. } => {
+        Rvalue::Ref { .. }
+        | Rvalue::SliceRef { .. }
+        | Rvalue::StrView { .. }
+        | Rvalue::TraitObjectReborrow { .. } => {
             let mut loans = LoanSet::default();
             if let Some(loan) = loan {
                 loans.insert(loan);

@@ -17,7 +17,7 @@ use seal_def::DefId;
 use seal_hash::{FxHashMap, FxHashSet};
 use seal_hir::Hir;
 use seal_mir::{
-    Body, LocalId, LocalKind, Operand, Place, PlaceRoot, Projection, Rvalue, Statement,
+    Body, Constant, LocalId, LocalKind, Operand, Place, PlaceRoot, Projection, Rvalue, Statement,
     StatementKind,
 };
 use seal_ty::{TyId, TyKind};
@@ -116,6 +116,8 @@ pub(crate) enum StorageKey {
         /// The field path below the allocation; empty for the whole value.
         fields: Vec<StorageField>,
     },
+    /// The immutable, program-lifetime bytes of a string literal.
+    String,
 }
 
 /// The storage a reference value may name.
@@ -161,25 +163,29 @@ impl OriginSet {
         set
     }
 
-    /// Returns the static and const allocations this set may name.
+    /// Returns the program-lifetime allocations this set may name.
     pub(crate) fn globals(&self) -> impl Iterator<Item = StorageKey> + '_ {
         self.keys.iter().filter_map(|key| match key {
-            StorageKey::Static { .. } | StorageKey::Const { .. } => Some(key.clone()),
+            StorageKey::Static { .. } | StorageKey::Const { .. } | StorageKey::String => {
+                Some(key.clone())
+            }
             StorageKey::Frame { .. } | StorageKey::Pointee { .. } => None,
         })
     }
 
-    /// Returns `true` when every known target is a static or const allocation.
+    /// Returns `true` when every known target is a program-lifetime allocation.
     ///
-    /// Such a reference outlives the frame. An unknown target does not qualify:
-    /// it may still name frame storage.
+    /// Such a reference outlives the frame, including a string literal. An
+    /// unknown target does not qualify: it may still name frame storage.
     pub(crate) fn only_globals(&self) -> bool {
         !self.unknown
             && !self.keys.is_empty()
-            && self
-                .keys
-                .iter()
-                .all(|key| matches!(key, StorageKey::Static { .. } | StorageKey::Const { .. }))
+            && self.keys.iter().all(|key| {
+                matches!(
+                    key,
+                    StorageKey::Static { .. } | StorageKey::Const { .. } | StorageKey::String
+                )
+            })
     }
 
     /// Returns `true` when the set names no storage at all.
@@ -400,7 +406,7 @@ fn transfer(
             let origins = keys_of(state, borrowed, const_locals);
             state.assign(place, origins);
         }
-        Rvalue::SliceRef { base, .. } => {
+        Rvalue::SliceRef { base, .. } | Rvalue::StrView { base, .. } => {
             let effective = if matches!(
                 hir.ty_ctxt().kind(place_ty(hir, body, base)),
                 TyKind::Ref { .. }
@@ -456,7 +462,15 @@ fn transfer(
             }
         }
         Rvalue::Use(operand) => {
-            let origins = operand_origins(hir, body, program, state, operand);
+            // A string literal is a pointer to immutable, program-lifetime
+            // data. It has no allocation ID in `ConstValue`, so give it a
+            // global key instead of treating the loan as unknown: an unknown
+            // target would make every later temporary write conflict.
+            let origins = if matches!(operand, Operand::Constant(Constant::Str { .. })) {
+                OriginSet::global(StorageKey::String)
+            } else {
+                operand_origins(hir, body, program, state, operand)
+            };
             if let Some(source) = operand.place()
                 && matches!(operand, Operand::Move(_))
             {
@@ -757,6 +771,15 @@ pub(crate) fn keys_of(state: &OriginState, place: &Place, const_locals: &ConstLo
                     resolved.insert(StorageKey::Const { def: *def, fields });
                 }
             }
+            StorageKey::String => {
+                if rest.iter().any(|projection| {
+                    matches!(projection, Projection::Deref | Projection::RawDeref)
+                }) {
+                    resolved.insert_unknown();
+                } else {
+                    resolved.insert(StorageKey::String);
+                }
+            }
         }
     }
     resolved
@@ -829,6 +852,7 @@ fn key_overlap(left: &StorageKey, right: &StorageKey) -> bool {
                 fields: right_fields,
             },
         ) => left_def == right_def && paths_overlap(left_fields, right_fields),
+        (StorageKey::String, StorageKey::String) => true,
         _ => false,
     }
 }

@@ -44,6 +44,20 @@ fn scalars_keep_their_types_and_bits() {
 }
 
 #[test]
+fn string_len_and_boundaries_are_evaluated() {
+    let fixture = clean(
+        "const LENGTH: usize = \"hello\".len(); \
+         const START: bool = \"\u{e9}\".is_char_boundary(0); \
+         const MIDDLE: bool = \"\u{e9}\".is_char_boundary(1); \
+         const END: bool = \"\u{e9}\".is_char_boundary(2);",
+    );
+    assert_eq!(int(&fixture, "LENGTH"), 5);
+    assert!(flag(&fixture, "START"));
+    assert!(!flag(&fixture, "MIDDLE"));
+    assert!(flag(&fixture, "END"));
+}
+
+#[test]
 fn integer_arithmetic_wraps_and_truncates() {
     let fixture = clean(
         "const SUM: u8 = 250 + 10; \

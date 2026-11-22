@@ -314,7 +314,7 @@ fn check_rvalue(
             check_type(tcx, instance, *ret_ty)
         }
         Rvalue::Ref { .. } | Rvalue::Discriminant(_) => Ok(()),
-        Rvalue::SliceRef { start, end, ty, .. } => {
+        Rvalue::SliceRef { start, end, ty, .. } | Rvalue::StrView { start, end, ty, .. } => {
             check_type(tcx, instance, *ty)?;
             for operand in start.iter().chain(end.iter()) {
                 check_operand(tcx, instance, operand)?;
@@ -597,6 +597,9 @@ fn check_rvalue_globals(
         }
         Rvalue::Ref { place, .. } => check_place_global(program, constants, place),
         Rvalue::SliceRef {
+            base, start, end, ..
+        }
+        | Rvalue::StrView {
             base, start, end, ..
         } => {
             check_place_global(program, constants, base)?;

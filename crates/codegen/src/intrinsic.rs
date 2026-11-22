@@ -327,11 +327,99 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                     .into_int_value();
                 Ok(length.into())
             }
+            IntrinsicOp::StrIsCharBoundary => {
+                let [index] = args else {
+                    return Err(CodegenError::internal(
+                        "`str::is_char_boundary` takes exactly one index",
+                    ));
+                };
+                let fat = value.into_struct_value();
+                let data = self
+                    .build(
+                        self.builder.build_extract_value(fat, 0, "string data"),
+                        "string data",
+                    )?
+                    .into_pointer_value();
+                let length = self
+                    .build(
+                        self.builder.build_extract_value(fat, 1, "string length"),
+                        "string length",
+                    )?
+                    .into_int_value();
+                let index = self.load_operand(index)?.into_int_value();
+                let at_end = self.build(
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        index,
+                        length,
+                        "boundary at end",
+                    ),
+                    "boundary comparison",
+                )?;
+                let in_bounds = self.build(
+                    self.builder.build_int_compare(
+                        IntPredicate::ULT,
+                        index,
+                        length,
+                        "boundary in bounds",
+                    ),
+                    "boundary comparison",
+                )?;
+                let current = self.builder.get_insert_block().ok_or_else(|| {
+                    CodegenError::internal("a string boundary check has no insertion block")
+                })?;
+                let check = self
+                    .context
+                    .append_basic_block(self.function, "str.boundary.check");
+                let merged = self
+                    .context
+                    .append_basic_block(self.function, "str.boundary.merged");
+                self.build(
+                    self.builder
+                        .build_conditional_branch(in_bounds, check, merged),
+                    "boundary branch",
+                )?;
+                self.builder.position_at_end(check);
+                let bytes = self.tcx.uint_ty(seal_ty::UintTy::U8);
+                let byte_ty = self.mapper.basic(bytes)?.into_int_type();
+                let pointer = self.index_ptr(data, index, bytes)?;
+                let byte = self
+                    .build(
+                        self.builder.build_load(byte_ty, pointer, "str byte"),
+                        "string byte load",
+                    )?
+                    .into_int_value();
+                let masked = self.build(
+                    self.builder
+                        .build_and(byte, byte_ty.const_int(0xc0, false), "utf8 prefix"),
+                    "utf8 prefix mask",
+                )?;
+                let boundary = self.build(
+                    self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        masked,
+                        byte_ty.const_int(0x80, false),
+                        "boundary byte",
+                    ),
+                    "boundary comparison",
+                )?;
+                self.build(
+                    self.builder.build_unconditional_branch(merged),
+                    "boundary continue",
+                )?;
+                self.builder.position_at_end(merged);
+                let bool_ty = self.mapper.basic(self.tcx.bool_ty())?.into_int_type();
+                let phi = self.build(
+                    self.builder.build_phi(bool_ty, "str boundary"),
+                    "boundary phi",
+                )?;
+                phi.add_incoming(&[(&boundary, check), (&at_end, current)]);
+                Ok(phi.as_basic_value())
+            }
             IntrinsicOp::BoolToggle => Err(CodegenError::internal(
                 "`bool::toggle` reached the value path after its special case",
             )),
             IntrinsicOp::Len
-            | IntrinsicOp::StrIsCharBoundary
             | IntrinsicOp::StrCharAt
             | IntrinsicOp::StrSlice
             | IntrinsicOp::StrAsBytes

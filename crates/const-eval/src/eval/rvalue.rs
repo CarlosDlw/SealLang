@@ -101,6 +101,12 @@ impl<'a> Interpreter<'a> {
                     element,
                 })
             }
+            Rvalue::StrView { .. } => {
+                // A view carries an offset into a string that a `ConstValue::Str`
+                // cannot represent. Reject it through the whitelist instead of
+                // fabricating a value that code generation cannot reproduce.
+                Err(self.error(EvalErrorKind::IntrinsicNotWhitelisted, span))
+            }
             Rvalue::Discriminant(place) => {
                 let resolved = self.resolve_place(place, span)?;
                 let value = self.read_place(&resolved, span)?;

@@ -537,6 +537,9 @@ impl Collector<'_> {
             Rvalue::Ref { place, .. } => self.scan_place(place, span),
             Rvalue::SliceRef {
                 base, start, end, ..
+            }
+            | Rvalue::StrView {
+                base, start, end, ..
             } => {
                 self.scan_place(base, span);
                 for operand in start.iter().chain(end.iter()) {

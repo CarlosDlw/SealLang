@@ -261,6 +261,29 @@ impl CallTarget {
     }
 }
 
+/// The string view a `StrView` rvalue builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StrViewKind {
+    /// A checked substring of a `*str`.
+    Substring,
+    /// A byte view of a `*str`.
+    Bytes,
+    /// A `*str` view of a `*[u8]`, under the caller's UTF-8 contract.
+    FromBytes,
+}
+
+impl StrViewKind {
+    /// Returns the source-level method that builds this view.
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Substring => "slice",
+            Self::Bytes => "as_bytes",
+            Self::FromBytes => "as_str_unchecked",
+        }
+    }
+}
+
 /// A compile-time type property read at run time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TypeInfoKind {
@@ -369,6 +392,24 @@ pub enum Rvalue {
         /// Whether the reference permits writes.
         kind: seal_ty::RefKind,
         /// The resulting `*[T]` or `*mut [T]` type.
+        ty: seal_ty::TyId,
+    },
+    /// Builds a borrowed string or byte-slice view.
+    ///
+    /// A view is always a shared fat pointer. `Substring` and `Bytes` read a
+    /// `*str`; `FromBytes` reads a `*[u8]`. Lowering checks every substring
+    /// bound before this value is constructed, and `FromBytes` relies on the
+    /// caller's unsafe UTF-8 contract.
+    StrView {
+        /// Which view is being built.
+        kind: StrViewKind,
+        /// The pointer to the string or byte slice being viewed.
+        base: Place,
+        /// The inclusive start byte, for `Substring`.
+        start: Option<Operand>,
+        /// The exclusive end byte, for `Substring`.
+        end: Option<Operand>,
+        /// The resulting `*str` or `*[u8]` type.
         ty: seal_ty::TyId,
     },
     /// Reads the discriminant of an enum place.
