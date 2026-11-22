@@ -298,6 +298,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/project/registry.md`](docs/project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
 | [`docs/project/architecture.md`](docs/project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
 | [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 41-line acceptance matrix and its executable evidence |
+| [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
 | [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
 | [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |

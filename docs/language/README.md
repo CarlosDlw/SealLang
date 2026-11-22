@@ -1,15 +1,17 @@
 # Seal language guide
 
-This directory teaches the language from the user's point of view. The
-documents in the [parent directory](../) are the normative design and compiler
-references; the chapters here explain how to use the implemented surface
-correctly, with complete rules, worked examples, and the contracts behind
-unsafe operations.
+This directory teaches the language from the user's point of view. Start with
+[`overview.md`](overview.md) for the philosophy, goals, and design principles;
+the documents in the [parent directory](../) are the normative design and
+compiler references, while the chapters here explain how to use the implemented
+surface correctly, with complete rules, worked examples, and the contracts
+behind unsafe operations.
 
 ## Chapters
 
 | Chapter | Covers |
 |---------|--------|
+| [`overview.md`](overview.md) | Philosophy, goals, design principles, safe-code guarantees, accepted trade-offs, and the rules for extending the language |
 | [`copy.md`](copy.md) | Opt-in `Copy` for structs and enums, generic bounds, fields and variants, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, `unsafe`, constants, provenance, diagnostics, and patterns |
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
