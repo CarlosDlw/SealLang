@@ -22,6 +22,13 @@ validates external bytes before producing a `*str`, while
 `std::str::from_utf8_unchecked` is an `unsafe func` for already validated
 bytes.
 
+Strings iterate, search, split, and trim without allocating. `for ch in text`
+visits Unicode scalar values; `text.bytes()` visits the exact UTF-8 bytes; and
+`text.char_indices()` reports byte offsets. Search uses Two-Way with a
+worst-case `O(n + m)` bound, and `split`, `split_once`, `lines`,
+`split_whitespace`, `trim`, `trim_start`, and `trim_end` are built on the same
+borrowed views. `eq_ignore_ascii_case` folds only ASCII letters.
+
 ```console
 $ seal run --bin stdlib --project .
 $ echo $?
@@ -29,6 +36,6 @@ $ echo $?
 $ seal test --project .
 ```
 
-The example's tests live in `tests/prelude.sl` and `tests/str.sl`; they cover
-`Some`, `None`, `Ok`, `Err`, string ranges, UTF-8 validation, and safe view
-construction.
+The example's tests live in `tests/`; they cover `Some`, `None`, `Ok`, `Err`,
+string ranges, UTF-8 validation, safe view construction, iteration, search,
+splitting, Unicode whitespace trimming, and ASCII case comparison.

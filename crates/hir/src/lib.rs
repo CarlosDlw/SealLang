@@ -354,6 +354,12 @@ impl Hir {
     /// item is reachable from another package only when every module on its path
     /// is exposed.
     pub fn is_visible_from(&self, def: DefId, from: ModuleId) -> bool {
+        // Compiler-owned traits are part of the language surface and are
+        // installed before user modules exist, so they have no exposed module
+        // to navigate. Their names and protocol methods are always visible.
+        if self.is_builtin_def(def) {
+            return true;
+        }
         let target = self.definitions.module(def);
         let target_package = self.definitions.package(def);
         let from_package = self.modules[from].package;

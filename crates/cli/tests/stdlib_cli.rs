@@ -113,6 +113,56 @@ fn both_standard_library_examples_run_and_test() {
 }
 
 #[test]
+fn the_string_surface_runs_in_debug_and_release_profiles() {
+    let fixture = copy_example("stdlib");
+    write(
+        &fixture.root.join("src/main.sl"),
+        concat!(
+            "func main() -> i32 {\n",
+            "  let text: *str = \"a🦀é\";\n",
+            "  let mut scalars = 0;\n",
+            "  for value in text { let _ = value; scalars += 1; }\n",
+            "  let mut bytes = 0;\n",
+            "  for value in text.bytes() { let _ = value; bytes += 1; }\n",
+            "  let mut pieces = 0;\n",
+            "  for piece in \"a,b,c\".split(\",\") { let _ = piece; pieces += 1; }\n",
+            "  let mut lines = 0;\n",
+            "  for line in \"a\\r\\nb\\n\".lines() { let _ = line; lines += 1; }\n",
+            "  let mut words = 0;\n",
+            "  for word in \" a\\tb\\u{a0}c \".split_whitespace() { let _ = word; words += 1; }\n",
+            "  if scalars != 3 || bytes != 7 || pieces != 3 || lines != 2 || words != 3 { return 1; }\n",
+            "  match text.find(\"🦀\") {\n",
+            "    Option::Some(index) => if index != 1 { return 2; },\n",
+            "    Option::None => { return 3; }\n",
+            "  }\n",
+            "  if !text.starts_with(\"a\") || !text.ends_with(\"é\") || !text.contains(\"🦀\") { return 4; }\n",
+            "  if text.trim() != text || !\"HeLLo\".eq_ignore_ascii_case(\"hello\") { return 5; }\n",
+            "  0\n",
+            "}\n",
+        ),
+    );
+
+    for release in [false, true] {
+        let run = output(
+            seal()
+                .arg("run")
+                .arg("--bin")
+                .arg("stdlib")
+                .arg("--project")
+                .arg(&fixture.root)
+                .args(release.then_some("--release")),
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "release={release}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+#[test]
 fn string_views_from_bytes_cannot_outlive_their_owner() {
     let fixture = copy_example("stdlib");
     write(

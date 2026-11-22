@@ -242,6 +242,17 @@ fn break_continue_and_non_copy_items_are_accepted() {
 }
 
 #[test]
+fn protocol_methods_can_be_called_directly() {
+    let source = format!(
+        "{CHAIN} func main() -> i32 {{ \
+           let mut cursor = Cursor {{ value: 3 }}; \
+           if cursor.has_next() {{ cursor.next() }} else {{ 0 }} \
+         }}"
+    );
+    check_clean(&source);
+}
+
+#[test]
 fn a_source_without_any_iteration_protocol_is_e3035() {
     let source = "struct Source { value: i32 } \
                   func main() { let source = Source { value: 1 }; for value in source { let _ = value; } }";

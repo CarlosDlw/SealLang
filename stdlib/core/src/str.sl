@@ -64,6 +64,13 @@ impl str {
   }
 }
 
+// Builds a view after all cursor state has been updated. Keeping the actual
+// `slice` call in a leaf helper prevents a returned view loan from overlapping
+// writes to iterator state in the caller.
+func view_between(text: *str, start: usize, end: usize) -> *str {
+  text.slice(start, end)
+}
+
 // Builds a string view from bytes after validating the complete UTF-8
 // encoding. Returns `Option::None` for malformed input and never allocates.
 //
