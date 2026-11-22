@@ -74,6 +74,27 @@ fn a_call_to_an_unsafe_function_withholds_noalias() {
 }
 
 #[test]
+fn an_owned_view_withholds_noalias() {
+    let body = body_of(
+        "struct Buffer { pointer: *raw mut i32 }\n\n\
+         func read(owner: *mut Buffer) -> i32 {\n\
+             let view = unsafe { owned_view(*owner, (*owner).pointer as *raw i32) };\n\
+             *view\n\
+         }\n\n\
+         func main() -> i32 {\n\
+             let mut value = 41;\n\
+             let mut buffer = Buffer { pointer: &mut value as *raw mut i32 };\n\
+             read(&mut buffer)\n\
+         }",
+        "read",
+    );
+    assert!(
+        !body.contains("noalias"),
+        "an owned view reads a raw pointer and must withhold the exclusive grant:\n{body}"
+    );
+}
+
+#[test]
 fn an_exclusive_parameter_is_noalias_when_the_proof_closes() {
     let ir = ir_of(
         "func bump(count: *mut i32) {\n  *count = *count + 1;\n}\n\n\

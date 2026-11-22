@@ -20,6 +20,7 @@ mod indexing_protocol;
 mod iteration_protocol;
 mod match_expr;
 mod methods;
+mod owned_view_matrix;
 mod owned_views;
 mod returns;
 mod slices;

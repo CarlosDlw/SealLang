@@ -17,10 +17,13 @@ use crate::results::PlaceRoot;
 impl Checker<'_> {
     /// Types `unsafe { owned_view(owner, source) }`.
     ///
-    /// `owner` must be an initialized place that can carry a loan. `source` must
-    /// be a raw pointer whose pointee has a concrete representation. Its
-    /// mutability selects the reference kind, so a shared raw pointer can never
-    /// become a mutable view implicitly.
+    /// `owner` must be an initialized place that can carry a loan. A checked
+    /// dereference of a temporary reference is also accepted: MIR materializes
+    /// that reference in a temporary and promotes it to the enclosing block, so
+    /// the owner storage remains live for the view. `source` must be a raw
+    /// pointer whose pointee has a concrete representation. Its mutability
+    /// selects the reference kind, so a shared raw pointer can never become a
+    /// mutable view implicitly.
     pub(super) fn check_owned_view(
         &mut self,
         owner: HirExprId,
@@ -49,35 +52,57 @@ impl Checker<'_> {
         }
 
         let owner_span = self.hir.expr(owner).span;
-        let Some(place) = self.results.place(owner).cloned() else {
-            self.error(
-                codes::E3106,
-                owner_span,
-                "the first argument of `owned_view` must be an owner place",
-            )
-            .help("borrow the value that owns the allocation, not a temporary or a call result")
-            .emit();
-            return self.error_ty();
-        };
-        if matches!(place.root, PlaceRoot::Const(_)) {
-            self.error(
-                codes::E3106,
-                owner_span,
-                "a constant cannot own the storage of an `owned_view`",
-            )
-            .help("keep the allocation in a local, a static, or a borrowed container")
-            .emit();
+        let place = self.results.place(owner).cloned();
+        // A dereference of a reference value has no resolved place, because
+        // the reference itself is a temporary. MIR materializes and promotes
+        // that temporary, so the dereference is still checked storage. Raw
+        // dereferences have no reference kind and stay rejected below.
+        let temporary_deref = place.is_none() && self.deref_kind(owner).is_some();
+        if place.is_none() && !temporary_deref {
+            if self.raw_deref_kind(owner).is_some() {
+                self.error(
+                    codes::E3106,
+                    owner_span,
+                    "an `owned_view` owner cannot be reached through a raw pointer",
+                )
+                .help(
+                    "the owner must be checked storage, such as a local, a static, or `*reference`",
+                )
+                .emit();
+            } else {
+                self.error(
+                    codes::E3106,
+                    owner_span,
+                    "the first argument of `owned_view` must be an owner place",
+                )
+                .help("borrow the value that owns the allocation, not a temporary or a call result")
+                .emit();
+            }
             return self.error_ty();
         }
-        if place.contains_raw_deref() {
-            self.error(
-                codes::E3106,
-                owner_span,
-                "an `owned_view` owner cannot be reached through a raw pointer",
-            )
-            .help("the owner must be checked storage, such as a local, a static, or `*reference`")
-            .emit();
-            return self.error_ty();
+        if let Some(place) = &place {
+            if matches!(place.root, PlaceRoot::Const(_)) {
+                self.error(
+                    codes::E3106,
+                    owner_span,
+                    "a constant cannot own the storage of an `owned_view`",
+                )
+                .help("keep the allocation in a local, a static, or a borrowed container")
+                .emit();
+                return self.error_ty();
+            }
+            if place.contains_raw_deref() {
+                self.error(
+                    codes::E3106,
+                    owner_span,
+                    "an `owned_view` owner cannot be reached through a raw pointer",
+                )
+                .help(
+                    "the owner must be checked storage, such as a local, a static, or `*reference`",
+                )
+                .emit();
+                return self.error_ty();
+            }
         }
 
         let source_span = self.hir.expr(source).span;

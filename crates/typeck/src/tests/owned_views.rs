@@ -68,6 +68,31 @@ fn the_owner_must_be_an_initialized_place() {
 }
 
 #[test]
+fn a_temporary_reference_deref_is_a_checked_owner() {
+    check_clean(
+        "struct Buffer { pointer: *raw i32 }\n\
+         func identity(buffer: *Buffer) -> *Buffer { buffer }\n\
+         func f(buffer: *Buffer) -> *i32 {\n\
+           let source = identity(buffer);\n\
+           unsafe { owned_view(*identity(buffer), (*source).pointer) }\n\
+         }",
+    );
+}
+
+#[test]
+fn a_temporary_raw_deref_cannot_be_the_owner() {
+    let (fixture, _, _) = check_errors(
+        "struct Buffer { pointer: *raw i32 }\n\
+         func identity(buffer: *raw Buffer) -> *raw Buffer { buffer }\n\
+         func f(buffer: *raw Buffer) -> *i32 {\n\
+           let source = identity(buffer);\n\
+           unsafe { owned_view(*identity(buffer), (*source).pointer) }\n\
+         }",
+    );
+    fixture.expect("E3106", "reached through a raw pointer");
+}
+
+#[test]
 fn a_constant_cannot_own_a_view() {
     let (fixture, _, _) = check_errors(
         "const VALUE: i32 = 1;\n\
@@ -161,6 +186,8 @@ fn a_fat_raw_pointer_cannot_be_borrowed_without_an_owner() {
         "func f(pointer: *raw mut str) -> *mut str { unsafe { &mut *pointer } }",
         "trait Shape { func area(self: *Self) -> i32; }\n\
          func f(pointer: *raw dyn Shape) -> *dyn Shape { unsafe { &*pointer } }",
+        "trait Shape { func area(self: *Self) -> i32; }\n\
+         func f(pointer: *raw mut dyn Shape) -> *mut dyn Shape { unsafe { &mut *pointer } }",
     ] {
         let (fixture, _, _) = check_errors(source);
         fixture.expect("E3106", "fat raw pointer");

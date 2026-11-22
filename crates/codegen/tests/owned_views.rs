@@ -44,6 +44,36 @@ func main() -> i32 {
 }
 
 #[test]
+fn a_temporary_owner_is_promoted_and_used_after_its_statement() {
+    let source = "\
+struct Buffer { pointer: *raw i32 }
+func identity(buffer: *Buffer) -> *Buffer { buffer }
+func main() -> i32 {
+  let value = 41;
+  let buffer = Buffer { pointer: &value as *raw i32 };
+  let source = identity(&buffer);
+  let view = unsafe {
+    owned_view(*identity(&buffer), (*source).pointer)
+  };
+  *view + 1
+}";
+    assert_returns(source, 42, "owned-view-temporary-owner");
+}
+
+#[test]
+fn a_static_owner_lends_a_view_for_the_static_lifetime() {
+    let source = "\
+struct Buffer { pointer: *raw i32 }
+static VALUE: i32 = 41;
+static BUFFER: Buffer = Buffer { pointer: &VALUE as *raw i32 };
+func view() -> *i32 {
+  unsafe { owned_view(BUFFER, BUFFER.pointer) }
+}
+func main() -> i32 { *view() + 1 }";
+    assert_returns(source, 42, "owned-view-static-owner");
+}
+
+#[test]
 fn an_owned_slice_preserves_length_and_elements() {
     let source = "\
 struct SliceBuffer { pointer: *raw [i32] }
