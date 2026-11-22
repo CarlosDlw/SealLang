@@ -113,6 +113,48 @@ fn both_standard_library_examples_run_and_test() {
 }
 
 #[test]
+fn std_alloc_is_visible_only_under_the_hosted_standard_library() {
+    let fixture = copy_example("stdlib");
+    write(
+        &fixture.root.join("src/main.sl"),
+        "use std::alloc::Layout;\n\nfunc main() -> usize {\n  Layout::new::<u8>().size()\n}\n",
+    );
+
+    let hosted = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_success(&hosted);
+
+    for mode in ["core", "none"] {
+        write(
+            &fixture.root.join("seal.toml"),
+            &format!(
+                "[project]\nname = \"stdlib\"\nlanguage = \"0.1\"\n\n[package]\nname = \"stdlib\"\nversion = \"0.1.0\"\ndescription = \"The hosted standard library and its prelude\"\nstdlib = \"{mode}\"\n"
+            ),
+        );
+        let rejected = output(seal().arg("check").arg("--project").arg(&fixture.root));
+        assert_eq!(
+            rejected.status.code(),
+            Some(1),
+            "mode={mode}: stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&rejected.stdout),
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&rejected.stdout),
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        assert!(
+            diagnostics.contains("E2073"),
+            "mode={mode}: `std::alloc` must be unresolved:\n{diagnostics}"
+        );
+        assert!(
+            !diagnostics.contains("E2070"),
+            "mode={mode}: the unresolved `std` path cascaded:\n{diagnostics}"
+        );
+    }
+}
+
+#[test]
 fn the_string_surface_runs_in_debug_and_release_profiles() {
     let fixture = copy_example("stdlib");
     write(

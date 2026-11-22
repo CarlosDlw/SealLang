@@ -30,6 +30,22 @@ worst-case `O(n + m)` bound, and `split`, `split_once`, `lines`,
 `split_whitespace`, `trim`, `trim_start`, and `trim_end` are built on the same
 borrowed views. `eq_ignore_ascii_case` folds only ASCII letters.
 
+## Allocation
+
+`std::alloc` is the hosted allocation layer above the runtime heap. It exposes
+validated `Layout` values, `AllocError`, the unsafe `alloc`, `alloc_zeroed`,
+`realloc`, and `dealloc` functions, and `RawBuffer`, the non-`Copy` owner of an
+untyped block. Allocation failure is returned as a value; `dealloc` requires
+the exact layout that created the block, and a Seal block must never be passed
+to C `free`.
+
+The main program allocates a 16-byte `RawBuffer`, writes into it, grows it to
+32 bytes while preserving the prefix and 8-byte alignment, and drops it. The
+tests cover `Layout` validation, zero-size behavior, aligned and zeroed
+allocation, reallocation growth and shrink, failure preservation, ownership
+moves, and repeated resize/drop loops. `RawBuffer` exposes only a raw pointer,
+so every pointer access in the tests stays inside `unsafe`.
+
 ```console
 $ seal run --bin stdlib --project .
 $ echo $?
@@ -39,4 +55,6 @@ $ seal test --project .
 
 The example's tests live in `tests/`; they cover `Some`, `None`, `Ok`, `Err`,
 string ranges, UTF-8 validation, safe view construction, iteration, search,
-splitting, Unicode whitespace trimming, and ASCII case comparison.
+splitting, Unicode whitespace trimming, ASCII case comparison, allocation
+layout validation, raw allocation and reallocation, `RawBuffer` ownership, and
+drop behavior.

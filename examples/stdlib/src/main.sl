@@ -1,5 +1,8 @@
 // The std prelude puts `Option` and `Result` in scope. Variants stay qualified.
 
+use std::alloc::Layout;
+use std::alloc::RawBuffer;
+
 func option_or(value: Option<i32>, fallback: i32) -> i32 {
   match value {
     Option::Some(inner) => inner,
@@ -92,6 +95,42 @@ func main() -> i32 {
   if words != 2 || pieces != 4 || lines != 2 {
     return 9;
   }
+
+  // Allocation is explicit and hosted-only. `RawBuffer` owns the block and
+  // releases it on drop, including every early return below.
+  let layout = match Layout::from_size_align(16, 8) {
+    Result::Ok(layout) => layout,
+    Result::Err(_) => {
+      return 10;
+    }
+  };
+  let mut buffer = match RawBuffer::new(layout) {
+    Result::Ok(buffer) => buffer,
+    Result::Err(_) => {
+      return 11;
+    }
+  };
+
+  unsafe { *buffer.as_ptr() = 123; }
+  match buffer.resize(32) {
+    Result::Ok(_) => {}
+    Result::Err(_) => {
+      return 12;
+    }
+  }
+  if buffer.capacity() != 32 || buffer.layout().align() != 8 {
+    return 13;
+  }
+  unsafe {
+    if *buffer.as_ptr() != 123 {
+      return 14;
+    }
+    *(buffer.as_ptr().add(31)) = 234;
+    if *(buffer.as_ptr().add(31)) != 234 {
+      return 15;
+    }
+  }
+  drop(buffer);
 
   0
 }

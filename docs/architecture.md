@@ -223,6 +223,16 @@ does not. Diagnostics use `<stdlib>/...` identities and never expose the
 installation path. Modes without a library (`stdlib = "none"` and no prelude)
 require no installation. See [`project/stdlib.md`](project/stdlib.md).
 
+The runtime heap and the Seal-level allocator are distinct layers. The runtime
+heap is internal C ABI surface (`seal_alloc`, `seal_alloc_zeroed`,
+`seal_realloc`, `seal_dealloc`) that returns `NULL` on failure and is linked only
+when an allocation symbol is referenced. The hosted `std` package adds
+`std::alloc` above it: validated `Layout` and `AllocError` values, unsafe raw
+wrappers that turn failure into a returned value, and `RawBuffer` as a
+non-`Copy` owner that releases one untyped block exactly once. User code never
+names the runtime symbols directly. `core`, `--no-stdlib`, and freestanding
+runtime targets cannot reach `std::alloc`.
+
 Inside a body, a multi-segment path resolves its prefix through the module graph
 and its last segment through the value, type, or trait namespace, after the
 file's imports. `root::name` and `module::name` work in expressions and types,

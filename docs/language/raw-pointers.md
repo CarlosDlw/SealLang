@@ -820,11 +820,19 @@ unsafe code should be the smallest possible island.
 | `copy`/`copy_nonoverlapping` | `copy`/`copy_nonoverlapping` | Same overlap split, memmove/memcpy lowering |
 | `*raw dyn Trait` | `*const dyn Trait` | Two-word data/vtable representation |
 
-Seal does not have `NonNull`, `MaybeUninit`, or allocator APIs, and it has no
-owning wrappers such as `Box` or `CString`. C interop, including C function
-pointers (`*raw extern "c" func(...)`) and `c"..."` literals, is covered in
-[C interoperability](ffi.md); those are distinct surface forms, not alternate
-spellings of the raw pointer operations in this chapter.
+Seal does not have `NonNull` or `MaybeUninit`, and it has no owning typed
+wrappers such as `Box`, `Vec`, or `CString`. The hosted standard library does
+expose an explicit allocator as `std::alloc`: validated `Layout` values,
+`AllocError`, unsafe `alloc`/`alloc_zeroed`/`realloc`/`dealloc`, and the
+non-`Copy` `RawBuffer` owner of one untyped block. Those APIs do not make raw
+dereferences safe; every access through `RawBuffer::as_ptr` still requires
+`unsafe`. Allocation remains hosted-only and absent from `core`, `--no-stdlib`,
+and freestanding targets, and no C memory may be passed to the Seal
+deallocator. See [`stdlib.md`](stdlib.md#allocation) for the public
+surface. C interop, including C function pointers (`*raw extern "c" func(...)`)
+and `c"..."` literals, is covered in [C interoperability](ffi.md); those are
+distinct surface forms, not alternate spellings of the raw pointer operations
+in this chapter.
 
 ## 14. Complete example
 

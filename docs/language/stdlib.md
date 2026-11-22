@@ -5,7 +5,7 @@ The standard library is ordinary Seal source split into two packages:
 | Package | Contents | Availability |
 |---------|----------|--------------|
 | `core` | `option`, `result`, `str`, an internal `char` helper, and the core prelude | dependency-free; no operating system or runtime |
-| `std` | a facade over `core` and the hosted prelude | hosted targets |
+| `std` | a facade over `core`, the hosted prelude, and `std::alloc` | hosted targets |
 
 A package chooses one mode in its manifest:
 
@@ -113,11 +113,82 @@ panic-message, empty-pattern, and line-ending rules live in
 `as_str` reinterpretation and its distinction from the safe constructor are in
 [`raw-pointers.md`](raw-pointers.md#raw-string-pointers).
 
+## Allocation
+
+Heap allocation is hosted-only and explicit. A package reaches the allocator
+as `std::alloc` only in `stdlib = "std"` mode; `core`, `--no-stdlib`, and a
+`runtime = "none"` target have no allocation module to import. Nothing in the
+language allocates implicitly, and the allocator adds no `?` operator: fallible
+operations are matched explicitly.
+
+`std::alloc` has three layers:
+
+- `Layout` and `LayoutError` validate a size and alignment before any call
+  reaches the runtime. `Layout::new::<T>()` is infallible; `Layout::array` uses
+  checked multiplication; `from_size_align` rejects a zero or non-power-of-two
+  alignment and a rounded size above the portable maximum object size.
+- `alloc`, `alloc_zeroed`, `realloc`, and `dealloc` are `unsafe` raw functions.
+  They return `Result<_, AllocError>` (except `dealloc`) and never turn `NULL`
+  into a successful pointer. `realloc` requires `new_size > 0`, preserves the
+  prefix and alignment, and leaves the old block valid when it fails.
+  `dealloc` accepts the exact layout that created the current pointer and is a
+  no-op for a null pointer or zero size.
+- `RawBuffer` is the safe, non-`Copy` owner of one untyped block. It stores the
+  exact layout, preserves its bytes and layout on a failed resize, and releases
+  the block exactly once on `drop`. `as_ptr` exposes a raw pointer, so every
+  dereference remains `unsafe`, and the pointer is invalid after `resize`,
+  `drop`, or moving the owner.
+
+```seal
+use std::alloc::Layout;
+use std::alloc::RawBuffer;
+
+func main() -> i32 {
+  let layout = match Layout::from_size_align(8, 8) {
+    Result::Ok(layout) => layout,
+    Result::Err(_) => {
+      return 1;
+    }
+  };
+  let mut buffer = match RawBuffer::new(layout) {
+    Result::Ok(buffer) => buffer,
+    Result::Err(_) => {
+      return 2;
+    }
+  };
+
+  unsafe { *buffer.as_ptr() = 7; }
+  match buffer.resize(16) {
+    Result::Ok(_) => {}
+    Result::Err(_) => {
+      return 3;
+    }
+  }
+  unsafe {
+    if *buffer.as_ptr() != 7 {
+      return 4;
+    }
+  }
+
+  drop(buffer);
+  0
+}
+```
+
+A zero-size `alloc` returns the runtime's non-null dangling pointer, which must
+never be dereferenced; `RawBuffer` normalizes an empty block to a null pointer
+with capacity zero. The two forms are intentionally different: the raw
+functions mirror the runtime ABI, while the owner presents a clearer empty
+value. Neither form permits passing a Seal block to C `free`; the matching
+`dealloc` or `RawBuffer::drop` is the only release path. `RawBuffer` owns bytes,
+not typed values, so it exposes no safe typed view and no container.
+
 ## Paths and identity
 
 `core` exposes its `root`, `option`, `result`, `str`, and `prelude` modules.
 `std` re-exports `core::option`, `core::result`, and `core::str` from its root,
-so these paths all name the same canonical declarations:
+and exposes `alloc` as its own module, so these paths all name the same
+canonical declarations:
 
 ```seal
 core::option::Option<T>
@@ -126,6 +197,8 @@ core::str::from_utf8
 std::option::Option<T>
 std::result::Result<T, E>
 std::str::from_utf8
+std::alloc::Layout
+std::alloc::RawBuffer
 ```
 
 The prelude aliases are canonical too:

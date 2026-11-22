@@ -152,15 +152,25 @@ There is no implicit heap. String literals are `*str` fat pointers (data and
 length) into static read-only memory, so `str` is an **unsized pointee** and is
 only usable behind a reference. Safe string operations never allocate: `slice`,
 `get`, `split`, `lines`, `trim`, and the iterators produce borrowed views, and
-`from_utf8` validates bytes in place before returning a view. The runtime
-provides the internal allocation substrate (`seal_alloc`, `seal_alloc_zeroed`,
-`seal_realloc`, `seal_dealloc`) and reports failure as `NULL`. Owned heap data
-arrives with the allocator API as a distinct owning type that implements
-`Drop`; allocation failure there is returned as a value, not hidden behind an
-abort. Reallocation and growth are explicit operations of that type, never
-implicit on assignment. A trait object also does not allocate: its vtable is a
-constant built at compile time per concrete type and trait reference, and
-coercing to it copies only the data and vtable words.
+`from_utf8` validates bytes in place before returning a view.
+
+The runtime provides the internal heap ABI (`seal_alloc`, `seal_alloc_zeroed`,
+`seal_realloc`, `seal_dealloc`) and reports failure as `NULL`. User Seal code
+never calls those symbols directly. The hosted `std` package exposes a separate
+language-level layer, `std::alloc`, with validated `Layout` values,
+`AllocError`, unsafe raw allocation and reallocation functions, and `RawBuffer`
+as the safe owner of one untyped block. A `RawBuffer` is not `Copy`, stores the
+exact layout of its block, and deallocates it exactly once on `Drop`. Allocation
+failure is returned as a value, never hidden behind a panic or abort;
+reallocation leaves the old block valid on failure, and `resize(0)` releases the
+block explicitly. All allocation is explicit, and growth is never implicit on
+assignment.
+
+The allocator is hosted-only. `core` has no heap dependency, `--no-stdlib` has
+no allocation API, and a `runtime = "none"` target cannot select `std`. A trait
+object also does not allocate: its vtable is a constant built at compile time
+per concrete type and trait reference, and coercing to it copies only the data
+and vtable words.
 
 ### D8 — Bindings are immutable by default
 

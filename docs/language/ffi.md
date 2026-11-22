@@ -527,6 +527,15 @@ with `seal_dealloc`, because a large alignment over-allocates and stores the
 base pointer before the returned address. Passing a `seal_alloc` block to
 `free`, or a `malloc` block to `seal_dealloc`, is undefined behavior.
 
+The runtime allocation symbols are internal to the compiler and runtime. User
+Seal code never declares or calls `seal_alloc`, `seal_alloc_zeroed`,
+`seal_realloc`, or `seal_dealloc` directly. The hosted `std::alloc` module owns those private
+declarations and exposes validated `Layout` values, `AllocError`, unsafe raw
+wrappers, and `RawBuffer`. A block obtained through that module is still a Seal
+block and must be released through the same module, never by C `free`.
+`RawBuffer` owns one Seal block and releases it on `drop`; it does not own C
+memory and cannot be used to adopt a `malloc` pointer.
+
 A destructor runs only for a Seal value that Seal owns. When a value crosses
 into C, no `Drop` implementation runs on the C side, and C storage that Seal
 observes through `*raw` has no drop glue. An `extern struct` may implement
@@ -781,11 +790,13 @@ system and explicit unsafe gate:
 | Owning C memory | `Box::from_raw`, `CString` | explicit C free function; no owning wrapper |
 | Unwinding | `"C-unwind"`, `catch_unwind` | never across the boundary; panics abort |
 
-The main differences are consequences of scope: Seal has no owning heap types,
-so `CString`, `CStr`, `Box`, and `Vec` wrappers do not exist; `c"..."` plus
-`with_len`/`as_str` covers the same ground. Seal also has no `#[repr(C)]`
-attribute because C layout is a distinct declaration form, `extern struct`,
-which cannot be confused with the default layout.
+The main differences are consequences of scope: Seal has no owning C heap
+types, so `CString`, `CStr`, `Box`, and `Vec` wrappers do not exist; `c"..."`
+plus `with_len`/`as_str` covers the same ground. `std::alloc::RawBuffer` owns
+untyped Seal allocations, not C memory, and it does not add a typed container.
+Seal also has no `#[repr(C)]` attribute because C layout is a distinct
+declaration form, `extern struct`, which cannot be confused with the default
+layout.
 
 ## 13. Acceptance matrix
 

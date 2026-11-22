@@ -30,16 +30,26 @@ stdlib/
     ├── seal.toml
     └── src/
         ├── lib.sl
-        └── prelude.sl
+        ├── prelude.sl
+        ├── alloc.sl
+        └── alloc/
+            ├── buffer.sl
+            ├── error.sl
+            ├── ffi.sl
+            ├── heap.sl
+            └── layout.sl
 ```
 
 Every package directory contains its own `seal.toml` and source tree. `core`
 defines `Option` and `Result` in `option` and `result` and exposes both
-modules plus its prelude. `std` re-exports those modules from its root and
-re-exports both types from its prelude. Both manifests set
-`stdlib = "none"` and `implicit-prelude = false` so the library never injects
-itself. The language surface is documented in
-[`../language/stdlib.md`](../language/stdlib.md).
+modules plus its prelude. `std` re-exports those modules from its root,
+re-exports both types from its prelude, and exposes its own `alloc` module.
+`std::alloc` contains the validated layout and error types, the private runtime
+ABI declarations, the unsafe allocation wrappers, and `RawBuffer`; the module
+files are listed in `std/seal.toml` under `[package.api] expose = ["root",
+"prelude", "alloc"]`. Both manifests set `stdlib = "none"` and
+`implicit-prelude = false` so the library never injects itself. The language
+surface is documented in [`../language/stdlib.md`](../language/stdlib.md).
 
 ## Descriptor
 
@@ -48,7 +58,7 @@ format = 1
 language = "0.1"
 version = "0.1.0"
 packages = ["core", "std"]
-digest = "2325ce6c855ab0737f3c9c030e8c6228da310a8487f496e7da09ca44797218fc"
+digest = "c38ca2f4bf5d1c28abe61f2e7c16388da573f68bb56d34a6b6d1e868c614f4ad"
 
 [prelude]
 std = "std::prelude"
@@ -122,7 +132,7 @@ $ sealc check --no-prelude main.sl    # std without implicit names
   "stdlib": {
     "language": "0.1",
     "version": "0.1.0",
-    "digest": "2325ce6c..."
+    "digest": "c38ca2f4..."
   },
   "packages": [
     {
