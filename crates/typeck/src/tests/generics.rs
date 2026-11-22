@@ -309,6 +309,21 @@ fn explicit_arguments_instantiate_an_associated_function_own_parameters() {
 }
 
 #[test]
+fn aggregate_and_function_type_arguments_are_kept_apart() {
+    let source = "\
+        struct Marker<T> { value: T } \
+        impl<T> Marker<T> { func keep<U>(value: U) -> U { value } } \
+        func main() -> u8 { Marker::<i32>::keep::<u8>(7u8) }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let args = instantiation_args(&hir, &results, call);
+    assert_eq!(args.len(), 2);
+    assert_eq!(ty_text_with(&fixture, &hir, args[0]), "i32");
+    assert_eq!(ty_text_with(&fixture, &hir, args[1]), "u8");
+}
+
+#[test]
 fn a_bound_method_resolves_symbolically() {
     let source = "\
         trait Show { func show(self: *Self) -> i32; } \
