@@ -13,7 +13,7 @@ behind unsafe operations.
 |---------|--------|
 | [`overview.md`](overview.md) | Philosophy, goals, design principles, safe-code guarantees, accepted trade-offs, and the rules for extending the language |
 | [`copy.md`](copy.md) | Opt-in `Copy` for structs and enums, generic bounds, fields and variants, `Drop`, references, patterns, loops, statics, and diagnostics |
-| [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, `unsafe`, constants, provenance, diagnostics, and patterns |
+| [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, owned views, `unsafe`, constants, provenance, diagnostics, and patterns |
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
 | [`first-class-functions.md`](first-class-functions.md) | `func` and `unsafe func` types, closures and capture, `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop and borrow rules, ABI, diagnostics, and limits |
 | [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, `cfg` filtering, cycles, and the `--plan` driver |

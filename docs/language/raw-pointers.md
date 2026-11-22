@@ -413,6 +413,70 @@ preserves the shared loan. Use raw `as_str` only when a raw string pointer is
 actually required, such as at a low-level boundary; never use it to bypass
 validation in safe code.
 
+### Restoring a checked reference with `owned_view`
+
+A raw pointer never carries a checked loan. When a container owns the
+allocation and stores the address, it can turn that address back into an
+ordinary reference with `owned_view`:
+
+```seal
+struct Buffer {
+  pointer: *raw mut i32,
+}
+
+func shared(buffer: *Buffer) -> *i32 {
+  unsafe { owned_view(*buffer, (*buffer).pointer as *raw i32) }
+}
+
+func exclusive(buffer: *mut Buffer) -> *mut i32 {
+  unsafe { owned_view(*buffer, (*buffer).pointer) }
+}
+```
+
+The first argument is the **owner**: the storage that guarantees the allocation
+stays alive. The second argument is the **source**: a raw pointer into that
+allocation. The pointer kind selects the result, so `*raw P` produces `*P` and
+`*raw mut P` produces `*mut P`. The conversion copies the data and metadata
+words; it does not allocate, copy the pointee, validate the address, or rebuild
+a fat pointer.
+
+`owned_view` is an unsafe builtin (`E3070` outside an `unsafe` block) because it
+restores a proof the compiler cannot derive from the pointer alone. The caller
+must establish that:
+
+1. `source` points into the allocation owned by `owner`;
+2. the pointee is initialized and aligned for its type;
+3. a slice or string length is valid, and string bytes are valid UTF-8;
+4. the resulting reference kind matches the access the program will perform;
+5. the owner outlives every use of the view.
+
+The compiler enforces the part it can: `owner` must be an initialized checked
+place, not a constant and not reached through a raw pointer. A local, a static,
+a field, or a dereference of a checked reference are valid owners. A temporary
+reference dereference such as `*identity(&buffer)` is also accepted: lowering
+promotes the reference to the enclosing block, so the owner storage stays alive
+for the view. A raw dereference such as `owned_view(*pointer, ...)` is rejected
+with `E3106`.
+
+The pointee may be a sized type, `[T]`, or `str`. Trait-object pointees are
+reserved for a future extension and currently produce `E3106`. The primitive
+is not available in a constant (`E4035`), because a constant cannot carry the
+owner loan.
+
+The reference behaves like any other reference after construction. Its loan is
+on the owner, never on the raw pointer. While a shared view is live, the owner
+cannot be moved, dropped, or written; an exclusive view additionally excludes
+reads and other loans. Copying the view copies the loan, and passing or storing
+it keeps the loan live through the copy. A view of a local owner cannot escape
+(`E5004`); a view of a borrowed owner can be returned, in which case the
+caller's loan is propagated. Because the body reaches storage through a raw
+pointer, the function is excluded from `noalias`.
+
+[`examples/053_owned_views.sl`](../../examples/053_owned_views.sl) is the
+acceptance example for this section. It exercises thin, slice, and string
+views, shared and exclusive owners, a promoted temporary owner, and a static
+owner at `-O0` and `-O2`.
+
 ## 5. Arithmetic and bounds
 
 ### Element arithmetic
@@ -534,6 +598,12 @@ returns `*raw u8`; a byte read is a normal `u8`. The length is in bytes, not
 characters. Raw string data is read-only; `*raw mut str` permits writes in the
 type system, but writing into an interned string literal is still outside the
 language contract because literals live in read-only storage.
+
+`*mut str` has no safe method surface of its own. String methods are read-only
+and reach the data through a `*str` reborrow; there is no safe operation that
+writes through a mutable string view. Writing requires the raw methods and the
+caller must preserve the UTF-8 invariant and initialization. Treat `*mut str`
+as an ABI and `owned_view` target, not as a general writable string.
 
 ### Raw slice pointers
 
@@ -739,9 +809,12 @@ a link-time address, and cannot read an arbitrary integer-built address.
 | `E3070` | An unsafe operation is outside `unsafe` | Wrap the operation or call in `unsafe { ... }` |
 | `E3074` | Unsupported pointer cast | Check the cast matrix; use `data()` before changing fat/thin shape |
 | `E3075` | Invalid raw pointer operation | Use `*raw mut T` for writes; call `data()` before arithmetic on a fat pointer; use `with_len`/`as_str` for the supported shape changes |
+| `E3106` | Invalid `owned_view` owner or source | Pass an initialized checked owner and a raw pointer to a sized, slice, or string pointee |
 | `E4030` | Address is not computable in a constant | Query nullness or move address observation to runtime |
 | `E4031` | Constant writes through a raw pointer | Build the value in the initializer or write at runtime |
 | `E4032` | Constant reads through an invalid pointer | Keep the access at runtime or read a known allocation |
+| `E4035` | `owned_view` in a constant | Build the view in a runtime function |
+| `E5004` | A view of a local owner escapes | Return the view through a borrowed owner, or keep it inside the function |
 
 Common mistakes:
 
@@ -833,6 +906,21 @@ surface. C interop, including C function pointers (`*raw extern "c" func(...)`)
 and `c"..."` literals, is covered in [C interoperability](ffi.md); those are
 distinct surface forms, not alternate spellings of the raw pointer operations
 in this chapter.
+
+### Growth path: typed containers
+
+`owned_view` is the compiler-side growth hook for typed containers. A future
+`Box<T>`, `Vec<T>`, and `String` can store a raw pointer and expose `as_ref`,
+`as_slice`, and `as_str` as safe methods whose returned reference borrows the
+container. Each wrapper calls `owned_view` internally and keeps its allocation
+or UTF-8 invariant private, so safe callers never reconstruct a view themselves.
+The same MIR rvalue and loan model can support an owned view of `dyn Trait` when
+that arm is admitted, without changing the representation of references or
+adding a new unchecked cast to safe code.
+
+Keeping the conversion explicit also keeps the cost visible: no container is
+required for a program to use `owned_view`, and adding one does not change the
+allocation model, ABI, or runtime.
 
 ## 14. Complete example
 

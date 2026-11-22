@@ -181,7 +181,11 @@ with capacity zero. The two forms are intentionally different: the raw
 functions mirror the runtime ABI, while the owner presents a clearer empty
 value. Neither form permits passing a Seal block to C `free`; the matching
 `dealloc` or `RawBuffer::drop` is the only release path. `RawBuffer` owns bytes,
-not typed values, so it exposes no safe typed view and no container.
+not typed values, so it exposes no safe typed view and no container. Future
+`Box<T>`, `Vec<T>`, and `String` wrappers will keep their allocation private
+and use the compiler's `owned_view` primitive for `as_ref`, `as_slice`, and
+`as_str`, so those methods can return checked references without exposing a raw
+pointer to safe code.
 
 ## Paths and identity
 

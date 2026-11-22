@@ -963,6 +963,44 @@ handles them explicitly at every stage:
   `unsafe`; it exposes GEPs and the LLVM debug-record API. No other phase
   performs unchecked pointer construction.
 
+### Owned views
+
+`owned_view(owner, source)` is a builtin instead of an ordinary function
+because it changes the borrowing structure of the program. The owner must be
+checked storage that carries the returned loan; the source is only a raw
+pointer into that storage. A user declaration named `owned_view` shadows the
+builtin, so existing name resolution and function calls stay unchanged.
+
+- **HIR.** Lowering produces `ExprKind::OwnedView { owner, source }`. The
+expression keeps both operands as expressions so the owner remains a place and
+name resolution still sees every use.
+- **Type check.** The checker requires an initialized owner place that is not a
+constant or a raw dereference. A dereference of a checked reference is accepted
+even when the reference itself is a temporary, such as `*identity(&buffer)`;
+MIR promotes the temporary reference to the enclosing block. The source must be
+`*raw T` or `*raw mut T`, and its pointee must be sized, `[T]`, or `str`;
+trait-object pointees are reserved (`E3106`). The source kind selects `*T` or
+`*mut T`, the call is gated by `unsafe` (`E3070`), and a constant context is
+rejected (`E4035`).
+- **MIR.** Lowering emits `Rvalue::OwnedView` with the result kind and type. The
+rvalue carries the owner place and source operand, so validation checks both
+without re-resolving syntax. `promote_borrowed_temp` promotes the reference
+temporary used by a dereference owner to the enclosing block, matching the rule
+for `&place`. The code generator copies the pointer representation; it does not
+reconstruct metadata or allocate.
+- **Borrow check.** The loan is attached to the owner place, never to the source
+pointer. Holds, origins, and effects treat the owner as borrowed for the
+lifetime of every copy of the view, so moving, dropping, or writing the owner
+conflicts exactly as it would with an ordinary reference (`E5001`, `E5002`,
+`E5007`, `E5008`). A local owner cannot escape (`E5004`), while a borrowed or
+static owner can lend a view whose loan follows the caller. The body records a
+raw-memory touch, so it is excluded from the `noalias` proof even though the
+view itself is checked.
+- **Cost and growth.** The primitive adds no runtime allocation, check, or
+metadata rebuild. `Box<T>`, `Vec<T>`, and `String` can wrap it behind safe
+methods, and a future `dyn Trait` arm extends the pointee set without changing
+the loan or codegen model.
+
 ## C interoperability
 
 The C boundary is an explicit slice through every phase, with one owner for each

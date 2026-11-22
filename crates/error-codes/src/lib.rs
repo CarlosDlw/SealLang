@@ -1532,8 +1532,11 @@ raw pointer kind selects the result: `*raw P` becomes `*P`, and `*raw mut P`
 becomes `*mut P`.\n\nThe same diagnostic rejects `&*pointer` and `&mut *pointer` when `pointer` is a
 fat raw pointer. Those expressions have no owner to borrow, so a container method
 must call `owned_view` with its owning place instead.\n\nPass the storage owner, not the pointer field, and make sure the owner is a
-local, a static, or a checked reference dereference. Trait-object pointees are
-reserved for a later extension.",
+local, a static, or a checked reference dereference. A dereference of a temporary
+reference is valid too: the compiler promotes that reference to the enclosing
+block, so `*identity(&buffer)` remains a checked owner. A raw dereference is not
+a checked owner and is always rejected. Trait-object pointees are reserved for a
+later extension.",
 };
 
 /// Expression types do not match.
@@ -2028,8 +2031,10 @@ Returning a reference to a parameter is fine: the caller owns the referenced
 data and keeps it alive. Borrowing through a reference, as in `&*parameter`,
 points outside this frame and is accepted too. The loans the reference itself
 carries are checked as well, so `&*identity(&local)` is rejected: the pointee
-still belongs to this frame. To return derived data, the caller must own the
-storage or the value must be copied.",
+still belongs to this frame. An `owned_view` whose owner is a local is the same
+error: the view carries the local's loan, so returning it would name storage that
+dies with the frame. To return derived data, the caller must own the storage or
+the value must be copied.",
 };
 
 /// A local is read after its value was moved out.
@@ -4753,6 +4758,31 @@ mod tests {
         assert!(output.starts_with("E0003: could not read source file"));
         assert!(output.contains("permission"));
         assert!(explain("E7777").is_none());
+    }
+
+    #[test]
+    fn owned_view_codes_explain_the_owner_contract() {
+        let cases = [
+            (
+                "E3106",
+                &[
+                    "initialized owner place",
+                    "checked reference dereference",
+                    "raw dereference",
+                ][..],
+            ),
+            ("E4035", &["runtime function", "loan"][..]),
+            ("E5004", &["owned_view", "local"][..]),
+        ];
+        for (code, fragments) in cases {
+            let entry = lookup(code).expect("the code is registered");
+            for fragment in fragments {
+                assert!(
+                    entry.explanation().contains(fragment),
+                    "{code} explanation is missing {fragment:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -682,6 +682,54 @@ Function pointers have no null value, no equality, no arithmetic, and no
 implicit C conversion, so they never become a source of provenance that the
 memory model cannot track.
 
+### D26 — Owned views attach a checked loan to a raw-backed owner
+
+A raw pointer carries provenance but no checked loan (D21). `owned_view` is the
+explicit primitive that turns such a pointer back into an ordinary reference,
+and it does so by borrowing the owner rather than the pointer:
+
+```seal
+struct Buffer { pointer: *raw mut i32 }
+
+func read(buffer: *Buffer) -> *i32 {
+  unsafe { owned_view(*buffer, (*buffer).pointer as *raw i32) }
+}
+```
+
+The owner is the storage that guarantees the allocation remains alive: a local,
+a static, a field, or a dereference of a checked reference. A reference
+temporary is allowed as the owner because lowering promotes it to the enclosing
+block. A constant and a raw dereference are not owners (`E3106`).
+
+The unsafe caller must ensure that the source points into the owner's
+allocation, that the pointee is initialized and aligned, that any slice or
+string metadata is valid with UTF-8 bytes, and that the owner outlives every
+use of the view. The compiler does not insert a runtime check for those
+conditions, and the primitive does not make an arbitrary raw pointer safe. The
+pointee is a sized type, `[T]`, or `str`; trait-object pointees are reserved for
+a future arm.
+
+The source kind selects the view kind: `*raw T` produces `*T`, and `*raw mut T`
+produces `*mut T`. A container may cast a mutable source down to a read-only
+one before constructing a shared view. The returned reference then follows the
+ordinary reference rules (D4–D6): it is non-null, copies carry the loan, and it
+conflicts with owner moves, drops, and writes by kind. A view of a local owner
+cannot escape (`E5004`); a view of a borrowed owner can be returned, and its
+loan is propagated to the caller. A static owner lends a view only for data the
+static actually owns.
+
+The primitive adds no allocation, pointee copy, metadata rebuild, or runtime
+check. A body that creates a view reaches storage through a raw pointer, so the
+`noalias` proof is withheld (D22); safe aliasing rules still apply to the view.
+A `*mut str` view is writable in the type system but has no safe mutating method
+surface: writes require raw operations and must preserve the UTF-8 invariant.
+
+This is the growth hook for typed containers. `Box<T>`, `Vec<T>`, and `String`
+can keep their allocation private and expose `as_ref`, `as_slice`, and `as_str`
+as safe methods that call `owned_view` internally. A future `dyn Trait` arm can
+reuse the same owner loan and representation without adding a second reference
+model or an unchecked cast to safe code.
+
 ## Type-system encoding
 
 `seal-ty` encodes these decisions instead of leaving them to prose:
