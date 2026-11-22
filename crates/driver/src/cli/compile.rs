@@ -35,6 +35,13 @@ pub(crate) struct CompileArgs {
     #[arg(long = "expose", value_name = "PATH", help_heading = "Compilation")]
     pub(crate) expose: Vec<String>,
 
+    /// Ignore every package prelude named by the compile plan.
+    ///
+    /// This is the low-level opt-out; `seal` exposes the same switch through
+    /// `--no-prelude`.
+    #[arg(long = "no-prelude", help_heading = "Compilation")]
+    pub(crate) no_prelude: bool,
+
     #[command(flatten)]
     pub(crate) target: TargetArgs,
 

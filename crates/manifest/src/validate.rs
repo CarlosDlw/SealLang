@@ -797,6 +797,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
                 "api",
                 "features",
                 "metadata",
+                "implicit-prelude",
             ],
             "package",
             &mut warnings,
@@ -1024,6 +1025,15 @@ mod tests {
     fn a_minimal_package_manifest_is_valid() {
         let manifest = load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
         assert_eq!(manifest.manifest.package.unwrap().name, "demo");
+    }
+
+    #[test]
+    fn the_implicit_prelude_defaults_to_true_and_can_be_disabled() {
+        let manifest = load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+        assert!(manifest.manifest.package.expect("package").implicit_prelude);
+        let manifest =
+            load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nimplicit-prelude = false\n");
+        assert!(!manifest.manifest.package.expect("package").implicit_prelude);
     }
 
     #[test]

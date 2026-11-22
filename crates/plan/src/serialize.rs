@@ -70,7 +70,7 @@ mod tests {
 
     use crate::{
         BuildMode, CfgOptions, CompilePlan, FORMAT_VERSION, PlanFile, PlanMetadata, PlanPackage,
-        PlanProfile,
+        PlanPrelude, PlanProfile,
     };
 
     fn fixture_path(name: &str) -> PathBuf {
@@ -99,6 +99,7 @@ mod tests {
                 exposed: vec!["root".to_owned()],
                 dependencies: Vec::new(),
                 cfg: CfgOptions::default(),
+                prelude: None,
             }],
             primary: 0,
             entry: Some("root::main".to_owned()),
@@ -110,7 +111,11 @@ mod tests {
 
     #[test]
     fn a_plan_round_trips_through_json() {
-        let plan = plan();
+        let mut plan = plan();
+        plan.packages[0].prelude = Some(PlanPrelude {
+            package: 0,
+            module: "root".to_owned(),
+        });
         let text = plan.to_json().expect("the plan serializes");
         assert_eq!(
             CompilePlan::from_json(&text).expect("the plan parses"),

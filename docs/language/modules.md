@@ -111,6 +111,40 @@ other in a cycle. What cannot happen is an import that does not resolve:
 A plain import has no visibility of its own. Adding `private` or `test` to a
 `use` is rejected as an invalid modifier (`E2079`).
 
+## Prelude
+
+A package plan may name one module as its *prelude*. The public item exports of
+that module are then available in every file of the package without an import:
+
+```text
+// core.sl
+public struct Option<T> { ... }
+
+// app.sl
+func main() { let value = Option { ... }; }
+```
+
+Only public items and public `public use` aliases are injected. Modules are not:
+a module export in the prelude is `E2101`. Variants remain qualified, so the
+prelude puts `Option` in scope but `Some` is still `Option::Some`, and there is
+no glob syntax.
+
+Unqualified lookup prefers, in order, the innermost local scope, an item of the
+current module, an explicit import of the current file, and finally the
+prelude. The order is per namespace, so a function named `Option` does not hide
+a prelude type named `Option`. An explicit import that shadows a prelude name
+wins without an `E2078` collision. Prelude names are not imports: they never
+produce `unused_import`, and an unused explicit import that merely shadows a
+prelude name still warns.
+
+A package without a prelude compiles as before. The manifest field
+`implicit-prelude` (default `true`) controls the standard prelude, and
+`--no-prelude` disables it for both `seal` and `sealc`. The prelude source is
+data from the compile plan; `core` and `std` themselves carry no prelude. A
+missing module is `E2100`, two names in one namespace are `E2102`, and a cycle
+between package preludes is `E2103`. See [prelude.md](prelude.md) for the full
+rules and versioning notes.
+
 ## Re-exports
 
 `public use` and `internal use` are re-exports. Unlike a plain import, they do

@@ -61,7 +61,7 @@ pub use id::{BodyId, HirBlockId, HirExprId, HirPatternId, HirStmtId};
 pub use module::{
     ApiTable, ImportBinding, ImportTable, ImportTarget, ModuleData, ModuleFragment, ModulePath,
     Namespace, PackageData, PackageDependency, PackagePlan, PackagePlanDependency,
-    PackagePlanEntry, PackagePlanFile,
+    PackagePlanEntry, PackagePlanFile, PreludeBinding, PreludeSource, PreludeTable,
 };
 pub use pattern::{MatchArm, Pattern, PatternKind};
 pub use primitives::primitive_kind;
@@ -157,6 +157,7 @@ pub struct Hir {
     file_modules: FxHashMap<FileId, ModuleId>,
     module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
     module_exports: FxHashMap<(ModuleId, seal_symbol::Symbol), module::ExportBinding>,
+    preludes: FxHashMap<PackageId, module::PreludeTable>,
     imports: FxHashMap<FileId, module::ImportTable>,
     api: module::ApiTable,
     primary_package: PackageId,
@@ -217,6 +218,11 @@ impl Hir {
     /// Returns every package in the compilation.
     pub fn packages(&self) -> &IndexVec<PackageId, module::PackageData> {
         &self.packages
+    }
+
+    /// Returns the resolved prelude of `package`, if it has one.
+    pub fn prelude(&self, package: PackageId) -> Option<&module::PreludeTable> {
+        self.preludes.get(&package)
     }
 
     /// Returns every module in the compilation.
@@ -966,6 +972,7 @@ impl Hir {
             file_modules: FxHashMap::default(),
             module_children: FxHashMap::default(),
             module_exports: FxHashMap::default(),
+            preludes: FxHashMap::default(),
             imports: FxHashMap::default(),
             api: module::ApiTable::default(),
             primary_package: PackageId::from_usize(0),
@@ -991,6 +998,7 @@ impl Hir {
         api: module::ApiTable,
         module_children: FxHashMap<(ModuleId, seal_symbol::Symbol), ModuleId>,
         module_exports: FxHashMap<(ModuleId, seal_symbol::Symbol), module::ExportBinding>,
+        preludes: FxHashMap<PackageId, module::PreludeTable>,
         imports: FxHashMap<FileId, module::ImportTable>,
         primary_package: PackageId,
     ) {
@@ -1001,6 +1009,7 @@ impl Hir {
         self.api = api;
         self.module_children = module_children;
         self.module_exports = module_exports;
+        self.preludes = preludes;
         self.imports = imports;
     }
 

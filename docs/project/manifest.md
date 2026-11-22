@@ -34,7 +34,10 @@ commands without `--workspace`.
 `[package]` requires a valid lowercase `name` and a semantic `version`.
 `description`, `license`, `repository`, `readme`, `metadata`, `features`, and
 `[package.api]` are reserved for the project and publishing layers.
-`[package.metadata]` is free-form.
+`[package.metadata]` is free-form. `implicit-prelude` (default `true`) selects
+whether the standard library prelude is in scope; `false` leaves every
+unqualified prelude name unresolved. See
+[`../language/prelude.md`](../language/prelude.md).
 
 ## Sources
 

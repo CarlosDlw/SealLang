@@ -122,10 +122,12 @@ fn plan_and_expose_are_analysis_options() {
         "--expose",
         "app",
         "--expose=app::util",
+        "--no-prelude",
         "main.sl",
         "util.sl",
     ]);
     assert!(args.compile.plan);
+    assert!(args.compile.no_prelude);
     assert_eq!(args.compile.expose, ["app", "app::util"]);
     assert_eq!(
         args.compile.inputs,
@@ -134,6 +136,7 @@ fn plan_and_expose_are_analysis_options() {
 
     let defaults = check_args(&["check", "main.sl"]);
     assert!(!defaults.compile.plan);
+    assert!(!defaults.compile.no_prelude);
     assert!(defaults.compile.expose.is_empty());
 }
 

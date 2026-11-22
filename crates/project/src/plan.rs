@@ -32,6 +32,8 @@ pub struct PlanOptions {
     pub all_features: bool,
     /// Boolean `cfg` facts forced on the command line.
     pub cfgs: Vec<String>,
+    /// Whether the standard library prelude is disabled for this plan.
+    pub no_prelude: bool,
     /// Generated files added to the primary package before planning.
     pub extra_files: Vec<PathBuf>,
     /// Whether artifacts use canonical timestamps and paths.
@@ -54,6 +56,7 @@ impl Default for PlanOptions {
             no_default_features: false,
             all_features: false,
             cfgs: Vec::new(),
+            no_prelude: false,
             extra_files: Vec::new(),
             reproducible: true,
             source_date_epoch: None,
@@ -228,6 +231,7 @@ pub(crate) fn compile_plan(
             files,
             exposed,
             dependencies,
+            prelude: None,
             cfg: CfgOptions {
                 features,
                 target_os: spec.triple().os().as_str().to_owned(),
@@ -303,6 +307,7 @@ pub(crate) fn compile_plan(
                     package: primary,
                 }],
                 cfg: test_cfg,
+                prelude: None,
             });
             primary = index;
         }

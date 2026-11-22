@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::{
     Body, BodyId, BodyKind, ExprKind, Hir, HirBlockId, HirExprId, HirPatternId, HirStmtId,
     ModuleId, ModulePath, PackagePlan, PackagePlanDependency, PackagePlanEntry, PackagePlanFile,
-    PatternKind, Res, StmtKind,
+    PatternKind, PreludeSource, Res, StmtKind,
 };
 use seal_ast::Ast;
 use seal_def::{DefId, DefKind, PackageId, PackageInstanceId};
@@ -221,6 +221,48 @@ impl Fixture {
 
     /// Lowers every package in plan order.
     pub(crate) fn lower_packages(&self) -> Hir {
+        self.lower_packages_with(&[], &[])
+    }
+
+    /// Lowers every package with a prelude on `package` read from
+    /// `source_package::module`.
+    pub(crate) fn lower_packages_with_prelude(
+        &self,
+        package: usize,
+        source_package: usize,
+        module: &str,
+    ) -> Hir {
+        self.lower_packages_with_preludes_and_cfgs(
+            &[(
+                package,
+                PreludeSource {
+                    package: PackageId::from_usize(source_package),
+                    module: module_path(&self.interner, module),
+                },
+            )],
+            &[],
+        )
+    }
+
+    /// Lowers every package with explicit preludes, keyed by package index.
+    pub(crate) fn lower_packages_with_preludes(&self, preludes: &[(usize, PreludeSource)]) -> Hir {
+        self.lower_packages_with_preludes_and_cfgs(preludes, &[])
+    }
+
+    /// Lowers every package with explicit preludes and `cfg` overrides.
+    pub(crate) fn lower_packages_with_preludes_and_cfgs(
+        &self,
+        preludes: &[(usize, PreludeSource)],
+        cfgs: &[(usize, crate::CfgEnvironment)],
+    ) -> Hir {
+        self.lower_packages_with(preludes, cfgs)
+    }
+
+    fn lower_packages_with(
+        &self,
+        preludes: &[(usize, PreludeSource)],
+        cfgs: &[(usize, crate::CfgEnvironment)],
+    ) -> Hir {
         let mut asts = Vec::with_capacity(self.files.len());
         for id in &self.files {
             let file = self.map.file(*id).expect("registered file exists");
@@ -260,7 +302,14 @@ impl Fixture {
                 files,
                 exposed,
                 dependencies,
-                cfg: crate::CfgEnvironment::default(),
+                cfg: cfgs
+                    .iter()
+                    .find(|(target, _)| *target == index)
+                    .map_or_else(crate::CfgEnvironment::default, |(_, cfg)| cfg.clone()),
+                prelude: preludes
+                    .iter()
+                    .find(|(target, _)| *target == index)
+                    .map(|(_, source)| source.clone()),
             });
         }
 

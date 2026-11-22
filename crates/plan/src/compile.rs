@@ -40,6 +40,16 @@ pub struct PlanDependency {
     pub package: usize,
 }
 
+/// The package prelude selected for one package.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanPrelude {
+    /// Index into [`CompilePlan::packages`].
+    pub package: usize,
+    /// Module path inside that package, such as `prelude` or `root`.
+    pub module: String,
+}
+
 /// Configuration values selected for this compilation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -88,6 +98,9 @@ pub struct PlanPackage {
     /// Features selected for this instance.
     #[serde(default)]
     pub cfg: CfgOptions,
+    /// The module whose public items are implicitly in scope in this package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prelude: Option<PlanPrelude>,
 }
 
 /// The profile values that affect the artifact.
@@ -363,6 +376,20 @@ impl CompilePlan {
                     package.name
                 )));
             }
+            if let Some(prelude) = &package.prelude {
+                if prelude.package >= self.packages.len() {
+                    return Err(PlanError::invalid(format!(
+                        "the prelude of package `{}` names package {} outside the plan",
+                        package.name, prelude.package
+                    )));
+                }
+                if prelude.module.is_empty() || prelude.module.split("::").any(str::is_empty) {
+                    return Err(PlanError::invalid(format!(
+                        "the prelude of package `{}` names an empty module path",
+                        package.name
+                    )));
+                }
+            }
             if package.files.iter().filter(|file| file.primary).count() > 1 {
                 return Err(PlanError::invalid(format!(
                     "package `{}` names more than one primary file",
@@ -443,6 +470,7 @@ mod tests {
                 exposed: vec!["root".to_owned()],
                 dependencies: Vec::new(),
                 cfg: CfgOptions::default(),
+                prelude: None,
             }],
             primary: 0,
             entry: Some("root::main".to_owned()),
@@ -465,6 +493,31 @@ mod tests {
         plan.packages[0].dependencies.push(PlanDependency {
             alias: "self".to_owned(),
             package: 0,
+        });
+        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+    }
+
+    #[test]
+    fn a_prelude_must_name_a_package_in_the_plan() {
+        let mut plan = plan();
+        plan.packages[0].prelude = Some(PlanPrelude {
+            package: 1,
+            module: "root".to_owned(),
+        });
+        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+    }
+
+    #[test]
+    fn a_prelude_module_path_cannot_be_empty() {
+        let mut plan = plan();
+        plan.packages[0].prelude = Some(PlanPrelude {
+            package: 0,
+            module: String::new(),
+        });
+        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+        plan.packages[0].prelude = Some(PlanPrelude {
+            package: 0,
+            module: "a::".to_owned(),
         });
         assert_eq!(plan.validate().unwrap_err().code(), "E8010");
     }

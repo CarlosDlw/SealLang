@@ -200,6 +200,7 @@ impl PackagePlan {
                 exposed: vec![ModulePath::root()],
                 dependencies: Vec::new(),
                 cfg: crate::CfgEnvironment::default(),
+                prelude: None,
             }],
             primary: PackageId::from_usize(0),
         }
@@ -221,6 +222,88 @@ pub struct PackagePlanEntry {
     pub dependencies: Vec<PackagePlanDependency>,
     /// The configuration facts for this instance.
     pub cfg: crate::CfgEnvironment,
+    /// The module whose public items are implicitly in scope in this package.
+    ///
+    /// `None` disables the prelude. The source is data from the plan, never a
+    /// name hardcoded in lowering.
+    pub prelude: Option<PreludeSource>,
+}
+
+/// The plan-provided source of a package prelude.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreludeSource {
+    /// The package that declares the prelude module.
+    pub package: PackageId,
+    /// The module path inside that package.
+    pub module: ModulePath,
+}
+
+/// One public item made implicitly available by a prelude.
+///
+/// The binding names the canonical declaration rather than a new definition,
+/// so prelude names keep the identity and visibility of their target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreludeBinding {
+    /// The module that declares the target item.
+    pub module: ModuleId,
+    /// The target item's declared name.
+    pub name: Symbol,
+}
+
+/// The resolved names of one package prelude.
+#[derive(Clone, Debug)]
+pub struct PreludeTable {
+    source: PreludeSource,
+    bindings: FxHashMap<(Symbol, Namespace), PreludeBinding>,
+}
+
+impl PreludeTable {
+    /// Creates an empty table for `source`.
+    pub(crate) fn new(source: PreludeSource) -> Self {
+        Self {
+            source,
+            bindings: FxHashMap::default(),
+        }
+    }
+
+    /// Returns the plan source that produced this table.
+    #[inline]
+    pub fn source(&self) -> &PreludeSource {
+        &self.source
+    }
+
+    /// Returns the target bound to `name` in `namespace`.
+    #[inline]
+    pub fn binding(&self, name: Symbol, namespace: Namespace) -> Option<PreludeBinding> {
+        self.bindings.get(&(name, namespace)).copied()
+    }
+
+    /// Returns the number of names in the table.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bindings.len()
+    }
+
+    /// Returns whether the table binds no names.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
+    /// Adds one name. Returns the previous binding when the name was present.
+    pub(crate) fn insert(
+        &mut self,
+        name: Symbol,
+        namespace: Namespace,
+        binding: PreludeBinding,
+    ) -> Option<PreludeBinding> {
+        self.bindings.insert((name, namespace), binding)
+    }
+
+    /// Removes and returns the binding for `name`, if any.
+    pub(crate) fn remove(&mut self, name: Symbol, namespace: Namespace) -> Option<PreludeBinding> {
+        self.bindings.remove(&(name, namespace))
+    }
 }
 
 /// One dependency alias in a package plan.
@@ -233,7 +316,7 @@ pub struct PackagePlanDependency {
 }
 
 /// The namespace a top-level name belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Namespace {
     /// Functions, constants, statics, and external declarations.
     Value,
@@ -478,6 +561,8 @@ pub(crate) struct ModuleGraph {
     pub(crate) items: FxHashMap<(ModuleId, Symbol), ItemInfo>,
     pub(crate) exports: FxHashMap<(ModuleId, Symbol), ExportBinding>,
     pub(crate) export_order: Vec<(ModuleId, Symbol)>,
+    /// Resolved preludes, installed after re-exports settle.
+    pub(crate) preludes: FxHashMap<PackageId, PreludeTable>,
     /// API paths whose final module can only be resolved after re-exports.
     deferred_exposures: Vec<(PackageId, ModulePath)>,
     pub(crate) api: ApiTable,
@@ -501,6 +586,7 @@ impl ModuleGraph {
             items: FxHashMap::default(),
             exports: FxHashMap::default(),
             export_order: Vec::new(),
+            preludes: FxHashMap::default(),
             deferred_exposures: Vec::new(),
             api: ApiTable::default(),
         };

@@ -153,6 +153,7 @@ pub(crate) fn run(args: &RunArgs) -> Result<ExitCode, String> {
         plan: false,
         plan_file: None,
         expose: Vec::new(),
+        no_prelude: false,
     };
     let request = Request::Build {
         emit: Emit::Executable,
@@ -287,7 +288,7 @@ fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, Str
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     session.reset_for_request();
     if let Some(plan) = plan {
-        if !compile_plan_file(&session, request.clone(), plan) {
+        if !compile_plan_file(&session, request.clone(), plan, arguments.no_prelude) {
             return Ok(Outcome::Failed(ExitCode::from(1)));
         }
     } else if arguments.plan {
@@ -499,7 +500,12 @@ fn compile_package(session: &Session, request: Request<'_>, arguments: &CompileA
 }
 
 /// Compiles one package graph from a versioned plan file.
-fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan) -> bool {
+fn compile_plan_file(
+    session: &Session,
+    request: Request<'_>,
+    plan: CompilePlan,
+    no_prelude: bool,
+) -> bool {
     let mut loaded: Vec<(seal_span::FileId, seal_ast::Ast)> = Vec::new();
     let mut dependencies = Vec::new();
     let mut file_ids = std::collections::BTreeMap::new();
@@ -601,6 +607,23 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
         };
+        let prelude = if no_prelude {
+            None
+        } else if let Some(source) = &package.prelude {
+            let Some(module) = module_path(session, &source.module) else {
+                eprintln!(
+                    "error: the prelude of package `{}` has an empty module path",
+                    package.name
+                );
+                return false;
+            };
+            Some(seal_hir::PreludeSource {
+                package: PackageId::from_usize(source.package),
+                module,
+            })
+        } else {
+            None
+        };
         package_plan.packages.push(seal_hir::PackagePlanEntry {
             name,
             instance: PackageInstanceId::from_usize(index),
@@ -608,6 +631,7 @@ fn compile_plan_file(session: &Session, request: Request<'_>, plan: CompilePlan)
             exposed,
             dependencies,
             cfg,
+            prelude,
         });
     }
     let unit_key = format!(

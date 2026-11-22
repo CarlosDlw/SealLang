@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use seal_plan::{BuildMode, CompilePlan, PlanFile, PlanPackage, PlanProfile};
+use seal_plan::{BuildMode, CompilePlan, PlanFile, PlanPackage, PlanPrelude, PlanProfile};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -54,6 +54,7 @@ fn plan(
             exposed: vec!["root".to_owned()],
             dependencies: Vec::new(),
             cfg: seal_plan::CfgOptions::default(),
+            prelude: None,
         }],
         primary: 0,
         entry: entry.map(str::to_owned),
@@ -140,6 +141,7 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
                 exposed: vec!["root".to_owned()],
                 dependencies: Vec::new(),
                 cfg: seal_plan::CfgOptions::default(),
+                prelude: None,
             },
             PlanPackage {
                 name: "app".to_owned(),
@@ -156,6 +158,7 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
                     package: 0,
                 }],
                 cfg: seal_plan::CfgOptions::default(),
+                prelude: None,
             },
         ],
         primary: 1,
@@ -173,6 +176,71 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
     );
     let status = Command::new(&output_path).status().expect("program runs");
     assert_eq!(status.code(), Some(5));
+}
+
+#[test]
+fn a_plan_prelude_can_be_disabled_with_no_prelude() {
+    let (fixture, app) = fixture("func main() -> i32 { answer() }\n");
+    let core = fixture.root.join("core.sl");
+    std::fs::write(&core, "public func answer() -> i32 { 3 }\n").expect("core");
+    let plan = CompilePlan {
+        version: seal_plan::FORMAT_VERSION,
+        target: seal_target::host_triple().as_str().to_owned(),
+        profile: PlanProfile::default(),
+        mode: BuildMode::Check,
+        packages: vec![
+            PlanPackage {
+                name: "core".to_owned(),
+                version: "0.1.0".to_owned(),
+                instance: 0,
+                root: fixture.root.clone(),
+                files: vec![PlanFile {
+                    path: core,
+                    primary: true,
+                }],
+                exposed: vec!["root".to_owned()],
+                dependencies: Vec::new(),
+                cfg: seal_plan::CfgOptions::default(),
+                prelude: None,
+            },
+            PlanPackage {
+                name: "app".to_owned(),
+                version: "0.1.0".to_owned(),
+                instance: 0,
+                root: fixture.root.clone(),
+                files: vec![PlanFile {
+                    path: app,
+                    primary: true,
+                }],
+                exposed: vec!["root".to_owned()],
+                dependencies: vec![seal_plan::PlanDependency {
+                    alias: "core".to_owned(),
+                    package: 0,
+                }],
+                cfg: seal_plan::CfgOptions::default(),
+                prelude: Some(PlanPrelude {
+                    package: 0,
+                    module: "root".to_owned(),
+                }),
+            },
+        ],
+        primary: 1,
+        entry: Some("root::main".to_owned()),
+        metadata: seal_plan::PlanMetadata::default(),
+        output: None,
+        target_spec: None,
+    };
+    let path = write_plan(&fixture.root, &plan);
+    let path = path.display().to_string();
+    let enabled = run(&["check", "--plan-file", &path]);
+    assert!(
+        enabled.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&enabled.stderr)
+    );
+    let disabled = run(&["check", "--no-prelude", "--plan-file", &path]);
+    assert!(!disabled.status.success());
+    assert!(String::from_utf8_lossy(&disabled.stderr).contains("answer"));
 }
 
 #[test]

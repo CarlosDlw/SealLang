@@ -320,6 +320,10 @@ pub(crate) struct Selection {
     #[arg(long = "cfg", value_name = "FACT")]
     pub(crate) cfgs: Vec<String>,
 
+    /// Disable the implicit standard library prelude.
+    #[arg(long = "no-prelude")]
+    pub(crate) no_prelude: bool,
+
     /// Fail if the lockfile would change.
     #[arg(long)]
     pub(crate) locked: bool,
@@ -344,6 +348,7 @@ impl Selection {
             features: Vec::new(),
             all_features: false,
             no_default_features: false,
+            no_prelude: false,
             cfgs: Vec::new(),
             locked: false,
             frozen: false,

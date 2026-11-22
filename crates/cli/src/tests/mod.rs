@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use clap::Parser;
 use seal_project::Project;
 
 use crate::cli::Selection;
@@ -132,6 +133,15 @@ pub(super) fn load(fixture: &Fixture) -> Project {
     Project::load(&fixture.root).expect("the fixture is a valid project")
 }
 
+#[test]
+fn no_prelude_is_a_build_selection_flag() {
+    let cli = crate::cli::Cli::parse_from(["seal", "build", "--no-prelude", "main.sl"]);
+    match cli.command {
+        crate::cli::Command::Build(build) => assert!(build.selection.no_prelude),
+        other => panic!("expected a build command, got {other:?}"),
+    }
+}
+
 /// Returns a selection with no filters, as if the user passed no flags.
 pub(super) fn selection() -> Selection {
     Selection {
@@ -146,6 +156,7 @@ pub(super) fn selection() -> Selection {
         features: Vec::new(),
         all_features: false,
         no_default_features: false,
+        no_prelude: false,
         cfgs: Vec::new(),
         locked: false,
         frozen: false,

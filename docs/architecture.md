@@ -193,6 +193,19 @@ a target that cannot be aliased is `E2091`, a visibility widening is `E2092`, an
 unreachable target module or internal hop is `E2093`, and a collision with an
 item or submodule is `E2094`.
 
+Each package entry may also name a prelude source: a package index and a module
+path inside that package. After re-exports and deferred exposures settle, the
+graph collects the public item exports of that module into a `PreludeTable`.
+Only items and public re-export aliases enter; a module export is `E2101`, a
+missing module is `E2100`, a same-namespace collision is `E2102`, and a cycle
+between package preludes is `E2103`. Unqualified lookup then resolves local
+scopes first, module items second, explicit file imports third, and the prelude
+last, independently in each namespace. Prelude names are not import bindings,
+so they never produce `unused_import`; an explicit import that shadows one still
+warns when unused. A package without a prelude uses no implicit names, and
+`core`/`std` plans leave the field absent so the prelude cannot prelude itself.
+The source is plan data, not a hardcoded list, and there is no glob expansion.
+
 Inside a body, a multi-segment path resolves its prefix through the module graph
 and its last segment through the value, type, or trait namespace, after the
 file's imports. `root::name` and `module::name` work in expressions and types,

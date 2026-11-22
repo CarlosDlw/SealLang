@@ -25,6 +25,7 @@ mod match_expr;
 mod methods;
 mod modules;
 mod packages;
+mod prelude;
 mod protocols;
 mod reexports;
 mod resolve;

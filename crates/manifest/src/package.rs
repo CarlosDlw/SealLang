@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::feature::FeatureManifest;
 
 /// The `[package]` table.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PackageManifest {
     /// The package name.
@@ -39,6 +39,32 @@ pub struct PackageManifest {
     /// Free-form tool metadata.
     #[serde(default)]
     pub metadata: Option<toml::Value>,
+    /// Whether the standard library prelude is implicitly in scope.
+    #[serde(default = "implicit_prelude_default")]
+    pub implicit_prelude: bool,
+}
+
+impl Default for PackageManifest {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            version: String::new(),
+            description: None,
+            license: None,
+            repository: None,
+            readme: None,
+            sources: Vec::new(),
+            exclude: Vec::new(),
+            api: None,
+            features: FeatureManifest::default(),
+            metadata: None,
+            implicit_prelude: true,
+        }
+    }
+}
+
+fn implicit_prelude_default() -> bool {
+    true
 }
 
 /// The `[package.api]` table.

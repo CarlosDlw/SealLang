@@ -46,6 +46,7 @@ mod opaque;
 mod params;
 mod paths;
 mod patterns;
+mod prelude;
 mod reexports;
 mod scope;
 mod stmt;
@@ -109,6 +110,7 @@ fn lower_plan(
     let mut graph = crate::module::ModuleGraph::build(plan, asts, dcx, interner);
     reexports::resolve_reexports(&mut graph, asts, dcx, interner);
     graph.resolve_deferred_exposures(dcx, interner);
+    graph.preludes = prelude::resolve_preludes(plan, &graph, dcx, interner);
     let imports = imports::resolve_imports(&graph, asts, dcx, interner);
     let files: Vec<AstFile<'_>> = asts
         .iter()
@@ -217,6 +219,7 @@ impl<'a> Lowering<'a> {
             graph.api,
             graph.children,
             graph.exports,
+            graph.preludes,
             imports_by_file,
             primary_package,
         );
@@ -469,12 +472,14 @@ impl<'a> Lowering<'a> {
     pub(super) fn value_def(&self, name: Symbol) -> Option<DefId> {
         self.module_def(Namespace::Value, name)
             .or_else(|| self.imported(name, Namespace::Value))
+            .or_else(|| self.prelude_def(name, Namespace::Value))
     }
 
     /// Returns the type declared as `name` in the current module or imported.
     pub(super) fn type_def(&self, name: Symbol) -> Option<DefId> {
         self.module_def(Namespace::Type, name)
             .or_else(|| self.imported(name, Namespace::Type))
+            .or_else(|| self.prelude_def(name, Namespace::Type))
             .or_else(|| self.builtin_types.get(&name).copied())
     }
 
@@ -482,7 +487,21 @@ impl<'a> Lowering<'a> {
     pub(super) fn trait_def(&self, name: Symbol) -> Option<DefId> {
         self.module_def(Namespace::Trait, name)
             .or_else(|| self.imported(name, Namespace::Trait))
+            .or_else(|| self.prelude_def(name, Namespace::Trait))
             .or_else(|| self.builtin_traits.get(&name).copied())
+    }
+
+    /// Resolves one unqualified name through the current package's prelude.
+    fn prelude_def(&self, name: Symbol, namespace: Namespace) -> Option<DefId> {
+        let binding = self
+            .hir
+            .prelude(self.current_package)?
+            .binding(name, namespace)?;
+        match namespace {
+            Namespace::Value => self.globals.get(&(binding.module, binding.name)).copied(),
+            Namespace::Type => self.types.get(&(binding.module, binding.name)).copied(),
+            Namespace::Trait => self.traits.get(&(binding.module, binding.name)).copied(),
+        }
     }
 
     /// Resolves one item directly in `module` or through a resolved re-export.
