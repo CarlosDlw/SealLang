@@ -561,6 +561,9 @@ impl Lowering<'_> {
     }
 
     fn report_missing_pattern_type(&mut self, type_name: Symbol, type_span: Span) {
+        if self.import_failed(type_name) {
+            return;
+        }
         let missing = self.interner.resolve(type_name);
         if self.trait_exists(type_name) {
             self.error(

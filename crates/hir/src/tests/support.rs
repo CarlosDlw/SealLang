@@ -977,7 +977,14 @@ impl Reachability<'_> {
             ExprKind::Exit { code } => self.check_expr(code),
             ExprKind::TypeOf { operand } => self.check_expr(operand),
             ExprKind::TypeName { .. } | ExprKind::SizeOf { .. } | ExprKind::AlignOf { .. } => {}
-            ExprKind::Path { args, .. } => self.check_optional_substs(args),
+            ExprKind::Path {
+                args,
+                function_args,
+                ..
+            } => {
+                self.check_optional_substs(args);
+                self.check_optional_substs(function_args);
+            }
             ExprKind::Lit(_) | ExprKind::Error => {}
         }
     }

@@ -456,6 +456,9 @@ impl<'a> Lowering<'a> {
             .emit();
             return None;
         }
+        if self.import_failed(name) {
+            return None;
+        }
 
         self.error(
             codes::E2002,
@@ -637,6 +640,13 @@ impl<'a> Lowering<'a> {
             }
         }
         definition
+    }
+
+    /// Returns `true` when an import of `name` failed and bound nothing.
+    pub(super) fn import_failed(&self, name: Symbol) -> bool {
+        self.imports
+            .get(self.current_file)
+            .is_some_and(|table| table.is_poisoned(name))
     }
 
     /// Resolves a module binding in the current file.

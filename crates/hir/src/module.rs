@@ -367,6 +367,9 @@ pub struct ImportBinding {
 pub struct ImportTable {
     bindings: FxHashMap<Symbol, ImportBinding>,
     order: Vec<(Symbol, Span)>,
+    /// Local names whose import failed. They are not bindings, but later
+    /// resolution must not report the same missing name again.
+    poisoned: FxHashSet<Symbol>,
 }
 
 impl ImportTable {
@@ -374,6 +377,20 @@ impl ImportTable {
     #[inline]
     pub fn get(&self, name: Symbol) -> Option<&ImportBinding> {
         self.bindings.get(&name)
+    }
+
+    /// Records that an import of `name` failed.
+    ///
+    /// Later uses of the name are already explained by the import diagnostic,
+    /// so resolution suppresses a second, cascading "unknown name" error.
+    pub(crate) fn poison(&mut self, name: Symbol) {
+        self.poisoned.insert(name);
+    }
+
+    /// Returns `true` when an import of `name` failed and no binding exists.
+    #[inline]
+    pub fn is_poisoned(&self, name: Symbol) -> bool {
+        self.poisoned.contains(&name) && !self.bindings.contains_key(&name)
     }
 
     /// Returns every binding in source order.

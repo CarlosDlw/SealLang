@@ -861,11 +861,27 @@ impl Hir {
     }
 
     /// Returns the resolved type arguments attached to `expr`, if written.
+    ///
+    /// For a qualified associated function these belong to the aggregate; for
+    /// a free function they are the function's own arguments.
     pub fn expr_args(&self, expr: HirExprId) -> Option<SubstsId> {
         match self.expr(expr).kind {
             ExprKind::Path { args, .. }
             | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. } => args,
+            ExprKind::MethodCall { generic_args, .. } => generic_args,
+            _ => None,
+        }
+    }
+
+    /// Returns the explicit type arguments written on a function name.
+    ///
+    /// For an associated function this is the list after its name, separate
+    /// from any aggregate arguments written before it. A method call stores
+    /// its arguments here too.
+    pub fn expr_function_args(&self, expr: HirExprId) -> Option<SubstsId> {
+        match self.expr(expr).kind {
+            ExprKind::Path { function_args, .. } => function_args,
             ExprKind::MethodCall { generic_args, .. } => generic_args,
             _ => None,
         }

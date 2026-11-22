@@ -47,7 +47,11 @@ impl Lowering<'_> {
                         crate::Res::Capture { closure, index } => {
                             ExprKind::Capture { closure, index }
                         }
-                        res => ExprKind::Path { res, args },
+                        res => ExprKind::Path {
+                            res,
+                            args,
+                            function_args: None,
+                        },
                     }
                 }
                 None => ExprKind::Error,
@@ -58,9 +62,14 @@ impl Lowering<'_> {
                 type_args,
                 name,
                 name_span,
-            } => {
-                self.lower_qualified_path(type_name, type_span, type_args.as_ref(), name, name_span)
-            }
+            } => self.lower_qualified_path(
+                type_name,
+                type_span,
+                type_args.as_ref(),
+                None,
+                name,
+                name_span,
+            ),
             AstExprKind::PathMulti {
                 root,
                 root_span,
@@ -389,11 +398,12 @@ impl Lowering<'_> {
         type_name: Symbol,
         type_span: Span,
         type_args: Option<&seal_ast::GenericArgs>,
+        function_args: Option<&seal_ast::GenericArgs>,
         name: Symbol,
         name_span: Span,
     ) -> ExprKind {
         if type_name == self.self_symbol {
-            if let Some(resolved) = self.lower_trait_self_function(type_args, name, name_span) {
+            if let Some(resolved) = self.lower_trait_self_function(function_args, name, name_span) {
                 return resolved;
             }
             self.error(
@@ -408,10 +418,19 @@ impl Lowering<'_> {
         // A type parameter is not a type definition, but it can still name an
         // associated function through its bounds.
         if let Some(param) = self.generic_scope_param(type_name) {
-            return self
-                .lower_bound_associated(param, type_name, type_span, type_args, name, name_span);
+            return self.lower_bound_associated(
+                param,
+                type_name,
+                type_span,
+                function_args,
+                name,
+                name_span,
+            );
         }
         let Some(type_def) = self.type_def(type_name) else {
+            if self.import_failed(type_name) {
+                return ExprKind::Error;
+            }
             let missing = self.interner.resolve(type_name);
             if self
                 .trait_def(type_name)
@@ -500,7 +519,16 @@ impl Lowering<'_> {
 
         match self.select_inherent_function(type_def, name, type_args, name_span) {
             InherentLookup::Found(function) => {
-                return self.qualified_function(function, function, name, name_span, type_args);
+                let expected = self.own_generic_count(function);
+                let function_args = self.lower_expr_arguments(function_args, expected);
+                return self.qualified_function(
+                    function,
+                    function,
+                    name,
+                    name_span,
+                    type_args,
+                    function_args,
+                );
             }
             InherentLookup::Rejected => return ExprKind::Error,
             InherentLookup::Missing => {}
@@ -511,7 +539,18 @@ impl Lowering<'_> {
                 trait_def,
                 function,
                 ..
-            } => self.qualified_function(function, trait_def, name, name_span, type_args),
+            } => {
+                let expected = self.own_generic_count(function);
+                let function_args = self.lower_expr_arguments(function_args, expected);
+                self.qualified_function(
+                    function,
+                    trait_def,
+                    name,
+                    name_span,
+                    type_args,
+                    function_args,
+                )
+            }
             TraitMethodLookup::Default {
                 trait_ref,
                 function,
@@ -556,12 +595,15 @@ impl Lowering<'_> {
                 if !self.require_visible(trait_ref.trait_def, name_span) {
                     return ExprKind::Error;
                 }
+                let expected = self.own_generic_count(function);
+                let function_args = self.lower_expr_arguments(function_args, expected);
                 ExprKind::Path {
                     res: crate::Res::TraitFunction {
                         function,
                         trait_ref,
                     },
                     args: None,
+                    function_args,
                 }
             }
             TraitMethodLookup::Ambiguous(traits) => {
@@ -616,7 +658,7 @@ impl Lowering<'_> {
     /// monomorphization selects an override or the default body itself.
     fn lower_trait_self_function(
         &mut self,
-        type_args: Option<&seal_ast::GenericArgs>,
+        function_args: Option<&seal_ast::GenericArgs>,
         name: Symbol,
         name_span: Span,
     ) -> Option<ExprKind> {
@@ -675,13 +717,14 @@ impl Lowering<'_> {
             return Some(ExprKind::Error);
         }
         let expected = method.generics.params.len();
-        let args = self.lower_expr_arguments(type_args, expected);
+        let function_args = self.lower_expr_arguments(function_args, expected);
         Some(ExprKind::Path {
             res: crate::Res::TraitFunction {
                 function: method.def,
                 trait_ref,
             },
-            args,
+            args: None,
+            function_args,
         })
     }
 
@@ -845,6 +888,7 @@ impl Lowering<'_> {
         name: Symbol,
         name_span: Span,
         args: Option<seal_ty::SubstsId>,
+        function_args: Option<seal_ty::SubstsId>,
     ) -> ExprKind {
         if self.hir.receiver(function).is_some() {
             let function_name = self.interner.resolve(name);
@@ -866,6 +910,7 @@ impl Lowering<'_> {
         ExprKind::Path {
             res: crate::Res::Function(function),
             args,
+            function_args,
         }
     }
 
@@ -1282,7 +1327,14 @@ impl Lowering<'_> {
                 return ExprKind::Error;
             }
             if is_type || self.generic_scope_param(root).is_some() {
-                return self.lower_qualified_path(root, root_span, args, last.name, last.name_span);
+                return self.lower_qualified_path(
+                    root,
+                    root_span,
+                    args,
+                    last.args.as_ref(),
+                    last.name,
+                    last.name_span,
+                );
             }
         }
 
@@ -1311,7 +1363,11 @@ impl Lowering<'_> {
             };
             let generic = last.args.as_ref().or(args);
             let args = self.lower_expr_arguments(generic, expected);
-            return ExprKind::Path { res, args };
+            return ExprKind::Path {
+                res,
+                args,
+                function_args: None,
+            };
         }
 
         let name = self.interner.resolve(last.name);
@@ -1434,6 +1490,9 @@ impl Lowering<'_> {
         let initializers = self.lower_initializers(fields);
 
         let Some(definition) = self.type_def(name) else {
+            if self.import_failed(name) {
+                return ExprKind::Error;
+            }
             let struct_name = self.interner.resolve(name);
             if self.trait_exists(name) {
                 self.error(
@@ -1541,6 +1600,9 @@ impl Lowering<'_> {
         let initializers = self.lower_initializers(fields);
 
         let Some(definition) = self.type_def(type_name) else {
+            if self.import_failed(type_name) {
+                return ExprKind::Error;
+            }
             let missing = self.interner.resolve(type_name);
             if self.trait_exists(type_name) {
                 self.error(
@@ -1831,7 +1893,7 @@ impl Lowering<'_> {
         param: seal_ty::ParamTyId,
         type_name: Symbol,
         type_span: Span,
-        type_args: Option<&seal_ast::GenericArgs>,
+        function_args: Option<&seal_ast::GenericArgs>,
         name: Symbol,
         name_span: Span,
     ) -> ExprKind {
@@ -1867,10 +1929,11 @@ impl Lowering<'_> {
                     return ExprKind::Error;
                 }
                 let expected = method.generics.params.len();
-                let args = self.lower_expr_arguments(type_args, expected);
+                let function_args = self.lower_expr_arguments(function_args, expected);
                 ExprKind::Path {
                     res: crate::Res::Function(method.def),
-                    args,
+                    args: None,
+                    function_args,
                 }
             }
             0 => {

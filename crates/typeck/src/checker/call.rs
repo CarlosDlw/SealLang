@@ -95,6 +95,10 @@ impl Checker<'_> {
             .hir
             .expr_args(callee)
             .map(|substs| self.hir.ty_ctxt().substs_args(substs));
+        let explicit_function = self
+            .hir
+            .expr_function_args(callee)
+            .map(|substs| self.hir.ty_ctxt().substs_args(substs));
         if self.hir.definitions().kind(function) == DefKind::TraitMethod {
             return self.check_symbolic_trait_call(
                 TraitFunctionCall {
@@ -102,7 +106,7 @@ impl Checker<'_> {
                     function,
                     trait_ref: supplied_trait_ref,
                     args,
-                    explicit: explicit.as_deref(),
+                    explicit: explicit_function.as_deref(),
                     expected,
                     span,
                 },
@@ -123,7 +127,9 @@ impl Checker<'_> {
         } else {
             Default::default()
         };
-        let explicit_own = (!from_impl).then_some(explicit.as_deref()).flatten();
+        let explicit_own = explicit_function
+            .as_deref()
+            .or_else(|| (!from_impl).then_some(explicit.as_deref()).flatten());
         let instantiated = self.instantiate_function(function, &seed, explicit_own, expected);
 
         let variadic = self

@@ -257,14 +257,20 @@ impl Checker<'_> {
             .hir
             .expr_args(operand)
             .map(|substs| self.hir.ty_ctxt().substs_args(substs));
+        let explicit_function = self
+            .hir
+            .expr_function_args(operand)
+            .map(|substs| self.hir.ty_ctxt().substs_args(substs));
         let all_generics = self.hir.flattened_generics(function).len();
         let own_generics = self
             .hir
             .generics(function)
             .map_or(0, |generics| generics.params.len());
-        if all_generics > 0
-            && (own_generics == 0 || explicit.as_ref().is_none_or(|args| args.is_empty()))
-        {
+        let has_explicit = explicit_function
+            .as_ref()
+            .or(explicit.as_ref())
+            .is_some_and(|args| !args.is_empty());
+        if all_generics > 0 && (own_generics == 0 || !has_explicit) {
             self.error(
                 codes::E3089,
                 self.hir.expr(operand).span,
@@ -275,8 +281,19 @@ impl Checker<'_> {
             return self.error_ty();
         }
 
-        let instantiated =
-            self.instantiate_function(function, &Default::default(), explicit.as_deref(), None);
+        let from_impl = self.impl_of_function(function).is_some();
+        let seed = if from_impl {
+            match self.associated_seed(function, explicit.as_deref(), None, as_span) {
+                Some(seed) => seed,
+                None => return self.error_ty(),
+            }
+        } else {
+            Default::default()
+        };
+        let explicit_own = explicit_function
+            .as_deref()
+            .or_else(|| (!from_impl).then_some(explicit.as_deref()).flatten());
+        let instantiated = self.instantiate_function(function, &seed, explicit_own, None);
         let Some((params, ret, substs)) =
             self.finish_function_instantiation(expr, function, instantiated, as_span)
         else {

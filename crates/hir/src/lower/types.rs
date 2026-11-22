@@ -296,6 +296,9 @@ impl Lowering<'_> {
                     return self.hir.ty_ctxt_mut().error_ty();
                 }
 
+                if self.import_failed(symbol) {
+                    return self.hir.ty_ctxt_mut().error_ty();
+                }
                 let span = self.ast.ty(ty).span;
                 let name = self.interner.resolve(symbol);
                 if self.value_exists(symbol) {

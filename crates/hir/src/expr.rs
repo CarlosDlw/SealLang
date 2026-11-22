@@ -118,8 +118,12 @@ pub enum ExprKind {
     Path {
         /// The resolved function or local.
         res: Res,
-        /// Explicit type arguments written with turbofish, or `None`.
+        /// Explicit type arguments for a free function, or for the aggregate a
+        /// qualified associated function is reached through, or `None`.
         args: Option<SubstsId>,
+        /// Explicit type arguments written on the associated function name,
+        /// after the aggregate arguments, or `None`.
+        function_args: Option<SubstsId>,
     },
     /// A borrow of a place, written `&place` or `&mut place`.
     Borrow {

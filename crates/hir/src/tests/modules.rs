@@ -100,6 +100,21 @@ fn an_unknown_module_is_reported() {
 }
 
 #[test]
+fn a_failed_import_does_not_cascade_into_an_unknown_module() {
+    let fixture = Fixture::package(&[(
+        "main.sl",
+        "use nope::Layout;\nfunc main() -> usize { Layout::new::<u8>().size() }",
+    )]);
+    let _ = fixture.lower_package();
+    fixture.expect("E2073", "cannot find the module or dependency `nope`");
+    assert!(
+        !fixture.codes().iter().any(|code| code == "E2070"),
+        "a failed import must not produce a second unknown-module error: {:?}",
+        fixture.codes()
+    );
+}
+
+#[test]
 fn a_missing_item_in_an_imported_module_is_reported() {
     let fixture = Fixture::package(&[
         ("main.sl", "use app::missing;\nfunc main() {}"),

@@ -291,6 +291,24 @@ fn explicit_associated_type_arguments_select_the_impl() {
 }
 
 #[test]
+fn explicit_arguments_instantiate_an_associated_function_own_parameters() {
+    let source = "\
+        struct Marker { value: u8 } \
+        impl Marker { func make<T>(value: T) -> T { value } } \
+        func main() -> i32 { Marker::make::<i32>(1) }";
+    let (fixture, hir, results) = check_clean(source);
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let args = instantiation_args(&hir, &results, call);
+    assert_eq!(args.len(), 1);
+    assert_eq!(
+        ty_text_with(&fixture, &hir, args[0]),
+        "i32",
+        "the function's own argument must not select the impl"
+    );
+}
+
+#[test]
 fn a_bound_method_resolves_symbolically() {
     let source = "\
         trait Show { func show(self: *Self) -> i32; } \

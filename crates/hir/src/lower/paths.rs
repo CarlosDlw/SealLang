@@ -160,6 +160,9 @@ impl Lowering<'_> {
         if let Some(module) = self.imported_module(root) {
             return Some(module);
         }
+        if self.import_failed(root) {
+            return None;
+        }
         let dependency = self
             .hir
             .package(package)

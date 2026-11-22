@@ -86,8 +86,22 @@ fn resolve_declaration(
 ) {
     let leaves = expand(path);
     for leaf in leaves {
+        let local = local_name(&leaf, interner);
+        let had_binding = table.get(local).is_some();
         resolve_leaf(graph, table, package, module, &leaf, dcx, interner);
+        if !had_binding && table.get(local).is_none() {
+            table.poison(local);
+        }
     }
+}
+
+/// Returns the local name a leaf binds, mirroring [`bind_module`].
+fn local_name(leaf: &Leaf, interner: &Interner) -> Symbol {
+    leaf.alias
+        .map(|(alias, _)| alias)
+        .or_else(|| leaf.names.last().map(|(name, _)| *name))
+        .or_else(|| leaf.root.name())
+        .unwrap_or_else(|| interner.intern("root"))
 }
 
 /// Expands groups into one leaf per imported name.

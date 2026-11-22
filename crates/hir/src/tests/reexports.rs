@@ -392,5 +392,10 @@ fn a_cfg_disabled_reexport_is_not_part_of_the_graph() {
         ),
     ]);
     let _ = fixture.lower_package_exposing(&["api", "implementation"]);
-    fixture.expect("E2002", "cannot find `answer`");
+    fixture.expect("E2073", "cannot find `answer`");
+    assert!(
+        !fixture.codes().iter().any(|code| code == "E2002"),
+        "the failed import already explains the missing name: {:?}",
+        fixture.codes()
+    );
 }

@@ -456,6 +456,27 @@ fn expression_paths_carry_explicit_function_arguments_and_none_when_omitted() {
 }
 
 #[test]
+fn an_associated_function_keeps_its_own_arguments_separate_from_the_type() {
+    let (fixture, hir) = lower_clean(
+        "struct Marker { value: u8 } \
+         impl Marker { func make<T>(value: T) -> T { value } } \
+         func main() -> i32 { Marker::make::<i32>(1) }",
+    );
+    let (_, body) = function(&fixture, &hir, "main");
+    let call = tail(&hir, body);
+    let ExprKind::Call { callee, .. } = hir.expr(call).kind.clone() else {
+        panic!("expected call");
+    };
+    assert_eq!(hir.expr_args(callee), None);
+    assert_eq!(
+        hir.ty_ctxt()
+            .substs_len(hir.expr_function_args(callee).expect("own arguments")),
+        1
+    );
+    assert_invariants(&fixture, &hir);
+}
+
+#[test]
 fn a_trait_impl_method_is_checked_after_instantiating_its_parameters() {
     let fixture = Fixture::new(
         "struct Pair<T> { value: T } trait Convert<T> { func convert(self: *Self, value: T) -> T; } \
