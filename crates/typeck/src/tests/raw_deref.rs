@@ -32,6 +32,39 @@ fn writing_through_a_read_only_raw_pointer_is_rejected() {
 }
 
 #[test]
+fn a_pointer_value_can_be_dereferenced_as_an_assignment_target() {
+    check_clean(
+        "func offset(pointer: *raw mut i32) -> *raw mut i32 { unsafe { pointer.add(1) } } \
+         func f(pointer: *raw mut i32) { unsafe { *(offset(pointer)) = 41; } }",
+    );
+}
+
+#[test]
+fn a_pointer_value_can_be_updated_through_a_dereference() {
+    check_clean(
+        "func offset(pointer: *raw mut i32) -> *raw mut i32 { unsafe { pointer.add(1) } } \
+         func f(pointer: *raw mut i32) { unsafe { *(offset(pointer)) += 1; } }",
+    );
+}
+
+#[test]
+fn a_read_only_pointer_value_rejects_a_dereferenced_write() {
+    let (fixture, _, _) = check_errors(
+        "func offset(pointer: *raw i32) -> *raw i32 { unsafe { pointer.add(1) } } \
+         func f(pointer: *raw i32) { unsafe { *(offset(pointer)) = 41; } }",
+    );
+    fixture.expect("E3075", "cannot write through a `*raw T` pointer");
+}
+
+#[test]
+fn a_reference_value_can_be_dereferenced_as_an_assignment_target() {
+    check_clean(
+        "func identity(pointer: *mut i32) -> *mut i32 { pointer } \
+         func f(pointer: *mut i32) { *(identity(pointer)) = 41; }",
+    );
+}
+
+#[test]
 fn shared_and_exclusive_borrows_of_a_raw_pointer_are_checked() {
     let (fixture, hir, results) =
         check_clean("func f(pointer: *raw mut i32) -> *mut i32 { unsafe { &mut *pointer } }");
