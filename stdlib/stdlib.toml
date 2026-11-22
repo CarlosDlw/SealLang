@@ -2,7 +2,7 @@ format = 1
 language = "0.1"
 version = "0.1.0"
 packages = ["core", "std"]
-digest = "416a313d644108ee4866b8e0f0eb8f90baaa23deb70c4a90847ee89ed5cfe7ae"
+digest = "c5764cc320a2844d3238246b64a8a9f3137d89772621bad428c552d839f1654e"
 
 [prelude]
 std = "std::prelude"

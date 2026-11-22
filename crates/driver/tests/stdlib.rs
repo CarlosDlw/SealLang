@@ -228,6 +228,34 @@ fn alloc_is_exposed_only_by_the_hosted_standard_library() {
 }
 
 #[test]
+fn allocation_wrappers_require_unsafe_and_runtime_symbols_stay_private() {
+    let fixture = temporary("alloc-safety");
+    let unsafe_source = fixture.root.join("unsafe.sl");
+    std::fs::write(
+        &unsafe_source,
+        "use std::alloc::alloc;\nuse std::alloc::Layout;\n\nfunc main() {\n  let layout = Layout::new::<u8>();\n  alloc(layout);\n}\n",
+    )
+    .expect("unsafe source");
+    let unsafe_output = run(&["check", &unsafe_source.display().to_string()], None);
+    assert_eq!(unsafe_output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&unsafe_output.stderr);
+    assert!(stderr.contains("E3070"), "stderr: {stderr}");
+    assert!(stderr.contains("unsafe"), "stderr: {stderr}");
+
+    let private_source = fixture.root.join("private.sl");
+    std::fs::write(
+        &private_source,
+        "use std::alloc::seal_alloc;\n\nfunc main() {}\n",
+    )
+    .expect("private source");
+    let private_output = run(&["check", &private_source.display().to_string()], None);
+    assert_eq!(private_output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&private_output.stderr);
+    assert!(stderr.contains("E2073"), "stderr: {stderr}");
+    assert!(stderr.contains("seal_alloc"), "stderr: {stderr}");
+}
+
+#[test]
 fn no_stdlib_rejects_string_methods_without_crashing() {
     let fixture = temporary("no-stdlib-string");
     let source = fixture.root.join("main.sl");
