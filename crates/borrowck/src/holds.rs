@@ -235,8 +235,22 @@ fn transfer(
         .is_some_and(|local| hir.ty_ctxt().contains_reference(body.local(local).ty));
 
     match rvalue {
-        Rvalue::Ref { .. }
-        | Rvalue::OwnedView { .. }
+        Rvalue::Ref {
+            place: borrowed, ..
+        } => {
+            let mut loans = LoanSet::default();
+            if let Some(loan) = loan {
+                loans.insert(loan);
+            }
+            // A reference to a local that itself carries loans (for example a
+            // local holding an owned view) keeps those loans live: reading
+            // through the new reference can reach the view and its owner.
+            if !borrowed.is_deref() {
+                loans.extend(state.at(borrowed).iter().copied());
+            }
+            state.assign(place, loans);
+        }
+        Rvalue::OwnedView { .. }
         | Rvalue::SliceRef { .. }
         | Rvalue::StrView { .. }
         | Rvalue::TraitObjectReborrow { .. } => {

@@ -126,7 +126,7 @@ fn a_closure_capturing_a_view_keeps_the_owner_loan() {
            let value = 1;\
            let buffer = Buffer {{ pointer: &value as *raw i32 }};\
            let view = unsafe {{ owned_view(buffer, buffer.pointer) }};\
-           let read = move || *view;\
+           let read = || *view;\
            read()\
          }}"
     ));
@@ -139,7 +139,7 @@ fn a_closure_capturing_a_view_conflicts_with_moving_the_owner() {
            let value = 1;\
            let buffer = Buffer {{ pointer: &value as *raw i32 }};\
            let view = unsafe {{ owned_view(buffer, buffer.pointer) }};\
-           let read = move || *view;\
+           let read = || *view;\
            drop(buffer);\
            read()\
          }}"
