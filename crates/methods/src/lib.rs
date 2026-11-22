@@ -59,6 +59,8 @@ pub enum MethodOwner {
     Array,
     /// Slice pointees `[T]`, reached through `*[T]` or `*mut [T]`.
     Slice,
+    /// String pointees `str`, reached through `*str`.
+    Str,
     /// Raw pointers `*raw T` and `*raw mut T`.
     RawPtr,
 }
@@ -74,6 +76,7 @@ impl MethodOwner {
             Self::Char => "char",
             Self::Array => "array",
             Self::Slice => "slice",
+            Self::Str => "string",
             Self::RawPtr => "raw pointer",
         }
     }
@@ -137,6 +140,12 @@ pub enum ReturnKind {
     SlicePointer,
     /// A raw string pointer with the receiver's mutability.
     StrPointer,
+    /// A shared reference to the unsized pointee `str`.
+    StrReference,
+    /// A shared reference to the byte slice `[u8]`.
+    SliceReference,
+    /// A Unicode scalar value.
+    Char,
 }
 
 /// A compiler operation behind a method.
@@ -231,6 +240,18 @@ pub enum IntrinsicOp {
     CharToU32,
     /// Number of elements in an array or slice.
     Len,
+    /// Number of bytes in a string.
+    StrLen,
+    /// Whether a byte index is a UTF-8 scalar boundary.
+    StrIsCharBoundary,
+    /// Decode the scalar at a byte index.
+    StrCharAt,
+    /// Create a checked substring view.
+    StrSlice,
+    /// Create a byte view of a string.
+    StrAsBytes,
+    /// Reinterpret a byte slice as a string under an unsafe contract.
+    SliceAsStrUnchecked,
     /// Whether an array or slice has no elements.
     IsEmpty,
     /// Swap two elements by index, panicking when either index is out of range.
@@ -1079,6 +1100,54 @@ pub const METHODS: &[MethodDef] = &[
         ReturnKind::Unit,
         IntrinsicOp::PtrCopyNonOverlapping,
     ),
+    method(
+        MethodOwner::Str,
+        "len",
+        ReceiverMode::Shared,
+        NONE,
+        ReturnKind::Usize,
+        IntrinsicOp::StrLen,
+    ),
+    method(
+        MethodOwner::Str,
+        "is_char_boundary",
+        ReceiverMode::Shared,
+        &[ParamKind::Usize],
+        ReturnKind::Bool,
+        IntrinsicOp::StrIsCharBoundary,
+    ),
+    method(
+        MethodOwner::Str,
+        "char_at",
+        ReceiverMode::Shared,
+        &[ParamKind::Usize],
+        ReturnKind::Char,
+        IntrinsicOp::StrCharAt,
+    ),
+    method(
+        MethodOwner::Str,
+        "slice",
+        ReceiverMode::Shared,
+        USIZE_TWO,
+        ReturnKind::StrReference,
+        IntrinsicOp::StrSlice,
+    ),
+    method(
+        MethodOwner::Str,
+        "as_bytes",
+        ReceiverMode::Shared,
+        NONE,
+        ReturnKind::SliceReference,
+        IntrinsicOp::StrAsBytes,
+    ),
+    unsafe_method(
+        MethodOwner::Slice,
+        "as_str_unchecked",
+        ReceiverMode::Shared,
+        NONE,
+        ReturnKind::StrReference,
+        IntrinsicOp::SliceAsStrUnchecked,
+    ),
 ];
 
 /// Looks up a method by owner and name.
@@ -1114,6 +1183,7 @@ mod tests {
             MethodOwner::Char,
             MethodOwner::Array,
             MethodOwner::Slice,
+            MethodOwner::Str,
             MethodOwner::RawPtr,
         ] {
             let mut names = BTreeSet::new();

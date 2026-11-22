@@ -27,6 +27,7 @@ mod raw_pointers;
 mod reference_patterns;
 mod slice_patterns;
 mod slices;
+mod str_methods;
 mod straight_line;
 mod support;
 mod tuples;

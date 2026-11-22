@@ -8,7 +8,7 @@ use seal_ast::Ast;
 use seal_def::{DefId, DefKind};
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_hir::{Body, ExprKind, Hir, HirExprId, HirStmtId, Res, StmtKind};
-use seal_span::{FileName, SourceFile, SourceMap};
+use seal_span::{FileId, FileName, SourceFile, SourceMap};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::TyId;
 
@@ -42,6 +42,7 @@ pub(crate) struct Fixture {
     dcx: DiagCtxt,
     interner: Interner,
     file: Arc<SourceFile>,
+    file_id: FileId,
     recording: Recording,
 }
 
@@ -59,6 +60,7 @@ impl Fixture {
             dcx,
             interner: Interner::new(),
             file,
+            file_id: id,
             recording,
         }
     }
@@ -69,8 +71,27 @@ impl Fixture {
     }
 
     pub(crate) fn check(&self, pointer_width: u8) -> (Hir, TypeckResults) {
+        self.check_in_package("test", pointer_width)
+    }
+
+    /// Checks a single-file package with an explicit package name.
+    ///
+    /// `str` methods are owned by the reserved `core` package, so testing them
+    /// needs a fixture whose package identity is `core` instead of `test`.
+    pub(crate) fn check_in_package(
+        &self,
+        package: &str,
+        pointer_width: u8,
+    ) -> (Hir, TypeckResults) {
         let ast = self.parse();
-        let hir = seal_hir::lower(&ast, &self.dcx, &self.interner);
+        let plan = seal_hir::PackagePlan::single(self.interner.intern(package), self.file_id);
+        let hir = seal_hir::lower_package(
+            &plan,
+            &[(self.file_id, ast)],
+            &self.dcx,
+            &self.interner,
+            seal_ty::CAbiProperties::default(),
+        );
         let results = crate::check(&hir, &self.dcx, &self.interner, pointer_width);
         (hir, results)
     }
@@ -147,6 +168,15 @@ impl Fixture {
 pub(crate) fn check_clean(source: &str) -> (Fixture, Hir, TypeckResults) {
     let fixture = Fixture::new(source);
     let (hir, results) = fixture.check(64);
+    fixture.assert_clean();
+    assert_invariants(&fixture, &hir, &results);
+    (fixture, hir, results)
+}
+
+/// Checks one source file as the reserved `core` package.
+pub(crate) fn check_core_clean(source: &str) -> (Fixture, Hir, TypeckResults) {
+    let fixture = Fixture::new(source);
+    let (hir, results) = fixture.check_in_package("core", 64);
     fixture.assert_clean();
     assert_invariants(&fixture, &hir, &results);
     (fixture, hir, results)

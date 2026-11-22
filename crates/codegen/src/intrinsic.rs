@@ -317,10 +317,25 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 Ok(result.into())
             }
             IntrinsicOp::CharToU32 => Ok(value.into_int_value().into()),
+            IntrinsicOp::StrLen => {
+                let fat = value.into_struct_value();
+                let length = self
+                    .build(
+                        self.builder.build_extract_value(fat, 1, "string length"),
+                        "string length",
+                    )?
+                    .into_int_value();
+                Ok(length.into())
+            }
             IntrinsicOp::BoolToggle => Err(CodegenError::internal(
                 "`bool::toggle` reached the value path after its special case",
             )),
             IntrinsicOp::Len
+            | IntrinsicOp::StrIsCharBoundary
+            | IntrinsicOp::StrCharAt
+            | IntrinsicOp::StrSlice
+            | IntrinsicOp::StrAsBytes
+            | IntrinsicOp::SliceAsStrUnchecked
             | IntrinsicOp::IsEmpty
             | IntrinsicOp::Swap
             | IntrinsicOp::Reverse

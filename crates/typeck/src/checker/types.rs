@@ -25,6 +25,10 @@ impl Checker<'_> {
         self.interned(TyKind::Bool)
     }
 
+    pub(super) fn char_ty(&self) -> TyId {
+        self.interned(TyKind::Char)
+    }
+
     fn primitive(&self, primitive: PrimitiveType) -> TyId {
         self.interned(primitive_kind(primitive, self.hir.ty_ctxt().c_abi()))
     }

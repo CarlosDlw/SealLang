@@ -138,6 +138,10 @@ pub struct Hir {
     /// one generic type, so a name maps to every candidate. Choosing one needs
     /// the type arguments or the receiver, which only the caller has.
     methods: FxHashMap<(DefId, Symbol), Vec<DefId>>,
+    /// Inherent functions declared by `impl str`, in declaration order per
+    /// method name. `str` has no `DefId`, so its methods need a separate
+    /// registry from the nominal one.
+    str_methods: FxHashMap<Symbol, Vec<DefId>>,
     receivers: FxHashMap<DefId, ReceiverKind>,
     inherent_impls: Vec<InherentImpl>,
     dyn_types: Vec<DynTypeUse>,
@@ -558,6 +562,27 @@ impl Hir {
             .unwrap_or(&[])
     }
 
+    /// Returns the inherent `impl str` method named `name`.
+    ///
+    /// The lookup succeeds only when exactly one method has the name. Use
+    /// [`Hir::str_methods`] when every declaration is needed, such as when
+    /// reporting a duplicate or choosing among candidates.
+    pub fn str_method(&self, name: Symbol) -> Option<DefId> {
+        let candidates = self.str_methods(name);
+        (candidates.len() == 1).then(|| candidates[0])
+    }
+
+    /// Returns every inherent `impl str` method named `name`.
+    ///
+    /// The candidates are in declaration order. `str` is a primitive, so no
+    /// type arguments or impl generics are involved in the lookup.
+    pub fn str_methods(&self, name: Symbol) -> &[DefId] {
+        self.str_methods
+            .get(&name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
     /// Returns the receiver kind of `function`, or `None` when it is associated.
     pub fn receiver(&self, function: DefId) -> Option<ReceiverKind> {
         self.receivers.get(&function).copied()
@@ -889,6 +914,10 @@ impl Hir {
             .push(function);
     }
 
+    pub(crate) fn insert_str_method(&mut self, name: Symbol, function: DefId) {
+        self.str_methods.entry(name).or_default().push(function);
+    }
+
     pub(crate) fn insert_receiver(&mut self, function: DefId, receiver: ReceiverKind) {
         self.receivers.insert(function, receiver);
     }
@@ -953,6 +982,7 @@ impl Hir {
             builtin: None,
             trait_impls: traits::TraitImpls::default(),
             methods: FxHashMap::default(),
+            str_methods: FxHashMap::default(),
             receivers: FxHashMap::default(),
             inherent_impls: Vec::new(),
             dyn_types: Vec::new(),

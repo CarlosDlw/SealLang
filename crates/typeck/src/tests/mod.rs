@@ -38,6 +38,7 @@ mod reference_patterns;
 mod sized;
 mod slice_patterns;
 mod slices;
+mod str_methods;
 mod structs;
 mod support;
 mod traits;

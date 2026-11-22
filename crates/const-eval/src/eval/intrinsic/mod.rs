@@ -179,6 +179,12 @@ impl<'a> Interpreter<'a> {
             }
             IntrinsicOp::BoolToggle
             | IntrinsicOp::Len
+            | IntrinsicOp::StrLen
+            | IntrinsicOp::StrIsCharBoundary
+            | IntrinsicOp::StrCharAt
+            | IntrinsicOp::StrSlice
+            | IntrinsicOp::StrAsBytes
+            | IntrinsicOp::SliceAsStrUnchecked
             | IntrinsicOp::IsEmpty
             | IntrinsicOp::Swap
             | IntrinsicOp::Reverse

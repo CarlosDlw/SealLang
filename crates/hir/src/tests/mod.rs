@@ -30,6 +30,7 @@ mod protocols;
 mod reexports;
 mod resolve;
 mod slices;
+mod str_methods;
 mod structs;
 mod support;
 mod traits;

@@ -260,9 +260,54 @@ impl Checker<'_> {
             TyKind::Param(param) => {
                 self.bound_method_target(base, receiver_ty, param, name, name_span)
             }
+            TyKind::Str => self.str_method_target(base, receiver_ty, name, name_span),
             TyKind::Error => UserLookup::Rejected,
             _ => self.primitive_method_target(base, receiver_ty, name, name_span),
         }
+    }
+
+    /// Looks up an inherent `impl str` method before trait or catalog lookup.
+    ///
+    /// A registered method wins over a trait method and over a catalog entry
+    /// with the same name, matching nominal inherent lookup. When the name is
+    /// not registered, the trait and catalog paths remain available.
+    fn str_method_target(
+        &mut self,
+        base: TyId,
+        receiver_ty: TyId,
+        name: Symbol,
+        name_span: Span,
+    ) -> UserLookup {
+        let count = self.hir.str_methods(name).len();
+        if count == 0 {
+            return self.primitive_method_target(base, receiver_ty, name, name_span);
+        }
+        if count > 1 {
+            self.error(
+                codes::E3045,
+                name_span,
+                format!(
+                    "more than one inherent impl declares `{}` for `{}`",
+                    self.interner.resolve(name),
+                    self.ty_text(base)
+                ),
+            )
+            .help("remove one of the overlapping inherent methods")
+            .emit();
+            return UserLookup::Rejected;
+        }
+        let function = self.hir.str_methods(name)[0];
+        let Some(receiver) = self.hir.receiver(function) else {
+            self.report_associated_as_method(base, name, name_span);
+            return UserLookup::Rejected;
+        };
+        UserLookup::Method(UserMethod::Concrete {
+            function,
+            receiver,
+            source: MethodSource::Inherent,
+            self_ty: base,
+            seed: FxHashMap::default(),
+        })
     }
 
     /// Looks up a trait method implemented for a primitive, tuple, or reference.
@@ -1035,6 +1080,7 @@ impl Checker<'_> {
                 TyKind::Bool => break (MethodOwner::Bool, ty, ReceiverForm::Place),
                 TyKind::Char => break (MethodOwner::Char, ty, ReceiverForm::Place),
                 TyKind::Array { .. } => break (MethodOwner::Array, ty, ReceiverForm::Place),
+                TyKind::Str => break (MethodOwner::Str, ty, ReceiverForm::Value),
                 TyKind::RawPtr { .. } => break (MethodOwner::RawPtr, ty, ReceiverForm::Value),
                 TyKind::Error => return None,
                 _ => {
@@ -1067,6 +1113,29 @@ impl Checker<'_> {
             }
         };
         let def = id.def();
+        if def.unsafe_op && self.unsafe_depth == 0 {
+            self.error(
+                codes::E3070,
+                span_for_method(self.hir, receiver),
+                format!("calling `{}` requires an `unsafe` block", def.name),
+            )
+            .help("wrap the call in `unsafe { ... }`")
+            .emit();
+        }
+        if def.intrinsic == IntrinsicOp::SliceAsStrUnchecked
+            && !matches!(
+                self.hir.ty_ctxt().kind(base_ty),
+                TyKind::Slice { element } if element == self.u8_ty()
+            )
+        {
+            self.error(
+                codes::E3075,
+                span_for_method(self.hir, receiver),
+                "`as_str_unchecked` requires a byte slice",
+            )
+            .help("only `*[u8]` can become a `*str`")
+            .emit();
+        }
         let element_ty = match self.hir.ty_ctxt().kind(base_ty) {
             TyKind::Array { element, .. } => element,
             TyKind::Slice { element } => element,
@@ -1074,18 +1143,6 @@ impl Checker<'_> {
             _ => base_ty,
         };
         if def.owner == MethodOwner::RawPtr {
-            if def.unsafe_op && self.unsafe_depth == 0 {
-                self.error(
-                    codes::E3070,
-                    span_for_method(self.hir, receiver),
-                    format!(
-                        "calling `{}` on a raw pointer requires an `unsafe` block",
-                        def.name
-                    ),
-                )
-                .help("wrap the call in `unsafe { ... }`")
-                .emit();
-            }
             if raw_pointer_requires_mut(def.intrinsic)
                 && matches!(
                     self.hir.ty_ctxt().kind(base_ty),
@@ -1311,6 +1368,12 @@ impl Checker<'_> {
             ReturnKind::Pointer => resolution.receiver_ty,
             ReturnKind::SlicePointer => self.slice_pointer_ty(resolution.receiver_ty),
             ReturnKind::StrPointer => self.str_pointer_ty(resolution.receiver_ty),
+            ReturnKind::StrReference => self.str_ref_ty(),
+            ReturnKind::SliceReference => {
+                let slice = self.slice_ty(self.u8_ty());
+                self.ref_ty(RefKind::Shared, slice)
+            }
+            ReturnKind::Char => self.char_ty(),
         }
     }
 

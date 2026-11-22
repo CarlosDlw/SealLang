@@ -7,7 +7,7 @@ use seal_ast::Ast;
 use seal_def::DefKind;
 use seal_diagnostics::{DiagCtxt, Diagnostic, Emitter};
 use seal_hir::Hir;
-use seal_span::{FileName, SourceFile, SourceMap};
+use seal_span::{FileId, FileName, SourceFile, SourceMap};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::TyId;
 
@@ -46,6 +46,7 @@ pub(crate) struct Fixture {
     dcx: DiagCtxt,
     interner: Interner,
     file: Arc<SourceFile>,
+    file_id: FileId,
     recording: Recording,
 }
 
@@ -63,6 +64,7 @@ impl Fixture {
             dcx,
             interner: Interner::new(),
             file,
+            file_id: id,
             recording,
         }
     }
@@ -72,8 +74,19 @@ impl Fixture {
         seal_parser::parse(&lexed, &self.dcx, &self.interner)
     }
 
-    fn lower(&self) -> (Hir, Mir) {
-        self.lower_with_destructors(&[])
+    fn lower_in_package(&self, package: &str) -> (Hir, Mir) {
+        let ast = self.parse();
+        let plan = seal_hir::PackagePlan::single(self.interner.intern(package), self.file_id);
+        let hir = seal_hir::lower_package(
+            &plan,
+            &[(self.file_id, ast)],
+            &self.dcx,
+            &self.interner,
+            seal_ty::CAbiProperties::default(),
+        );
+        let results = seal_typeck::check(&hir, &self.dcx, &self.interner, 64);
+        let mir = crate::lower(&hir, &results);
+        (hir, mir)
     }
 
     /// Lowers `source`, registering a destructor for each named aggregate.
@@ -144,8 +157,17 @@ impl Fixture {
 
 /// Lowers `source` end to end, requiring a clean check and a valid MIR tree.
 pub(crate) fn lower_clean(source: &str) -> (Fixture, Hir, Mir) {
+    lower_clean_in_package("test", source)
+}
+
+/// Lowers one source file as the reserved `core` package.
+pub(crate) fn lower_clean_in_core(source: &str) -> (Fixture, Hir, Mir) {
+    lower_clean_in_package("core", source)
+}
+
+fn lower_clean_in_package(package: &str, source: &str) -> (Fixture, Hir, Mir) {
     let fixture = Fixture::new(source);
-    let (hir, mir) = fixture.lower();
+    let (hir, mir) = fixture.lower_in_package(package);
     fixture.assert_clean();
     mir.validate_with(&hir)
         .expect("MIR lowering maintains its invariants");

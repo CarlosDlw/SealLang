@@ -1,8 +1,8 @@
 //! Item collection and duplicate checks.
 
 use seal_ast::{
-    BlockId as AstBlockId, GenericParams, ImplDecl, ItemId, ItemKind, ParamId, TypeId as AstTypeId,
-    TypeKind, WhereClause,
+    BlockId as AstBlockId, GenericParams, ImplDecl, ItemId, ItemKind, ParamId, PrimitiveType,
+    TypeId as AstTypeId, TypeKind, WhereClause,
 };
 use seal_def::{DefData, DefId, DefKind};
 use seal_error_codes as codes;
@@ -433,6 +433,16 @@ impl Lowering<'_> {
             self.pop_generic_scope(levels);
             return self.hir.ty_ctxt().error_ty();
         }
+        if matches!(
+            self.ast.ty(declaration.self_ty).kind,
+            TypeKind::Primitive(PrimitiveType::Str)
+        ) {
+            let saved = self.self_ty.take();
+            let ty = self.lower_type(declaration.self_ty);
+            self.self_ty = saved;
+            self.pop_generic_scope(levels);
+            return ty;
+        }
         let path = match &self.ast.ty(declaration.self_ty).kind {
             TypeKind::Path(path) => Some((path.name, path.name_span)),
             _ => None,
@@ -483,31 +493,67 @@ impl Lowering<'_> {
             Some(self_ty),
         );
 
+        let is_str = self.is_str_ty(self_ty);
+        let str_owned_by_core = is_str && self.current_package_named("core");
         let nominal = self.nominal_impl_target(self_ty);
-        let _orphan = self.check_orphan_impl(nominal, None, span);
-        if nominal.is_none() && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error) {
-            let display = self.display_ty(self_ty);
-            let ty_span = self.ast.ty(declaration.self_ty).span;
+        let _orphan = if is_str {
+            false
+        } else {
+            self.check_orphan_impl(nominal, None, span)
+        };
+        if is_str && !str_owned_by_core {
             self.error(
-                codes::E2056,
-                ty_span,
-                format!("the inherent impl target `{display}` is not a nominal type"),
+                codes::E2082,
+                span,
+                "inherent implementations for `str` may only be declared in the core package",
             )
-            .help("inherent impls attach methods to a struct or enum declared in this file")
+            .help("`str` is compiler-owned; move this impl into `core`")
             .emit();
         }
-        if !self.hir.ty_ctxt().is_sized(self_ty)
-            && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error)
-        {
-            let display = self.display_ty(self_ty);
-            let ty_span = self.ast.ty(declaration.self_ty).span;
-            self.error(
-                codes::E2056,
-                ty_span,
-                format!("the impl target `{display}` has no known size"),
-            )
-            .help("implement the trait for a sized type instead")
-            .emit();
+        if is_str {
+            if !declaration.generics.is_empty() {
+                self.error(
+                    codes::E2056,
+                    declaration.generics.span,
+                    "an inherent impl for `str` cannot declare generic parameters",
+                )
+                .help("remove the parameters; `str` is a single concrete type")
+                .emit();
+            }
+            if !declaration.where_clause.is_empty() {
+                self.error(
+                    codes::E2056,
+                    declaration.where_clause.span,
+                    "an inherent impl for `str` cannot have a where clause",
+                )
+                .help("remove the predicate; `str` has no generic parameters")
+                .emit();
+            }
+        } else {
+            if nominal.is_none() && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error) {
+                let display = self.display_ty(self_ty);
+                let ty_span = self.ast.ty(declaration.self_ty).span;
+                self.error(
+                    codes::E2056,
+                    ty_span,
+                    format!("the inherent impl target `{display}` is not a nominal type"),
+                )
+                .help("inherent impls attach methods to a struct or enum declared in this file")
+                .emit();
+            }
+            if !self.hir.ty_ctxt().is_sized(self_ty)
+                && !matches!(self.hir.ty_ctxt().kind(self_ty), TyKind::Error)
+            {
+                let display = self.display_ty(self_ty);
+                let ty_span = self.ast.ty(declaration.self_ty).span;
+                self.error(
+                    codes::E2056,
+                    ty_span,
+                    format!("the impl target `{display}` has no known size"),
+                )
+                .help("implement the trait for a sized type instead")
+                .emit();
+            }
         }
 
         self.impl_self_tys.insert(impl_def, self_ty);
@@ -734,6 +780,34 @@ impl Lowering<'_> {
         self.register_generics(definition, &generics, Some(impl_def), false);
         self.queue_bounds(definition, &generics, &[], &where_clause, Some(self_ty));
 
+        if self.is_str_ty(self_ty) {
+            let Some(receiver_param) = params.first().copied() else {
+                self.str_receiver_error(span, "a method on `str` must take `self: *str`");
+                return Some((name, definition));
+            };
+            if !self.is_self_parameter(receiver_param) {
+                let span = self.ast.param(receiver_param).name_span;
+                self.str_receiver_error(span, "a method on `str` must take `self: *str`");
+                return Some((name, definition));
+            }
+            let levels = self.push_generic_scope(definition);
+            let saved = self.self_ty.replace(self_ty);
+            let receiver_ty = self.ast.param(receiver_param).ty;
+            let receiver = self.receiver_kind(receiver_ty, self_ty);
+            self.self_ty = saved;
+            self.pop_generic_scope(levels);
+            match receiver {
+                Some(ReceiverKind::Shared) => {
+                    self.hir.insert_receiver(definition, ReceiverKind::Shared);
+                }
+                Some(_) | None => {
+                    let span = self.ast.param(receiver_param).span;
+                    self.str_receiver_error(span, "this is not a valid receiver for `str`");
+                }
+            }
+            return Some((name, definition));
+        }
+
         let Some(receiver_param) = params.first().copied() else {
             return Some((name, definition));
         };
@@ -790,6 +864,31 @@ impl Lowering<'_> {
         self_ty: TyId,
     ) -> Option<(Symbol, DefId)> {
         let (name, definition) = self.define_impl_function(item_id, impl_def, type_def, self_ty)?;
+        if self.is_str_ty(self_ty) {
+            if !self.current_package_named("core")
+                || self.hir.receiver(definition) != Some(ReceiverKind::Shared)
+            {
+                return Some((name, definition));
+            }
+            if let Some(first) = self.hir.str_methods(name).first().copied() {
+                let first_span = self.hir.definitions().get(first).name_span;
+                let name_span = self.hir.definitions().get(definition).name_span;
+                self.error(
+                    codes::E2017,
+                    name_span,
+                    format!(
+                        "the associated function `{}` is defined twice",
+                        self.interner.resolve(name)
+                    ),
+                )
+                .secondary(first_span, "first defined here")
+                .help("give each impl function a distinct name")
+                .emit();
+            } else {
+                self.hir.insert_str_method(name, definition);
+            }
+            return Some((name, definition));
+        }
         let Some(type_def) = type_def else {
             return Some((name, definition));
         };
@@ -1358,6 +1457,22 @@ impl Lowering<'_> {
 
     fn is_self_parameter(&self, param: ParamId) -> bool {
         self.interner.resolve(self.ast.param(param).name) == "self"
+    }
+
+    fn is_str_ty(&self, ty: TyId) -> bool {
+        matches!(self.hir.ty_ctxt().kind(ty), TyKind::Str)
+    }
+
+    fn current_package_named(&self, name: &str) -> bool {
+        self.interner
+            .resolve(self.hir.package(self.current_package).name)
+            == name
+    }
+
+    fn str_receiver_error(&mut self, span: Span, message: &str) {
+        self.error(codes::E2016, span, message)
+            .help("write `self: *str`; `str` methods borrow the string immutably")
+            .emit();
     }
 
     fn receiver_kind(&mut self, ty: seal_ast::TypeId, self_ty: TyId) -> Option<ReceiverKind> {
