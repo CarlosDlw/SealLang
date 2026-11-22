@@ -212,11 +212,26 @@ pub struct BuiltTarget {
     pub cached: bool,
 }
 
+/// The files one generator target materialized during a build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedOutput {
+    /// The package that owns the generator.
+    pub package: String,
+    /// The generator target name.
+    pub target: String,
+    /// Every declared output file, sorted.
+    pub files: Vec<PathBuf>,
+}
+
 /// The complete result of a build.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BuildReport {
     /// One entry per selected target, in request order.
     pub outputs: Vec<BuiltTarget>,
+    /// The files every executed generator materialized, sorted by package and
+    /// target. Consumers add these to the compile plan of the target that
+    /// declares `generated`.
+    pub generated: Vec<GeneratedOutput>,
     /// Every action timing, sorted by kind and label.
     pub timings: Vec<ActionTiming>,
     /// Native dependencies resolved during the build.
@@ -308,11 +323,25 @@ impl<'a> Builder<'a> {
                 )
             })
             .collect();
+        let mut generated_outputs: Vec<GeneratedOutput> = generated
+            .iter()
+            .map(|entry| GeneratedOutput {
+                package: self.project.package(entry.job.package).name.clone(),
+                target: entry.job.target.clone(),
+                files: entry.artifacts.clone(),
+            })
+            .collect();
+        generated_outputs.sort_by(|left, right| {
+            left.package
+                .cmp(&right.package)
+                .then_with(|| left.target.cmp(&right.target))
+        });
         let mut outputs: Vec<BuiltTarget> =
             generated.into_iter().map(|entry| entry.built).collect();
         outputs.extend(self.build_regular(&context, &regular, &generated_by_job, &native)?);
         Ok(BuildReport {
             outputs,
+            generated: generated_outputs,
             timings: context.timings(),
             native,
             duration: start.elapsed(),

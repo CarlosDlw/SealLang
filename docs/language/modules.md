@@ -248,6 +248,19 @@ must parse, and all inputs share one module graph. The same package is checked
 by `check`, `build`, and `run`; `run` remains a single-file command because it
 takes one input.
 
+A project manifest replaces the explicit input list. `seal` discovers every
+source through `package.sources`, assigns files to modules from their first
+item, and passes the resulting package graph to the driver:
+
+```console
+$ seal check
+$ seal build
+$ seal run --bin app
+```
+
+See [`../project/manifest.md`](../project/manifest.md) for the manifest and
+[`../project/cli.md`](../project/cli.md) for selection, profiles, and scripts.
+
 ## Complete example
 
 ```text
@@ -284,9 +297,49 @@ and the program exits with `62`.
 
 ## Configuration
 
-`cfg(...)` conditions are parsed and retained on items and imports, including
-the `cfg` written on a field, variant, or trait method that is rejected with
-`E2085`. Selecting configuration is part of the project layer: lowering does not
-yet filter declarations by `cfg`, so every parsed declaration is analyzed in
-this phase. The expression grammar and its diagnostics are documented in
-[`../architecture.md`](../architecture.md).
+`cfg(...)` is a typed condition evaluated before lowering. It may prefix an
+item, a module declaration, or an import:
+
+```text
+cfg(feature("std")) internal func allocate() {}
+cfg(target.os == "linux") module app::linux;
+cfg(feature("extra")) use app::extra::Helper;
+```
+
+The expression grammar supports `feature("name")`, `target.os`, `target.arch`,
+`target.env`, `target.pointer_width`, `debug_assertions`, `test`, `bench`,
+`env("NAME")`, the comparison operators, `!`, `&&`, and `||` with the usual
+precedence. An
+`env` name must be declared in the project environment; an undeclared name is
+`E2084`. Conditions on a field, variant, or trait method are rejected with
+`E2085`.
+
+An inactive item, module, or import is removed before name resolution, type
+checking, and code generation. It produces no definition, no symbol, and no
+`unused_import` warning; code inside it is never resolved, so it may name
+items that do not exist in the current configuration. This is why two
+`cfg`-exclusive declarations may share one name:
+
+```text
+cfg(feature("a")) public func which() -> i32 { 1 }
+cfg(feature("b")) public func which() -> i32 { 2 }
+```
+
+Feature selection is per package instance. The project layer evaluates each
+instance's feature set and target facts and passes the result to the module
+graph; `seal why` prints the conditions an instance received. The expression
+grammar and the project-level `cfg` table are documented in
+[`../architecture.md`](../architecture.md) and
+[`../project/manifest.md`](../project/manifest.md).
+
+## Cycles
+
+Module and import cycles are valid. Import resolution builds the module graph
+before any body is lowered, so `app::a` may import `app::b` while `app::b`
+imports `app::a`. A cycle across files is not an error and does not change
+visibility or initialization order, because Seal has no module initializers.
+
+Package cycles are a different rule: a dependency edge may not return to the
+package that introduced it. `seal` reports `E8006` with the dependency path
+before compilation starts. Split the shared code into a third package instead
+of forming a cycle.

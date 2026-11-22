@@ -1,0 +1,21 @@
+[project]
+name = "generator-example"
+language = "0.1"
+
+[package]
+name = "generator-example"
+version = "0.1.0"
+description = "A generator target whose output is compiled into the program"
+
+[targets.table]
+kind = "generator"
+entry = "root::main"
+sources = ["src/generate.sl"]
+inputs = ["data/value.txt"]
+outputs = ["generated/value.sl"]
+
+[targets.app]
+kind = "bin"
+entry = "root::main"
+sources = ["src/main.sl"]
+generated = ["table"]

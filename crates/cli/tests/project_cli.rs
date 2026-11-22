@@ -478,6 +478,44 @@ fn a_kernel_template_builds_freestanding_and_exits_42() {
 }
 
 #[test]
+fn a_compiler_template_builds_the_multi_file_pipeline() {
+    let fixture = fixture("compiler");
+    assert_success(&output(
+        seal()
+            .arg("new")
+            .arg(&fixture.root)
+            .arg("--template")
+            .arg("compiler")
+            .arg("--vcs")
+            .arg("none")
+            .arg("--yes"),
+    ));
+    let build = output(seal().arg("build").arg("--project").arg(&fixture.root));
+    assert_success(&build);
+    let run = output(seal().arg("run").arg("--project").arg(&fixture.root));
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let metadata = output(seal().arg("metadata").arg("--project").arg(&fixture.root));
+    assert_success(&metadata);
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&metadata.stdout).expect("metadata JSON");
+    let modules = metadata["packages"][0]["modules"]
+        .as_array()
+        .expect("modules");
+    assert!(
+        modules.iter().any(|module| module == "app::ast")
+            && modules.iter().any(|module| module == "app::eval")
+            && modules.iter().any(|module| module == "app::parser"),
+        "{metadata}"
+    );
+}
+
+#[test]
 fn target_commands_add_and_report_specifications() {
     let fixture = fixture("targets");
     assert_success(&output(

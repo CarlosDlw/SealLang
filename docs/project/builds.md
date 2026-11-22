@@ -242,10 +242,12 @@ sources = ["src/main.sl"]
 generated = ["table"]
 ```
 
-A target lists the generators whose outputs it compiles. The build runs the
-generator before planning that target, stores each output in the cache, and
-adds the generated files to the compile plan. Generated files are never allowed
-to overwrite a real source file.
+A target lists the generators whose outputs it compiles. Target selection adds
+those generators transitively, so a plain `seal build`, `run`, `check`, `test`,
+or `bench` runs them before planning the consumer. The build stores each output
+in the cache, exposes the files it materialized to callers, and adds them to the
+consumer's compile plan and action key. Generated files are never allowed to
+overwrite a real source file.
 
 Outputs are a contract:
 

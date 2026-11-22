@@ -66,6 +66,11 @@ pub(crate) fn check_jobs_with(
             .expect("selection returns existing targets");
         let mut options = crate::cli::build::plan_options(selection, BuildMode::Check, target);
         options.toolchain = toolchain.clone();
+        match crate::cli::build::generator_files(cli, project, job.package, &job.target, selection)
+        {
+            Ok(files) => options.extra_files = files,
+            Err(code) => return code,
+        }
         let plan = match project.compile_plan(job.package, &job.target, &options) {
             Ok(plan) => plan,
             Err(error) => return ui::error(error.code(), error.message()),

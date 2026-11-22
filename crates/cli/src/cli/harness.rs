@@ -93,19 +93,19 @@ pub(crate) fn build(
         progress,
         remote,
     };
-    let requests: Vec<JobRequest> = jobs
-        .iter()
-        .map(|job| {
-            let target = target(project, job);
-            let mut options = plan_options(selection, BuildMode::Build, target);
-            options.toolchain = toolchain.clone();
-            JobRequest {
-                package: job.package,
-                target: job.target.clone(),
-                options,
-            }
-        })
-        .collect();
+    let mut requests = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let target = target(project, job);
+        let mut options = plan_options(selection, BuildMode::Build, target);
+        options.toolchain = toolchain.clone();
+        options.extra_files =
+            crate::cli::build::generator_files(cli, project, job.package, &job.target, selection)?;
+        requests.push(JobRequest {
+            package: job.package,
+            target: job.target.clone(),
+            options,
+        });
+    }
     let report = Builder::new(project, options)
         .build(&requests)
         .map_err(|error| ui::error(error.code(), error.message()))?;

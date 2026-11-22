@@ -35,10 +35,19 @@ cargo build --release
 ```
 
 `seal new` writes a `seal.toml`, a multi-file `src/`, a lockfile, and a test
-directory. `seal build`, `seal check`, and `seal run` discover members and
-targets, build a versioned compile plan, and invoke the compiler in-process.
-`seal metadata` exposes the module and target model to editors, and
-`seal doctor` checks the linker, cache, and lockfile.
+directory. The templates are `bin`, `lib`, `workspace`, `kernel` (freestanding,
+`runtime = "none"` and a linker script), and `compiler` (AST, parser, and
+evaluator in separate modules). `seal build`, `seal check`, and `seal run`
+discover members and targets, build a versioned compile plan, and invoke the
+compiler in-process.
+
+The project layer also owns the content-addressed action cache and sandbox,
+generators and native libraries, a workspace-aware test runner, documentation
+and API snapshots, a TUF-verified registry client with vendoring/audit/SBOM, and
+an optional REAPI v2 remote cache. `seal metadata` exposes the module and target
+model to editors, and `seal doctor` checks the toolchain, linker, sandbox,
+registry, cache, and lockfile. The [project examples](examples/README.md) are
+built and executed by the acceptance suite.
 
 `sealc build` runs the whole pipeline: it type-checks, borrow-checks, lowers
 checked MIR to LLVM IR, optimizes, and links an executable. `sealc run` builds
@@ -164,13 +173,27 @@ const func scaled(value: i32) -> i32 {
 ## Command line
 
 ```text
-seal new [PATH] [--template bin|lib|workspace] [--vcs git|none] [--yes]
-seal init [--template bin|lib|workspace]
-seal build [TARGET...] [-p PACKAGE] [--workspace] [--profile NAME] [--release]
+seal new [PATH] [--template bin|lib|workspace|kernel|compiler] [--vcs git|none] [--yes]
+seal init [--template bin|lib|workspace|kernel|compiler]
+seal build [TARGET...] [-p PACKAGE] [--workspace] [--all-targets] [--release]
 seal check [TARGET...] [-p PACKAGE] [--workspace]
 seal run [TARGET...] [-p PACKAGE] [--bin NAME] [-- <ARGS>...]
+seal test [--filter TEXT] [--partition INDEX/TOTAL] [--format junit]
+seal bench [--iterations N] [--baseline FILE]
+seal doc [-p PACKAGE] [--format html|json] [--serve]
+seal api [-p PACKAGE] [--json]
+seal semver-check <VERSION|FILE>
+seal task <NAME>
+seal tree | why | graph <KIND> | affected [--run]
+seal add | remove | update | vendor | audit | sbom | search | info
+seal publish | yank | owner | login | logout
+seal target list|add|info
+toolchain list|install|pin|update|which
+seal cache stats|verify|prune|explain
+seal watch | lint | config | completions | man
 seal metadata [--no-deps]
 seal doctor [--json] [--fix]
+seal verify-repro [--keep]
 
 sealc build [OPTIONS] <INPUT>...
 sealc check [OPTIONS] <INPUT>...
@@ -267,10 +290,18 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 |----------|----------|
 | [`docs/memory-model.md`](docs/memory-model.md) | Ownership, moves, borrowing, allocation, and the decisions behind them |
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
-| [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, and public invariants |
+| [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, incremental queries, remote trust boundary, and public invariants |
 | [`docs/project/manifest.md`](docs/project/manifest.md) | Project manifests, members, targets, path dependencies, lockfile, and API exposure |
-| [`docs/project/cli.md`](docs/project/cli.md) | The `seal` commands, compile plans, metadata, doctor, and exit status |
-| [`docs/project/builds.md`](docs/project/builds.md) | The action graph, content-addressed cache, sandbox, generators, native libraries, and tasks |
+| [`docs/project/cli.md`](docs/project/cli.md) | The `seal` commands, selection, compile plans, metadata, doctor, and exit status |
+| [`docs/project/builds.md`](docs/project/builds.md) | The action graph, content-addressed cache, sandbox, generators, native libraries, tasks, and remote execution |
+| [`docs/project/dependencies.md`](docs/project/dependencies.md) | Resolution, lockfile v2, vendor, audit, SBOM, license policy, and error codes |
+| [`docs/project/registry.md`](docs/project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
+| [`docs/project/architecture.md`](docs/project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
+| [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 41-line acceptance matrix and its executable evidence |
+| [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
+| [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
+| [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
+| [`examples/README.md`](examples/README.md) | Runnable multi-module, workspace, features, generator, freestanding, and registry projects |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md) | Complete user guide to raw pointers, casts, unsafe operations, const evaluation, and provenance |
@@ -359,3 +390,26 @@ calls honest. `examples/039_const_static.sl` shows constant values and constant
 functions, `examples/040_global_data.sl` shows relocated aggregates, slices,
 strings, and trait objects, and `examples/041_global_mutation.sl` shows
 unsafe-gated mutable globals and block-scope statics.
+
+A Seal package is still one or more files, but projects are first-class. A file
+starts with `module a::b;` (or contributes to the root), imports are absolute
+and file-scoped, and `public`/`internal`/`private` control the package API.
+Files that declare one module are fragments of it, module cycles are allowed,
+and `cfg` conditions remove items, modules, and imports before they are
+resolved. `seal.toml` adds members, targets, per-edge features, profiles, path
+and registry dependencies, API exposure, generators, native libraries, and
+tasks. The same module graph feeds `seal build`, the test runner, `seal doc`,
+`seal api`, and the registry.
+
+Builds are an action graph over a content-addressed cache, split into a
+frontend archive, per-CGU objects, and a link, with a sandbox around generators,
+tasks, and native probes. A no-op build is a full cache hit, two directories
+produce identical bytes, and `seal verify-repro` proves it. Dependencies use
+PubGrub resolution with a deterministic lockfile; the registry client verifies
+TUF metadata and archive checksums, supports vendoring and offline builds, and
+publishes immutable versions with an API snapshot, CycloneDX SBOM, provenance,
+and a Merkle transparency log. Remote cache and execution use REAPI v2 and fall
+back locally on infrastructure failures. See
+[`docs/project/architecture.md`](docs/project/architecture.md) for the layer
+boundaries and [`docs/project/acceptance.md`](docs/project/acceptance.md) for
+the complete acceptance matrix.

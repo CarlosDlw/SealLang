@@ -106,12 +106,15 @@ diff without writing. A bare `update` refreshes every registry edge; naming
 packages refreshes only those. `--minimal-versions` applies to resolution, and
 `--offline` forbids every network request.
 
-`vendor` copies every locked registry package into `vendor/<name>-<version>`,
-verifies its checksum and tree digest, and writes `vendor/seal-vendor.toml`.
+`vendor` resolves the project when no lockfile exists, copies every locked
+registry package into `vendor/<name>-<version>`, verifies its checksum and tree
+digest, writes `vendor/seal-vendor.toml`, and records the resolved lockfile so a
+later `--offline` build can start from the vendor tree alone.
 `seal build --offline` uses that tree without contacting the registry. The
 global `--vendor` flag forces the same path even when the network is allowed.
-Remove the vendor tree with `--clean` or delete it together with
-`seal-vendor.toml`.
+`--clean` removes the existing tree before writing a fresh one; deleting
+`vendor/` together with `seal-vendor.toml` has the same effect on the next
+`seal vendor`.
 
 ## Lockfile v2
 

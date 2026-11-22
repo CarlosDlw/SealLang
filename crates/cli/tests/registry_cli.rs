@@ -574,6 +574,75 @@ fn a_missing_tuf_root_is_e8080() {
     assert!(String::from_utf8_lossy(&add.stderr).contains("E8080"));
 }
 
+#[test]
+fn the_registry_example_vendors_and_runs_offline() {
+    let fixture = fixture();
+    let project = fixture.root.join("project");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/registry");
+    copy_tree(&example, &project);
+
+    let registry_url = url::Url::from_directory_path(&fixture.registry)
+        .unwrap()
+        .to_string();
+    let tuf_url = url::Url::from_directory_path(fixture.registry.join("tuf"))
+        .unwrap()
+        .to_string();
+    let manifest = std::fs::read_to_string(project.join("seal.toml")).expect("example manifest");
+    let manifest = manifest
+        .replace("file:///tmp/seal-registry/tuf/", &tuf_url)
+        .replace("file:///tmp/seal-registry/", &registry_url);
+    write(&project.join("seal.toml"), manifest);
+    assert!(
+        project.join("trusted-root.json").is_file(),
+        "the fixture provides the trusted root the manifest pins"
+    );
+
+    let vendor = output(seal().arg("vendor").arg("--project").arg(&project));
+    assert_success(&vendor);
+    assert!(project.join("vendor/foo-1.2.0/seal.toml").is_file());
+
+    // The offline build and the executed program use only the vendor tree.
+    std::fs::remove_dir_all(&fixture.registry).expect("remove registry");
+    let build = output(
+        seal()
+            .arg("build")
+            .arg("--offline")
+            .arg("--vendor")
+            .arg("--project")
+            .arg(&project),
+    );
+    assert_success(&build);
+    let run = output(
+        seal()
+            .arg("run")
+            .arg("--offline")
+            .arg("--vendor")
+            .arg("--project")
+            .arg(&project),
+    );
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("create the destination directory");
+    for entry in std::fs::read_dir(from).expect("read the example directory") {
+        let entry = entry.expect("directory entry");
+        let path = entry.path();
+        let destination = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_tree(&path, &destination);
+        } else {
+            std::fs::copy(&path, &destination).expect("copy an example file");
+        }
+    }
+}
+
 // Keep the unused import available for future protocol fixtures.
 #[allow(dead_code)]
 fn _write_stderr(text: &str) {

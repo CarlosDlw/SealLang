@@ -1,0 +1,9 @@
+[package]
+name = "left"
+version = "0.1.0"
+
+[dependencies]
+common = { path = "../common", features = ["a"] }
+
+[package.api]
+expose = ["root"]

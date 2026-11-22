@@ -10,6 +10,7 @@ $ seal new demo --yes
 $ seal new library --template lib --vcs none
 $ seal new workspace --template workspace
 $ seal new kernel --template kernel --vcs none --yes
+$ seal new frontend --template compiler --vcs none --yes
 $ seal init --template bin
 ```
 
@@ -23,7 +24,10 @@ additionally runs `git init`. The `kernel` template is freestanding: it writes
 `runtime = "none"`, `panic = "trap"`, a `kernel.ld` entry script, and a
 `_start` function that exits with 42 through a generated `exit` stub. It builds
 and runs on the host without libc or the Seal runtime, which is the acceptance
-shape for bare-metal targets.
+shape for bare-metal targets. The `compiler` template writes a small multi-file
+pipeline: `src/ast.sl`, `src/parser.sl`, and `src/eval.sl` are separate modules
+and `src/main.sl` imports them by absolute path. It exits with 42 and is the
+worked example for module boundaries and package visibility.
 
 ## Building and checking
 
@@ -51,6 +55,10 @@ coverage builds; other names are rejected because the configuration is typed.
 
 The lockfile is refreshed before a build. `--locked` and `--frozen` compare it
 with the current resolution and fail with `E8008` instead of changing it.
+
+A target that declares `generated = ["name"]` pulls in that generator target.
+`build`, `run`, `check`, `test`, and `bench` materialize the declared outputs
+before planning the consumer, so no command needs a separate generator step.
 
 A repeated build is a cache hit. Actions are keyed by their input digests,
 hashed environment, and command, so changing one source rebuilds exactly the
@@ -121,7 +129,10 @@ $ seal run -p app example
 ```
 
 `run` needs exactly one executable target. A package with several binaries is
-ambiguous (`E8103`); `--bin` or an explicit target name selects one. Arguments
+ambiguous (`E8103`); `--bin` or an explicit target name selects one. Generators
+are excluded from the default executable selection, because they produce files
+rather than a program; naming one explicitly is allowed. A target that declares
+`generated` still runs its generators before the program is built. Arguments
 after `--` are forwarded unchanged, and the process exit status is `seal`'s
 status.
 
@@ -150,8 +161,10 @@ and lockfile back if the check fails. The global `--offline`,
 `--precise package@version` pins one selection and `--dry-run` leaves the
 lockfile untouched.
 
-`vendor` copies every locked registry package into `vendor/` with checksum and
-tree verification, and `--clean` recreates the tree. `audit` (also available as
+`vendor` resolves the current graph when no lockfile exists, copies every locked
+registry package into `vendor/` with checksum and tree verification, writes the
+lockfile, and verifies that the new tree loads with `--offline` before
+reporting success. `--clean` recreates the tree. `audit` (also available as
 `deny`) checks advisories, licenses, sources, yanked versions, checksums, and
 provenance; `--json` emits a report. `--require-provenance` fetches each
 registry package's provenance, SBOM, API snapshot, and transparency proof and

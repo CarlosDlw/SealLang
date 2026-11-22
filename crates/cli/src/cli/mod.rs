@@ -64,6 +64,8 @@ pub(crate) enum Template {
     Workspace,
     /// A freestanding kernel with a linker script and `_start`.
     Kernel,
+    /// A multi-file compiler pipeline with an AST, parser, and evaluator.
+    Compiler,
 }
 
 /// Version-control setup for a new project.

@@ -11,15 +11,25 @@ fn job_names(jobs: &[crate::cli::build::Job]) -> BTreeSet<&str> {
 }
 
 #[test]
-fn run_selection_contains_every_executable_target() {
+fn run_selection_contains_every_executable_target_except_generators() {
     let fixture = sample_project("run-executables");
     let project = load(&fixture);
     let jobs = select_jobs(&project, &selection(), Mode::Run).expect("run selection");
     assert_eq!(
         job_names(&jobs),
-        BTreeSet::from(["checks", "codegen", "demo", "main", "measure"]),
-        "libraries are excluded from run selection"
+        BTreeSet::from(["checks", "demo", "main", "measure"]),
+        "libraries and generators are excluded from the default run selection"
     );
+}
+
+#[test]
+fn an_explicit_target_selects_a_generator_for_run() {
+    let fixture = sample_project("run-generator");
+    let project = load(&fixture);
+    let mut selection = selection();
+    selection.targets.push("codegen".to_owned());
+    let jobs = select_jobs(&project, &selection, Mode::Run).expect("explicit generator selection");
+    assert_eq!(job_names(&jobs), BTreeSet::from(["codegen"]));
 }
 
 #[test]

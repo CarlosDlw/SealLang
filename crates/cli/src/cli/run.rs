@@ -89,6 +89,16 @@ pub(crate) fn run(cli: &Cli, root: &std::path::Path, args: &RunArgs) -> ExitCode
     }
     let mut options = plan_options(&args.selection, BuildMode::Build, target);
     options.toolchain = toolchain;
+    match crate::cli::build::generator_files(
+        cli,
+        &project,
+        job.package,
+        &job.target,
+        &args.selection,
+    ) {
+        Ok(files) => options.extra_files = files,
+        Err(code) => return code,
+    }
     let plan = match project.compile_plan(job.package, &job.target, &options) {
         Ok(plan) => plan,
         Err(error) => return ui::error(error.code(), error.message()),

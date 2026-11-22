@@ -63,6 +63,9 @@ pub(crate) fn run(cli: &Cli, root: &Path, args: &VendorArgs) -> ExitCode {
     }
     match vendor::install(root, &inputs) {
         Ok(manifest) => {
+            if let Err(error) = project.write_lockfile() {
+                return ui::error(error.code(), error.message());
+            }
             ui::status(
                 cli,
                 &format!(

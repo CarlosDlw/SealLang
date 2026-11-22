@@ -1,0 +1,5 @@
+[project]
+name = "features-example"
+language = "0.1"
+members = ["crates/*"]
+default-members = ["crates/app"]

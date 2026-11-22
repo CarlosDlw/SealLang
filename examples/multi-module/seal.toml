@@ -1,0 +1,8 @@
+[project]
+name = "multi-module"
+language = "0.1"
+
+[package]
+name = "multi-module"
+version = "0.1.0"
+description = "A package split across modules and fragments"

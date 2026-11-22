@@ -32,10 +32,11 @@ pub(crate) fn build(cli: &Cli, root: &std::path::Path, args: &BuildArgs) -> Exit
         Err(code) => return code,
     };
     report_warnings(cli, &project);
-    let jobs = match select_jobs(&project, &args.selection, Mode::Build) {
+    let mut jobs = match select_jobs(&project, &args.selection, Mode::Build) {
         Ok(jobs) => jobs,
         Err(code) => return code,
     };
+    expand_generators(&project, &mut jobs);
     let target = args
         .selection
         .target_triple
@@ -302,6 +303,102 @@ pub(crate) enum Mode {
     Bench,
 }
 
+/// Adds every generator a selected target declares to the job list.
+///
+/// A generator is an executable target that must run before the target that
+/// consumes its files. Selection includes the generators transitively so a
+/// plain `seal build` materializes them before the consumer is planned.
+pub(crate) fn expand_generators(project: &Project, jobs: &mut Vec<Job>) {
+    let mut index = 0;
+    while index < jobs.len() {
+        let package = jobs[index].package;
+        let target = jobs[index].target.clone();
+        let generators = project
+            .package(package)
+            .target(&target)
+            .map(|target| target.generated.clone())
+            .unwrap_or_default();
+        for name in generators {
+            if project.package(package).target(&name).is_some()
+                && !jobs
+                    .iter()
+                    .any(|job| job.package == package && job.target == name)
+            {
+                jobs.push(Job {
+                    package,
+                    target: name,
+                });
+            }
+        }
+        index += 1;
+    }
+}
+
+/// Builds the generators a target declares and returns their output files.
+///
+/// `run` and `check` invoke the compiler directly instead of going through the
+/// project builder, so they materialize generators first and add the files to
+/// the compile plan.
+pub(crate) fn generator_files(
+    cli: &Cli,
+    project: &Project,
+    package: usize,
+    target_name: &str,
+    selection: &Selection,
+) -> Result<Vec<PathBuf>, ExitCode> {
+    let Some(target) = project.package(package).target(target_name) else {
+        return Ok(Vec::new());
+    };
+    if target.generated.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut requests = Vec::new();
+    for name in &target.generated {
+        let Some(generator) = project.package(package).target(name) else {
+            return Err(ui::error(
+                "E8005",
+                &format!("the target `{target_name}` declares the missing generator `{name}`"),
+            ));
+        };
+        if generator.kind != TargetKind::Generator {
+            return Err(ui::error(
+                "E8005",
+                &format!("`{name}` is declared as a generated dependency but is not a generator"),
+            ));
+        }
+        let mut options = plan_options(selection, BuildMode::Build, generator);
+        options.toolchain = seal_toolchain::EMBEDDED_VERSION.to_owned();
+        requests.push(JobRequest {
+            package,
+            target: name.clone(),
+            options,
+        });
+    }
+    let options = BuildOptions {
+        jobs: std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1),
+        use_cache: true,
+        sandbox: Sandbox::detect(),
+        cache_root: None,
+        link_args: Vec::new(),
+        progress: build_progress(cli, false),
+        remote: None,
+    };
+    let report = Builder::new(project, options)
+        .build(&requests)
+        .map_err(|error| ui::error(error.code(), error.message()))?;
+    let mut files: Vec<PathBuf> = report
+        .generated
+        .into_iter()
+        .filter(|output| target.generated.iter().any(|name| name == &output.target))
+        .flat_map(|output| output.files)
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 pub(crate) fn select_jobs(
     project: &Project,
     selection: &Selection,
@@ -350,7 +447,7 @@ pub(crate) fn select_jobs(
                             | TargetKind::Staticlib
                             | TargetKind::Cdylib
                     ),
-                    Mode::Run => target.is_executable(),
+                    Mode::Run => target.is_executable() && target.kind != TargetKind::Generator,
                     Mode::Test => target.kind == TargetKind::Test,
                     Mode::Bench => target.kind == TargetKind::Bench,
                 }

@@ -1,0 +1,21 @@
+[project]
+name = "registry-example"
+language = "0.1"
+
+[package]
+name = "registry-example"
+version = "0.1.0"
+description = "A package that consumes a TUF-verified registry dependency"
+
+# The reference acceptance fixture replaces this URL with a local registry.
+# A real project points both URLs at its HTTPS registry.
+[registry]
+url = "file:///tmp/seal-registry/"
+tuf-url = "file:///tmp/seal-registry/tuf/"
+tuf-root = "trusted-root.json"
+
+[registry.policy]
+allow-licenses = ["MIT"]
+
+[dependencies]
+foo = "~1.2"

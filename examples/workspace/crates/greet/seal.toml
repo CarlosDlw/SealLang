@@ -1,0 +1,7 @@
+[package]
+name = "greet"
+version = "0.1.0"
+description = "A library consumed by the workspace application"
+
+[package.api]
+expose = ["root"]

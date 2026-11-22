@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+### Modules, projects, builds, and packages
+
+Seal now has a complete project layer. The compiler still consumes one package
+at a time, but `seal` discovers packages, resolves features and dependencies,
+builds through a cached action graph, and keeps the module graph as the single
+source of truth for compilation, tests, documentation, and publishing.
+
+#### Modules and packages
+
+- A file joins a module with a first-item `module a::b;` declaration; a file
+  without one contributes to the package root. Files that declare one module
+  are fragments, parents are implicit, and duplicate items across fragments are
+  `E2083` with both spans.
+- Imports are absolute, file-scoped, and support groups and aliases:
+  `use app::util::{double, Point as P};`. There is no relative import and no
+  glob. Unused imports are a warning; unknown modules, ambiguous names,
+  private targets, and unexposed dependency modules have stable codes.
+- `public`, `internal`, and `private` apply to items, fields, and inherent
+  methods. `[package.api] expose` chooses the reachable modules; a public
+  signature that names a private type is `E3100`–`E3105`.
+- `cfg(...)` is typed and filters items, modules, and imports before name
+  resolution. `cfg` on a field, variant, or trait method is `E2085`. Module and
+  import cycles are valid; package cycles are `E8006`.
+- Symbols are qualified by package instance and module, internals are hidden,
+  and two feature instances of one package never collide at link time.
+
+#### Projects and builds
+
+- `seal.toml` declares a root project, packages, members, targets, sources,
+  profiles, features, path/registry dependencies, API exposure, generators,
+  native libraries, and tasks. `seal new` scaffolds `bin`, `lib`, `workspace`,
+  `kernel`, and `compiler` projects; `seal init` adds a project in place.
+- Features are resolved per dependency edge and never unified. Two dependents
+  that request different sets receive two instances with their own symbols;
+  equal sets share one instance. Conflicts and the eight-variant cap are `E8007`.
+- The build is an action graph over a content-addressed cache: frontend archive,
+  per-CGU objects and link; generators, native probes, and tasks run in a
+  sandbox. A repeated build is a full cache hit, corrupt entries are discarded,
+  and `--jobs` does not change the artifact bytes.
+- `seal verify-repro` builds a self-contained project in two directories and
+  compares every artifact byte for byte. Paths are remapped, archives are
+  ordered, and lockfiles are deterministic and relative.
+- Pinned toolchains and target specifications are checksum-verified. A
+  `runtime = "none"` target links `_start` without the Seal runtime and traps on
+  panic; cross targets use the declared linker and sysroot or fail as `E8062`.
+- Incremental queries, persistent sessions, and `seal watch` reuse only values
+  whose inputs and fingerprints are unchanged.
+
+#### Registry, publication, and remote execution
+
+- `seal add/remove/update` edit manifests and write lockfile v2; `--precise`,
+  `--dry-run`, `--locked`, and `--frozen` are supported. Resolution is PubGrub
+  with deterministic ordering and a step limit.
+- The client verifies TUF root, targets, snapshot, and timestamp before using
+  any byte, then verifies archive length and SHA-256. Rollback, expiry, and
+  tampering are `E8080`. `seal vendor` writes a verified offline tree and the
+  lockfile; `--offline`/`--frozen` build from it without network access.
+- `seal audit` checks advisories, licenses, sources, yanked versions, and
+  provenance; `seal sbom` writes CycloneDX 1.5. `seal publish` is immutable and
+  attaches an API snapshot, SBOM, and DSSE/in-toto provenance. Namespaces,
+  tokens, yank, and an RFC 6962 transparency log are enforced by the reference
+  server.
+- `seal --remote` adds a REAPI v2 cache and optional remote execution with
+  digest verification, capability checks, and local fallback. `--require-remote`
+  makes any remote failure fatal.
+
+#### Tooling
+
+- Workspace selection (`-p`, `--workspace`, `--exclude`, `default-members`),
+  `tree`, `why`, `graph` (packages, targets, modules, actions), and `affected`.
+- `seal test` discovers unit, integration, and benchmark targets and supports
+  filters, sharding, retries, timeouts, stress runs, JSON, and JUnit. `seal bench`
+  reports wall time and compares baselines.
+- `seal doc`, `seal api`, and `seal semver-check` share one public-API snapshot.
+  `seal metadata` is the versioned editor/CI model; `seal doctor` reports the
+  toolchain, target, linker, sandbox, registry, manifest, cache, lockfile, and
+  disk state.
+
+#### Migration
+
+`sealc` and single-file programs are unchanged. A project adds a `seal.toml`
+and either moves `src/main.sl`/`src/lib.sl` into place or writes the manifest by
+hand; module declarations and imports are kept verbatim. The complete mapping,
+CI changes, and compatibility guarantees are in
+[`docs/migration.md`](docs/migration.md). The 41-line acceptance matrix and its
+executable evidence are in
+[`docs/project/acceptance.md`](docs/project/acceptance.md).
+
 ### First-class functions and closures
 
 Functions are now values, and closures are part of the language:

@@ -14,8 +14,24 @@ unsafe operations.
 | [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, `unsafe`, constants, provenance, diagnostics, and patterns |
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
 | [`first-class-functions.md`](first-class-functions.md) | `func` and `unsafe func` types, closures and capture, `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop and borrow rules, ABI, diagnostics, and limits |
-| [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, and the `--plan` driver |
+| [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, `cfg` filtering, cycles, and the `--plan` driver |
 | [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
+
+## Project guides
+
+The language guide stops at one package. These chapters cover the project layer
+that compiles, tests, documents, and publishes packages:
+
+| Chapter | Covers |
+|---------|--------|
+| [`../project/manifest.md`](../project/manifest.md) | `seal.toml`, members, targets, sources, profiles, features, dependencies, lockfile, and API exposure |
+| [`../project/cli.md`](../project/cli.md) | Every `seal` command, selection rules, metadata, doctor, and exit status |
+| [`../project/builds.md`](../project/builds.md) | Action graph, content-addressed cache, sandbox, generators, native libraries, tasks, and remote execution |
+| [`../project/dependencies.md`](../project/dependencies.md) | Resolution, lockfile v2, vendor, audit, SBOM, and license policy |
+| [`../project/registry.md`](../project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
+| [`../project/architecture.md`](../project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
+| [`../project/acceptance.md`](../project/acceptance.md) | The acceptance matrix and the command that proves each line |
+| [`../migration.md`](../migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
 
 ## Reading conventions
 
@@ -35,5 +51,6 @@ unsafe operations.
 ## Example programs
 
 Every chapter points at a runnable file under [`examples/`](../../examples/).
-The acceptance suite compiles each example at `-O0` and `-O2`, runs it, and
-asserts the documented exit status.
+The acceptance suite compiles each numbered example at `-O0` and `-O2`, runs
+it, and asserts the documented exit status. Project examples live in
+directories next to them and are built and executed by the same suite.

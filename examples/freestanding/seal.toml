@@ -1,0 +1,17 @@
+[project]
+name = "freestanding-example"
+language = "0.1"
+
+[package]
+name = "freestanding-example"
+version = "0.1.0"
+description = "A target that links without the Seal runtime or libc"
+
+[targets.kernel]
+kind = "bin"
+entry = "root::_start"
+runtime = "none"
+panic = "trap"
+linker = "cc"
+linker-script = "kernel.ld"
+link-args = ["-no-pie"]

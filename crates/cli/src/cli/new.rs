@@ -87,6 +87,7 @@ fn template_name(template: Template) -> &'static str {
         Template::Lib => "library",
         Template::Workspace => "workspace",
         Template::Kernel => "freestanding kernel",
+        Template::Compiler => "compiler",
     }
 }
 
@@ -132,6 +133,38 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
             )?;
         }
         Template::Workspace => return scaffold_workspace(root, name),
+        Template::Compiler => {
+            write(
+                root.join("seal.toml"),
+                &format!(
+                    "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n"
+                ),
+            )?;
+            write(
+                src.join("main.sl"),
+                "use app::ast::Program;\nuse app::eval::evaluate;\n\
+                 use app::parser::parse;\n\n\
+                 func main() -> i32 {\n  let program = parse(40, 2);\n  evaluate(&program)\n}\n",
+            )?;
+            write(
+                src.join("ast.sl"),
+                "module app::ast;\n\n\
+                 internal struct Program {\n    internal left: i32,\n    internal right: i32,\n}\n",
+            )?;
+            write(
+                src.join("parser.sl"),
+                "module app::parser;\n\nuse app::ast::Program;\n\n\
+                 internal func parse(left: i32, right: i32) -> Program {\n  \
+                 Program { left: left, right: right }\n}\n",
+            )?;
+            write(
+                src.join("eval.sl"),
+                "module app::eval;\n\nuse app::ast::Program;\n\n\
+                 internal func evaluate(program: *Program) -> i32 {\n  \
+                 (*program).left + (*program).right\n}\n",
+            )?;
+        }
         Template::Kernel => {
             write(
                 root.join("seal.toml"),
