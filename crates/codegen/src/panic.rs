@@ -8,7 +8,8 @@
 
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::types::BasicMetadataTypeEnum;
-use inkwell::values::{BasicMetadataValueEnum, FunctionValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
+use seal_mir::Operand;
 use seal_span::Span;
 
 use crate::error::CodegenError;
@@ -33,8 +34,53 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             })?;
             return Ok(());
         }
-        let (file, line, column) = self.source_location(span);
         let (message_data, message_length) = self.constants.string_global(message)?;
+        self.panic_with(span, message_data, message_length)
+    }
+
+    /// Reports a computed `*str` message at `span` and terminates the block.
+    ///
+    /// The runtime receives the fat pointer's data and length exactly like a
+    /// literal message, so both panic forms share one reporting contract.
+    pub(crate) fn panic_value_at(&self, span: Span, message: &Operand) -> Result<(), CodegenError> {
+        if self.trap_panics {
+            let _ = span;
+            self.builder.build_unreachable().map_err(|error| {
+                CodegenError::internal(format!("cannot emit a panic trap: {error:?}"))
+            })?;
+            return Ok(());
+        }
+        let value = self.load_operand(message)?;
+        let BasicValueEnum::StructValue(fat) = value else {
+            return Err(CodegenError::internal(
+                "a panic message is not a `*str` fat pointer",
+            ));
+        };
+        let data = self
+            .build(
+                self.builder
+                    .build_extract_value(fat, 0, "panic.message.data"),
+                "panic message data",
+            )?
+            .into_pointer_value();
+        let length = self
+            .build(
+                self.builder
+                    .build_extract_value(fat, 1, "panic.message.length"),
+                "panic message length",
+            )?
+            .into_int_value();
+        self.panic_with(span, data, length)
+    }
+
+    /// Calls the runtime panic reporter and leaves the block terminated.
+    fn panic_with(
+        &self,
+        span: Span,
+        message_data: inkwell::values::PointerValue<'ctx>,
+        message_length: inkwell::values::IntValue<'ctx>,
+    ) -> Result<(), CodegenError> {
+        let (file, line, column) = self.source_location(span);
         let (file_data, file_length) = self.constants.string_global(&file)?;
         let function = self.panic_function()?;
         let line = self.context.i32_type().const_int(u64::from(line), false);

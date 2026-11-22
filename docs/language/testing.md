@@ -98,7 +98,7 @@ cfg(test) func fixture() -> i32 {
 builds. The same rule holds for `cfg(bench)`. Use an explicit condition when a
 helper must exist in the harness but is not itself an entry point.
 
-## 3. The `assert` intrinsic
+## 3. Assertion intrinsics
 
 `assert` is a built-in expression with one or two arguments:
 
@@ -130,8 +130,32 @@ FAIL valid_range (10 ms)
      panic: the value must be positive at src/lib.sl:4:3
 ```
 
-`assert` is available only in `cfg(test)` and `cfg(bench)` builds. Using it in a
-normal build is `E8105`:
+### Equality assertions
+
+`assert_eq` and `assert_ne` are the equality forms of the same intrinsic:
+
+```seal
+test func arithmetic_works() {
+  assert_eq(2 + 2, 4);
+  assert_ne(2 + 2, 5, "addition changed");
+}
+```
+
+Each takes two operands and an optional string-literal message. The operands
+follow the ordinary `==` and `!=` rules, must have the same supported type, and
+are read without being moved. On success the call produces `()`. On failure it
+reports the call site with the message, or a default naming the failing
+operator:
+
+```text
+panic: assertion `left == right` failed at src/lib.sl:2:3
+```
+
+The arity is two or three (`E3008`), and a non-literal message is `E8106`.
+There is no debug formatting of the operands, so a failure never allocates.
+
+`assert`, `assert_eq`, and `assert_ne` are available only in `cfg(test)` and
+`cfg(bench)` builds. Using one in a normal build is `E8105`:
 
 ```seal
 func production_check() {
@@ -140,12 +164,12 @@ func production_check() {
 ```
 
 If a helper is called by tests but is also compiled normally, the helper cannot
-use `assert`. Either keep the helper test-only with `cfg(test)`, or write an
+use an assertion. Either keep the helper test-only with `cfg(test)`, or write an
 ordinary `if` in the production path.
 
-`assert` is a built-in name only when no user item or local binding shadows it.
-A user function named `assert` is called normally, exactly like a user function
-named `drop` or `len`.
+Each assertion name is a built-in only when no user item or local binding
+shadows it. A user function named `assert_eq` is called normally, exactly like a
+user function named `assert`, `drop`, or `len`.
 
 ## 4. Entry-point contract
 

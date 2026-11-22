@@ -71,6 +71,8 @@ pub(crate) struct FunctionRequest<'a, 'ctx> {
     pub(crate) scope: Option<DISubprogram<'ctx>>,
     /// Whether panics trap instead of calling the runtime.
     pub(crate) trap_panics: bool,
+    /// Whether the target links the embedded runtime archive.
+    pub(crate) runtime_available: bool,
 }
 
 /// Lowers a single MIR body.
@@ -97,6 +99,7 @@ pub(crate) struct FunctionLowerer<'a, 'ctx> {
     pub(crate) debug: Option<&'a DebugContext<'a, 'ctx>>,
     pub(crate) scope: Option<DISubprogram<'ctx>>,
     pub(crate) trap_panics: bool,
+    pub(crate) runtime_available: bool,
     pub(crate) allocas: Vec<PointerValue<'ctx>>,
     pub(crate) blocks: Vec<BasicBlock<'ctx>>,
     entry: BasicBlock<'ctx>,
@@ -138,6 +141,7 @@ impl<'a, 'ctx> FunctionRequest<'a, 'ctx> {
             debug: self.debug,
             scope: self.scope,
             trap_panics: self.trap_panics,
+            runtime_available: self.runtime_available,
             allocas: Vec::with_capacity(self.body.locals.len()),
             blocks,
             entry,
@@ -388,6 +392,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
             }
             TerminatorKind::Panic { message } => {
                 self.panic_at(terminator.span, message)?;
+            }
+            TerminatorKind::PanicValue { message } => {
+                self.panic_value_at(terminator.span, message)?;
+            }
+            TerminatorKind::Exit { code } => {
+                self.exit_with(code)?;
             }
             TerminatorKind::Unreachable => {
                 self.build(self.builder.build_unreachable(), "unreachable")?;

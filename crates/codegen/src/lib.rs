@@ -72,6 +72,7 @@ mod drop_glue;
 mod entry;
 mod equality;
 mod error;
+mod exit;
 mod export;
 mod extern_decl;
 mod function;
@@ -92,6 +93,7 @@ mod relocation;
 mod runtime;
 mod rvalue;
 mod trait_object;
+mod type_info;
 mod types;
 mod vtable;
 

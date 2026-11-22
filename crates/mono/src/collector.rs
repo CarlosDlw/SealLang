@@ -508,8 +508,20 @@ impl Collector<'_> {
                     }
                 }
             }
-            if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
-                self.scan_operand(discriminant, block.terminator.span);
+            match &block.terminator.kind {
+                TerminatorKind::SwitchInt { discriminant, .. } => {
+                    self.scan_operand(discriminant, block.terminator.span);
+                }
+                TerminatorKind::PanicValue { message } => {
+                    self.scan_operand(message, block.terminator.span);
+                }
+                TerminatorKind::Exit { code } => {
+                    self.scan_operand(code, block.terminator.span);
+                }
+                TerminatorKind::Goto(_)
+                | TerminatorKind::Return
+                | TerminatorKind::Panic { .. }
+                | TerminatorKind::Unreachable => {}
             }
         }
     }
@@ -533,6 +545,11 @@ impl Collector<'_> {
             }
             Rvalue::Discriminant(place) => self.scan_place(place, span),
             Rvalue::Len { slice } => self.scan_operand(slice, span),
+            Rvalue::TypeInfo { arg, .. } => {
+                if let Some(arg) = arg {
+                    self.scan_operand(arg, span);
+                }
+            }
             Rvalue::Binary { lhs, rhs, .. } => {
                 self.scan_operand(lhs, span);
                 self.scan_operand(rhs, span);

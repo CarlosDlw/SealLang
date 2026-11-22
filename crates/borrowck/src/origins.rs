@@ -437,7 +437,9 @@ fn transfer(
                 state.clear(place);
             }
         }
-        Rvalue::Len { .. } | Rvalue::Discriminant(_) => state.clear(place),
+        Rvalue::Len { .. } | Rvalue::Discriminant(_) | Rvalue::TypeInfo { .. } => {
+            state.clear(place)
+        }
         Rvalue::Cast { operand, .. } => {
             // A pointer cast keeps the pointee it came from: `&value as *raw T`
             // still names `value`, so a loan through it conflicts with writes to

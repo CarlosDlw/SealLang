@@ -570,6 +570,11 @@ fn moved_places(rvalue: &Rvalue) -> Vec<&Place> {
         }
         Rvalue::Repeat { value, .. } => add_move(value, &mut places),
         Rvalue::Len { slice } => add_move(slice, &mut places),
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                add_move(arg, &mut places);
+            }
+        }
         Rvalue::MakeTraitObject { source, .. } => add_move(source, &mut places),
         Rvalue::TraitObjectReborrow { source, .. } => add_move(source, &mut places),
         Rvalue::DynamicCall { receiver, args, .. } => {

@@ -19,7 +19,8 @@ behind unsafe operations.
 | [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, `cfg` filtering, cycles, and the `--plan` driver |
 | [`prelude.md`](prelude.md) | Plan-selected preludes, injected item exports, lookup precedence, opt-out, diagnostics, and versioning |
 | [`stdlib.md`](stdlib.md) | `core`/`std`, `Option`/`Result`, canonical paths, re-exports, moves, and the core/std preludes |
-| [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
+| [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`/`assert_eq`/`assert_ne`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
+| [`builtins.md`](builtins.md) | `panic`, `exit`, equality assertions, type-name and type-of queries, size and alignment queries, compile-time evaluation, and shadowing |
 
 ## Project guides
 

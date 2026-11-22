@@ -54,6 +54,13 @@ SEAL_NORETURN SEAL_EXPORT void seal_panic(const uint8_t *message,
                                           int32_t column);
 
 /*
+ * Terminates the process with `code`. The function never returns and never
+ * unwinds. Destructors and cleanup that must run before exiting are the
+ * program's responsibility.
+ */
+SEAL_NORETURN SEAL_EXPORT void seal_exit(int32_t code);
+
+/*
  * Allocates `size` bytes aligned to `align`, which must be a power of two.
  * Returns NULL for invalid alignment, layout overflow, or allocation failure.
  * A zero size returns a non-null dangling pointer equal to `align` without

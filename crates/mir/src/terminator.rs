@@ -41,6 +41,20 @@ pub enum TerminatorKind {
         /// The message written to standard error.
         message: String,
     },
+    /// Stops the program with a runtime panic whose message is a `*str` value.
+    ///
+    /// Unlike [`Self::Panic`], the message is computed by the program, so the
+    /// value is evaluated before the terminator runs. The source location is
+    /// still supplied by the terminator's span.
+    PanicValue {
+        /// The `*str` message written to standard error.
+        message: Operand,
+    },
+    /// Terminates the process with an `i32` status.
+    Exit {
+        /// The process status.
+        code: Operand,
+    },
     /// Control never reaches this point.
     Unreachable,
 }
@@ -57,7 +71,11 @@ impl TerminatorKind {
                 .map(|target| target.target)
                 .chain(std::iter::once(*otherwise))
                 .collect(),
-            Self::Return | Self::Panic { .. } | Self::Unreachable => Vec::new(),
+            Self::Return
+            | Self::Panic { .. }
+            | Self::PanicValue { .. }
+            | Self::Exit { .. }
+            | Self::Unreachable => Vec::new(),
         }
     }
 }

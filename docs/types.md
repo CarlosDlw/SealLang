@@ -58,6 +58,10 @@ reference follow the target pointer width — 4 bytes on a 32-bit target — whi
 | Inference variable | internal | unknown | unknown | no | no | no |
 | Type parameter | `T` | after instantiation | after instantiation | by bound | yes | no |
 
+The type introspection built-ins `type_name`, `type_of`, `size_of`, and
+`align_of` report these names, sizes, and alignments; their rules are in
+[`language/builtins.md`](language/builtins.md).
+
 The C scalar names described under [C scalar types](#c-scalar-types) are
 transparent aliases of the integer and float types above. Their width and
 signedness come from the target's C ABI, so `c_int` is `i32` everywhere and

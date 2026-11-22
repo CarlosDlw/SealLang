@@ -312,6 +312,7 @@ pub(crate) fn build_module<'ctx>(
             debug: debug.as_ref(),
             scope,
             trap_panics: false,
+            runtime_available: true,
         }
         .lower()
         .expect("a body lowers");

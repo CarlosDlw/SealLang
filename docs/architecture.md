@@ -30,9 +30,9 @@ allowed to depend only on crates below it in the list.
 | `seal-methods` | The closed compiler-owned intrinsic method catalog: owners, receiver modes, signatures, return kinds, unsafe gates, and semantic operations shared by type checking, MIR, and code generation, including the raw pointer methods. |
 | `seal-layout` | Deterministic struct, enum, tuple, array, and vtable layout: field offsets, alignment, tag and payload layout, vtable header and method slots, and size derived from `TyCtxt` types. |
 | `seal-def` | Definition identities: `DefId`, kind, name and spans, owner, and binding mutability. |
-| `seal-hir` | AST lowering and name resolution: one body per function, trait default method, constant, or static, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, and match patterns, `E2xxx` diagnostics. |
-| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, default trait method resolution, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
-| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, variant, and raw pointer projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric and pointer casts, raw intrinsic calls, bounds checks, match dispatch, terminators, and structural plus type validation. |
+| `seal-hir` | AST lowering and name resolution: one body per function, trait default method, constant, or static, inherent impl and receiver registries, trait and impl coherence, default-method lookup, resolved paths, places, match patterns, and the control-flow and introspection built-ins, `E2xxx` diagnostics. |
+| `seal-typeck` | Type and initialization checking: expression/local/signature types, generic argument inference and bounds, default trait method resolution, array and slice bounds, array-to-slice and trait-object coercion, object safety, address-space limits, explicit numeric casts, literal ranges, built-in divergence and type queries, mutability, match guards and exhaustiveness, `E3xxx` diagnostics. |
+| `seal-mir` | Control-flow-graph lowering of checked HIR: locals, blocks, statements, field, tuple, index, variant, and raw pointer projections, instantiated aggregates, direct, symbolic, and trait-object call targets, trait-object construction and reborrow, numeric and pointer casts, raw intrinsic calls, bounds checks, match dispatch, type-information values, panic/exit terminators, and structural plus type validation. |
 | `seal-borrowck` | Liveness, may-hold loan, and initialization dataflow over MIR: shared aliasing, moves, tuple and array element paths, cast operand reads, raw pointer origins, escaping references, global effects including raw accesses, `E5xxx` diagnostics. |
 | `seal-mono` | Monomorphization: reachable-instance collection from non-generic function roots, specialization of MIR types, cast endpoints, and aggregate arguments, resolution of trait calls to impl methods or default bodies, vtable collection from code and constant values, drop glue collection per concrete type (destructor instance and children), reachable static and const-allocation collection, recursion, instance, vtable, and glue limits, stable instance and type fingerprints, and global validation (`E7xxx`). |
 | `seal-codegen` | LLVM lowering of checked MIR, saturating numeric conversions, raw pointer loads/stores/arithmetic and copy intrinsics, one internal drop glue function per concrete type (vtable slot 0 points at it), vtable globals and indirect dispatch, DWARF emission, optimization, and object/assembly/executable artifacts with the embedded runtime (`E6xxx`). |
@@ -578,8 +578,10 @@ vtable, heap object, or runtime lookup.
 56. **Arithmetic cannot silently invoke LLVM undefined behavior.** Integer
     division and remainder panic through the runtime on a zero divisor and on
     the signed minimum divided by `-1`, reporting the failing expression's
-    source location and exiting with status 101; shift amounts are masked to the
-    operand width.
+    source location and exiting with status 101. The `panic(message)` built-in
+    uses the same reporter with a computed `*str`, and `exit(code)` uses the
+    runtime's direct process-exit primitive; both are terminators with no
+    successors. Shift amounts are masked to the operand width.
     Integer arithmetic wraps, floats follow IEEE, and no overflow check is
     inserted.
 57. **Artifacts are all-or-nothing.** Object and assembly output are written
@@ -593,10 +595,11 @@ vtable, heap object, or runtime lookup.
     runtime/target mismatch without `--runtime-archive` is `E6003`. Linker
     arguments adapt to `cl`/`clang-cl`, `link`, and GNU-style toolchains.
 59. **The runtime is layered and self-contained.** The embedded C11 runtime has
-    an allocation-free core (I/O and panic) and a separate heap layer. The core
-    takes no locks and uses no stdio, locale, or `atexit` handlers; writes
-    transfer exactly the requested bytes, retrying `EINTR` and partial writes;
-    panics never unwind and always terminate with status 101. The heap exposes
+    an allocation-free core (I/O, panic, and exit) and a separate heap layer.
+    The core takes no locks and uses no stdio, locale, or `atexit` handlers;
+    writes transfer exactly the requested bytes, retrying `EINTR` and partial
+    writes; panics never unwind and always terminate with status 101; `exit`
+    terminates with the requested status. The heap exposes
     `seal_alloc`, `seal_alloc_zeroed`, `seal_realloc`, and `seal_dealloc`.
     Allocation and reallocation validate alignment, return `NULL` on invalid
     layout, overflow, or allocation failure, and treat a zero size as a

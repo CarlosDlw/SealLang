@@ -130,6 +130,24 @@ impl<'a> Interpreter<'a> {
                         self.error(EvalErrorKind::Panic(message.clone()), basic.terminator.span)
                     );
                 }
+                TerminatorKind::PanicValue { message } => {
+                    let message = self.read_operand(message, basic.terminator.span)?;
+                    let text = match message {
+                        ConstValue::Str { value, .. } => self.interner.resolve(value).to_owned(),
+                        _ => "panic".to_owned(),
+                    };
+                    return Err(self.error(EvalErrorKind::Panic(text), basic.terminator.span));
+                }
+                TerminatorKind::Exit { code } => {
+                    let code = self.read_operand(code, basic.terminator.span)?;
+                    let code = self.as_u128(&code, basic.terminator.span)?;
+                    return Err(self.error(
+                        EvalErrorKind::Panic(format!(
+                            "exit({code}) called during constant evaluation"
+                        )),
+                        basic.terminator.span,
+                    ));
+                }
                 TerminatorKind::Unreachable => {
                     return Err(self.error(
                         EvalErrorKind::Panic("entered unreachable code".to_owned()),

@@ -14,7 +14,7 @@ use seal_index::IndexVec;
 use seal_layout::{Layout, LayoutCtxt};
 use seal_mir::{
     AggregateKind, Body, BodyKind, Constant, Operand, Place, PlaceRoot, Projection, Rvalue,
-    StatementKind, TerminatorKind, UnOp,
+    StatementKind, TerminatorKind, TypeInfoKind, UnOp,
 };
 use seal_span::Span;
 use seal_symbol::Interner;

@@ -68,7 +68,20 @@ fn runner_fixture(name: &str) -> Fixture {
          \n\
          test func private_access() { assert(hidden() == 7); }\n\
          \n\
-         test func failing_test() { assert(double(2) == 5, \"on purpose\"); }\n",
+         test func failing_test() { assert(double(2) == 5, \"on purpose\"); }\n\
+         \n\
+         test func equality_assertions_pass() {\n\
+         \x20 assert_eq(double(2), 4);\n\
+         \x20 assert_ne(double(2), 5);\n\
+         }\n\
+         \n\
+         test func equality_assertion_fails() {\n\
+         \x20 assert_ne(double(2), 4, \"equality on purpose\");\n\
+         }\n\
+         \n\
+         test func equality_default_message_fails() {\n\
+         \x20 assert_eq(double(2), 5);\n\
+         }\n",
     );
     write(
         &fixture.root.join("tests/integration.sl"),
@@ -235,6 +248,46 @@ fn json_and_junit_reports_are_machine_readable() {
 }
 
 #[test]
+fn equality_assertions_pass_and_fail_with_the_process_status() {
+    let fixture = runner_fixture("equality");
+    let passing = output(
+        seal()
+            .arg("test")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--filter")
+            .arg("equality_assertions_pass"),
+    );
+    assert_success(&passing);
+    let stdout = String::from_utf8_lossy(&passing.stdout);
+    assert!(stdout.contains("PASS equality_assertions_pass"), "{stdout}");
+
+    let failing = output(
+        seal()
+            .arg("test")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--filter")
+            .arg("equality_assertion_fails"),
+    );
+    assert_eq!(failing.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&failing.stdout);
+    assert!(stdout.contains("FAIL equality_assertion_fails"), "{stdout}");
+    assert!(stdout.contains("equality on purpose"), "{stdout}");
+
+    let default_message = output(
+        seal()
+            .arg("test")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--filter")
+            .arg("equality_default_message_fails"),
+    );
+    assert_eq!(default_message.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&default_message.stdout).contains("`left == right` failed"));
+}
+
+#[test]
 fn assert_is_scoped_to_test_builds_and_requires_a_literal_message() {
     let fixture = fixture("assert");
     write(
@@ -251,7 +304,15 @@ fn assert_is_scoped_to_test_builds_and_requires_a_literal_message() {
 
     write(
         &fixture.root.join("src/lib.sl"),
-        "public func value() -> i32 { 0 }\n\ntest func bad_message() { assert(true, 1); }\n",
+        "public func value() -> i32 { assert_eq(1, 1); 0 }\n",
+    );
+    let equality_outside = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_eq!(equality_outside.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&equality_outside.stderr).contains("E8105"));
+
+    write(
+        &fixture.root.join("src/lib.sl"),
+        "public func value() -> i32 { 0 }\n\ntest func bad_message() { assert(true, 1); }\n\ntest func bad_equality_message() { assert_eq(1, 1, 1); }\n",
     );
     let message = output(
         seal()

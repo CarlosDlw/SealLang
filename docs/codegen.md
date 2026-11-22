@@ -303,7 +303,11 @@ The ABI is defined by the language, not by a C header:
   grow the stack on every iteration.
 - `*str` is the fat pointer `{ data, length }`. A literal becomes a private,
   unnamed constant array plus its byte length; no run-time terminator scan is
-  needed.
+  needed. `type_name::<T>()` and `type_of(value)` use the same cache: the
+  displayed type name becomes a private string constant and the result is its
+  fat pointer. `size_of::<T>()` and `align_of::<T>()` read the target's
+  `LayoutCtxt` and emit a `usize` constant, so they agree with every aggregate
+  and allocation layout.
 - A `*raw T` or `*raw mut T` has the same one-word representation as a
   reference when the pointee is sized, and the same two-word `{ data, metadata }`
   representation when the pointee is `str`, a slice, or a trait object. The kind
@@ -584,7 +588,14 @@ locale, or `atexit` handlers:
   `panic: <message> at <file>:<line>:<column>\n` to standard error and
   terminates with status 101, without flushing or unwinding. The location is
   the span of the failing expression, not the enclosing statement. Generated
-  calls are followed by `unreachable`.
+  calls are followed by `unreachable`. Both the static panic terminator and the
+  `panic(message)` built-in call this reporter; the built-in extracts the data
+  and length words from its `*str` operand first.
+- `seal_exit` is `noreturn`, `nounwind`, and `cold`. It terminates with the
+  supplied `i32` status through the platform's direct process-exit primitive,
+  without flushing or running `atexit` handlers. A freestanding target has no
+  runtime archive, so `exit(code)` calls the `exit` implementation supplied by
+  the freestanding link instead.
 - The archive is linked after the generated object and only into executables;
   unused members do not enter the output. Object and assembly emission never
   need the runtime.

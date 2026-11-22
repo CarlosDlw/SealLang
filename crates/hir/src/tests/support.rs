@@ -969,6 +969,14 @@ impl Reachability<'_> {
                 );
             }
             ExprKind::Assert { condition, .. } => self.check_expr(condition),
+            ExprKind::AssertEq { lhs, rhs, .. } => {
+                self.check_expr(lhs);
+                self.check_expr(rhs);
+            }
+            ExprKind::Panic { message } => self.check_expr(message),
+            ExprKind::Exit { code } => self.check_expr(code),
+            ExprKind::TypeOf { operand } => self.check_expr(operand),
+            ExprKind::TypeName { .. } | ExprKind::SizeOf { .. } | ExprKind::AlignOf { .. } => {}
             ExprKind::Path { args, .. } => self.check_optional_substs(args),
             ExprKind::Lit(_) | ExprKind::Error => {}
         }

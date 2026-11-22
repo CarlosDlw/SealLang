@@ -124,6 +124,35 @@ impl<'a> Interpreter<'a> {
                     ty: destination,
                 })
             }
+            Rvalue::TypeInfo { query, ty, arg, .. } => {
+                if let Some(arg) = arg {
+                    self.read_operand(arg, span)?;
+                }
+                match query {
+                    TypeInfoKind::Name => {
+                        let name = self.tcx.display_with(*ty, self.interner).to_string();
+                        let value = self.interner.intern(&name);
+                        Ok(ConstValue::Str {
+                            value,
+                            ty: destination,
+                        })
+                    }
+                    TypeInfoKind::Size | TypeInfoKind::Align => {
+                        let layout = self.layout.layout_of(*ty).map_err(|error| {
+                            self.error(EvalErrorKind::Internal(error.to_string()), span)
+                        })?;
+                        let bits = if matches!(query, TypeInfoKind::Size) {
+                            layout.size()
+                        } else {
+                            layout.align()
+                        };
+                        Ok(ConstValue::Int {
+                            bits: u128::from(bits),
+                            ty: destination,
+                        })
+                    }
+                }
+            }
             Rvalue::Binary { op, lhs, rhs, .. } => {
                 let lhs = self.read_operand(lhs, span)?;
                 let rhs = self.read_operand(rhs, span)?;

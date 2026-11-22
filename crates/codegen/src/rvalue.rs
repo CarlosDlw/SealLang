@@ -41,6 +41,12 @@ impl<'a, 'ctx> FunctionLowerer<'a, 'ctx> {
                 ..
             } => self.slice_ref(base, start.as_ref(), end.as_ref(), *ty),
             Rvalue::Len { slice } => self.slice_len(slice),
+            Rvalue::TypeInfo {
+                query,
+                ty,
+                result_ty,
+                ..
+            } => self.type_info(*query, *ty, *result_ty),
             Rvalue::Binary { op, lhs, rhs, span } => {
                 let ty = self.operand_type(lhs)?;
                 let lhs = self.load_operand(lhs)?;

@@ -174,6 +174,11 @@ fn transfer(context: &Context<'_>, statement: &Statement, state: &mut InitPaths<
         }
         Rvalue::Repeat { value, .. } => move_operand(value, state),
         Rvalue::Len { slice } => move_operand(slice, state),
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                move_operand(arg, state);
+            }
+        }
         Rvalue::MakeTraitObject { source, .. } => move_operand(source, state),
         Rvalue::TraitObjectReborrow { source, .. } => move_operand(source, state),
         Rvalue::DynamicCall { receiver, args, .. } => {

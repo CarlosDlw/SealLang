@@ -83,6 +83,11 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, uses: &mut LocalSet) {
             }
         }
         Rvalue::Len { slice } => operand_uses(slice, uses),
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                operand_uses(arg, uses);
+            }
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             operand_uses(lhs, uses);
             operand_uses(rhs, uses);
@@ -145,6 +150,8 @@ fn place_uses(place: &seal_mir::Place, uses: &mut LocalSet) {
 pub(crate) fn terminator_uses(kind: &TerminatorKind, uses: &mut LocalSet) {
     match kind {
         TerminatorKind::SwitchInt { discriminant, .. } => operand_uses(discriminant, uses),
+        TerminatorKind::PanicValue { message } => operand_uses(message, uses),
+        TerminatorKind::Exit { code } => operand_uses(code, uses),
         TerminatorKind::Return => {
             uses.insert(Body::return_local());
         }

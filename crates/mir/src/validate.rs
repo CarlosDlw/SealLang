@@ -616,6 +616,8 @@ pub(crate) fn validate_body(body: &Body, hir: Option<&Hir>) -> Result<(), Valida
                 }
                 check_target(body, block, *otherwise)?;
             }
+            TerminatorKind::PanicValue { message } => check_operand(body, block, message, hir)?,
+            TerminatorKind::Exit { code } => check_operand(body, block, code, hir)?,
             TerminatorKind::Return | TerminatorKind::Panic { .. } | TerminatorKind::Unreachable => {
             }
         }
@@ -1161,6 +1163,24 @@ fn check_rvalue(
             Ok(())
         }
         Rvalue::Len { slice } => check_operand(body, block, slice, hir),
+        Rvalue::TypeInfo {
+            ty, arg, result_ty, ..
+        } => {
+            if let Some(hir) = hir {
+                if contains_infer(hir, *ty) || contains_infer(hir, *result_ty) {
+                    return Err(ValidationError::InferredRvalueType { block });
+                }
+            }
+            if let Some(arg) = arg {
+                check_operand(body, block, arg, hir)?;
+                if let Some(hir) = hir
+                    && operand_ty(hir, body, arg).is_some_and(|operand_ty| operand_ty != *ty)
+                {
+                    return Err(ValidationError::RvalueOperandTypeMismatch { block });
+                }
+            }
+            Ok(())
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand(body, block, lhs, hir)?;
             check_operand(body, block, rhs, hir)

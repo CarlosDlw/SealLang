@@ -285,6 +285,8 @@ impl Lowering<'_> {
                             ExprKind::Error
                         }
                     }
+                } else if let Some(kind) = self.lower_control_builtin(callee, &args, span) {
+                    kind
                 } else {
                     ExprKind::Call {
                         callee: self.lower_expr(callee),
@@ -881,6 +883,264 @@ impl Lowering<'_> {
         self.lower_expr_arguments(args, expected)
     }
 
+    /// Returns the built-in name and explicit type arguments of `callee`.
+    ///
+    /// A user function or binding with the same name shadows the built-in, so
+    /// the caller keeps control over every intrinsic name. The returned name is
+    /// owned because lowering the type arguments borrows the lowering state.
+    fn builtin_path(&self, callee: AstExprId) -> Option<(String, Option<seal_ast::GenericArgs>)> {
+        let AstExprKind::Path { name, args, .. } = self.ast.expr(callee).kind.clone() else {
+            return None;
+        };
+        if self.value_exists(name) || self.scopes.lookup(name).is_some() {
+            return None;
+        }
+        Some((self.interner.resolve(name).to_owned(), args))
+    }
+
+    /// Lowers the control-flow and introspection built-ins.
+    ///
+    /// Returns `None` when `callee` is not one of them, in which case the
+    /// ordinary call path resolves the name.
+    fn lower_control_builtin(
+        &mut self,
+        callee: AstExprId,
+        args: &[AstExprId],
+        span: Span,
+    ) -> Option<ExprKind> {
+        let (name, type_args) = self.builtin_path(callee)?;
+        match name.as_str() {
+            "panic" => Some(self.lower_panic_builtin(&type_args, args, span)),
+            "exit" => Some(self.lower_exit_builtin(&type_args, args, span)),
+            "assert_eq" => Some(self.lower_equality_assert(&type_args, args, span, true)),
+            "assert_ne" => Some(self.lower_equality_assert(&type_args, args, span, false)),
+            "type_name" => Some(self.lower_type_name_builtin(&type_args, args, span)),
+            "type_of" => Some(self.lower_type_of_builtin(&type_args, args, span)),
+            "size_of" => Some(self.lower_type_layout_builtin(&type_args, args, span, true)),
+            "align_of" => Some(self.lower_type_layout_builtin(&type_args, args, span, false)),
+            _ => None,
+        }
+    }
+
+    /// Lowers `panic(message)`.
+    fn lower_panic_builtin(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+    ) -> ExprKind {
+        self.reject_type_arguments(type_args.as_ref(), "panic");
+        let Some(message) =
+            self.single_argument("panic", args, span, "pass the *str message to report")
+        else {
+            return ExprKind::Error;
+        };
+        ExprKind::Panic {
+            message: self.lower_expr(message),
+        }
+    }
+
+    /// Lowers `exit(code)`.
+    fn lower_exit_builtin(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+    ) -> ExprKind {
+        self.reject_type_arguments(type_args.as_ref(), "exit");
+        let Some(code) = self.single_argument("exit", args, span, "pass the i32 process status")
+        else {
+            return ExprKind::Error;
+        };
+        ExprKind::Exit {
+            code: self.lower_expr(code),
+        }
+    }
+
+    /// Lowers `assert_eq(left, right[, message])` and `assert_ne`.
+    fn lower_equality_assert(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+        equal: bool,
+    ) -> ExprKind {
+        let name = if equal { "assert_eq" } else { "assert_ne" };
+        self.reject_type_arguments(type_args.as_ref(), name);
+        let test = self.hir.package(self.current_package).cfg.test;
+        let bench = self.hir.package(self.current_package).cfg.bench;
+        if !test && !bench {
+            self.error(
+                codes::E8105,
+                span,
+                format!("`{name}` is available only in test and benchmark builds"),
+            )
+            .help("enable `cfg(test)` or `cfg(bench)`, or use a regular `if`")
+            .emit();
+        }
+        let (lhs, rhs, message) = match args {
+            [lhs, rhs] => (*lhs, *rhs, None),
+            [lhs, rhs, message] => {
+                let message = self.assertion_message(*message, name);
+                (*lhs, *rhs, message)
+            }
+            _ => {
+                self.error(
+                    codes::E3008,
+                    span,
+                    format!(
+                        "`{name}` takes two or three arguments, but {} were supplied",
+                        args.len()
+                    ),
+                )
+                .help(format!(
+                    "write `{name}(left, right)` or `{name}(left, right, \"message\")`"
+                ))
+                .emit();
+                for arg in args {
+                    self.lower_expr(*arg);
+                }
+                return ExprKind::Error;
+            }
+        };
+        ExprKind::AssertEq {
+            lhs: self.lower_expr(lhs),
+            rhs: self.lower_expr(rhs),
+            equal,
+            message,
+        }
+    }
+
+    /// Lowers `type_name::<T>()`.
+    fn lower_type_name_builtin(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+    ) -> ExprKind {
+        if let Some(ty) = self.introspection_type("type_name", type_args.as_ref(), args, span) {
+            ExprKind::TypeName { ty }
+        } else {
+            ExprKind::Error
+        }
+    }
+
+    /// Lowers `type_of(value)`.
+    fn lower_type_of_builtin(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+    ) -> ExprKind {
+        self.reject_type_arguments(type_args.as_ref(), "type_of");
+        let Some(operand) = self.single_argument(
+            "type_of",
+            args,
+            span,
+            "pass the value whose static type is reported",
+        ) else {
+            return ExprKind::Error;
+        };
+        ExprKind::TypeOf {
+            operand: self.lower_expr(operand),
+        }
+    }
+
+    /// Lowers `size_of::<T>()` or `align_of::<T>()`.
+    fn lower_type_layout_builtin(
+        &mut self,
+        type_args: &Option<seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+        size: bool,
+    ) -> ExprKind {
+        let name = if size { "size_of" } else { "align_of" };
+        let Some(ty) = self.introspection_type(name, type_args.as_ref(), args, span) else {
+            return ExprKind::Error;
+        };
+        if size {
+            ExprKind::SizeOf { ty }
+        } else {
+            ExprKind::AlignOf { ty }
+        }
+    }
+
+    /// Lowers the single type argument of an introspection built-in.
+    ///
+    /// Value arguments are rejected with the call-arity diagnostic, while a
+    /// missing or malformed type list is reported by the generic lowering path.
+    fn introspection_type(
+        &mut self,
+        name: &str,
+        type_args: Option<&seal_ast::GenericArgs>,
+        args: &[AstExprId],
+        span: Span,
+    ) -> Option<seal_ty::TyId> {
+        let ty = self
+            .lower_type_arguments(type_args, 1, false, span)
+            .map(|args| self.hir.ty_ctxt().substs_args(args)[0]);
+        if !args.is_empty() {
+            self.error(
+                codes::E3008,
+                span,
+                format!(
+                    "`{name}` takes no value arguments, but {} were supplied",
+                    args.len()
+                ),
+            )
+            .help(format!("name the type with `{name}::<T>()`"))
+            .emit();
+            for arg in args {
+                self.lower_expr(*arg);
+            }
+            return None;
+        }
+        ty
+    }
+
+    /// Rejects explicit type arguments on a non-generic built-in.
+    fn reject_type_arguments(&mut self, type_args: Option<&seal_ast::GenericArgs>, name: &str) {
+        if let Some(type_args) = type_args {
+            self.error(
+                codes::E2053,
+                type_args.span,
+                format!("`{name}` is not generic, but type arguments were supplied"),
+            )
+            .help("remove the type argument list")
+            .emit();
+            for argument in &type_args.args {
+                let _ = self.lower_type_inner(*argument, false, false);
+            }
+        }
+    }
+
+    /// Returns the sole argument of a built-in, reporting arity on failure.
+    fn single_argument(
+        &mut self,
+        name: &str,
+        args: &[AstExprId],
+        span: Span,
+        help: &str,
+    ) -> Option<AstExprId> {
+        if let [argument] = args {
+            return Some(*argument);
+        }
+        self.error(
+            codes::E3008,
+            span,
+            format!(
+                "`{name}` takes exactly one argument, but {} were supplied",
+                args.len()
+            ),
+        )
+        .help(help)
+        .emit();
+        for arg in args {
+            self.lower_expr(*arg);
+        }
+        None
+    }
+
     /// Returns `true` when `callee` is the built-in `len` rather than a user item.
     ///
     /// A user function or binding named `len` shadows the intrinsic, so existing
@@ -918,22 +1178,7 @@ impl Lowering<'_> {
                 message: None,
             },
             [condition, message] => {
-                let value = match self.ast.expr(*message).kind {
-                    AstExprKind::Lit(seal_ast::Literal::Str(text)) => {
-                        Some(self.interner.resolve(text).to_owned())
-                    }
-                    _ => {
-                        self.error(
-                            codes::E8106,
-                            self.ast.expr(*message).span,
-                            "the `assert` message must be a string literal",
-                        )
-                        .help("write the message directly, as in `assert(ok, \"value is valid\")`")
-                        .emit();
-                        self.lower_expr(*message);
-                        None
-                    }
-                };
+                let value = self.assertion_message(*message, "assert");
                 ExprKind::Assert {
                     condition: self.lower_expr(*condition),
                     message: value,
@@ -954,6 +1199,34 @@ impl Lowering<'_> {
                     self.lower_expr(*arg);
                 }
                 ExprKind::Error
+            }
+        }
+    }
+
+    /// Lowers the optional compile-time message of an assertion built-in.
+    ///
+    /// A non-literal message is reported and still lowered, so every expression
+    /// in the call remains reachable for later checks.
+    fn assertion_message(&mut self, message: AstExprId, name: &str) -> Option<String> {
+        match self.ast.expr(message).kind {
+            AstExprKind::Lit(seal_ast::Literal::Str(text)) => {
+                Some(self.interner.resolve(text).to_owned())
+            }
+            _ => {
+                let example = if name == "assert" {
+                    "assert(ok, \"value is valid\")"
+                } else {
+                    "assert_eq(left, right, \"values differ\")"
+                };
+                self.error(
+                    codes::E8106,
+                    self.ast.expr(message).span,
+                    format!("the `{name}` message must be a string literal"),
+                )
+                .help(format!("write the message directly, as in `{example}`"))
+                .emit();
+                self.lower_expr(message);
+                None
             }
         }
     }

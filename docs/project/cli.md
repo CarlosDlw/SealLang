@@ -297,8 +297,9 @@ $ seal bench --baseline bench-baseline.json --threshold 15
 A function declared `test func` or `bench func` is a harness entry point. The
 modifier is configuration-aware: test functions exist in `cfg(test)` builds and
 benchmark functions in `cfg(bench)` builds, so ordinary builds neither type-check
-nor emit them. `assert(condition)` and `assert(condition, "message")` are
-available inside those functions; a failed assertion panics with the source
+nor emit them. `assert(condition)`, `assert(condition, "message")`,
+`assert_eq(left, right[, message])`, and `assert_ne(left, right[, message])`
+are available inside those functions; a failed assertion panics with the source
 span and the optional message. A package without a `[targets]` table
 automatically gets a `unit` target that reuses the library (`reuse = "lib"`,
 with access to private items), one target per `tests/*.sl` integration file, and

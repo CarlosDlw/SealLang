@@ -289,6 +289,7 @@ pub fn emit(input: CodegenInput<'_>, options: &CodegenOptions) -> Result<Artifac
             scope,
             trap_panics: options.panic == seal_target::PanicStrategy::Trap
                 || options.runtime == RuntimePolicy::None,
+            runtime_available: options.runtime != RuntimePolicy::None,
         }
         .lower()?;
     }

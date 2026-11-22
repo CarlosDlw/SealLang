@@ -249,6 +249,12 @@ fn check_statement(statement: &Statement, context: &Context<'_>, calls: &mut Cal
             let summary = context.effects.dynamic(*method);
             context.apply_effects(*method, summary, &all_args, statement.span);
         }
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                unknown |= operand_unknown(arg, context);
+                check_operand(statement, arg, context);
+            }
+        }
         Rvalue::Discriminant(place) => {
             unknown |= context.keys_of(place).is_unknown();
             check_read(place, statement.span, context);
@@ -823,8 +829,35 @@ fn check_terminator(
             }
             false
         }
+        TerminatorKind::PanicValue { message } => {
+            read_terminator_operand(message, block_index, block, init, context)
+        }
+        TerminatorKind::Exit { code } => {
+            read_terminator_operand(code, block_index, block, init, context)
+        }
         TerminatorKind::Goto(_) | TerminatorKind::Panic { .. } | TerminatorKind::Unreachable => {
             false
         }
     }
+}
+
+/// Checks a terminator operand as a read and reports whether it is unknown.
+fn read_terminator_operand(
+    operand: &seal_mir::Operand,
+    block_index: usize,
+    block: &BasicBlock,
+    init: &InitInfo,
+    context: &Context<'_>,
+) -> bool {
+    let Some(place) = operand.place() else {
+        return false;
+    };
+    let unknown = context.keys_of(&place).is_unknown();
+    let exit = &init.exit[block_index];
+    let context = Context {
+        init: exit,
+        ..*context
+    };
+    check_read(&place, block.terminator.span, &context);
+    unknown
 }

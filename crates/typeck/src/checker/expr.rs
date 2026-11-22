@@ -221,6 +221,13 @@ impl Checker<'_> {
             } => self.check_slice_ref(base, start, end, kind, span, flow),
             ExprKind::Len { operand } => self.check_len(operand, span, flow),
             ExprKind::Assert { condition, .. } => self.check_assert(condition, span, flow),
+            ExprKind::AssertEq { lhs, rhs, .. } => self.check_equality_assert(lhs, rhs, span, flow),
+            ExprKind::Panic { message } => self.check_panic(message, flow),
+            ExprKind::Exit { code } => self.check_exit(code, flow),
+            ExprKind::TypeName { .. } => self.check_type_name(),
+            ExprKind::TypeOf { operand } => self.check_type_of(operand, flow),
+            ExprKind::SizeOf { ty } => self.check_type_layout(ty, span, "a size query"),
+            ExprKind::AlignOf { ty } => self.check_type_layout(ty, span, "an alignment query"),
             ExprKind::Drop { operand } => self.check_drop(operand, span, flow),
             ExprKind::Unary { op, operand } => self.check_unary(op, operand, expected, flow, span),
             ExprKind::Binary { op, lhs, rhs } => {

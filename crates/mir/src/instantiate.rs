@@ -30,8 +30,18 @@ pub fn instantiate_body(hir: &seal_hir::Hir, body: &Body, instance: Instance) ->
                 StatementKind::DropRemaining { from, .. } => substitute_operand(tcx, substs, from),
             }
         }
-        if let TerminatorKind::SwitchInt { discriminant, .. } = &mut block.terminator.kind {
-            substitute_operand(tcx, substs, discriminant);
+        match &mut block.terminator.kind {
+            TerminatorKind::SwitchInt { discriminant, .. } => {
+                substitute_operand(tcx, substs, discriminant);
+            }
+            TerminatorKind::PanicValue { message } => {
+                substitute_operand(tcx, substs, message);
+            }
+            TerminatorKind::Exit { code } => substitute_operand(tcx, substs, code),
+            TerminatorKind::Goto(_)
+            | TerminatorKind::Return
+            | TerminatorKind::Panic { .. }
+            | TerminatorKind::Unreachable => {}
         }
     }
     specialized
@@ -92,6 +102,15 @@ fn substitute_rvalue(tcx: &TyCtxt, substs: SubstsId, rvalue: &mut Rvalue) {
             *ty = tcx.substitute(*ty, substs);
         }
         Rvalue::Len { slice } => substitute_operand(tcx, substs, slice),
+        Rvalue::TypeInfo {
+            ty, arg, result_ty, ..
+        } => {
+            *ty = tcx.substitute(*ty, substs);
+            *result_ty = tcx.substitute(*result_ty, substs);
+            if let Some(arg) = arg {
+                substitute_operand(tcx, substs, arg);
+            }
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             substitute_operand(tcx, substs, lhs);
             substitute_operand(tcx, substs, rhs);

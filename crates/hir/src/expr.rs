@@ -237,6 +237,51 @@ pub enum ExprKind {
         /// The message reported on failure, when the source supplied one.
         message: Option<String>,
     },
+    /// The built-in `assert_eq(left, right)` and its optional message.
+    ///
+    /// Like `assert`, the equality assertions are only available in test and
+    /// benchmark configurations. Both operands are read, never moved, so a
+    /// failure and a success leave their owners responsible for dropping them.
+    AssertEq {
+        /// The left operand.
+        lhs: HirExprId,
+        /// The right operand.
+        rhs: HirExprId,
+        /// `true` for `assert_eq`, `false` for `assert_ne`.
+        equal: bool,
+        /// The message reported on failure, when the source supplied one.
+        message: Option<String>,
+    },
+    /// The built-in `panic(message)`, which terminates the process.
+    Panic {
+        /// The `*str` message reported to standard error.
+        message: HirExprId,
+    },
+    /// The built-in `exit(code)`, which terminates the process with `code`.
+    Exit {
+        /// The `i32` process status.
+        code: HirExprId,
+    },
+    /// The built-in `type_name::<T>()`.
+    TypeName {
+        /// The type whose displayed name is produced.
+        ty: TyId,
+    },
+    /// The built-in `type_of(value)`, which reports the operand's static type.
+    TypeOf {
+        /// The operand whose static type is produced.
+        operand: HirExprId,
+    },
+    /// The built-in `size_of::<T>()`.
+    SizeOf {
+        /// The type whose byte size is produced.
+        ty: TyId,
+    },
+    /// The built-in `align_of::<T>()`.
+    AlignOf {
+        /// The type whose byte alignment is produced.
+        ty: TyId,
+    },
     /// A closure expression.
     ///
     /// The closure's body, parameters, and environment live behind its

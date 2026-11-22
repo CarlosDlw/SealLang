@@ -218,8 +218,18 @@ impl crate::MonoMir {
                     }
                 }
             }
-            if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
-                check_operand(tcx, instance, discriminant)?;
+            match &block.terminator.kind {
+                TerminatorKind::SwitchInt { discriminant, .. } => {
+                    check_operand(tcx, instance, discriminant)?;
+                }
+                TerminatorKind::PanicValue { message } => {
+                    check_operand(tcx, instance, message)?;
+                }
+                TerminatorKind::Exit { code } => check_operand(tcx, instance, code)?,
+                TerminatorKind::Goto(_)
+                | TerminatorKind::Return
+                | TerminatorKind::Panic { .. }
+                | TerminatorKind::Unreachable => {}
             }
         }
         Ok(())
@@ -312,6 +322,16 @@ fn check_rvalue(
             Ok(())
         }
         Rvalue::Len { slice } => check_operand(tcx, instance, slice),
+        Rvalue::TypeInfo {
+            ty, arg, result_ty, ..
+        } => {
+            check_type(tcx, instance, *ty)?;
+            check_type(tcx, instance, *result_ty)?;
+            if let Some(arg) = arg {
+                check_operand(tcx, instance, arg)?;
+            }
+            Ok(())
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand(tcx, instance, lhs)?;
             check_operand(tcx, instance, rhs)
@@ -544,8 +564,18 @@ fn check_body_globals(
                 }
             }
         }
-        if let TerminatorKind::SwitchInt { discriminant, .. } = &block.terminator.kind {
-            check_operand_global(program, constants, discriminant)?;
+        match &block.terminator.kind {
+            TerminatorKind::SwitchInt { discriminant, .. } => {
+                check_operand_global(program, constants, discriminant)?;
+            }
+            TerminatorKind::PanicValue { message } => {
+                check_operand_global(program, constants, message)?;
+            }
+            TerminatorKind::Exit { code } => check_operand_global(program, constants, code)?,
+            TerminatorKind::Goto(_)
+            | TerminatorKind::Return
+            | TerminatorKind::Panic { .. }
+            | TerminatorKind::Unreachable => {}
         }
     }
     Ok(())
@@ -577,6 +607,12 @@ fn check_rvalue_globals(
         }
         Rvalue::Discriminant(place) => check_place_global(program, constants, place),
         Rvalue::Len { slice } => check_operand_global(program, constants, slice),
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                check_operand_global(program, constants, arg)?;
+            }
+            Ok(())
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             check_operand_global(program, constants, lhs)?;
             check_operand_global(program, constants, rhs)

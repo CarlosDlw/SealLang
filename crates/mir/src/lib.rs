@@ -73,7 +73,7 @@ pub use lower::{lower, lower_body, lower_body_with_declarations};
 pub use mir::Mir;
 pub use operand::{Constant, Operand};
 pub use place::{Place, PlaceRoot, Projection};
-pub use rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
+pub use rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, TypeInfoKind, UnOp};
 pub use statement::{DropKind, Statement, StatementKind};
 pub use terminator::{SwitchTarget, Terminator, TerminatorKind};
 pub use validate::ValidationError;

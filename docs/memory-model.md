@@ -512,8 +512,10 @@ its destructor never runs. Constant evaluation has no scope to leave either: a
 constant initializer or `const func` that drops a value declaring a destructor
 is `E4028`, while constructing the value and storing or returning it is allowed.
 
-Seal has no unwinding. A panic ends the program with status 101, so destructors
-that would have run during a stack unwind do not run. The decision keeps the
+Seal has no unwinding. A panic, including the `panic(message)` built-in, ends
+the program with status 101; `exit(code)` ends it with the supplied status.
+Destructors that would have run during a stack unwind do not run. The decision
+keeps the
 release order purely lexical and makes every drop site statically visible to the
 borrow checker.
 

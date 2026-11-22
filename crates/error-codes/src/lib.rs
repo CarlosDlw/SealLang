@@ -2937,22 +2937,24 @@ cannot describe a valid run. For example a partition must be `N/M` with
 /// `assert` was used outside a test or benchmark build.
 pub const E8105: ErrorCode = ErrorCode {
     code: "E8105",
-    title: "`assert` outside a test build",
+    title: "assertion outside a test build",
     explanation: "\
-The `assert` intrinsic exists only when `cfg(test)` or `cfg(bench)` is active,
-because a normal program has no test runner to report the failure. It is
-compiled as a panic with the call site.\n\nEnable the configuration with a test target, or write an ordinary `if` for a
+The `assert`, `assert_eq`, and `assert_ne` intrinsics exist only when
+`cfg(test)` or `cfg(bench)` is active, because a normal program has no test
+runner to report the failure. Each is compiled as a panic with the call site.\n\nEnable the configuration with a test target, or write an ordinary `if` for a
 runtime check in a normal build.",
 };
 
-/// An `assert` message is not a string literal.
+/// An assertion message is not a string literal.
 pub const E8106: ErrorCode = ErrorCode {
     code: "E8106",
-    title: "`assert` message must be a string literal",
+    title: "assertion message must be a string literal",
     explanation: "\
-The optional second argument to `assert` is embedded in the generated program as
-the panic message. Formatting or evaluating a value there would require runtime
-allocation and a formatting subsystem, so only a string literal is accepted.\n\nWrite the message directly, as in `assert(ok, \"value is valid\")`.",
+The optional message argument to `assert`, `assert_eq`, or `assert_ne` is
+embedded in the generated program as the panic message. Formatting or evaluating
+a value there would require runtime allocation and a formatting subsystem, so
+only a string literal is accepted.\n\nWrite the message directly, as in `assert(ok, \"value is valid\")` or
+`assert_eq(left, right, \"values differ\")`.",
 };
 
 /// A test or benchmark entry point has an invalid signature.

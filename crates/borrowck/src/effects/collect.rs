@@ -62,6 +62,10 @@ pub(super) fn collect(
             TerminatorKind::SwitchInt { discriminant, .. } => {
                 collect_operand(hir, discriminant, &mut direct);
             }
+            TerminatorKind::PanicValue { message } => {
+                collect_operand(hir, message, &mut direct);
+            }
+            TerminatorKind::Exit { code } => collect_operand(hir, code, &mut direct),
             TerminatorKind::Goto(_)
             | TerminatorKind::Return
             | TerminatorKind::Panic { .. }
@@ -132,6 +136,11 @@ pub(super) fn collect_rvalue(
             }
         }
         Rvalue::Len { slice } => collect_operand(hir, slice, direct),
+        Rvalue::TypeInfo { arg, .. } => {
+            if let Some(arg) = arg {
+                collect_operand(hir, arg, direct);
+            }
+        }
         Rvalue::Binary { lhs, rhs, .. } => {
             collect_operand(hir, lhs, direct);
             collect_operand(hir, rhs, direct);

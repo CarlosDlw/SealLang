@@ -2,6 +2,7 @@
 
 mod arrays;
 mod borrows;
+mod builtins;
 mod c_types;
 mod calls;
 mod casts;

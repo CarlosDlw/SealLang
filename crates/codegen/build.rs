@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 /// Native runtime translation units, in archive order.
 const SOURCES: &[&str] = &[
+    "runtime/core/exit.c",
     "runtime/core/io.c",
     "runtime/core/panic.c",
     "runtime/heap/alloc.c",

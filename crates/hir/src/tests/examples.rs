@@ -7,7 +7,7 @@ use seal_def::DefKind;
 
 use super::support::{assert_invariants, lower_clean};
 
-const EXAMPLES: [&str; 35] = [
+const EXAMPLES: [&str; 38] = [
     "0001_main.sl",
     "0002_variables.sl",
     "0003_operators.sl",
@@ -43,6 +43,9 @@ const EXAMPLES: [&str; 35] = [
     "039_const_static.sl",
     "040_global_data.sl",
     "041_global_mutation.sl",
+    "049_builtins.sl",
+    "050_panic_builtin.sl",
+    "051_exit_builtin.sl",
 ];
 
 fn source(name: &str) -> String {
@@ -221,10 +224,20 @@ fn collect_expr(hir: &Hir, expr: HirExprId, stmts: &mut Vec<StmtKind>, exprs: &m
             }
         }
         ExprKind::Assert { condition, .. } => collect_expr(hir, *condition, stmts, exprs),
+        ExprKind::AssertEq { lhs, rhs, .. } => {
+            collect_expr(hir, *lhs, stmts, exprs);
+            collect_expr(hir, *rhs, stmts, exprs);
+        }
+        ExprKind::Panic { message } => collect_expr(hir, *message, stmts, exprs),
+        ExprKind::Exit { code } => collect_expr(hir, *code, stmts, exprs),
+        ExprKind::TypeOf { operand } => collect_expr(hir, *operand, stmts, exprs),
         ExprKind::Lit(_)
         | ExprKind::Path { .. }
         | ExprKind::Closure { .. }
         | ExprKind::Capture { .. }
+        | ExprKind::TypeName { .. }
+        | ExprKind::SizeOf { .. }
+        | ExprKind::AlignOf { .. }
         | ExprKind::Error => {}
     }
     exprs.push(kind);

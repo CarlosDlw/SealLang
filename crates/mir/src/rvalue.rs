@@ -261,6 +261,17 @@ impl CallTarget {
     }
 }
 
+/// A compile-time type property read at run time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TypeInfoKind {
+    /// The displayed source name of a type, as `*str`.
+    Name,
+    /// The byte size of a type, as `usize`.
+    Size,
+    /// The byte alignment of a type, as `usize`.
+    Align,
+}
+
 /// The aggregate being built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AggregateKind {
@@ -370,6 +381,22 @@ pub enum Rvalue {
     Len {
         /// The fat pointer whose length is read.
         slice: Operand,
+    },
+    /// Produces a compile-time property of `ty`.
+    ///
+    /// Monomorphization substitutes `ty`, so a query written with a type
+    /// parameter reports the concrete type at each call site. `arg` is present
+    /// for `type_of(value)` and supplies the evaluated operand the query reads;
+    /// a plain `type_name::<T>()` has no argument.
+    TypeInfo {
+        /// Which property is produced.
+        query: TypeInfoKind,
+        /// The type being inspected.
+        ty: TyId,
+        /// The evaluated argument for `type_of`, if any.
+        arg: Option<Operand>,
+        /// The type of the produced value (`*str` or `usize`).
+        result_ty: TyId,
     },
     /// Applies a binary operator to two operands.
     Binary {

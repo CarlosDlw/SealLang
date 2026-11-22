@@ -25,7 +25,9 @@ use crate::id::{BasicBlockId, LocalId};
 use crate::mir::Mir;
 use crate::operand::{Constant, Operand};
 use crate::place::{Place, PlaceRoot, Projection};
-use crate::rvalue::{AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, UnOp};
+use crate::rvalue::{
+    AggregateKind, BinOp, CallTarget, IntrinsicReceiver, Rvalue, TypeInfoKind, UnOp,
+};
 use crate::statement::{DropKind, Statement};
 use crate::terminator::{SwitchTarget, Terminator, TerminatorKind};
 
@@ -1128,6 +1130,130 @@ impl<'a> BodyLowering<'a> {
                 self.current = Some(success);
                 if let Some(dest) = dest {
                     self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
+            ExprKind::AssertEq {
+                lhs,
+                rhs,
+                equal,
+                message,
+            } => {
+                let lhs = self.lower_operand_for(lhs, true);
+                let rhs = self.lower_operand_for(rhs, true);
+                let bool_ty = self
+                    .hir
+                    .ty_ctxt()
+                    .lookup(TyKind::Bool)
+                    .expect("HIR lowering interns `bool`");
+                let compared = self.new_temp(bool_ty, span);
+                self.assign_rvalue(
+                    compared.clone(),
+                    Rvalue::Binary {
+                        op: if equal { BinOp::Eq } else { BinOp::Ne },
+                        lhs,
+                        rhs,
+                        span,
+                    },
+                    span,
+                );
+                let success = self.new_block();
+                let failure = self.new_block();
+                self.terminate(
+                    TerminatorKind::SwitchInt {
+                        discriminant: Operand::Copy(compared),
+                        targets: vec![SwitchTarget {
+                            value: 1,
+                            target: success,
+                        }],
+                        otherwise: failure,
+                    },
+                    span,
+                );
+                self.current = Some(failure);
+                let default = if equal {
+                    "assertion `left == right` failed"
+                } else {
+                    "assertion `left != right` failed"
+                };
+                self.terminate(
+                    TerminatorKind::Panic {
+                        message: message.unwrap_or_else(|| default.to_owned()),
+                    },
+                    span,
+                );
+                self.current = Some(success);
+                if let Some(dest) = dest {
+                    self.assign_constant(dest, Constant::Unit, span);
+                }
+            }
+            ExprKind::Panic { message } => {
+                let message = self.lower_operand(message);
+                self.terminate(TerminatorKind::PanicValue { message }, span);
+            }
+            ExprKind::Exit { code } => {
+                let code = self.lower_operand(code);
+                self.terminate(TerminatorKind::Exit { code }, span);
+            }
+            ExprKind::TypeName { ty } => {
+                if let Some(dest) = dest {
+                    let result_ty = self.expr_ty(expr);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::TypeInfo {
+                            query: TypeInfoKind::Name,
+                            ty,
+                            arg: None,
+                            result_ty,
+                        },
+                        span,
+                    );
+                }
+            }
+            ExprKind::TypeOf { operand } => {
+                let arg = self.lower_operand_for(operand, true);
+                if let Some(dest) = dest {
+                    let ty = self.expr_ty(operand);
+                    let result_ty = self.expr_ty(expr);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::TypeInfo {
+                            query: TypeInfoKind::Name,
+                            ty,
+                            arg: Some(arg),
+                            result_ty,
+                        },
+                        span,
+                    );
+                }
+            }
+            ExprKind::SizeOf { ty } => {
+                if let Some(dest) = dest {
+                    let result_ty = self.expr_ty(expr);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::TypeInfo {
+                            query: TypeInfoKind::Size,
+                            ty,
+                            arg: None,
+                            result_ty,
+                        },
+                        span,
+                    );
+                }
+            }
+            ExprKind::AlignOf { ty } => {
+                if let Some(dest) = dest {
+                    let result_ty = self.expr_ty(expr);
+                    self.assign_rvalue(
+                        dest,
+                        Rvalue::TypeInfo {
+                            query: TypeInfoKind::Align,
+                            ty,
+                            arg: None,
+                            result_ty,
+                        },
+                        span,
+                    );
                 }
             }
             ExprKind::Drop { operand } => {

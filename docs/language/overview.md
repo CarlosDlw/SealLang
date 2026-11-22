@@ -160,8 +160,10 @@ elements in increasing index order. `drop(value)` consumes a value and releases
 it early.
 
 Seal has no exceptions and no unwinding. On a hosted target, a panic writes a
-diagnostic and ends the process with status 101; a freestanding target traps.
-Destructors that would have run during a stack unwind do not run, which keeps
+diagnostic and ends the process with status 101; the `panic(message)` built-in
+uses the same path, and `exit(code)` ends the process with the supplied status.
+A freestanding target turns a panic into a trap. Destructors that would have run
+during a stack unwind do not run, which keeps
 release order purely lexical and every drop site statically visible. Code that
 must release a resource on failure uses an ordinary enum value and explicit
 control flow, not a hidden unwind path.
