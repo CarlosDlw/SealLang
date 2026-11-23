@@ -9,7 +9,8 @@
 use std::path::Path;
 
 use seal_api::{
-    ApiField, ApiImplementation, ApiItem, ApiLayout, ApiModule, ApiSnapshot, ApiVariant,
+    ApiDeprecation, ApiField, ApiImplementation, ApiItem, ApiLayout, ApiModule, ApiSnapshot,
+    ApiVariant,
 };
 use seal_def::{DefId, DefKind, Visibility};
 use seal_hir::Hir;
@@ -137,6 +138,7 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
         fields: Vec::new(),
         variants: Vec::new(),
         docs: crate::doc_text::render(session.source_map(), data.doc_span, session.interner()),
+        deprecated: deprecated(session, data.deprecated),
         layout: None,
         implementations: Vec::new(),
     };
@@ -171,6 +173,10 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
                                 session.source_map(),
                                 hir.definitions().get(variant.def).doc_span,
                                 session.interner(),
+                            ),
+                            deprecated: deprecated(
+                                session,
+                                hir.definitions().get(variant.def).deprecated,
                             ),
                         })
                         .collect();
@@ -209,9 +215,25 @@ fn fields(
                     data.doc_span,
                     session.interner(),
                 ),
+                deprecated: deprecated(session, data.deprecated),
             })
         })
         .collect()
+}
+
+fn deprecated(
+    session: &Session,
+    deprecation: Option<seal_def::Deprecation>,
+) -> Option<ApiDeprecation> {
+    deprecation.map(|deprecation| ApiDeprecation {
+        since: session.interner().resolve(deprecation.since).to_owned(),
+        note: deprecation
+            .note
+            .map(|note| session.interner().resolve(note).to_owned()),
+        replacement: deprecation
+            .replacement
+            .map(|replacement| session.interner().resolve(replacement).to_owned()),
+    })
 }
 
 fn layout(session: &Session, hir: &Hir, adt: AdtId) -> Option<ApiLayout> {

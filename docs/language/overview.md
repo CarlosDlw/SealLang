@@ -335,6 +335,18 @@ the RFC process in [`../rfcs/README.md`](../rfcs/README.md). An accepted RFC
 names its edition impact, deprecation plan, migration, and test matrix before
 implementation starts.
 
+## Deprecation is a lifecycle, not a deletion
+
+A declaration can carry `deprecated(since: "0.2.0", note: "use new_api",
+replacement: "new_api")`. The modifier keeps the declaration usable, records
+who deprecated it and why, and lets the public API snapshot and generated
+documentation carry the same metadata. Uses warn under the stable `deprecated`
+lint. Removal is a separate, breaking decision: it happens only in an edition
+named by an accepted RFC, with a release note and a migration recipe. The
+syntax, placement rules, and metadata shape are in
+[`modules.md`](modules.md#deprecation); the policy is in
+[`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
+
 The bet behind Seal is simple: if the compiler proves ownership, aliasing,
 initialization, and destruction statically, the runtime does not need to guess.
 What cannot be proved is spelled `unsafe`, and everything else stays visible in

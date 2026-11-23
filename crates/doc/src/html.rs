@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crate::{DocError, DocResult, Documentation, ItemDoc, ModuleDoc};
+use crate::{DeprecationDoc, DocError, DocResult, Documentation, FieldDoc, ItemDoc, ModuleDoc};
 
 /// Renders the complete documentation set and writes it below `directory`.
 pub fn write(documentation: &Documentation, directory: &Path) -> DocResult<Vec<String>> {
@@ -86,6 +86,13 @@ pub fn render(documentation: &Documentation) -> String {
             if let Some(cfg) = &item.cfg {
                 let _ = write!(body, " <span class=\"cfg\">cfg({})</span>", escape(cfg));
             }
+            if let Some(deprecation) = &item.deprecated {
+                let _ = write!(
+                    body,
+                    " <span class=\"badge deprecated\">deprecated since <code>{}</code></span>",
+                    escape(&deprecation.since)
+                );
+            }
             if let Some(docs) = &item.docs {
                 let summary = docs.lines().next().unwrap_or_default();
                 let _ = write!(body, "<p>{}</p>", markdown(summary));
@@ -154,6 +161,9 @@ fn render_item(body: &mut String, item: &ItemDoc) {
     if let Some(docs) = &item.docs {
         let _ = writeln!(body, "<div class=\"docs\">{}</div>", markdown(docs));
     }
+    if let Some(deprecation) = &item.deprecated {
+        render_deprecation(body, deprecation);
+    }
     if let Some(layout) = item.layout {
         let _ = writeln!(
             body,
@@ -171,6 +181,7 @@ fn render_item(body: &mut String, item: &ItemDoc) {
                 escape(name),
                 escape(&field.ty)
             );
+            render_field_deprecation(body, field);
             if let Some(docs) = &field.docs {
                 let _ = write!(body, "<div class=\"docs\">{}</div>", markdown(docs));
             }
@@ -182,6 +193,13 @@ fn render_item(body: &mut String, item: &ItemDoc) {
         body.push_str("<h3>Variants</h3><ul class=\"variants\">");
         for variant in &item.variants {
             let _ = write!(body, "<li><code>{}</code>", escape(&variant.name));
+            if let Some(deprecation) = &variant.deprecated {
+                let _ = write!(
+                    body,
+                    " <span class=\"badge deprecated\">deprecated since <code>{}</code></span>",
+                    escape(&deprecation.since)
+                );
+            }
             if let Some(docs) = &variant.docs {
                 let _ = write!(body, "<div class=\"docs\">{}</div>", markdown(docs));
             }
@@ -195,6 +213,7 @@ fn render_item(body: &mut String, item: &ItemDoc) {
                         escape(name),
                         escape(&field.ty)
                     );
+                    render_field_deprecation(body, field);
                     if let Some(docs) = &field.docs {
                         let _ = write!(body, "<div class=\"docs\">{}</div>", markdown(docs));
                     }
@@ -230,6 +249,33 @@ fn render_item(body: &mut String, item: &ItemDoc) {
     body.push_str("</section>");
 }
 
+/// Renders the full deprecation notice of an item.
+fn render_deprecation(body: &mut String, deprecation: &DeprecationDoc) {
+    let _ = write!(
+        body,
+        "<p class=\"deprecated\">Deprecated since <code>{}</code>",
+        escape(&deprecation.since)
+    );
+    if let Some(note) = &deprecation.note {
+        let _ = write!(body, ". {}", escape(note));
+    }
+    if let Some(replacement) = &deprecation.replacement {
+        let _ = write!(body, ". Use <code>{}</code> instead", escape(replacement));
+    }
+    body.push_str(".</p>");
+}
+
+/// Renders the compact deprecation badge attached to a field.
+fn render_field_deprecation(body: &mut String, field: &FieldDoc) {
+    if let Some(deprecation) = &field.deprecated {
+        let _ = write!(
+            body,
+            " <span class=\"badge deprecated\">deprecated since <code>{}</code></span>",
+            escape(&deprecation.since)
+        );
+    }
+}
+
 /// Returns whether a doc-comment link uses a relative path or a known safe
 /// scheme. A package cannot turn documentation into a script URL.
 fn safe_link(target: &str) -> bool {
@@ -253,7 +299,7 @@ fn page(title: &str, body: &str) -> String {
     )
 }
 
-const STYLE: &str = "body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2933}code,pre{font-family:ui-monospace,monospace;background:#f3f4f6;border-radius:.2rem;padding:.1rem .25rem}pre{padding:.75rem;overflow:auto}.meta,.cfg,.layout{color:#52606d}.kind{font-size:.8rem;color:#7b8794;font-weight:normal}.item{border-top:1px solid #e4e7eb;margin-top:2rem}.badge{font-size:.7rem;background:#e4e7eb;border-radius:.2rem;padding:.1rem .3rem}a{color:#1d4ed8}";
+const STYLE: &str = "body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2933}code,pre{font-family:ui-monospace,monospace;background:#f3f4f6;border-radius:.2rem;padding:.1rem .25rem}pre{padding:.75rem;overflow:auto}.meta,.cfg,.layout{color:#52606d}.deprecated{color:#9a3412}.badge.deprecated{background:#ffedd5}.kind{font-size:.8rem;color:#7b8794;font-weight:normal}.item{border-top:1px solid #e4e7eb;margin-top:2rem}.badge{font-size:.7rem;background:#e4e7eb;border-radius:.2rem;padding:.1rem .3rem}a{color:#1d4ed8}";
 
 fn write_file(path: &Path, contents: &str) -> DocResult<()> {
     std::fs::write(path, contents).map_err(|error| DocError::Io {

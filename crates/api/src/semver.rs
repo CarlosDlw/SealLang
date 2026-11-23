@@ -501,8 +501,10 @@ mod tests {
                     name: "On".to_owned(),
                     fields: Vec::new(),
                     docs: None,
+                    deprecated: None,
                 }],
                 docs: None,
+                deprecated: None,
                 layout: None,
                 implementations: Vec::new(),
             }],
@@ -531,6 +533,7 @@ mod tests {
             name: "Off".to_owned(),
             fields: Vec::new(),
             docs: None,
+            deprecated: None,
         });
         let diff = check(&snapshot("1.0.0"), &next).unwrap();
         assert_eq!(diff.breaking[0].kind, "variant-added");
@@ -544,6 +547,7 @@ mod tests {
             ty: "i32".to_owned(),
             visibility: "public".to_owned(),
             docs: None,
+            deprecated: None,
         });
         let next = snapshot("2.0.0");
         let diff = check(&previous, &next).unwrap();
@@ -582,6 +586,7 @@ mod tests {
             ty: "i32".to_owned(),
             visibility: "private".to_owned(),
             docs: None,
+            deprecated: None,
         });
         let diff = check(&previous, &snapshot("1.1.0")).unwrap();
         assert!(diff.is_empty());
@@ -639,14 +644,29 @@ mod tests {
                 ty: "i32".to_owned(),
                 visibility: "public".to_owned(),
                 docs: None,
+                deprecated: None,
             }],
             variants: Vec::new(),
             docs: None,
+            deprecated: None,
             layout: None,
             implementations: Vec::new(),
         });
         let diff = check(&snapshot("1.0.0"), &next).unwrap();
         assert_eq!(diff.required_bump(), Bump::Minor);
+    }
+
+    #[test]
+    fn deprecation_metadata_does_not_change_the_bump() {
+        let mut next = snapshot("1.0.1");
+        next.items[0].deprecated = Some(crate::ApiDeprecation {
+            since: "0.2.0".to_owned(),
+            note: None,
+            replacement: None,
+        });
+        let diff = check(&snapshot("1.0.0"), &next).unwrap();
+        assert!(diff.is_empty());
+        assert_eq!(diff.required_bump(), Bump::Patch);
     }
 
     #[test]

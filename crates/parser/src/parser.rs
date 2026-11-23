@@ -3,7 +3,7 @@
 use seal_ast::{
     Ast, AstBuilder, ConstDecl, EnumDecl, ExprId, ExprKind, FieldDeclId, FnDecl, GenericParams,
     ImplDecl, ItemId, ItemKind, Modifiers, ParamId, StaticDecl, TraitDecl, TraitMethodDecl,
-    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList,
+    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList, Visibility,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -207,6 +207,15 @@ impl<'a> Parser<'a> {
                         "a module declaration cannot be a benchmark",
                     )
                     .help("remove `bench`; it applies to functions")
+                    .emit();
+                }
+                if modifiers.deprecated.is_some() {
+                    self.error(
+                        codes::E2079,
+                        self.current_span(),
+                        "a module declaration cannot be deprecated",
+                    )
+                    .help("deprecate the items in the module instead")
                     .emit();
                 }
                 self.item_modifiers = modifiers;
@@ -740,7 +749,19 @@ impl<'a> Parser<'a> {
     /// arena; the implementation item references them, keeping the whole tree
     /// reachable without a second declaration grammar.
     fn parse_impl(&mut self) -> ItemId {
-        let modifiers = std::mem::take(&mut self.item_modifiers);
+        let mut modifiers = std::mem::take(&mut self.item_modifiers);
+        if modifiers.deprecated.is_some() {
+            self.error(
+                codes::E2079,
+                modifiers
+                    .deprecated
+                    .map_or_else(|| self.current_span(), |deprecation| deprecation.span),
+                "an implementation block cannot be deprecated",
+            )
+            .help("deprecate the methods or the type instead")
+            .emit();
+            modifiers.deprecated = None;
+        }
         let keyword = self.bump();
         let generics = self.parse_generic_params();
         let (trait_ref, self_ty) = if self.starts_trait_path_before_for() {
@@ -989,6 +1010,7 @@ impl<'a> Parser<'a> {
                 where_clause,
                 body,
                 cfg: modifiers.cfg,
+                deprecated: modifiers.deprecated,
             }),
             span,
             Modifiers::none(),
@@ -1116,9 +1138,14 @@ impl<'a> Parser<'a> {
         };
 
         let span = name_span.cover(self.previous_span());
-        let variant =
-            self.builder
-                .push_variant_with_cfg(name, name_span, fields, span, modifiers.cfg);
+        let variant = self.builder.push_variant_with_cfg(
+            name,
+            name_span,
+            fields,
+            span,
+            modifiers.cfg,
+            modifiers.deprecated,
+        );
         self.builder.set_variant_docs(variant, docs);
         self.skip_trivia_through(self.previous_span());
         variant
@@ -1133,6 +1160,17 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RParen) && !self.is_eof() {
             let before = self.index;
+            if self.at_name("deprecated") && matches!(self.peek_kind(), Some(TokenKind::LParen)) {
+                let span = self.current_span();
+                let _ = self.parse_deprecated();
+                self.error(
+                    codes::E2079,
+                    span,
+                    "a positional field cannot be deprecated",
+                )
+                .help("name the field or deprecate the variant instead")
+                .emit();
+            }
             if matches!(self.current_kind(), TokenKind::Ident(_))
                 && self.peek_kind() == Some(TokenKind::Colon)
             {
@@ -1189,13 +1227,69 @@ impl<'a> Parser<'a> {
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
             let docs = self.take_docs();
+            let modifiers = self.parse_modifiers();
+            if modifiers.has_visibility {
+                self.error(
+                    codes::E2079,
+                    self.current_span(),
+                    "a variant field cannot have a visibility modifier",
+                )
+                .help("fields inherit the visibility of their variant")
+                .emit();
+            }
+            if modifiers.cfg.is_some() {
+                self.error(
+                    codes::E2085,
+                    self.current_span(),
+                    "a variant field cannot have a `cfg` condition",
+                )
+                .help("place `cfg` on the enum or on the code that matches the variant")
+                .emit();
+            }
+            if modifiers.is_test {
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    "a variant field cannot be a test",
+                )
+                .help("remove `test`; it applies to functions")
+                .emit();
+            }
+            if modifiers.is_bench {
+                self.error(
+                    codes::E1001,
+                    self.current_span(),
+                    "a variant field cannot be a benchmark",
+                )
+                .help("remove `bench`; it applies to functions")
+                .emit();
+            }
+            if modifiers.export_span.is_some() {
+                self.error(
+                    codes::E2079,
+                    self.current_span(),
+                    "a variant field cannot be exported",
+                )
+                .help("remove `export`; only a function can be exported")
+                .emit();
+            }
             let (field_name, field_name_span) = self.expect_ident("a field name");
             let _ = self.expect(TokenKind::Colon, "`:` after the field name");
             let ty = self.parse_type();
             let field_span = field_name_span.cover(self.builder.ast().ty(ty).span);
-            let field = self
-                .builder
-                .push_field(field_name, field_name_span, ty, field_span);
+            let field = self.builder.push_field_with_modifiers(
+                field_name,
+                field_name_span,
+                ty,
+                field_span,
+                Modifiers {
+                    visibility: Visibility::Private,
+                    has_visibility: false,
+                    cfg: modifiers.cfg,
+                    deprecated: modifiers.deprecated,
+                    ..Modifiers::none()
+                },
+            );
             self.builder.set_field_docs(field, docs);
             fields.push(field);
             self.skip_trivia_through(self.previous_span());

@@ -34,7 +34,7 @@ impl Lowering<'_> {
             let mut variants = Vec::with_capacity(declaration.variants.len());
             let mut names = FxHashSet::default();
             for variant_id in &declaration.variants {
-                let (name, name_span, field_list, variant_span, docs) = {
+                let (name, name_span, field_list, variant_span, docs, deprecated) = {
                     let variant = self.ast.variant(*variant_id);
                     (
                         variant.name,
@@ -42,6 +42,7 @@ impl Lowering<'_> {
                         variant.fields.clone(),
                         variant.span,
                         variant.docs,
+                        variant.deprecated,
                     )
                 };
                 if !names.insert(name) {
@@ -68,6 +69,9 @@ impl Lowering<'_> {
                     false,
                 ));
                 self.hir.definitions_mut().set_doc_span(variant_def, docs);
+                self.hir
+                    .definitions_mut()
+                    .set_deprecated(variant_def, deprecated);
 
                 let mut fields = Vec::new();
                 match &field_list {
@@ -75,7 +79,7 @@ impl Lowering<'_> {
                     VariantFieldList::Named(field_ids) => {
                         let mut field_names = FxHashSet::default();
                         for field_id in field_ids {
-                            let (field_name, field_name_span, ty_id, field_span, docs) = {
+                            let (field_name, field_name_span, ty_id, field_span, docs, deprecated) = {
                                 let field = self.ast.field(*field_id);
                                 (
                                     field.name,
@@ -83,6 +87,7 @@ impl Lowering<'_> {
                                     field.ty,
                                     field.span,
                                     field.docs,
+                                    field.deprecated,
                                 )
                             };
                             let ty = self.lower_type(ty_id);
@@ -109,6 +114,9 @@ impl Lowering<'_> {
                                 false,
                             ));
                             self.hir.definitions_mut().set_doc_span(field_def, docs);
+                            self.hir
+                                .definitions_mut()
+                                .set_deprecated(field_def, deprecated);
                             fields.push(FieldDef {
                                 def: field_def,
                                 name: Some(field_name),

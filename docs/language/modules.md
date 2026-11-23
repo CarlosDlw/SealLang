@@ -338,6 +338,61 @@ An implementation is allowed only in the package that declares its type or its
 trait. A foreign implementation is `E2082`; wrap the foreign type in a local
 struct when the behavior must live in the current package.
 
+## Deprecation
+
+A declaration can stay available while steering callers away from it:
+
+```text
+public deprecated(since: "0.2.0", note: "use new_api", replacement: "new_api")
+func old_api() -> i32 { 0 }
+
+public struct Config {
+    deprecated(since: "0.3.0", replacement: "timeout_ms") legacy_timeout: i32,
+}
+```
+
+`deprecated` is a contextual modifier, not a reserved word: outside a
+declaration prefix, `deprecated` is an ordinary identifier. It accepts three
+string entries in any order:
+
+- `since` is required and must be a semantic version such as `0.2.0`.
+- `note` is optional migration guidance.
+- `replacement` is optional and names the item to use instead.
+
+Every entry is a string literal of at most 256 bytes, without control
+characters or an empty value. Unknown keys, duplicate keys, a missing `since`,
+and a malformed version are `E1001`; a declaration has at most one
+`deprecated` modifier.
+
+The modifier is accepted on items, named struct fields, named variant fields,
+enum variants, trait methods, inherent methods, and external declarations.
+It is rejected on modules, imports, and impl blocks with `E2079`, and a
+positional tuple field has no name to attach it to. `deprecated` never changes
+the declaration's type, layout, ABI, or generated code.
+
+A deprecation is not a removal. The declaration stays available for at least
+one minor release line, every use warns under the stable `deprecated` lint, and
+removal happens only in an edition named by an accepted RFC with a migration
+recipe. The complete policy is in
+[`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
+
+The public API snapshot and `seal doc` expose the metadata:
+
+```json
+{
+  "name": "old_api",
+  "deprecated": {
+    "since": "0.2.0",
+    "note": "use new_api",
+    "replacement": "new_api"
+  }
+}
+```
+
+The object is absent when a declaration is not deprecated. The same fields
+appear on public fields and enum variants, and the HTML renderer escapes every
+value before inserting it into a page.
+
 ## Building multiple files
 
 Without `--plan`, every input is an independent single-file program, which is

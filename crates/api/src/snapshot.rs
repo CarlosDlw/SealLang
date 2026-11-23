@@ -31,6 +31,47 @@ pub struct ApiModule {
     pub docs: Option<String>,
 }
 
+/// Deprecation metadata attached to a public item, field, or variant.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ApiDeprecation {
+    /// The release in which the declaration was deprecated.
+    pub since: String,
+    /// Optional migration guidance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Optional replacement the declaration points to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
+}
+
+impl ApiDeprecation {
+    fn validate(&self, owner: &str) -> ApiResult<()> {
+        if self.since.is_empty()
+            || self.note.as_deref().is_some_and(str::is_empty)
+            || self.replacement.as_deref().is_some_and(str::is_empty)
+        {
+            return Err(ApiError::snapshot(format!(
+                "`{owner}` has an empty deprecation value"
+            )));
+        }
+        let invalid = self.since.chars().any(char::is_control)
+            || self
+                .note
+                .as_deref()
+                .is_some_and(|note| note.chars().any(char::is_control))
+            || self
+                .replacement
+                .as_deref()
+                .is_some_and(|replacement| replacement.chars().any(char::is_control));
+        if invalid {
+            return Err(ApiError::snapshot(format!(
+                "`{owner}` has a deprecation value with control characters"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// One public field.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ApiField {
@@ -45,6 +86,9 @@ pub struct ApiField {
     /// Documentation attached to the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs: Option<String>,
+    /// Deprecation metadata, when the field is deprecated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<ApiDeprecation>,
 }
 
 /// One public enum variant.
@@ -58,6 +102,9 @@ pub struct ApiVariant {
     /// Documentation attached to the variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs: Option<String>,
+    /// Deprecation metadata, when the variant is deprecated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<ApiDeprecation>,
 }
 
 /// Size and alignment of an aggregate, in bytes.
@@ -110,6 +157,9 @@ pub struct ApiItem {
     /// Documentation attached to the item.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs: Option<String>,
+    /// Deprecation metadata, when the item is deprecated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<ApiDeprecation>,
     /// Aggregate layout, when the item is a sized struct or enum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<ApiLayout>,
@@ -195,8 +245,14 @@ impl ApiSnapshot {
                     item.key()
                 )));
             }
+            if let Some(deprecated) = &item.deprecated {
+                deprecated.validate(&item.key())?;
+            }
             let mut fields = std::collections::BTreeSet::new();
             for field in &item.fields {
+                if let Some(deprecated) = &field.deprecated {
+                    deprecated.validate(&format!("{} field", item.key()))?;
+                }
                 let name = field.name.clone().unwrap_or_else(|| "#".to_owned());
                 if !fields.insert(name.clone()) {
                     return Err(ApiError::snapshot(format!(
@@ -213,8 +269,14 @@ impl ApiSnapshot {
                         item.key()
                     )));
                 }
+                if let Some(deprecated) = &variant.deprecated {
+                    deprecated.validate(&format!("{}::{}", item.key(), variant.name))?;
+                }
                 let mut names = std::collections::BTreeSet::new();
                 for field in &variant.fields {
+                    if let Some(deprecated) = &field.deprecated {
+                        deprecated.validate(&format!("{}::{} field", item.key(), variant.name))?;
+                    }
                     let name = field.name.clone().unwrap_or_else(|| "#".to_owned());
                     if !names.insert(name.clone()) {
                         return Err(ApiError::snapshot(format!(
@@ -361,9 +423,11 @@ mod tests {
                     ty: "i32".to_owned(),
                     visibility: "public".to_owned(),
                     docs: None,
+                    deprecated: None,
                 }],
                 variants: Vec::new(),
                 docs: None,
+                deprecated: None,
                 layout: None,
                 implementations: Vec::new(),
             }],
@@ -378,6 +442,28 @@ mod tests {
         assert_eq!(parsed, snapshot);
         assert_eq!(snapshot.hash().unwrap(), parsed.hash().unwrap());
         assert!(snapshot.hash().unwrap().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn deprecation_metadata_round_trips_and_is_validated() {
+        let mut snapshot = snapshot();
+        snapshot.items[0].deprecated = Some(ApiDeprecation {
+            since: "0.2.0".to_owned(),
+            note: Some("use NewPoint".to_owned()),
+            replacement: Some("NewPoint".to_owned()),
+        });
+        let bytes = snapshot.canonical_bytes().unwrap();
+        let parsed = ApiSnapshot::parse(&bytes).unwrap();
+        assert_eq!(parsed, snapshot);
+        assert!(String::from_utf8(bytes).unwrap().contains("\"deprecated\""));
+
+        let mut invalid = snapshot;
+        invalid.items[0]
+            .deprecated
+            .as_mut()
+            .expect("deprecation")
+            .note = Some(String::new());
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
@@ -399,6 +485,7 @@ mod tests {
         let first = snapshot();
         let mut second = snapshot();
         second.items[0].fields.push(ApiField {
+            deprecated: None,
             name: Some("y".to_owned()),
             ty: "i64".to_owned(),
             visibility: "public".to_owned(),
@@ -413,6 +500,7 @@ mod tests {
                 ty: "i64".to_owned(),
                 visibility: "public".to_owned(),
                 docs: None,
+                deprecated: None,
             },
         );
         third.normalize();

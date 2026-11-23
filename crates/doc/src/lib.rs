@@ -50,6 +50,9 @@ pub struct ItemDoc {
     /// The `cfg` condition, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cfg: Option<String>,
+    /// Deprecation metadata, when the item is deprecated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<DeprecationDoc>,
     /// Struct fields.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldDoc>,
@@ -77,6 +80,9 @@ pub struct FieldDoc {
     /// The field documentation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs: Option<String>,
+    /// Deprecation metadata, when the field is deprecated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<DeprecationDoc>,
 }
 
 /// One documented enum variant.
@@ -87,9 +93,25 @@ pub struct VariantDoc {
     /// The variant documentation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs: Option<String>,
+    /// Deprecation metadata, when the variant is deprecated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<DeprecationDoc>,
     /// The variant fields.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldDoc>,
+}
+
+/// Deprecation metadata attached to an item, field, or variant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DeprecationDoc {
+    /// The release that deprecated the declaration.
+    pub since: String,
+    /// Migration guidance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// The replacement the declaration points to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
 }
 
 /// One documented aggregate layout.
@@ -164,6 +186,14 @@ impl Documentation {
     }
 }
 
+fn deprecation_doc(deprecation: &seal_api::ApiDeprecation) -> DeprecationDoc {
+    DeprecationDoc {
+        since: deprecation.since.clone(),
+        note: deprecation.note.clone(),
+        replacement: deprecation.replacement.clone(),
+    }
+}
+
 fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
     ItemDoc {
         name: item.name.clone(),
@@ -171,6 +201,7 @@ fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
         docs: item.docs.clone(),
         signature: item.signature.clone(),
         cfg: item.cfg.clone(),
+        deprecated: item.deprecated.as_ref().map(deprecation_doc),
         fields: item
             .fields
             .iter()
@@ -179,6 +210,7 @@ fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
                 ty: field.ty.clone(),
                 visibility: field.visibility.clone(),
                 docs: field.docs.clone(),
+                deprecated: field.deprecated.as_ref().map(deprecation_doc),
             })
             .collect(),
         variants: item
@@ -187,6 +219,7 @@ fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
             .map(|variant| VariantDoc {
                 name: variant.name.clone(),
                 docs: variant.docs.clone(),
+                deprecated: variant.deprecated.as_ref().map(deprecation_doc),
                 fields: variant
                     .fields
                     .iter()
@@ -195,6 +228,7 @@ fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
                         ty: field.ty.clone(),
                         visibility: field.visibility.clone(),
                         docs: field.docs.clone(),
+                        deprecated: field.deprecated.as_ref().map(deprecation_doc),
                     })
                     .collect(),
             })
@@ -217,7 +251,7 @@ fn item_doc(item: &seal_api::ApiItem) -> ItemDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_api::{ApiField, ApiItem, ApiModule, ApiSnapshot};
+    use seal_api::{ApiDeprecation, ApiField, ApiItem, ApiModule, ApiSnapshot};
 
     fn snapshot() -> ApiSnapshot {
         ApiSnapshot {
@@ -253,9 +287,11 @@ mod tests {
                         ty: "i32".to_owned(),
                         visibility: "public".to_owned(),
                         docs: Some("The x coordinate.".to_owned()),
+                        deprecated: None,
                     }],
                     variants: Vec::new(),
                     docs: Some("A point.".to_owned()),
+                    deprecated: None,
                     layout: Some(seal_api::ApiLayout { size: 4, align: 4 }),
                     implementations: Vec::new(),
                 },
@@ -270,6 +306,7 @@ mod tests {
                     fields: Vec::new(),
                     variants: Vec::new(),
                     docs: Some("Returns a value.".to_owned()),
+                    deprecated: None,
                     layout: None,
                     implementations: Vec::new(),
                 },
@@ -286,6 +323,43 @@ mod tests {
             docs.modules[0].items[0].cfg.as_deref(),
             Some("target.os == \"linux\"")
         );
+    }
+
+    #[test]
+    fn deprecation_metadata_reaches_json_and_escaped_html() {
+        let mut snapshot = snapshot();
+        snapshot.items[0].deprecated = Some(ApiDeprecation {
+            since: "0.2.0".to_owned(),
+            note: Some("<script>alert(1)</script>".to_owned()),
+            replacement: Some("NewPoint".to_owned()),
+        });
+        let documentation = Documentation::from_snapshot(&snapshot);
+        let item = documentation
+            .modules
+            .iter()
+            .flat_map(|module| &module.items)
+            .find(|item| item.name == "Point")
+            .expect("the Point item is documented");
+        assert_eq!(
+            item.deprecated.as_ref().expect("deprecated item").since,
+            "0.2.0"
+        );
+        let json = render_json(&documentation).expect("JSON");
+        assert!(json.contains("\"since\": \"0.2.0\""));
+        assert!(json.contains("NewPoint"));
+        let directory =
+            std::env::temp_dir().join(format!("seal-doc-deprecation-{}", std::process::id()));
+        let paths = write_html(&documentation, &directory).expect("HTML files");
+        let root = paths
+            .iter()
+            .find(|path| path.ends_with("root.html"))
+            .expect("the root module page is written");
+        let html = std::fs::read_to_string(root).expect("the root page is readable");
+        assert!(html.contains("Deprecated since <code>0.2.0</code>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("Use <code>NewPoint</code> instead"));
+        std::fs::remove_dir_all(&directory).expect("the temporary documentation is removed");
     }
 
     #[test]

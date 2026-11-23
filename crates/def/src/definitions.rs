@@ -8,6 +8,23 @@ use crate::id::{DefId, ModuleId, PackageId, PackageInstanceId};
 use crate::kind::DefKind;
 use crate::visibility::Visibility;
 
+/// The source-level deprecation metadata attached to a declaration.
+///
+/// The value is syntax-independent: the parser fills it from the contextual
+/// `deprecated(...)` modifier, and later attribute syntax can produce the same
+/// value without changing every consumer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deprecation {
+    /// The release in which the item was deprecated, such as `0.2.0`.
+    pub since: Symbol,
+    /// Optional guidance shown with a use-site warning.
+    pub note: Option<Symbol>,
+    /// Optional replacement the user should migrate to.
+    pub replacement: Option<Symbol>,
+    /// The span of the complete `deprecated(...)` modifier.
+    pub span: Span,
+}
+
 /// A named definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DefData {
@@ -46,6 +63,8 @@ pub struct DefData {
     pub is_test: bool,
     /// Whether the function was declared with the contextual `bench` modifier.
     pub is_bench: bool,
+    /// Deprecation metadata attached to the declaration, when present.
+    pub deprecated: Option<Deprecation>,
     /// The source file that declares the definition, when it has one.
     ///
     /// Built-in definitions have no source file. The file is kept on the
@@ -85,6 +104,7 @@ impl DefData {
             cfg: None,
             is_test: false,
             is_bench: false,
+            deprecated: None,
             file: None,
         }
     }
@@ -182,6 +202,11 @@ impl Definitions {
     /// Records whether a definition is a benchmark entry point.
     pub fn set_bench(&mut self, id: DefId, is_bench: bool) {
         self.defs[id].is_bench = is_bench;
+    }
+
+    /// Records the deprecation metadata of a definition.
+    pub fn set_deprecated(&mut self, id: DefId, deprecated: Option<Deprecation>) {
+        self.defs[id].deprecated = deprecated;
     }
 
     /// Returns whether `id` is a test entry point.

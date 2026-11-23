@@ -12,6 +12,7 @@ seal-error-codes.workspace = true
 seal-lexer.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
+semver.workspace = true
 
 [lints]
 workspace = true

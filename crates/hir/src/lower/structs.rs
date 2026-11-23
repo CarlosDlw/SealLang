@@ -27,7 +27,7 @@ impl Lowering<'_> {
             let mut fields = Vec::with_capacity(declaration.fields.len());
             let mut names = FxHashSet::default();
             for field_id in &declaration.fields {
-                let (name, name_span, ty, field_span, visibility, docs) = {
+                let (name, name_span, ty, field_span, visibility, docs, deprecated) = {
                     let field = self.ast.field(*field_id);
                     (
                         field.name,
@@ -36,6 +36,7 @@ impl Lowering<'_> {
                         field.span,
                         field.visibility,
                         field.docs,
+                        field.deprecated,
                     )
                 };
                 let ty = self.lower_type(ty);
@@ -65,6 +66,9 @@ impl Lowering<'_> {
                     ),
                 );
                 self.hir.definitions_mut().set_doc_span(field_def, docs);
+                self.hir
+                    .definitions_mut()
+                    .set_deprecated(field_def, deprecated);
                 fields.push(FieldDef {
                     def: field_def,
                     name: Some(name),

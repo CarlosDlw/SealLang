@@ -1509,6 +1509,7 @@ dependencies = [
 name = "seal-ast"
 version = "0.1.0"
 dependencies = [
+ "seal-def",
  "seal-index",
  "seal-span",
  "seal-symbol",
@@ -1880,6 +1881,7 @@ dependencies = [
  "seal-lexer",
  "seal-span",
  "seal-symbol",
+ "semver",
 ]
 
 [[package]]

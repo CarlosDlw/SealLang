@@ -1,5 +1,6 @@
 //! Items: the top level of a program.
 
+use seal_def::Deprecation;
 use seal_span::Span;
 use seal_symbol::Symbol;
 
@@ -129,6 +130,8 @@ pub struct VariantDecl {
     /// A `cfg(...)` condition written on the variant, retained so the rejected
     /// syntax still has a reachable node.
     pub cfg: Option<CfgExprId>,
+    /// Deprecation metadata written on the variant, when present.
+    pub deprecated: Option<Deprecation>,
     /// The span from the variant name through the closing delimiter.
     pub span: Span,
 }
@@ -172,6 +175,8 @@ pub struct FieldDecl {
     /// A `cfg(...)` condition written on the field, retained so the rejected
     /// syntax still has a reachable node.
     pub cfg: Option<CfgExprId>,
+    /// Deprecation metadata written on the field, when present.
+    pub deprecated: Option<Deprecation>,
     /// The span from the name through the type.
     pub span: Span,
 }
@@ -248,6 +253,8 @@ pub struct TraitMethodDecl {
     /// A `cfg(...)` condition written on the method, retained so the rejected
     /// syntax still has a reachable node.
     pub cfg: Option<CfgExprId>,
+    /// Deprecation metadata written on the method, when present.
+    pub deprecated: Option<Deprecation>,
 }
 
 /// A function declaration.

@@ -25,6 +25,7 @@ fn snapshot(signature: &str) -> ApiSnapshot {
             fields: Vec::new(),
             variants: Vec::new(),
             docs: None,
+            deprecated: None,
             layout: None,
             implementations: Vec::new(),
         }],

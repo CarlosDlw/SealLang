@@ -21,7 +21,7 @@ mod id;
 mod kind;
 mod visibility;
 
-pub use definitions::{DefData, Definitions};
+pub use definitions::{DefData, Definitions, Deprecation};
 pub use id::{DefId, ModuleId, PackageId, PackageInstanceId};
 pub use kind::DefKind;
 pub use visibility::Visibility;

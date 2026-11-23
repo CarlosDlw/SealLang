@@ -404,27 +404,28 @@ impl AstBuilder {
             ty,
             visibility,
             cfg: None,
+            deprecated: None,
             span,
         })
     }
 
-    /// Adds a struct field with its visibility and rejected `cfg` condition.
+    /// Adds a struct field with its parsed declaration modifiers.
     pub fn push_field_with_modifiers(
         &mut self,
         name: Symbol,
         name_span: Span,
         ty: TypeId,
         span: Span,
-        visibility: Visibility,
-        cfg: Option<CfgExprId>,
+        modifiers: Modifiers,
     ) -> FieldDeclId {
         self.ast.fields.push(FieldDecl {
             name,
             name_span,
             docs: None,
             ty,
-            visibility,
-            cfg,
+            visibility: modifiers.visibility,
+            cfg: modifiers.cfg,
+            deprecated: modifiers.deprecated,
             span,
         })
     }
@@ -448,6 +449,7 @@ impl AstBuilder {
             docs: None,
             fields,
             cfg: None,
+            deprecated: None,
             span,
         })
     }
@@ -460,6 +462,7 @@ impl AstBuilder {
         fields: VariantFieldList,
         span: Span,
         cfg: Option<CfgExprId>,
+        deprecated: Option<seal_def::Deprecation>,
     ) -> VariantDeclId {
         self.ast.variants.push(VariantDecl {
             name,
@@ -467,6 +470,7 @@ impl AstBuilder {
             docs: None,
             fields,
             cfg,
+            deprecated,
             span,
         })
     }

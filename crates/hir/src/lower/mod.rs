@@ -754,6 +754,9 @@ impl<'a> Lowering<'a> {
             .set_bench(definition, modifiers.is_bench);
         self.hir
             .definitions_mut()
+            .set_deprecated(definition, modifiers.deprecated);
+        self.hir
+            .definitions_mut()
             .set_doc_span(definition, self.ast.item(item_id).docs);
         if let Some(condition) = self.ast.item(item_id).modifiers.cfg {
             let text = crate::cfg::format(self.ast, condition, self.interner);

@@ -22,6 +22,15 @@ behind unsafe operations.
 | [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`/`assert_eq`/`assert_ne`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |
 | [`builtins.md`](builtins.md) | `panic`, `exit`, equality assertions, type-name and type-of queries, size and alignment queries, compile-time evaluation, and shadowing |
 
+## Editions and deprecation
+
+A package selects its compatibility line with `edition` in `seal.toml`; the
+current edition is `2026` and it changes no syntax today. Deprecated
+declarations stay available and carry `since`, optional `note`, and optional
+`replacement` metadata into the public API and `seal doc`. The syntax and
+placement rules are in [`modules.md`](modules.md#deprecation), and the removal
+policy is in [`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
+
 ## Project guides
 
 The language guide stops at one package. These chapters cover the project layer

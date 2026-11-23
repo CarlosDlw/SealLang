@@ -284,6 +284,7 @@ impl Lowering<'_> {
         let params = declaration.params.clone();
         let ret = declaration.ret;
         let body = declaration.body;
+        let deprecated = declaration.deprecated;
         let generics_decl = declaration.generics.clone();
         let where_clause = declaration.where_clause.clone();
 
@@ -314,6 +315,9 @@ impl Lowering<'_> {
                 false,
             ),
         );
+        self.hir
+            .definitions_mut()
+            .set_deprecated(definition, deprecated);
         self.register_generics(definition, &generics_decl, Some(trait_def), false);
         self.queue_bounds(definition, &generics_decl, &[], &where_clause, None);
         self.trait_method_items

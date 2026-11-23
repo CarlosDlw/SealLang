@@ -4,6 +4,7 @@
 //! combinations that have no meaning. Name resolution decides whether a
 //! visibility is reachable from another module or package.
 
+use seal_def::Deprecation;
 use seal_span::Span;
 use seal_symbol::Symbol;
 
@@ -50,6 +51,8 @@ pub struct Modifiers {
     pub export: Option<Symbol>,
     /// The span of the `export` modifier, for diagnostics.
     pub export_span: Option<Span>,
+    /// Deprecation metadata, when the declaration has one.
+    pub deprecated: Option<Deprecation>,
 }
 
 impl Modifiers {
@@ -64,12 +67,17 @@ impl Modifiers {
             is_bench: false,
             export: None,
             export_span: None,
+            deprecated: None,
         }
     }
 
     /// Returns `true` when no modifier was written.
     #[inline]
     pub const fn is_empty(self) -> bool {
-        !self.has_visibility && self.cfg.is_none() && !self.is_test && !self.is_bench
+        !self.has_visibility
+            && self.cfg.is_none()
+            && !self.is_test
+            && !self.is_bench
+            && self.deprecated.is_none()
     }
 }

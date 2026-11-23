@@ -58,4 +58,5 @@ pub use pattern::{
     MatchArm, NamedPatternField, Pattern, PatternKind, PatternLiteral, VariantPatternFields,
 };
 pub use program::{Ast, AstBuilder, Program};
+pub use seal_def::Deprecation;
 pub use ty::{PrimitiveType, Type, TypeKind};

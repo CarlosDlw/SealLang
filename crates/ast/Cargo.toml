@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+seal-def.workspace = true
 seal-index.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true

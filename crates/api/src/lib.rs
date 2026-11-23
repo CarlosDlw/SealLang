@@ -13,5 +13,6 @@ pub mod snapshot;
 pub use error::{ApiError, ApiResult};
 pub use semver::{ApiDiff, Bump, Change, check, enforce, required_bump};
 pub use snapshot::{
-    ApiField, ApiImplementation, ApiItem, ApiLayout, ApiModule, ApiSnapshot, ApiVariant, FORMAT,
+    ApiDeprecation, ApiField, ApiImplementation, ApiItem, ApiLayout, ApiModule, ApiSnapshot,
+    ApiVariant, FORMAT,
 };

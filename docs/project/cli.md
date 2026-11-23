@@ -278,7 +278,11 @@ items never appear because the renderer consumes the public API snapshot.
 server.
 
 `api` prints the same versioned snapshot the registry hashes: modules, public
-items, signatures, fields, variants, `cfg`, docs, layouts, and implementations.
+items, signatures, fields, variants, `cfg`, docs, deprecation metadata,
+layouts, and implementations. A deprecated item, field, or variant carries a
+`deprecated` object with `since`, and optional `note` and `replacement`; the
+object is absent when the declaration is not deprecated, and
+`semver-check` keeps its classification unchanged.
 `semver-check` compares against a published version or a snapshot file, prints
 breaking/minor/patch changes, and exits `1` for a breaking change.
 

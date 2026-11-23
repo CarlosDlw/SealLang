@@ -351,6 +351,54 @@ fn plan_mode_lists_reexports_in_the_api_snapshot() {
 }
 
 #[test]
+fn plan_mode_emits_deprecation_metadata() {
+    let (fixture, source) = fixture(
+        "public deprecated(since: \"0.2.0\", note: \"use new\", replacement: \"new\") func old() {}\n\
+         public struct S { public deprecated(since: \"0.3.0\") old_field: i32 }\n\
+         public enum E { deprecated(since: \"0.4.0\") Old }\n\
+         func main() {}",
+    );
+    let plan = plan(&source, Some("root::main"), BuildMode::Check, None);
+    let path = write_plan(&fixture.root, &plan);
+    let output_path = fixture.root.join("api.json");
+    let output = run(&[
+        "build",
+        "--emit=api",
+        "--plan-file",
+        &path.display().to_string(),
+        "-o",
+        &output_path.display().to_string(),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&output_path).expect("api file")).expect("api json");
+    let items = snapshot["items"].as_array().expect("items");
+    let function = items
+        .iter()
+        .find(|item| item["name"] == "old")
+        .expect("the deprecated function is listed");
+    assert_eq!(function["deprecated"]["since"], "0.2.0");
+    assert_eq!(function["deprecated"]["note"], "use new");
+    assert_eq!(function["deprecated"]["replacement"], "new");
+
+    let structure = items
+        .iter()
+        .find(|item| item["name"] == "S")
+        .expect("the struct is listed");
+    assert_eq!(structure["fields"][0]["deprecated"]["since"], "0.3.0");
+
+    let enumeration = items
+        .iter()
+        .find(|item| item["name"] == "E")
+        .expect("the enum is listed");
+    assert_eq!(enumeration["variants"][0]["deprecated"]["since"], "0.4.0");
+}
+
+#[test]
 fn plan_mode_emits_an_api_snapshot() {
     let (fixture, source) = fixture("func main() -> i32 { 0 }\n");
     let plan = plan(&source, Some("root::main"), BuildMode::Check, None);

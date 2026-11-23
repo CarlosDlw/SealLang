@@ -45,6 +45,14 @@ impl Parser<'_> {
         let (abi, abi_span) = self.parse_abi();
 
         if self.at(TokenKind::LBrace) {
+            if modifiers.deprecated.is_some() {
+                let span = modifiers
+                    .deprecated
+                    .map_or_else(|| self.current_span(), |deprecation| deprecation.span);
+                self.error(codes::E2079, span, "an `extern` block cannot be deprecated")
+                    .help("deprecate the declarations inside the block")
+                    .emit();
+            }
             self.item_modifiers = Modifiers::none();
             let (items, links) = self.parse_extern_block_members(abi, abi_span);
             let span = start.cover(self.previous_span());
@@ -180,8 +188,7 @@ impl Parser<'_> {
                 field_name_span,
                 ty,
                 span,
-                field_modifiers.visibility,
-                field_modifiers.cfg,
+                field_modifiers,
             );
             self.builder.set_field_docs(field, docs);
             fields.push(field);
@@ -252,6 +259,8 @@ impl Parser<'_> {
         let mut links = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.is_eof() {
             let before = self.index;
+            let modifiers = self.parse_extern_member_modifiers();
+            self.item_modifiers = modifiers;
             if self.at(TokenKind::Func) {
                 let start = self.current_span();
                 items.push(self.parse_extern_function(abi, abi_span, start));
@@ -287,6 +296,59 @@ impl Parser<'_> {
         }
         let _ = self.expect(TokenKind::RBrace, "`}` to close the `extern` block");
         (items, links)
+    }
+
+    /// Parses modifiers attached to one member of an external block.
+    ///
+    /// A member inherits the block's ABI and visibility. Deprecation is the one
+    /// member-level modifier, so every other modifier is reported instead of
+    /// leaking into the external declaration's definition.
+    fn parse_extern_member_modifiers(&mut self) -> Modifiers {
+        let mut modifiers = self.parse_modifiers();
+        if modifiers.has_visibility {
+            self.error(
+                codes::E2079,
+                self.current_span(),
+                "an `extern` block member cannot have a visibility modifier",
+            )
+            .help("place the visibility on the `extern` block")
+            .emit();
+            modifiers.visibility = seal_ast::Visibility::Private;
+            modifiers.has_visibility = false;
+        }
+        if modifiers.cfg.is_some() {
+            self.error(
+                codes::E2085,
+                self.current_span(),
+                "an `extern` block member cannot have a `cfg` condition",
+            )
+            .help("place `cfg` on the `extern` block or on the code that uses the member")
+            .emit();
+            modifiers.cfg = None;
+        }
+        if modifiers.is_test || modifiers.is_bench {
+            self.error(
+                codes::E2079,
+                self.current_span(),
+                "an `extern` block member cannot be a test or benchmark",
+            )
+            .help("remove `test` and `bench`; they apply to functions")
+            .emit();
+            modifiers.is_test = false;
+            modifiers.is_bench = false;
+        }
+        if modifiers.export_span.is_some() {
+            self.error(
+                codes::E2079,
+                self.current_span(),
+                "an `extern` block member cannot be exported directly",
+            )
+            .help("export the block or a wrapper function")
+            .emit();
+            modifiers.export = None;
+            modifiers.export_span = None;
+        }
+        modifiers
     }
 
     /// Parses `link "name";` inside an external block.

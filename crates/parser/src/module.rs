@@ -155,6 +155,12 @@ impl Parser<'_> {
             modifiers.export = None;
             modifiers.export_span = None;
         }
+        if modifiers.deprecated.is_some() {
+            self.error(codes::E2079, start, "an import cannot be deprecated")
+                .help("deprecate the imported item instead")
+                .emit();
+            modifiers.deprecated = None;
+        }
 
         let (root, root_span) = match self.current_kind() {
             TokenKind::Ident(name) => {

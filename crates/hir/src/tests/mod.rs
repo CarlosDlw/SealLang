@@ -10,6 +10,7 @@ mod cfg;
 mod closures;
 mod control_flow;
 mod copy_impls;
+mod deprecated;
 mod drop_builtin;
 mod drop_impls;
 mod dyn_types;
