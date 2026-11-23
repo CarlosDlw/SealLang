@@ -330,6 +330,11 @@ A feature that cannot answer those questions is not ready, even if it compiles.
 A feature that answers them by weakening an invariant above is a new language
 version, not an extension.
 
+Every change that alters the language contract is proposed and recorded through
+the RFC process in [`../rfcs/README.md`](../rfcs/README.md). An accepted RFC
+names its edition impact, deprecation plan, migration, and test matrix before
+implementation starts.
+
 The bet behind Seal is simple: if the compiler proves ownership, aliasing,
 initialization, and destruction statically, the runtime does not need to guess.
 What cannot be proved is spelled `unsafe`, and everything else stays visible in

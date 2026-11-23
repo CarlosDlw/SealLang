@@ -38,6 +38,7 @@ that compiles, tests, documents, and publishes packages:
 | [`../project/acceptance.md`](../project/acceptance.md) | The acceptance matrix and the command that proves each line |
 | [`../project/ci.md`](../project/ci.md) | The reusable CI workflows, the shared setup action, and the gates each job runs |
 | [`../migration.md`](../migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
+| [`../rfcs/README.md`](../rfcs/README.md) | The RFC process, edition policy, and deprecation lifecycle |
 
 ## Reading conventions
 

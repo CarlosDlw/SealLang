@@ -329,6 +329,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/language/testing.md`](docs/language/testing.md) | `test`/`bench` functions, discovery, isolation, and reports |
 | [`docs/install.md`](docs/install.md) | Building and installing `seal`, `sealc`, and the standard library on Linux |
 | [`docs/migration.md`](docs/migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
+| [`docs/rfcs/README.md`](docs/rfcs/README.md) | The RFC process, edition policy, and deprecation lifecycle |
 | [`examples/README.md`](examples/README.md) | Runnable multi-module, workspace, features, generator, freestanding, and registry projects |
 | [`docs/codegen.md`](docs/codegen.md) | LLVM lowering, ABI, debug information, runtime, and optimization |
 | [`docs/language/copy.md`](docs/language/copy.md) | Complete user guide to opt-in `Copy` for structs and enums, generics, fields, `Drop`, references, patterns, loops, statics, and diagnostics |

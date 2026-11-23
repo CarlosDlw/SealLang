@@ -18,6 +18,15 @@
   idempotence, spaces, unwritable prefixes, `DESTDIR`, and profile preservation.
   A Linux CI job runs `bash -n`, `shellcheck`, and the acceptance test.
 
+### Language evolution
+
+- Language and contract changes now follow the RFC process in
+  [`docs/rfcs/README.md`](docs/rfcs/README.md). An accepted RFC records the
+  motivation, semantics, alternatives, edition impact, deprecation plan,
+  migration, and test matrix before implementation.
+- [`docs/rfcs/0001-editions-and-deprecation.md`](docs/rfcs/0001-editions-and-deprecation.md)
+  defines year-named, package-scoped editions and the deprecation lifecycle.
+
 ### Continuous integration
 
 - `.github/workflows/ci.yml` runs formatting, clippy, build, tests, and
