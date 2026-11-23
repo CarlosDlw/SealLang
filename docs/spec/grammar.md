@@ -71,7 +71,8 @@ visibility.
 
 ```text
 item = item-modifiers ( function-item | const-item | static-item | struct-item
-     | enum-item | impl-item | trait-item | extern-item | opaque-type-item )
+     | type-alias-item | enum-item | impl-item | trait-item | extern-item
+     | opaque-type-item )
 
 function-item = function-qualifiers "func" IDENT generic-params
                 "(" [ params ] ")" [ "->" type ] where-clause block
@@ -124,6 +125,8 @@ extern-param  = IDENT ":" type
 extern-static = "static" [ "mut" ] IDENT ":" type ";"
 
 opaque-type-item = "extern" "type" IDENT ";"
+
+type-alias-item = "type" IDENT generic-params where-clause "=" type ";"
 ```
 
 **G8.** A `func` declaration has a body. A trait method has either `;` or a
@@ -153,6 +156,7 @@ ends with `;` (`E3081`). `extern struct` has C layout and cannot be generic
 **G14.** A function declaration accepts `const` and `unsafe` in either order,
 each at most once. `unsafe` without `func` is `E3071`. `static func` is
 `E1013`; a function inside a block is not an item (`E1014`).
+
 
 ## Generics and bounds
 
@@ -477,6 +481,15 @@ returns a total tree with `Error` nodes. Recovery is an implementation
 requirement, not a separate accepted language: a file with any syntax error is
 not a valid Seal program, even though the compiler can still expose its tree to
 an editor.
+
+**G46.** A type alias is `type Name<...> = Type;`. `type` is contextual: it
+starts an alias only at item-start position, and remains an identifier
+everywhere else. The target is ordinary type syntax. The alias accepts the
+ordinary visibility, `cfg`, and `deprecated(...)` modifiers; `test`, `bench`,
+`export`, and `unsafe` do not apply (`E1001`/`E3071`). A missing `=` or `;` is
+`E1002`. A bound on an alias parameter or a `where` clause on the alias is
+retained by the parser and rejected by lowering (`E2096`). `extern type`
+remains the separate opaque-type production.
 
 ## Grammar diagnostics
 

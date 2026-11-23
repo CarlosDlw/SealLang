@@ -885,6 +885,7 @@ impl ModuleGraph {
                 ItemKind::Struct(declaration) => (declaration.name, Namespace::Type),
                 ItemKind::Enum(declaration) => (declaration.name, Namespace::Type),
                 ItemKind::OpaqueType(declaration) => (declaration.name, Namespace::Type),
+                ItemKind::TypeAlias(declaration) => (declaration.name, Namespace::Type),
                 ItemKind::Trait(declaration) => (declaration.name, Namespace::Trait),
                 ItemKind::Func(declaration) => (declaration.name, Namespace::Value),
                 ItemKind::Const(declaration) => (declaration.name, Namespace::Value),

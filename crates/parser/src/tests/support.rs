@@ -374,6 +374,12 @@ impl Reachability<'_> {
             ItemKind::OpaqueType(declaration) => {
                 self.assert_span(declaration.name_span);
             }
+            ItemKind::TypeAlias(declaration) => {
+                self.assert_span(declaration.name_span);
+                self.check_generics(&declaration.generics);
+                self.check_where(&declaration.where_clause);
+                self.check_type(declaration.ty);
+            }
             ItemKind::Error => {}
         }
     }

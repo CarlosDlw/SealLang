@@ -351,6 +351,48 @@ fn plan_mode_lists_reexports_in_the_api_snapshot() {
 }
 
 #[test]
+fn plan_mode_emits_type_aliases_in_the_api_snapshot() {
+    let (fixture, source) = fixture(
+        "/// Identifier.\npublic deprecated(since: \"0.2.0\", note: \"use Id\", replacement: \"Id\") type Id = i32;\npublic type Pair<T> = (T, T);\nfunc main() -> i32 { 0 }\n",
+    );
+    let plan = plan(&source, Some("root::main"), BuildMode::Check, None);
+    let path = write_plan(&fixture.root, &plan);
+    let output_path = fixture.root.join("api.json");
+    let output = run(&[
+        "build",
+        "--emit=api",
+        "--plan-file",
+        &path.display().to_string(),
+        "-o",
+        &output_path.display().to_string(),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&output_path).expect("api file")).expect("api json");
+    let items = snapshot["items"].as_array().expect("items");
+    let id = items
+        .iter()
+        .find(|item| item["name"] == "Id")
+        .expect("the alias is listed");
+    assert_eq!(id["kind"], "type-alias");
+    assert_eq!(id["signature"], "= i32");
+    assert_eq!(id["docs"], "Identifier.");
+    assert_eq!(id["deprecated"]["since"], "0.2.0");
+    assert_eq!(id["deprecated"]["note"], "use Id");
+    assert_eq!(id["deprecated"]["replacement"], "Id");
+    let pair = items
+        .iter()
+        .find(|item| item["name"] == "Pair")
+        .expect("the generic alias is listed");
+    assert_eq!(pair["kind"], "type-alias");
+    assert_eq!(pair["signature"], "= (T, T)");
+}
+
+#[test]
 fn plan_mode_emits_deprecation_metadata() {
     let (fixture, source) = fixture(
         "public deprecated(since: \"0.2.0\", note: \"use new\", replacement: \"new\") func old() {}\n\

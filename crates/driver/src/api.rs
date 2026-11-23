@@ -152,6 +152,11 @@ fn item(session: &Session, hir: &Hir, def: DefId) -> Option<ApiItem> {
                 .and_then(|body| body.ret)
                 .map(|ty| format!(": {}", display(session, hir, ty)));
         }
+        DefKind::TypeAlias => {
+            item.signature = hir
+                .type_alias_target(def)
+                .map(|ty| format!("= {}", display(session, hir, ty)));
+        }
         DefKind::Struct | DefKind::Enum => {
             let adt = hir.adt(def)?;
             let definition = hir.ty_ctxt().adt(adt);
@@ -351,6 +356,7 @@ fn kind_name(kind: DefKind) -> Option<&'static str> {
         DefKind::ExternFunction => Some("extern-function"),
         DefKind::ExternStatic => Some("extern-static"),
         DefKind::OpaqueType => Some("opaque-type"),
+        DefKind::TypeAlias => Some("type-alias"),
         _ => None,
     }
 }

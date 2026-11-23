@@ -112,6 +112,16 @@ impl Lowering<'_> {
         for item in &items {
             self.enter_file(item.file);
             let item_id = item.id;
+            let ItemKind::TypeAlias(declaration) = &self.ast.item(item_id).kind else {
+                continue;
+            };
+            let span = self.ast.item(item_id).span;
+            self.collect_type_alias(item_id, declaration.name, declaration.name_span, span);
+        }
+
+        for item in &items {
+            self.enter_file(item.file);
+            let item_id = item.id;
             let ItemKind::Trait(declaration) = &self.ast.item(item_id).kind else {
                 continue;
             };
@@ -1636,6 +1646,64 @@ impl Lowering<'_> {
         );
         self.opaque_items.push((self.item_ref(item_id), definition));
         if let Some(first) = self.local_type(name) {
+            self.duplicate(
+                first,
+                name_span,
+                format!(
+                    "the type `{}` is defined twice",
+                    self.interner.resolve(name)
+                ),
+                codes::E2005,
+            );
+        } else {
+            self.types.insert((self.current_module, name), definition);
+        }
+    }
+
+    /// Registers a transparent type alias before any target is lowered.
+    ///
+    /// The target may name an alias declared later, so only the definition and
+    /// its generic parameters are created here. [`Lowering::lower_type_aliases`]
+    /// fills the target once every type definition exists.
+    fn collect_type_alias(&mut self, item_id: ItemId, name: Symbol, name_span: Span, span: Span) {
+        let definition = self.define_item(
+            item_id,
+            DefData::new(DefKind::TypeAlias, name, name_span, span, None, false),
+        );
+        let declaration = match &self.ast.item(item_id).kind {
+            ItemKind::TypeAlias(declaration) => Some(declaration.clone()),
+            _ => None,
+        };
+        if let Some(declaration) = declaration {
+            self.register_generics(definition, &declaration.generics, None, false);
+            let bound_span = declaration
+                .generics
+                .params
+                .iter()
+                .find_map(|param| {
+                    let param = self.ast.generic_param(*param);
+                    (!param.bounds.is_empty()).then_some(param.span)
+                })
+                .or_else(|| {
+                    (!declaration.where_clause.is_empty()).then_some(declaration.where_clause.span)
+                });
+            if let Some(bound_span) = bound_span {
+                self.error(
+                    codes::E2096,
+                    bound_span,
+                    "a type alias cannot constrain its generic parameters",
+                )
+                .secondary(name_span, "in this alias")
+                .help("remove the bound; a transparent alias has no operations that could use it")
+                .emit();
+            }
+        }
+        self.type_alias_items
+            .push((self.item_ref(item_id), definition));
+        self.type_alias_decl
+            .insert(definition, self.item_ref(item_id));
+
+        if let Some(first) = self.local_type(name).or_else(|| self.local_trait(name)) {
             self.duplicate(
                 first,
                 name_span,

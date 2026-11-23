@@ -478,7 +478,10 @@ impl Parser<'_> {
     }
 
     fn at_where_end(&self) -> bool {
-        self.at(TokenKind::LBrace) || self.at(TokenKind::Semicolon) || self.at(TokenKind::RBrace)
+        self.at(TokenKind::LBrace)
+            || self.at(TokenKind::Semicolon)
+            || self.at(TokenKind::RBrace)
+            || self.at(TokenKind::Eq)
     }
 
     fn at_generic_close(&self) -> bool {

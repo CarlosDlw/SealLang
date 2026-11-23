@@ -43,6 +43,8 @@ pub enum ItemKind {
     Struct(StructDecl),
     /// An opaque type declared by `extern type Name;`.
     OpaqueType(OpaqueTypeDecl),
+    /// A transparent type alias declared by `type Name = Type;`.
+    TypeAlias(TypeAliasDecl),
     /// An enum declaration.
     Enum(EnumDecl),
     /// An inherent implementation block for a nominal struct, or a trait
@@ -93,6 +95,25 @@ pub struct OpaqueTypeDecl {
     pub name: Symbol,
     /// The span of the name, for diagnostics that point at it.
     pub name_span: Span,
+}
+
+/// A transparent type alias declared by `type Name = Type;`.
+///
+/// The target is ordinary type syntax. Lowering substitutes the alias
+/// parameters into the target and uses the resulting type directly, so the
+/// alias has no identity of its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeAliasDecl {
+    /// The alias name.
+    pub name: Symbol,
+    /// The span of the name, for diagnostics that point at it.
+    pub name_span: Span,
+    /// Declared type parameters.
+    pub generics: GenericParams,
+    /// A rejected `where` clause, retained so recovery can diagnose it.
+    pub where_clause: WhereClause,
+    /// The target type written after `=`.
+    pub ty: TypeId,
 }
 
 /// An enum declaration.

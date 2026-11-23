@@ -1402,6 +1402,40 @@ pub const E2094: ErrorCode = ErrorCode {
 Re-exports live in their module's namespace. A re-export cannot share a name\nwith an item or submodule of that module.\n\nRename the re-export with `as`, or remove the conflicting declaration.",
 };
 
+/// Two type aliases or a type alias and another type form a cycle.
+pub const E2095: ErrorCode = ErrorCode {
+    code: "E2095",
+    title: "recursive type alias",
+    explanation: "\
+A type alias is transparent: using it expands to its target. If expanding the
+target reaches the same alias again, the expansion would never terminate, so
+the alias has no type to name.\n\nRecursive data types use a struct or enum\nwith a pointer or reference field. Remove the alias cycle, or replace one
+edge with a nominal type.",
+};
+
+/// A type alias parameter carries a bound that cannot be enforced.
+pub const E2096: ErrorCode = ErrorCode {
+    code: "E2096",
+    title: "bounds on a type alias parameter",
+    explanation: "\
+A type alias is erased during type checking and has no operations of its own,
+so a bound on one of its parameters would be a promise the compiler cannot
+enforce at an alias use. Seal rejects the bound instead of silently ignoring
+it.\n\nRemove the bound and state it on the generic struct, enum, function, or\ntrait that actually uses the type, or use a concrete alias target.",
+};
+
+/// A type alias was used where a struct or enum path is required.
+pub const E2097: ErrorCode = ErrorCode {
+    code: "E2097",
+    title: "type alias target is not nominal",
+    explanation: "\
+A constructor, variant path, associated-function path, or pattern names a
+struct or enum so the compiler can look up fields, variants, or methods. A type
+alias is transparent, and its target may be a primitive, tuple, reference, or
+another non-nominal type. Such a target has no members to select.\n\nUse the underlying struct or enum name, or use the alias only in a type
+position.",
+};
+
 /// A package prelude names a module that does not exist.
 pub const E2100: ErrorCode = ErrorCode {
     code: "E2100",
@@ -1537,6 +1571,18 @@ reference is valid too: the compiler promotes that reference to the enclosing
 block, so `*identity(&buffer)` remains a checked owner. A raw dereference is not
 a checked owner and is always rejected. Trait-object pointees are reserved for a
 later extension.",
+};
+
+/// A public type alias exposes a type that is not public.
+pub const E3107: ErrorCode = ErrorCode {
+    code: "E3107",
+    title: "public type alias exposes a private type",
+    explanation: "\
+A public alias is part of the package API, so another package can name it. The
+alias is transparent, which means every use also needs the target type to be
+nameable outside the package. A target that is private or internal therefore
+makes the alias unusable despite its public spelling.\n\nMake the target public and expose its module, change the alias to `internal`,
+or alias a public type instead.",
 };
 
 /// Expression types do not match.
@@ -4666,28 +4712,28 @@ pub static ALL: &[ErrorCode] = &[
     E2052, E2053, E2054, E2055, E2056, E2057, E2058, E2059, E2060, E2061, E2062, E2063, E2064,
     E2065, E2066, E2067, E2068, E2069, E2070, E2071, E2072, E2073, E2074, E2075, E2076, E2077,
     E2078, E2079, E2080, E2081, E2082, E2083, E2084, E2085, E2086, E2087, E2088, E2089, E2090,
-    E2091, E2092, E2093, E2094, E2100, E2101, E2102, E2103, E3001, E3002, E3003, E3004, E3005,
-    E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015, E3016, E3017, E3018,
-    E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028, E3029, E3030, E3031,
-    E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041, E3042, E3043, E3044,
-    E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054, E3055, E3056, E3057,
-    E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068, E3069, E3070, E3071,
-    E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082, E3083, E3084, E3085,
-    E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095, E3096, E3097, E3098,
-    E3099, E3100, E3101, E3102, E3103, E3104, E3105, E3106, E4001, E4002, E4003, E4004, E4005,
-    E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014, E4015, E4016, E4017, E4018,
-    E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027, E4028, E4030, E4031, E4032,
-    E4033, E4034, E4035, E5001, E5002, E5003, E5004, E5005, E5006, E5007, E5008, E5009, E5010,
-    E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003, E6004, E6005, E7001, E7002,
-    E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003, E8004, E8005, E8006, E8007,
-    E8008, E8009, E8010, E8011, E8012, E8013, E8014, E8020, E8021, E8022, E8023, E8024, E8025,
-    E8026, E8027, E8028, E8029, E8030, E8031, E8032, E8033, E8034, E8035, E8036, E8037, E8038,
-    E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047, E8060, E8061, E8062, E8070,
-    E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088, E8089, E8090, E8091, E8092,
-    E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8100, E8101, E8102, E8103, E8104, E8105,
-    E8106, E8107, E8108, E8109, E8110, E8111, E8112, E8120, E8121, E8122, E8123, E8124, E8125,
-    E8126, E8127, E8128, E8129, E8130, E8131, E8132, E8133, E8134, E8135, E8136, E8137, E8138,
-    E8139, E8140, E8141, E9001, E9002,
+    E2091, E2092, E2093, E2094, E2095, E2096, E2097, E2100, E2101, E2102, E2103, E3001, E3002,
+    E3003, E3004, E3005, E3006, E3007, E3008, E3009, E3010, E3011, E3012, E3013, E3014, E3015,
+    E3016, E3017, E3018, E3019, E3020, E3021, E3022, E3023, E3024, E3025, E3026, E3027, E3028,
+    E3029, E3030, E3031, E3032, E3033, E3034, E3035, E3036, E3037, E3038, E3039, E3040, E3041,
+    E3042, E3043, E3044, E3045, E3046, E3047, E3048, E3049, E3050, E3051, E3052, E3053, E3054,
+    E3055, E3056, E3057, E3058, E3059, E3060, E3062, E3063, E3064, E3065, E3066, E3067, E3068,
+    E3069, E3070, E3071, E3072, E3073, E3074, E3075, E3076, E3077, E3078, E3080, E3081, E3082,
+    E3083, E3084, E3085, E3086, E3087, E3088, E3089, E3090, E3091, E3092, E3093, E3094, E3095,
+    E3096, E3097, E3098, E3099, E3100, E3101, E3102, E3103, E3104, E3105, E3106, E3107, E4001,
+    E4002, E4003, E4004, E4005, E4006, E4007, E4008, E4009, E4010, E4011, E4012, E4013, E4014,
+    E4015, E4016, E4017, E4018, E4019, E4020, E4021, E4022, E4023, E4024, E4025, E4026, E4027,
+    E4028, E4030, E4031, E4032, E4033, E4034, E4035, E5001, E5002, E5003, E5004, E5005, E5006,
+    E5007, E5008, E5009, E5010, E5011, E5012, E5013, E5014, E5015, E5016, E6001, E6002, E6003,
+    E6004, E6005, E7001, E7002, E7003, E7004, E7005, E7006, E7007, E7008, E8001, E8002, E8003,
+    E8004, E8005, E8006, E8007, E8008, E8009, E8010, E8011, E8012, E8013, E8014, E8020, E8021,
+    E8022, E8023, E8024, E8025, E8026, E8027, E8028, E8029, E8030, E8031, E8032, E8033, E8034,
+    E8035, E8036, E8037, E8038, E8039, E8040, E8041, E8042, E8043, E8044, E8045, E8046, E8047,
+    E8060, E8061, E8062, E8070, E8080, E8081, E8082, E8083, E8084, E8085, E8086, E8087, E8088,
+    E8089, E8090, E8091, E8092, E8093, E8094, E8095, E8096, E8097, E8098, E8099, E8100, E8101,
+    E8102, E8103, E8104, E8105, E8106, E8107, E8108, E8109, E8110, E8111, E8112, E8120, E8121,
+    E8122, E8123, E8124, E8125, E8126, E8127, E8128, E8129, E8130, E8131, E8132, E8133, E8134,
+    E8135, E8136, E8137, E8138, E8139, E8140, E8141, E9001, E9002,
 ];
 
 /// Looks up a code by its text, for example `E0001`.
@@ -4953,7 +4999,8 @@ mod tests {
                 "E2064", "E2065", "E2066", "E2067", "E2068", "E2069", "E2070", "E2071", "E2072",
                 "E2073", "E2074", "E2075", "E2076", "E2077", "E2078", "E2079", "E2080", "E2081",
                 "E2082", "E2083", "E2084", "E2085", "E2086", "E2087", "E2088", "E2089", "E2090",
-                "E2091", "E2092", "E2093", "E2094", "E2100", "E2101", "E2102", "E2103",
+                "E2091", "E2092", "E2093", "E2094", "E2095", "E2096", "E2097", "E2100", "E2101",
+                "E2102", "E2103",
             ]
         );
         // Module, API, and prelude codes are allocated in order. Codes are
@@ -4981,7 +5028,7 @@ mod tests {
                 "E3074", "E3075", "E3076", "E3077", "E3078", "E3080", "E3081", "E3082", "E3083",
                 "E3084", "E3085", "E3086", "E3087", "E3088", "E3089", "E3090", "E3091", "E3092",
                 "E3093", "E3094", "E3095", "E3096", "E3097", "E3098", "E3099", "E3100", "E3101",
-                "E3102", "E3103", "E3104", "E3105", "E3106",
+                "E3102", "E3103", "E3104", "E3105", "E3106", "E3107",
             ]
         );
         // `E3061` stays unallocated: codes are never reused, so a gap is

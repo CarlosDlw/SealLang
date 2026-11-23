@@ -73,6 +73,27 @@ destructors from its fields or elements. Scalars, references, `str`, `()`, and
 dropped, and constant evaluation rejects a drop that would run a destructor
 (`E4028`).
 
+## Type aliases
+
+A type alias is a transparent name for a type:
+
+```seal
+type Score = i32;
+type Pair<T> = (T, T);
+type PointAlias = Point;
+```
+
+An alias has no entry of its own in the type table above. After substituting its
+type arguments, every use is the target type, with the same size, alignment,
+`Copy`/`Sized` properties, destructor, layout, trait implementations, and ABI.
+`type PointAlias = Point;` can therefore be used in `PointAlias { ... }`,
+`PointAlias::new()`, and struct patterns exactly like `Point`.
+
+Aliases are file-scope items and share the type namespace with structs, enums,
+opaque types, and traits. They accept visibility, `cfg`, and `deprecated(...)`,
+but not `test`, `bench`, `export`, or `unsafe`. A bound on an alias parameter is
+rejected (`E2096`), and an expansion cycle is rejected (`E2095`).
+
 ## Generic types
 
 A generic declaration introduces type parameters and is checked once, against

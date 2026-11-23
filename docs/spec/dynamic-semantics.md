@@ -232,3 +232,9 @@ deterministically.
 `-O2` may differ in timing and code size, never in language-visible results.
 A `noalias`-style attribute is emitted only when the compiler has proved the
 corresponding exclusivity; it is never a promise that unsafe code must uphold.
+
+**D30. Type aliases are erased.** A type alias has no run-time representation.
+After generic substitution, every operation on an alias is an operation on its
+target: layout, field offsets, drop glue, dispatch, symbol names, and ABI are
+the target's. An alias cannot change evaluation order, allocate, copy, or
+introduce a runtime check.

@@ -49,7 +49,7 @@ pub use id::{
 };
 pub use item::{
     ConstDecl, EnumDecl, FieldDecl, FnDecl, ImplDecl, Item, ItemKind, OpaqueTypeDecl, Param,
-    StaticDecl, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDecl, VariantDecl,
+    StaticDecl, StructDecl, TraitDecl, TraitMethodDecl, TupleFieldDecl, TypeAliasDecl, VariantDecl,
     VariantFieldList,
 };
 pub use modifiers::{Modifiers, Visibility};

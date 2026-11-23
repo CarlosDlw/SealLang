@@ -493,7 +493,11 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
         self.warn_deprecated(type_def, type_span);
-        let type_args = self.lower_nominal_arguments(type_def, type_args);
+        let Some((type_def, type_args)) =
+            self.nominal_type_for_path(type_def, type_args, type_span, type_span)
+        else {
+            return ExprKind::Error;
+        };
 
         if let Some(variant) = self.hir.variant(type_def, name) {
             let adt = self
@@ -807,15 +811,20 @@ impl Lowering<'_> {
     fn lower_variant_call(&mut self, callee: AstExprId, args: &[AstExprId]) -> Option<ExprKind> {
         let AstExprKind::PathQualified {
             type_name,
+            type_span,
             type_args,
             name,
             name_span,
-            ..
         } = self.ast.expr(callee).kind.clone()
         else {
             return None;
         };
         let definition = self.type_def(type_name)?;
+        if self.hir.definitions().kind(definition) == seal_def::DefKind::TypeAlias {
+            self.warn_deprecated(definition, type_span);
+        }
+        let (definition, type_args) =
+            self.nominal_type_for_path(definition, type_args.as_ref(), type_span, type_span)?;
         let adt = self.hir.adt(definition)?;
         let adt_def = self.hir.ty_ctxt().adt(adt);
         if !adt_def.is_enum() {
@@ -823,7 +832,6 @@ impl Lowering<'_> {
         }
         let variant = self.hir.variant(definition, name)?;
         let variant_def = adt_def.variant(variant)?.clone();
-        let type_args = self.lower_nominal_arguments(definition, type_args.as_ref());
         let enum_name = self.interner.resolve(type_name).to_owned();
         let variant_name = self.interner.resolve(name).to_owned();
         let path = format!("{enum_name}::{variant_name}");
@@ -930,20 +938,6 @@ impl Lowering<'_> {
             args,
             function_args,
         }
-    }
-
-    /// Lowers the explicit type arguments written before an associated name.
-    fn lower_nominal_arguments(
-        &mut self,
-        definition: DefId,
-        args: Option<&seal_ast::GenericArgs>,
-    ) -> Option<seal_ty::SubstsId> {
-        let adt = self
-            .hir
-            .adt(definition)
-            .expect("every type definition reserves an aggregate");
-        let expected = self.hir.ty_ctxt().adt_generic_count(adt) as usize;
-        self.lower_expr_arguments(args, expected)
     }
 
     /// Returns the built-in name and explicit type arguments of `callee`.
@@ -1610,7 +1604,17 @@ impl Lowering<'_> {
         {
             return ExprKind::Error;
         }
-        let type_args = self.lower_nominal_arguments(definition, last.args.as_ref().or(args));
+        if self.hir.definitions().kind(definition) == seal_def::DefKind::TypeAlias {
+            self.warn_deprecated(definition, last.name_span);
+        }
+        let Some((definition, type_args)) = self.nominal_type_for_path(
+            definition,
+            last.args.as_ref().or(args),
+            last.name_span,
+            last.name_span,
+        ) else {
+            return ExprKind::Error;
+        };
         self.lower_struct_value(
             definition,
             last.name,
@@ -1664,7 +1668,14 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
-        let type_args = self.lower_nominal_arguments(definition, type_args);
+        if self.hir.definitions().kind(definition) == seal_def::DefKind::TypeAlias {
+            self.warn_deprecated(definition, name_span);
+        }
+        let Some((definition, type_args)) =
+            self.nominal_type_for_path(definition, type_args, name_span, name_span)
+        else {
+            return ExprKind::Error;
+        };
         self.lower_struct_value(definition, name, name_span, type_args, initializers)
     }
 
@@ -1774,11 +1785,15 @@ impl Lowering<'_> {
         };
 
         self.warn_deprecated(definition, type_span);
-        let type_args = self.lower_nominal_arguments(definition, type_args);
+        let Some((definition, type_args)) =
+            self.nominal_type_for_path(definition, type_args, type_span, type_span)
+        else {
+            return ExprKind::Error;
+        };
         let adt = self
             .hir
             .adt(definition)
-            .expect("every type definition reserves an aggregate");
+            .expect("a nominal path resolves to an aggregate");
         let adt_def = self.hir.ty_ctxt().adt(adt);
         if !adt_def.is_enum() {
             let type_name = self.interner.resolve(type_name).to_owned();

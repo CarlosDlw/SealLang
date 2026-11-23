@@ -388,6 +388,9 @@ impl Lowering<'_> {
         behind_raw_pointer: bool,
     ) -> TyId {
         self.warn_deprecated(definition, name_span);
+        if self.hir.definitions().kind(definition) == seal_def::DefKind::TypeAlias {
+            return self.lower_type_alias_use(definition, args, name_span, span);
+        }
         if self.hir.definitions().kind(definition) == seal_def::DefKind::OpaqueType {
             let name = self.hir.definitions().name(definition);
             let opaque = self.hir.ty_ctxt().opaque_ty(definition, name);

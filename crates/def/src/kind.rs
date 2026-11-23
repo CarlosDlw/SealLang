@@ -17,6 +17,8 @@ pub enum DefKind {
     Struct,
     /// An opaque type declared by `extern type`.
     OpaqueType,
+    /// A transparent type alias.
+    TypeAlias,
     /// An enum item.
     Enum,
     /// An enum variant declaration.
@@ -59,6 +61,7 @@ impl DefKind {
             Self::ExternStatic => "external static",
             Self::Struct => "struct",
             Self::OpaqueType => "opaque type",
+            Self::TypeAlias => "type alias",
             Self::Enum => "enum",
             Self::Variant => "variant",
             Self::Trait => "trait",
@@ -82,6 +85,7 @@ mod tests {
     fn only_parameters_and_bindings_are_local() {
         assert!(!DefKind::Function.is_local());
         assert!(!DefKind::OpaqueType.is_local());
+        assert!(!DefKind::TypeAlias.is_local());
         assert!(!DefKind::Enum.is_local());
         assert!(!DefKind::Variant.is_local());
         assert!(!DefKind::Trait.is_local());
@@ -105,6 +109,7 @@ mod tests {
             DefKind::ExternStatic.description(),
             DefKind::Struct.description(),
             DefKind::OpaqueType.description(),
+            DefKind::TypeAlias.description(),
             DefKind::Enum.description(),
             DefKind::Variant.description(),
             DefKind::Trait.description(),

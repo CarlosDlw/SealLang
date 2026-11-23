@@ -25,6 +25,7 @@ wins and the guide is corrected.
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
 | [`first-class-functions.md`](first-class-functions.md) | `func` and `unsafe func` types, closures and capture, `move`, `Fn`/`FnMut`/`FnOnce` bounds, coercion, drop and borrow rules, ABI, diagnostics, and limits |
 | [`modules.md`](modules.md) | Multi-file packages, module declarations and fragments, absolute imports, visibility, the public API, `cfg` filtering, cycles, and the `--plan` driver |
+| [`type-aliases.md`](type-aliases.md) | Transparent aliases, generic substitution, nominal paths, cycles, bounds rejection, and public API rules |
 | [`prelude.md`](prelude.md) | Plan-selected preludes, injected item exports, lookup precedence, opt-out, diagnostics, and versioning |
 | [`stdlib.md`](stdlib.md) | `core`/`std`, `Option`/`Result`, the `mem` utilities and `mem::forget`, canonical paths, re-exports, moves, and the core/std preludes |
 | [`testing.md`](testing.md) | `test`/`bench` modifiers, implicit `cfg` gating, `assert`/`assert_eq`/`assert_ne`, entry-point rules, unit and integration boundaries, discovery, runner reports, and benchmark measurement |

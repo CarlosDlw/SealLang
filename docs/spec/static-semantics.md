@@ -97,7 +97,9 @@ an `extern` block take no deprecation (`E2079`). An import takes no `private`,
 slices, trait objects, Seal function pointers, C function signatures behind raw
 pointers, nominal structs and enums, opaque external types, type parameters,
 closures, and the internal `Error`/`Infer` types. `()` is the empty tuple. `!`
-is the never type and has no type-position spelling in `0.1`.
+is the never type and has no type-position spelling in `0.1`. A type alias is
+not a type kind of its own: it is a declaration that expands to one of these
+kinds (S61–S65).
 
 **S15. Well-formedness.** Every stored value MUST be `Sized`: locals,
 parameters, return values, fields, tuple elements, array elements, and enum
@@ -394,8 +396,9 @@ rejected. A reference to a const-frame allocation may not escape (`E4013`).
 
 **S56. Deprecation metadata.** `deprecated(since: "...", note: "...",
 replacement: "...")` marks a function, constant, static, struct, enum, opaque
-type, trait, trait method, inherent method, field, variant, or extern function
-or static. `since` is a required semantic version; `note` and `replacement` are
+type, type alias, trait, trait method, inherent method, field, variant, or
+extern function or static. `since` is a required semantic version; `note` and
+`replacement` are
 optional. The metadata is carried in the public API and documentation. A use of
 a deprecated declaration warns with the `deprecated` lint at the use site;
 uses inside the deprecated declaration itself do not warn. A `cfg`-inactive use
@@ -426,3 +429,39 @@ S49–S55 has no undefined behavior. Undefined behavior can only be reached
 through an unchecked operation whose documented contract is violated; the
 contract is part of [`dynamic-semantics.md`](dynamic-semantics.md). A type,
 initialization, move, or borrow error is never silently downgraded to a warning.
+
+## Type aliases
+
+**S61. Identity.** A declaration `type Name = Target;` introduces a name in the
+type namespace but no new type identity. After substituting its arguments, a use
+has the same type, layout, destructor, trait implementations, and ABI as the
+written target. An alias never changes a value's ownership or evaluation order.
+
+**S62. Declaration rules.** An alias is a file-scope item. Its name follows the
+type-namespace uniqueness rules (S9): a same-name struct, enum, opaque type,
+trait, or alias is `E2005` (or `E2083` across module fragments). `public`,
+`internal`, `private`, `cfg`, and `deprecated(...)` have their ordinary meaning
+(S6, S56). `test`, `bench`, `export`, and `unsafe` do not apply (`E1001`/
+`E3071`). The declaration requires `=` and `;` (`E1002`).
+
+**S63. Expansion and generics.** An alias may declare type parameters and is
+used with exactly one type argument per parameter; a missing or extra argument
+is `E2052`/`E2053`. Lowering substitutes the arguments into the target with the
+same operation used for every generic declaration. The target may name a
+primitive, tuple, reference, raw pointer, array, slice, function pointer, C
+signature behind a raw pointer, trait object, struct, enum, opaque type behind a
+raw pointer, type parameter, or another alias. A bound on an alias parameter or
+a `where` clause on the alias is `E2096`: a transparent alias has no operations
+that could enforce it.
+
+**S64. Cycles.** An alias target must have a finite expansion. A reference that
+reaches an alias already being expanded is `E2095`, including direct
+(`type A = A;`) and mutual (`type A = B; type B = A;`) cycles. An alias that
+fails expansion denotes the error type; later uses do not repeat the diagnostic.
+
+**S65. Nominal paths and API.** In a type position a use always expands. In a
+constructor, variant path, associated-function path, pattern, or impl header,
+the expanded target is used as the nominal type: its fields, variants, methods,
+and coherence rules apply. A target that is not a struct or enum in a
+nominal-only position is `E2097`. A public alias is part of the package API and
+its target must be nameable outside the package; otherwise it is `E3107`.

@@ -178,10 +178,16 @@ impl Lowering<'_> {
             return RawPatternKind::Error;
         };
 
+        let Some((definition, _)) =
+            self.nominal_type_for_path(definition, None, type_span, type_span)
+        else {
+            self.discard_variant_fields(fields);
+            return RawPatternKind::Error;
+        };
         let adt = self
             .hir
             .adt(definition)
-            .expect("every type definition reserves an aggregate");
+            .expect("a nominal pattern resolves to an aggregate");
         let adt_def = self.hir.ty_ctxt().adt(adt).clone();
         if !adt_def.is_enum() {
             self.error(
@@ -468,10 +474,18 @@ impl Lowering<'_> {
             return RawPatternKind::Error;
         };
 
+        let Some((definition, _)) =
+            self.nominal_type_for_path(definition, None, name_span, name_span)
+        else {
+            for field in fields {
+                self.build_raw_pattern(field.pattern);
+            }
+            return RawPatternKind::Error;
+        };
         let adt = self
             .hir
             .adt(definition)
-            .expect("every type definition reserves an aggregate");
+            .expect("a nominal pattern resolves to an aggregate");
         let adt_def = self.hir.ty_ctxt().adt(adt).clone();
         if adt_def.is_enum() {
             self.error(

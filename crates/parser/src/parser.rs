@@ -3,7 +3,7 @@
 use seal_ast::{
     Ast, AstBuilder, ConstDecl, EnumDecl, ExprId, ExprKind, FieldDeclId, FnDecl, GenericParams,
     ImplDecl, ItemId, ItemKind, Modifiers, ParamId, StaticDecl, TraitDecl, TraitMethodDecl,
-    TupleFieldDeclId, TypeId, TypeKind, VariantDeclId, VariantFieldList, Visibility,
+    TupleFieldDeclId, TypeAliasDecl, TypeId, TypeKind, VariantDeclId, VariantFieldList, Visibility,
 };
 use seal_diagnostics::{DiagCtxt, ErrorBuilder};
 use seal_error_codes as codes;
@@ -279,6 +279,8 @@ impl<'a> Parser<'a> {
             self.parse_static_item()
         } else if self.at(TokenKind::Struct) {
             self.parse_struct()
+        } else if self.at_name("type") {
+            self.parse_type_alias()
         } else if self.at(TokenKind::Enum) {
             self.parse_enum()
         } else if self.at(TokenKind::Impl) {
@@ -295,8 +297,8 @@ impl<'a> Parser<'a> {
                 format!("expected an item, found {found}"),
             )
             .help(
-                "top-level items start with `func`, `const`, `static`, `struct`, `enum`, \
-                 `impl`, or `trait`",
+                "top-level items start with `func`, `const`, `static`, `struct`, `type`, \
+                 `enum`, `impl`, or `trait`",
             )
             .emit();
             while !self.is_eof()
@@ -305,6 +307,7 @@ impl<'a> Parser<'a> {
                 && !self.at(TokenKind::Const)
                 && !self.at(TokenKind::Static)
                 && !self.at(TokenKind::Struct)
+                && !self.at_name("type")
                 && !self.at(TokenKind::Enum)
                 && !self.at(TokenKind::Impl)
                 && !self.at(TokenKind::Trait)
@@ -396,6 +399,8 @@ impl<'a> Parser<'a> {
         .emit();
         if self.at(TokenKind::Struct) {
             self.parse_struct()
+        } else if self.at_name("type") {
+            self.parse_type_alias()
         } else if self.at(TokenKind::Enum) {
             self.parse_enum()
         } else if self.at(TokenKind::Impl) {
@@ -1014,6 +1019,43 @@ impl<'a> Parser<'a> {
             }),
             span,
             Modifiers::none(),
+        )
+    }
+
+    /// Parses `type Name<...> = Type;`.
+    ///
+    /// `type` is contextual: only this item-start position consumes it. The
+    /// target is ordinary type syntax, and a `where` clause is retained so
+    /// lowering can reject bounds on a transparent alias explicitly.
+    fn parse_type_alias(&mut self) -> ItemId {
+        let keyword = self.bump();
+        let (name, name_span) = self.expect_ident("a type alias name");
+        let generics = self.parse_generic_params();
+        let where_clause = self.parse_where_clause();
+        let _ = self.expect(TokenKind::Eq, "`=` after the type alias name");
+        let ty = self.parse_type();
+        if !self.eat(TokenKind::Semicolon) {
+            let found = self.describe(self.current_kind());
+            self.error(
+                codes::E1002,
+                self.current_span(),
+                format!("a type alias ends with `;`, found {found}"),
+            )
+            .help("write `type Name = Type;`")
+            .emit();
+            self.skip_declaration();
+        }
+        let span = keyword.span.cover(self.previous_span());
+        self.builder.push_item_with_modifiers(
+            ItemKind::TypeAlias(TypeAliasDecl {
+                name,
+                name_span,
+                generics,
+                where_clause,
+                ty,
+            }),
+            span,
+            self.item_modifiers,
         )
     }
 

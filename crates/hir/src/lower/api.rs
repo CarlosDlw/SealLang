@@ -109,9 +109,17 @@ impl Lowering<'_> {
             DefKind::Struct => self.validate_struct(def, name_span),
             DefKind::Enum => self.validate_enum(def, span),
             DefKind::Trait => self.validate_trait(def, span),
+            DefKind::TypeAlias => self.validate_type_alias(def, name_span),
             DefKind::OpaqueType => {}
             _ => {}
         }
+    }
+
+    fn validate_type_alias(&mut self, def: DefId, name_span: Span) {
+        let Some(target) = self.hir.type_alias_target(def) else {
+            return;
+        };
+        self.require_api_type(target, name_span, codes::E3107, "this public type alias");
     }
 
     fn validate_function(&mut self, def: DefId, span: Span) {

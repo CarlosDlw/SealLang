@@ -29,6 +29,7 @@ commit.
 | `item-modifiers`, `deprecation`, `cfg` | `crates/parser/src/modifiers.rs`, `cfg.rs` | `crates/parser/src/tests/{visibility,deprecated,cfg}.rs` |
 | Functions, constants, statics | `crates/parser/src/parser.rs` | `crates/parser/src/tests/{items,stmts,globals}.rs` |
 | Structs, enums, variants, fields | `crates/parser/src/parser.rs`, `extern_item.rs` | `crates/parser/src/tests/{structs,enums,tuple_variants,extern_items}.rs` |
+| Type aliases | `crates/parser/src/parser.rs` | `crates/parser/src/tests/type_aliases.rs` |
 | Traits, impls, methods | `crates/parser/src/parser.rs`, `generics.rs` | `crates/parser/src/tests/{traits,impls,methods,generics}.rs` |
 | External declarations | `crates/parser/src/extern_item.rs` | `crates/parser/src/tests/{extern_items,fn_sigs}.rs` |
 | Generic parameters, arguments, bounds, `where` | `crates/parser/src/generics.rs` | `crates/parser/src/tests/generics.rs` |
@@ -57,6 +58,7 @@ requirements for editors (G45). A recovered file is never a conforming program.
 | Unsafe, raw pointers, C interop | S49–S52 | `crates/typeck/src/tests/{raw_pointers,raw_deref,raw_casts,raw_methods,ffi,c_types}.rs`; `crates/driver/tests/linking.rs`; `examples/` FFI examples |
 | Constants, statics, evaluation | S53–S55 | `crates/const-eval` tests; `crates/driver/tests/global_diagnostics.rs`; `examples/039_const_static.sl` |
 | Deprecation, lints, editions | S56–S57 | `crates/parser/src/tests/deprecated.rs`; `crates/hir/src/tests/deprecated.rs`; `crates/typeck/src/tests/deprecated.rs`; `crates/driver/tests/diagnostics.rs`; `examples/deprecation` |
+| Type aliases | S61–S65 | `crates/parser/src/tests/type_aliases.rs`; `crates/hir/src/tests/type_aliases.rs`; `crates/driver/tests/type_aliases.rs` |
 
 ## Dynamic evidence
 
@@ -69,7 +71,7 @@ requirements for editors (G45). A recovered file is never a conforming program.
 | Drop order and overwrite | D17–D18 | `crates/borrowck/src/tests/{drops,drop_rules}.rs`; `crates/codegen/tests/end_to_end.rs` |
 | ABI, C interop, entry point, exit | D19–D22 | `crates/codegen/tests/end_to_end.rs`; `crates/driver/tests/{linking,runtime_archive}.rs`; `examples/freestanding` |
 | Constants and statics at run time | D23–D24 | `crates/const-eval` tests; `crates/driver/tests/global_diagnostics.rs` |
-| Determinism and optimization agreement | D25, D28–D29 | `crates/driver/tests/examples.rs`; `crates/cli/tests/project_cli.rs::verify_repro_builds_two_copies_and_finds_them_identical`; `examples/README.md` |
+| Determinism and optimization agreement | D25, D28–D30 | `crates/driver/tests/examples.rs`; `crates/cli/tests/project_cli.rs::verify_repro_builds_two_copies_and_finds_them_identical`; `examples/README.md` |
 
 ## Commands
 
@@ -112,9 +114,10 @@ The conformance claim is not only the happy path. The following must stay green:
   recovery (`crates/parser/src/tests/{errors,recovery,visibility,cfg,imports}.rs`);
 - static failures: wrong namespaces, private access, missing trait methods,
   overlapping impls, non-exhaustive matches, moved values, uninitialized reads,
-  aliasing conflicts, unsupported casts, non-`Sized` storage, and invalid FFI
+  aliasing conflicts, unsupported casts, non-`Sized` storage, invalid FFI, and
+  alias cycles/arity/namespace/bounds failures
   (`crates/typeck/src/tests`, `crates/borrowck/src/tests`,
-  `crates/driver/tests/*_diagnostics.rs`);
+  `crates/driver/tests/*_diagnostics.rs`, `crates/hir/src/tests/type_aliases.rs`);
 - dynamic boundaries: panic status 101, freestanding trap, bounds checks,
   division by zero, drop order, `mem::forget`, and `-O0`/`-O2` agreement
   (`crates/driver/tests/examples.rs`, `examples/`).

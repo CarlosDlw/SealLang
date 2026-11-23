@@ -131,6 +131,7 @@ pub struct Hir {
     ty_ctxt: TyCtxt,
     body_of: FxHashMap<DefId, BodyId>,
     adts: FxHashMap<DefId, AdtId>,
+    type_aliases: FxHashMap<DefId, TyId>,
     variants: FxHashMap<(DefId, Symbol), VariantIdx>,
     traits: FxHashMap<Symbol, DefId>,
     builtin: Option<builtin::BuiltinTraits>,
@@ -538,9 +539,21 @@ impl Hir {
     /// Returns the aggregate reserved for the nominal type definition `def`.
     ///
     /// Structs and enums both reserve one aggregate; use the type context to
-    /// distinguish them when the distinction matters.
+    /// distinguish them when the distinction matters. A type alias has no
+    /// aggregate of its own; use [`Hir::type_alias_target`] to reach its
+    /// expanded type.
     pub fn adt(&self, def: DefId) -> Option<AdtId> {
         self.adts.get(&def).copied()
+    }
+
+    /// Returns the expanded target of the type alias `def`.
+    ///
+    /// The target is stored with the alias's generic parameters still in
+    /// place. A use must substitute the supplied arguments before consuming
+    /// it. A missing entry means the alias never finished lowering; the
+    /// alias use produced an error type and the caller keeps recovering.
+    pub fn type_alias_target(&self, def: DefId) -> Option<TyId> {
+        self.type_aliases.get(&def).copied()
     }
 
     /// Returns the variant of the enum `type_def` named `name`.
@@ -911,6 +924,10 @@ impl Hir {
         self.adts.insert(def, adt);
     }
 
+    pub(crate) fn insert_type_alias(&mut self, def: DefId, target: TyId) {
+        self.type_aliases.insert(def, target);
+    }
+
     pub(crate) fn push_extern_struct(&mut self, adt: AdtId) {
         self.extern_structs.push(adt);
     }
@@ -1002,6 +1019,7 @@ impl Hir {
             ty_ctxt,
             body_of: FxHashMap::default(),
             adts: FxHashMap::default(),
+            type_aliases: FxHashMap::default(),
             variants: FxHashMap::default(),
             traits: FxHashMap::default(),
             builtin: None,

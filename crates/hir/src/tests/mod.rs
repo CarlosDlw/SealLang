@@ -39,6 +39,7 @@ mod support;
 mod traits;
 mod tuple_variants;
 mod tuples;
+mod type_aliases;
 mod types;
 mod unsafe_functions;
 mod while_let;

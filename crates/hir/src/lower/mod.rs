@@ -30,6 +30,7 @@ use crate::res::Res;
 use crate::{Block, Hir, HirBlockId, Protocol};
 
 mod aggregates;
+mod aliases;
 mod api;
 mod bodies;
 mod closure;
@@ -150,6 +151,9 @@ pub(crate) struct Lowering<'a> {
     builtin_traits: FxHashMap<Symbol, DefId>,
     function_item_of: FxHashMap<DefId, ItemRef>,
     function_items: Vec<(ItemRef, DefId)>,
+    type_alias_items: Vec<(ItemRef, DefId)>,
+    type_alias_decl: FxHashMap<DefId, ItemRef>,
+    type_alias_stack: Vec<DefId>,
     value_items: Vec<(ItemRef, DefId)>,
     pub(super) extern_function_items: Vec<(ItemRef, DefId)>,
     pub(super) extern_static_items: Vec<(ItemRef, DefId)>,
@@ -265,6 +269,9 @@ impl<'a> Lowering<'a> {
             builtin_traits,
             function_item_of: FxHashMap::default(),
             function_items: Vec::new(),
+            type_alias_items: Vec::new(),
+            type_alias_decl: FxHashMap::default(),
+            type_alias_stack: Vec::new(),
             value_items: Vec::new(),
             extern_function_items: Vec::new(),
             extern_static_items: Vec::new(),
@@ -295,6 +302,7 @@ impl<'a> Lowering<'a> {
         self.collect_items();
         self.collect_extern_items();
         self.lower_pending_bounds();
+        self.lower_type_aliases();
         self.lower_structs();
         self.lower_opaque_types();
         self.lower_enums();
