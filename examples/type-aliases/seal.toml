@@ -1,0 +1,5 @@
+[project]
+name = "type-aliases-example"
+language = "0.1"
+members = ["crates/*"]
+default-members = ["crates/app"]

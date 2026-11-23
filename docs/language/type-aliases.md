@@ -110,4 +110,36 @@ type Id = i32; // E2005
 ```
 
 A public alias is part of the package API. Its target must also be public and
-reachable from the same module; otherwise the API check reports `E3107`.
+reachable from the same module; otherwise the API check reports `E3107`. An
+alias rejected this way is omitted from the API snapshot, including when a
+public `use` re-exports it.
+
+## Packages and re-exports
+
+Aliases cross package boundaries like any other public type. Consumers import
+the alias name, not a rewritten target:
+
+```seal
+// geometry
+public type Score = i32;
+public type Pair<T> = (T, T);
+
+// app
+use geometry::{Pair, Score};
+
+func total(pair: Pair<Score>) -> Score {
+  pair.0 + pair.1
+}
+```
+
+A public re-export creates a new public name that keeps the canonical alias
+identity:
+
+```seal
+// geometry root
+public use root::shapes::PointAlias;
+```
+
+The API snapshot lists the re-exported name with `kind: "type-alias"`, its
+`= <target>` signature, and the canonical declaration path. Removing a public
+alias or changing its target is a breaking API change; adding one is minor.

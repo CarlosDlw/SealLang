@@ -353,7 +353,7 @@ fn plan_mode_lists_reexports_in_the_api_snapshot() {
 #[test]
 fn plan_mode_emits_type_aliases_in_the_api_snapshot() {
     let (fixture, source) = fixture(
-        "/// Identifier.\npublic deprecated(since: \"0.2.0\", note: \"use Id\", replacement: \"Id\") type Id = i32;\npublic type Pair<T> = (T, T);\nfunc main() -> i32 { 0 }\n",
+        "public use root::Id as Alias;\n/// Identifier.\npublic deprecated(since: \"0.2.0\", note: \"use Id\", replacement: \"Id\") type Id = i32;\npublic type Pair<T> = (T, T);\nfunc main() -> i32 { 0 }\n",
     );
     let plan = plan(&source, Some("root::main"), BuildMode::Check, None);
     let path = write_plan(&fixture.root, &plan);
@@ -390,6 +390,14 @@ fn plan_mode_emits_type_aliases_in_the_api_snapshot() {
         .expect("the generic alias is listed");
     assert_eq!(pair["kind"], "type-alias");
     assert_eq!(pair["signature"], "= (T, T)");
+    let alias = items
+        .iter()
+        .find(|item| item["name"] == "Alias")
+        .expect("the re-exported alias is listed");
+    assert_eq!(alias["kind"], "type-alias");
+    assert_eq!(alias["signature"], "= i32");
+    assert_eq!(alias["canonical"], "root::Id");
+    assert_eq!(id["canonical"], serde_json::Value::Null);
 }
 
 #[test]

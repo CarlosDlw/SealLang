@@ -47,6 +47,12 @@ impl Lowering<'_> {
             }
             self.hir.api_mut().push_item(def);
             self.validate_item(def, data.kind, data.name_span, data.span);
+            // A public alias whose target is not nameable outside the package is
+            // diagnosed by `validate_type_alias`; it must not remain in the
+            // public surface through its declaration or a re-export.
+            if data.kind == DefKind::TypeAlias && !self.type_alias_is_public(def) {
+                self.hir.api_mut().remove_item(def);
+            }
         }
 
         let exports: Vec<_> = self
@@ -81,7 +87,10 @@ impl Lowering<'_> {
                         crate::module::Namespace::Trait => self.traits.get(&(module, target_name)),
                     }
                     .copied();
-                    if let Some(def) = target {
+                    if let Some(def) = target
+                        && (self.hir.definitions().kind(def) != DefKind::TypeAlias
+                            || self.type_alias_is_public(def))
+                    {
                         self.hir.api_mut().push_alias(crate::module::ApiAlias {
                             package: owner_package,
                             path: owner_path,
@@ -120,6 +129,13 @@ impl Lowering<'_> {
             return;
         };
         self.require_api_type(target, name_span, codes::E3107, "this public type alias");
+    }
+
+    /// Returns whether the alias target is nameable outside the package.
+    fn type_alias_is_public(&self, def: DefId) -> bool {
+        self.hir
+            .type_alias_target(def)
+            .is_some_and(|target| self.non_public_type(target).is_none())
     }
 
     fn validate_function(&mut self, def: DefId, span: Span) {

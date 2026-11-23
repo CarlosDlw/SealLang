@@ -76,6 +76,7 @@ fn every_project_example_builds_and_runs() {
     for (name, expected) in [
         ("multi-module", 42),
         ("workspace", 42),
+        ("type-aliases", 42),
         ("features", 3),
         ("generator", 42),
         ("freestanding", 42),
@@ -95,6 +96,38 @@ fn every_project_example_builds_and_runs() {
             String::from_utf8_lossy(&run.stderr)
         );
     }
+}
+
+#[test]
+fn the_type_alias_example_exposes_canonical_aliases() {
+    let fixture = copy_example("type-aliases");
+    let api = output(
+        seal()
+            .arg("api")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("-p")
+            .arg("geometry")
+            .arg("--json"),
+    );
+    assert_success(&api);
+    let snapshot: serde_json::Value = serde_json::from_slice(&api.stdout).expect("api JSON");
+    let items = snapshot["items"].as_array().expect("items");
+    let point_alias = items
+        .iter()
+        .find(|item| item["module"] == "root" && item["name"] == "PointAlias")
+        .expect("the re-exported alias is listed");
+    assert_eq!(point_alias["kind"], "type-alias");
+    assert_eq!(point_alias["signature"], "= Point");
+    assert_eq!(point_alias["canonical"], "shapes::PointAlias");
+
+    let pair = items
+        .iter()
+        .find(|item| item["module"] == "root" && item["name"] == "Pair")
+        .expect("the generic alias is listed");
+    assert_eq!(pair["kind"], "type-alias");
+    assert_eq!(pair["signature"], "= (T, T)");
+    assert!(pair.get("canonical").is_none());
 }
 
 #[test]

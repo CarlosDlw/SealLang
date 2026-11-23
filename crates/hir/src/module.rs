@@ -501,6 +501,10 @@ impl ApiTable {
         self.items.push(def);
     }
 
+    pub(crate) fn remove_item(&mut self, def: DefId) {
+        self.items.retain(|item| *item != def);
+    }
+
     pub(crate) fn push_alias(&mut self, alias: ApiAlias) {
         self.aliases.push(alias);
     }

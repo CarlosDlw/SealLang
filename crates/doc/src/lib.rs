@@ -363,6 +363,43 @@ mod tests {
     }
 
     #[test]
+    fn a_type_alias_keeps_its_kind_and_target_in_json_and_html() {
+        let mut snapshot = snapshot();
+        snapshot.items[1].name = "Id".to_owned();
+        snapshot.items[1].kind = "type-alias".to_owned();
+        snapshot.items[1].signature = Some("= i32".to_owned());
+        snapshot.items[1].cfg = None;
+        let documentation = Documentation::from_snapshot(&snapshot);
+        let item = documentation
+            .modules
+            .iter()
+            .flat_map(|module| &module.items)
+            .find(|item| item.name == "Id")
+            .expect("the alias is documented");
+        assert_eq!(item.kind, "type-alias");
+        assert_eq!(item.signature.as_deref(), Some("= i32"));
+        assert!(item.fields.is_empty());
+        assert!(item.variants.is_empty());
+        assert!(item.implementations.is_empty());
+
+        let json = render_json(&documentation).expect("JSON");
+        assert!(json.contains("\"kind\": \"type-alias\""));
+        assert!(json.contains("\"signature\": \"= i32\""));
+        let index = render_html(&documentation);
+        assert!(index.contains("<span class=\"kind\">type-alias</span>"));
+        let directory = std::env::temp_dir().join(format!("seal-doc-alias-{}", std::process::id()));
+        let paths = write_html(&documentation, &directory).expect("HTML files");
+        let app = paths
+            .iter()
+            .find(|path| path.ends_with("app.html"))
+            .expect("the app module page is written");
+        let html = std::fs::read_to_string(app).expect("the app page is readable");
+        assert!(html.contains("<span class=\"kind\">type-alias</span>"));
+        assert!(html.contains("<pre class=\"signature\"><code>= i32</code></pre>"));
+        std::fs::remove_dir_all(&directory).expect("the temporary documentation is removed");
+    }
+
+    #[test]
     fn html_contains_docs_cfg_and_links() {
         let html = render_html(&Documentation::from_snapshot(&snapshot()));
         assert!(html.contains("A point."));

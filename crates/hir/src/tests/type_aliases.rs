@@ -4,8 +4,8 @@ use seal_def::{DefId, DefKind};
 use seal_diagnostics::Level;
 use seal_ty::{IntTy, TyKind};
 
-use super::support::{Fixture, function, lower_clean, tail};
-use crate::{ExprKind, Hir, PatternKind, StmtKind};
+use super::support::{Fixture, PackageSpec, function, lower_clean, tail};
+use crate::{CfgEnvironment, ExprKind, Hir, PatternKind, StmtKind};
 
 fn alias_def(fixture: &Fixture, hir: &Hir, name: &str) -> DefId {
     hir.definitions()
@@ -326,10 +326,31 @@ fn a_public_alias_to_a_private_target_is_rejected() {
         "app.sl",
         "module app;\n\
          internal struct Secret { internal value: i32 }\n\
-         public type Leak = Secret;",
+         public type Leak = Secret;\n\
+         public use app::Leak as StillLeak;",
     )]);
-    let _ = fixture.lower_package_exposing(&["app"]);
-    fixture.expect("E3107", "exposes the non-public type `Secret`");
+    let hir = fixture.lower_package_exposing(&["app"]);
+    let errors: Vec<_> = fixture
+        .diagnostics()
+        .into_iter()
+        .filter(|diagnostic| {
+            diagnostic
+                .code()
+                .is_some_and(|code| code.as_str() == "E3107")
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0]
+            .message()
+            .contains("exposes the non-public type `Secret`")
+    );
+    let leak = alias_def(&fixture, &hir, "Leak");
+    assert!(!hir.public_items().contains(&leak));
+    assert!(
+        !hir.api().aliases().iter().any(|alias| alias.def == leak),
+        "an invalid alias must not be reachable through a re-export"
+    );
 }
 
 #[test]
@@ -362,6 +383,265 @@ fn a_cfg_disabled_alias_does_not_exist() {
     let fixture = Fixture::new("cfg(test) type Hidden = i32; func f(value: Hidden) {}");
     let _ = fixture.lower();
     fixture.expect("E2002", "cannot find type");
+}
+
+#[test]
+fn an_alias_imported_from_a_dependency_expands_in_a_consumer() {
+    let fixture = Fixture::from_packages(&[
+        PackageSpec {
+            name: "geometry",
+            files: &[(
+                "geometry.sl",
+                "public type Score = i32;\n\
+                 public type Pair<T> = (T, T);\n\
+                 public struct Point { public x: i32 }\n\
+                 public type P = Point;",
+            )],
+            exposed: &[],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[(
+                "main.sl",
+                "use geometry::{P, Pair, Score};\n\
+                 func main() -> i32 {\n\
+                   let point = P { x: 40 };\n\
+                   let pair: Pair<Score> = (point.x, 2);\n\
+                   match point { P { x } => x + pair.1 }\n\
+                 }",
+            )],
+            exposed: &[],
+            dependencies: &[("geometry", 0)],
+        },
+    ]);
+    let hir = fixture.lower_packages();
+    fixture.assert_clean();
+    let (_, body) = function(&fixture, &hir, "main");
+    assert_eq!(
+        hir.ty_ctxt().kind(body.ret.expect("return type")),
+        TyKind::Int(IntTy::I32)
+    );
+    assert!(
+        hir.type_alias_target(alias_def(&fixture, &hir, "Pair"))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_dependency_alias_can_be_re_exported_under_a_new_name() {
+    let fixture = Fixture::from_packages(&[
+        PackageSpec {
+            name: "geometry",
+            files: &[
+                (
+                    "geometry.sl",
+                    "public use root::shapes::P as PublicPoint;\n\
+                     public use root::shapes::Score;",
+                ),
+                (
+                    "shapes.sl",
+                    "module shapes;\n\
+                     public struct Point { public x: i32 }\n\
+                     public type P = Point;\n\
+                     public type Score = i32;",
+                ),
+            ],
+            exposed: &["root", "shapes"],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[(
+                "main.sl",
+                "use geometry::{PublicPoint, Score};\n\
+                 public use geometry::PublicPoint as ExportedPoint;\n\
+                 func main() -> i32 {\n\
+                   let point: PublicPoint = PublicPoint { x: 40 };\n\
+                   let value: Score = match point { PublicPoint { x } => x + 2 };\n\
+                   value\n\
+                 }",
+            )],
+            exposed: &[],
+            dependencies: &[("geometry", 0)],
+        },
+    ]);
+    let hir = fixture.lower_packages();
+    fixture.assert_clean();
+    let canonical = alias_def(&fixture, &hir, "P");
+    let exported = hir
+        .api()
+        .aliases()
+        .iter()
+        .find(|alias| fixture.symbol(alias.name) == "ExportedPoint")
+        .expect("the public re-export is part of the API");
+    assert_eq!(exported.def, canonical);
+    let target = hir
+        .type_alias_target(canonical)
+        .expect("the canonical alias has a target");
+    assert!(matches!(hir.ty_ctxt().kind(target), TyKind::Adt { .. }));
+}
+
+#[test]
+fn an_internal_re_export_is_not_part_of_the_public_api() {
+    let fixture = Fixture::package(&[
+        (
+            "main.sl",
+            "use facade::HiddenP;\nfunc main() -> i32 { let p = HiddenP { x: 1 }; p.x }",
+        ),
+        (
+            "shapes.sl",
+            "module shapes;\n\
+             public struct Point { public x: i32 }\n\
+             public type P = Point;",
+        ),
+        (
+            "facade.sl",
+            "module facade;\ninternal use root::shapes::P as HiddenP;",
+        ),
+    ]);
+    let hir = fixture.lower_package_exposing(&["root", "shapes", "facade"]);
+    fixture.assert_clean();
+    assert!(
+        !hir.api()
+            .aliases()
+            .iter()
+            .any(|alias| fixture.symbol(alias.name) == "HiddenP"),
+        "an internal re-export must not enter the API"
+    );
+
+    let fixture = Fixture::from_packages(&[
+        PackageSpec {
+            name: "geometry",
+            files: &[
+                ("geometry.sl", "public type Marker = i32;"),
+                (
+                    "shapes.sl",
+                    "module shapes;\n\
+                     public struct Point { public x: i32 }\n\
+                     public type P = Point;",
+                ),
+                (
+                    "facade.sl",
+                    "module facade;\ninternal use root::shapes::P as HiddenP;",
+                ),
+            ],
+            exposed: &["root", "shapes", "facade"],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[("main.sl", "use geometry::facade::HiddenP;\nfunc main() {}")],
+            exposed: &[],
+            dependencies: &[("geometry", 0)],
+        },
+    ]);
+    let _ = fixture.lower_packages();
+    fixture.expect("E2072", "the re-export is internal to its package");
+}
+
+#[test]
+fn a_deprecated_alias_warns_at_an_import_and_a_re_export() {
+    let fixture = Fixture::from_packages(&[
+        PackageSpec {
+            name: "geometry",
+            files: &[(
+                "geometry.sl",
+                "deprecated(since: \"0.2.0\", replacement: \"New\") public type Old = i32;\n\
+                 public type New = i32;",
+            )],
+            exposed: &[],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[(
+                "main.sl",
+                "use geometry::Old;\n\
+                 public use geometry::Old as Renamed;\n\
+                 func main(value: Old) -> i32 { value }",
+            )],
+            exposed: &[],
+            dependencies: &[("geometry", 0)],
+        },
+    ]);
+    let _ = fixture.lower_packages();
+    let warnings: Vec<_> = fixture
+        .diagnostics()
+        .into_iter()
+        .filter(|diagnostic| {
+            diagnostic.level() == Level::Warning
+                && diagnostic.lint() == Some(seal_diagnostics::DEPRECATED)
+        })
+        .collect();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| warning.message().contains("`Old`")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_cfg_gated_dependency_alias_follows_the_feature_matrix() {
+    let packages = [
+        PackageSpec {
+            name: "geometry",
+            files: &[(
+                "geometry.sl",
+                "cfg(feature(\"extra\")) public type Extra = i32;\n\
+                 public type Always = i32;",
+            )],
+            exposed: &[],
+            dependencies: &[],
+        },
+        PackageSpec {
+            name: "app",
+            files: &[(
+                "main.sl",
+                "use geometry::Extra;\nfunc main(value: Extra) -> i32 { value }",
+            )],
+            exposed: &[],
+            dependencies: &[("geometry", 0)],
+        },
+    ];
+    let disabled = Fixture::from_packages(&packages);
+    let _ = disabled.lower_packages();
+    disabled.expect("E2073", "cannot find `Extra` in the imported module");
+
+    let enabled = Fixture::from_packages(&packages);
+    let environment = CfgEnvironment {
+        features: ["extra".to_owned()].into_iter().collect(),
+        ..CfgEnvironment::default()
+    };
+    let hir = enabled.lower_packages_with_preludes_and_cfgs(&[], &[(0, environment)]);
+    assert!(
+        enabled.diagnostics().is_empty(),
+        "{:?}",
+        enabled.diagnostics()
+    );
+    assert!(
+        hir.type_alias_target(alias_def(&enabled, &hir, "Extra"))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_public_alias_may_chain_through_a_private_alias_to_a_public_type() {
+    let fixture = Fixture::package(&[(
+        "app.sl",
+        "module app;\n\
+         internal type Secret = i32;\n\
+         public type Id = Secret;",
+    )]);
+    let hir = fixture.lower_package_exposing(&["app"]);
+    fixture.assert_clean();
+    let id = alias_def(&fixture, &hir, "Id");
+    let secret = alias_def(&fixture, &hir, "Secret");
+    assert!(hir.is_public_api(id));
+    assert!(!hir.is_public_api(secret));
+    assert!(hir.type_alias_target(id).is_some());
 }
 
 #[test]

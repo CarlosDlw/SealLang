@@ -476,6 +476,24 @@ mod tests {
     use super::*;
     use crate::snapshot::{ApiImplementation, ApiModule, ApiVariant};
 
+    fn type_alias(signature: &str) -> ApiItem {
+        ApiItem {
+            name: "Alias".to_owned(),
+            kind: "type-alias".to_owned(),
+            module: "root".to_owned(),
+            canonical: None,
+            visibility: "public".to_owned(),
+            cfg: None,
+            signature: Some(signature.to_owned()),
+            fields: Vec::new(),
+            variants: Vec::new(),
+            docs: None,
+            deprecated: None,
+            layout: None,
+            implementations: Vec::new(),
+        }
+    }
+
     fn snapshot(version: &str) -> ApiSnapshot {
         ApiSnapshot {
             version: 1,
@@ -607,6 +625,35 @@ mod tests {
         without_method.items[0].implementations[0].methods.clear();
         let diff = check(&with_method, &without_method).unwrap();
         assert_eq!(diff.breaking[0].kind, "method-removed");
+    }
+
+    #[test]
+    fn adding_a_type_alias_is_minor() {
+        let mut next = snapshot("1.1.0");
+        next.items.push(type_alias("= i32"));
+        let diff = check(&snapshot("1.0.0"), &next).unwrap();
+        assert_eq!(diff.required_bump(), Bump::Minor);
+        assert_eq!(diff.minor[0].kind, "item-added");
+    }
+
+    #[test]
+    fn changing_a_type_alias_target_is_breaking() {
+        let mut previous = snapshot("1.0.0");
+        previous.items.push(type_alias("= i32"));
+        let mut next = snapshot("2.0.0");
+        next.items.push(type_alias("= u32"));
+        let diff = check(&previous, &next).unwrap();
+        assert_eq!(diff.required_bump(), Bump::Major);
+        assert_eq!(diff.breaking[0].kind, "signature-changed");
+    }
+
+    #[test]
+    fn removing_a_type_alias_is_breaking() {
+        let mut previous = snapshot("1.0.0");
+        previous.items.push(type_alias("= i32"));
+        let diff = check(&previous, &snapshot("2.0.0")).unwrap();
+        assert_eq!(diff.required_bump(), Bump::Major);
+        assert_eq!(diff.breaking[0].kind, "item-removed");
     }
 
     #[test]

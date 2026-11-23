@@ -10,6 +10,7 @@ the example stays free of generated artifacts.
 |---------|--------------|----------------|
 | [`multi-module/`](multi-module/) | Module declarations, fragments, absolute imports, and package visibility | exits `42` |
 | [`workspace/`](workspace/) | Root project, members, default members, path dependency, public API | exits `42` |
+| [`type-aliases/`](type-aliases/) | Transparent aliases, cross-package imports, public re-exports, generic and nominal targets | exits `42` |
 | [`features/`](features/) | Per-edge features, two instances of one package, `cfg(feature(...))` | exits `3` |
 | [`generator/`](generator/) | Generator target, declared inputs/outputs, generated source compilation | exits `42` |
 | [`freestanding/`](freestanding/) | `runtime = "none"`, linker script, `_start`, panic trap | exits `42` |
