@@ -509,6 +509,44 @@ fn lint_denies_stable_warning_names() {
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("denied"));
 
+    let denied_group = output(
+        seal()
+            .arg("lint")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--deny")
+            .arg("warnings"),
+    );
+    assert_eq!(denied_group.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied_group.stderr).contains("denied by `--deny-warnings`"));
+
+    let conflicting = output(
+        seal()
+            .arg("lint")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--deny")
+            .arg("unused_import")
+            .arg("--allow")
+            .arg("unused_import"),
+    );
+    assert_eq!(conflicting.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&conflicting.stderr).contains("E8112"));
+
+    let allow_group = output(
+        seal()
+            .arg("lint")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--allow")
+            .arg("warnings"),
+    );
+    assert_eq!(allow_group.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&allow_group.stderr)
+            .contains("the `warnings` group cannot be allowed")
+    );
+
     let unknown = output(
         seal()
             .arg("lint")
@@ -519,6 +557,45 @@ fn lint_denies_stable_warning_names() {
     );
     assert_eq!(unknown.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown lint"));
+}
+
+#[test]
+fn lint_maps_deprecated_to_the_individual_lint_flags() {
+    let fixture = fixture("lint-deprecated");
+    write(
+        &fixture.root.join("seal.toml"),
+        "[project]\nname = \"lint-deprecated\"\n\n[package]\nname = \"lint-deprecated\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &fixture.root.join("src/lib.sl"),
+        "deprecated(since: \"0.2.0\") public func old() {}\n\npublic func current() { old(); }\n",
+    );
+
+    let warned = output(seal().arg("lint").arg("--project").arg(&fixture.root));
+    assert_success(&warned);
+    assert!(String::from_utf8_lossy(&warned.stderr).contains("warning[deprecated]"));
+
+    let allowed = output(
+        seal()
+            .arg("lint")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--allow")
+            .arg("deprecated"),
+    );
+    assert_success(&allowed);
+    assert!(!String::from_utf8_lossy(&allowed.stderr).contains("deprecated"));
+
+    let denied = output(
+        seal()
+            .arg("lint")
+            .arg("--project")
+            .arg(&fixture.root)
+            .arg("--deny")
+            .arg("deprecated"),
+    );
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("error[deprecated]"));
 }
 
 #[test]

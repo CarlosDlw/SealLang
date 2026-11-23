@@ -528,6 +528,54 @@ impl Drop for Point {
 }
 
 #[test]
+fn a_deprecation_warning_can_be_allowed_or_denied() {
+    let file = SourceFile::new(
+        "deprecated-lint",
+        r#"deprecated(since: "0.2.0", replacement: "new_api")
+func old_api() {}
+
+func main() {
+  old_api();
+}
+"#,
+    );
+
+    let warned = file.check();
+    assert!(warned.status.success(), "the warning is not an error");
+    let stderr = String::from_utf8_lossy(&warned.stderr);
+    assert!(
+        stderr.contains("warning[deprecated]") && stderr.contains("is deprecated since 0.2.0"),
+        "missing the deprecation warning: {stderr}"
+    );
+    assert!(
+        stderr.contains("help: use new_api"),
+        "missing the replacement help: {stderr}"
+    );
+
+    let allowed = file.check_with(&["--allow-lint", "deprecated"]);
+    assert!(allowed.status.success());
+    assert!(
+        !String::from_utf8_lossy(&allowed.stderr).contains("deprecated"),
+        "allow must suppress the warning"
+    );
+
+    let denied = file.check_with(&["--deny-lint", "deprecated"]);
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("error[deprecated]"),
+        "a denied lint is an error"
+    );
+
+    let denied_group = file.check_with(&["--deny-warnings"]);
+    assert_eq!(denied_group.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied_group.stderr).contains("denied by `--deny-warnings`"));
+
+    let unknown = file.check_with(&["--deny-lint", "not_a_lint"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown lint"));
+}
+
+#[test]
 fn two_shared_arguments_may_alias() {
     let file = SourceFile::new(
         "alias-shared-arguments",

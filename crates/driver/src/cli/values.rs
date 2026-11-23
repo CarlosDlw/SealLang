@@ -7,7 +7,7 @@
 
 use clap::ValueEnum;
 use seal_codegen::Emit;
-use seal_diagnostics::ColorChoice;
+use seal_diagnostics::{ColorChoice, KNOWN_LINTS, known_lint};
 use seal_session::{ErrorFormat, OptLevel};
 use seal_target::TargetTriple;
 use seal_version::{Edition, LanguageVersion};
@@ -106,6 +106,21 @@ pub(crate) fn parse_positive(value: &str) -> Result<usize, String> {
         Ok(limit) if limit > 0 => Ok(limit),
         _ => Err(format!("expected a positive integer, but found `{value}`")),
     }
+}
+
+/// Parses an individual lint name for `--allow-lint` and `--deny-lint`.
+///
+/// The `warnings` group belongs to `seal lint`; the driver's flags name one
+/// lint at a time. Clap reports an unknown name as a usage error before any
+/// source is read.
+pub(crate) fn parse_lint(value: &str) -> Result<String, String> {
+    if known_lint(value).is_some() {
+        return Ok(value.to_owned());
+    }
+    Err(format!(
+        "unknown lint `{value}`; the compiler lints are {}",
+        KNOWN_LINTS.join(", ")
+    ))
 }
 
 /// Parses a target triple for `--target`.

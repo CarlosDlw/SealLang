@@ -204,6 +204,22 @@ impl<'a> Checker<'a> {
         self.results
     }
 
+    /// Emits the shared use-site deprecation warning for a resolved definition.
+    ///
+    /// A use inside the body of a deprecated function is suppressed, including
+    /// bodies of closures nested in it.
+    pub(super) fn warn_deprecated(&self, definition: DefId, use_span: Span) {
+        let mut next = self.owner;
+        while let Some(owner) = next {
+            let data = self.hir.definitions().get(owner);
+            if data.deprecated.is_some() {
+                return;
+            }
+            next = data.parent;
+        }
+        seal_hir::warn_deprecated(self.hir, self.dcx, self.interner, definition, use_span);
+    }
+
     /// Returns a signature from the body-local table or the declarations pass.
     pub(super) fn signature(&self, function: DefId) -> Option<&Signature> {
         self.results.signature(function).or_else(|| {

@@ -1,6 +1,6 @@
 //! The diagnostic context: emission, deduplication, counts, and guarantees.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -9,6 +9,7 @@ use crate::code::DiagCode;
 use crate::diagnostic::{Applicability, Diagnostic, LabelStyle, Suggestion};
 use crate::emitter::Emitter;
 use crate::level::Level;
+use crate::lint::LintLevel;
 use seal_span::{SourceMap, Span};
 
 /// Proof that an error was emitted.
@@ -48,10 +49,14 @@ pub struct IcePanic;
 /// Default maximum number of errors before emission stops.
 pub const DEFAULT_ERROR_LIMIT: usize = 100;
 
+/// Everything that distinguishes one emitted diagnostic from another.
+type DiagnosticKey = (Level, Option<DiagCode>, Option<&'static str>, Span, String);
+
 struct Inner {
     emitter: Box<dyn Emitter>,
     source_map: Arc<SourceMap>,
-    seen: BTreeSet<(Level, Option<DiagCode>, Span, String)>,
+    seen: BTreeSet<DiagnosticKey>,
+    lints: BTreeMap<&'static str, LintLevel>,
     error_count: usize,
     warning_count: usize,
     error_limit: usize,
@@ -79,6 +84,7 @@ impl DiagCtxt {
                 emitter,
                 source_map,
                 seen: BTreeSet::new(),
+                lints: BTreeMap::new(),
                 error_count: 0,
                 warning_count: 0,
                 error_limit: DEFAULT_ERROR_LIMIT,
@@ -92,6 +98,19 @@ impl DiagCtxt {
     /// Sets the number of errors after which emission stops.
     pub fn set_error_limit(&self, limit: usize) {
         self.lock().error_limit = limit.max(1);
+    }
+
+    /// Sets the level of one stable lint.
+    ///
+    /// The lint name must come from [`crate::KNOWN_LINTS`]; callers validate
+    /// command-line input before constructing the session.
+    pub fn set_lint_level(&self, lint: &'static str, level: LintLevel) {
+        self.lock().lints.insert(lint, level);
+    }
+
+    /// Returns the configured level of `lint`.
+    pub fn lint_level(&self, lint: &str) -> LintLevel {
+        self.lock().lints.get(lint).copied().unwrap_or_default()
     }
 
     /// Returns the number of distinct errors emitted.
@@ -203,14 +222,32 @@ impl DiagCtxt {
         std::panic::panic_any(IcePanic)
     }
 
-    /// Emits a diagnostic, deduplicating by `(code, first label span)`.
+    /// Emits a diagnostic, deduplicating by level, code, lint, first label span,
+    /// and message.
     ///
-    /// Returns a guarantee for error-level diagnostics. Duplicate errors return
-    /// the existing guarantee without emitting twice.
-    pub fn emit(&self, diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
+    /// A named lint is resolved against the policy table before counting: an
+    /// allowed lint is dropped, a denied lint becomes an error, and the default
+    /// is a warning. Returns a guarantee for error-level diagnostics. Duplicate
+    /// errors return the existing guarantee without emitting twice.
+    pub fn emit(&self, mut diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
         let mut inner = self.lock();
         if inner.aborted {
             return inner.first_error;
+        }
+
+        if diagnostic.level() == Level::Warning
+            && let Some(lint) = diagnostic.lint()
+        {
+            match inner.lints.get(lint).copied().unwrap_or_default() {
+                LintLevel::Allow => return inner.first_error,
+                LintLevel::Warn => {}
+                LintLevel::Deny => {
+                    diagnostic.level = Level::Error;
+                    diagnostic
+                        .notes
+                        .push(format!("the lint `{lint}` is denied"));
+                }
+            }
         }
 
         // Deduplicate on everything the user sees, so two different errors at
@@ -219,6 +256,7 @@ impl DiagCtxt {
         let key = (
             diagnostic.level(),
             diagnostic.code(),
+            diagnostic.lint(),
             diagnostic
                 .labels()
                 .first()
@@ -289,6 +327,13 @@ impl DiagnosticBuilder<'_> {
     #[must_use]
     pub fn code(mut self, code: DiagCode) -> Self {
         self.diagnostic = self.diagnostic.with_code(code);
+        self
+    }
+
+    /// Attaches the lint that owns this diagnostic.
+    #[must_use]
+    pub fn lint(mut self, lint: &'static str) -> Self {
+        self.diagnostic = self.diagnostic.with_lint(lint);
         self
     }
 
@@ -371,6 +416,11 @@ impl ErrorBuilder<'_> {
         Self(self.0.code(code))
     }
 
+    /// Attaches the lint that owns this diagnostic.
+    pub fn lint(self, lint: &'static str) -> Self {
+        Self(self.0.lint(lint))
+    }
+
     /// Adds a primary label.
     pub fn primary(self, span: Span, message: impl Into<String>) -> Self {
         Self(self.0.primary(span, message))
@@ -415,6 +465,11 @@ impl WarningBuilder<'_> {
         Self(self.0.code(code))
     }
 
+    /// Attaches the lint that owns this warning.
+    pub fn lint(self, lint: &'static str) -> Self {
+        Self(self.0.lint(lint))
+    }
+
     /// Adds a primary label.
     pub fn primary(self, span: Span, message: impl Into<String>) -> Self {
         Self(self.0.primary(span, message))
@@ -454,6 +509,7 @@ mod tests {
     use crate::Diagnostic;
     use crate::emitter::SilentEmitter;
     use crate::level::Level;
+    use crate::lint::LintLevel;
     use seal_span::{FileName, SourceMap};
 
     fn context() -> (DiagCtxt, Arc<SourceMap>) {
@@ -487,6 +543,66 @@ mod tests {
         assert!(!dcx.has_errors());
         assert_eq!(dcx.warning_count(), 1);
         assert!(dcx.abort_if_errors().is_ok());
+    }
+
+    #[test]
+    fn allowed_lints_are_dropped() {
+        let (dcx, map) = context();
+        dcx.set_lint_level("deprecated", LintLevel::Allow);
+        dcx.warning("old")
+            .lint("deprecated")
+            .primary(span(&map), "here")
+            .emit();
+        assert_eq!(dcx.warning_count(), 0);
+        assert!(!dcx.has_errors());
+    }
+
+    #[test]
+    fn denied_lints_become_errors() {
+        let (dcx, map) = context();
+        dcx.set_lint_level("deprecated", LintLevel::Deny);
+        dcx.warning("old")
+            .lint("deprecated")
+            .primary(span(&map), "here")
+            .emit();
+        assert_eq!(dcx.warning_count(), 0);
+        assert_eq!(dcx.error_count(), 1);
+        assert!(dcx.has_errors());
+    }
+
+    #[test]
+    fn lints_are_distinct_deduplication_keys() {
+        let (dcx, map) = context();
+        let span = span(&map);
+        dcx.warning("same")
+            .lint("deprecated")
+            .primary(span, "")
+            .emit();
+        dcx.warning("same")
+            .lint("unused_import")
+            .primary(span, "")
+            .emit();
+        assert_eq!(dcx.warning_count(), 2);
+    }
+
+    #[test]
+    fn lint_policies_do_not_cross_contexts() {
+        let (allow, allow_map) = context();
+        let (deny, deny_map) = context();
+        allow.set_lint_level("deprecated", LintLevel::Allow);
+        deny.set_lint_level("deprecated", LintLevel::Deny);
+        allow
+            .warning("old")
+            .lint("deprecated")
+            .primary(span(&allow_map), "")
+            .emit();
+        deny.warning("old")
+            .lint("deprecated")
+            .primary(span(&deny_map), "")
+            .emit();
+        assert_eq!(allow.warning_count(), 0);
+        assert!(!allow.has_errors());
+        assert!(deny.has_errors());
     }
 
     #[test]

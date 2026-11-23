@@ -19,6 +19,7 @@ hex.workspace = true
 seal-api.workspace = true
 seal-build.workspace = true
 seal-cas.workspace = true
+seal-diagnostics.workspace = true
 seal-doc.workspace = true
 seal-driver.workspace = true
 seal-manifest.workspace = true

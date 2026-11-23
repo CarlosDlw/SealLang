@@ -19,7 +19,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use seal_diagnostics::{
-    ColorChoice, DiagCtxt, Emitter, ErrorGuaranteed, JsonEmitter, RichEmitter, should_use_color,
+    ColorChoice, DiagCtxt, Emitter, ErrorGuaranteed, JsonEmitter, LintLevel, RichEmitter,
+    known_lint, should_use_color,
 };
 use seal_error_codes as codes;
 use seal_fs::{self, LoadError};
@@ -126,6 +127,7 @@ impl Session {
         let emitter = emitter.unwrap_or_else(|| default_emitter(&options));
         let diag = DiagCtxt::new(emitter, Arc::clone(&source_map));
         diag.set_error_limit(options.max_errors);
+        apply_lint_policy(&diag, &options);
 
         let gates = FeatureGates::new(options.allow_unstable);
         let profiler = Profiler::new(options.time_passes);
@@ -415,6 +417,25 @@ impl Session {
     }
 }
 
+/// Applies the option-level lint policy to a fresh diagnostic context.
+///
+/// Unknown names are ignored here: the driver rejects them before creating a
+/// session, and an embedder that bypasses the driver still gets the default
+/// warning level instead of a panic. A name in both lists is denied, because
+/// denying is the safer interpretation of contradictory input.
+fn apply_lint_policy(diag: &DiagCtxt, options: &Options) {
+    for name in &options.allow_lints {
+        if let Some(lint) = known_lint(name) {
+            diag.set_lint_level(lint, LintLevel::Allow);
+        }
+    }
+    for name in &options.deny_lints {
+        if let Some(lint) = known_lint(name) {
+            diag.set_lint_level(lint, LintLevel::Deny);
+        }
+    }
+}
+
 fn default_emitter(options: &Options) -> Box<dyn Emitter> {
     match options.error_format {
         ErrorFormat::Human => {
@@ -521,6 +542,40 @@ mod tests {
         let error = Session::with_emitter(options, Some(Box::new(Recording::default())))
             .expect_err("invalid remap");
         assert!(matches!(error, SessionError::Remap(_)));
+    }
+
+    #[test]
+    fn session_options_apply_the_lint_policy() {
+        let options = Options {
+            allow_lints: vec!["unused_import".to_owned()],
+            deny_lints: vec!["deprecated".to_owned()],
+            ..Options::default()
+        };
+        let emitter = Recording::default();
+        let session = Session::with_emitter(options, Some(Box::new(emitter.clone())))
+            .expect("session builds");
+        assert_eq!(
+            session.diag().lint_level("unused_import"),
+            seal_diagnostics::LintLevel::Allow
+        );
+        assert_eq!(
+            session.diag().lint_level("deprecated"),
+            seal_diagnostics::LintLevel::Deny
+        );
+        let id = session
+            .add_file(FileName::virtual_name("t"), "abc".to_owned())
+            .expect("file registers");
+        let span = session.source_map().span(id, 0..1).expect("valid span");
+        session
+            .diag()
+            .warning("old")
+            .lint("deprecated")
+            .primary(span, "")
+            .emit();
+        assert!(session.abort_if_errors().is_err());
+        let diagnostics = emitter.diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].level(), seal_diagnostics::Level::Error);
     }
 
     #[test]

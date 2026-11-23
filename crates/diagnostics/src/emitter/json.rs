@@ -45,6 +45,12 @@ impl<W: Write + Send> Emitter for JsonEmitter<W> {
             None => line.push_str("null"),
         }
         line.push(',');
+        line.push_str("\"lint\":");
+        match diagnostic.lint() {
+            Some(lint) => write_json_string(&mut line, lint),
+            None => line.push_str("null"),
+        }
+        line.push(',');
         line.push_str("\"message\":");
         write_json_string(&mut line, diagnostic.message());
         line.push_str(",\"labels\":[");
@@ -240,7 +246,7 @@ mod tests {
         let output = String::from_utf8(buffer).expect("output is UTF-8");
         assert_eq!(output.lines().count(), 1);
         assert!(output.starts_with(&format!(
-            "{{\"schema_version\":{SCHEMA_VERSION},\"level\":\"error\",\"code\":\"E1001\""
+            "{{\"schema_version\":{SCHEMA_VERSION},\"level\":\"error\",\"code\":\"E1001\",\"lint\":null"
         )));
         assert!(output.contains("\"file\":\"<t>\""));
         assert!(output.contains("\"line_start\":1"));

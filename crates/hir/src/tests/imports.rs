@@ -124,6 +124,7 @@ fn an_import_that_resolution_never_uses_is_a_warning() {
         .expect("the unused import is reported");
     assert!(warning.code().is_none());
     assert_eq!(warning.level(), seal_diagnostics::Level::Warning);
+    assert_eq!(warning.lint(), Some(seal_diagnostics::UNUSED_IMPORT));
 }
 
 #[test]

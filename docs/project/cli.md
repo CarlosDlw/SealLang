@@ -381,6 +381,8 @@ $ seal completions fish
 $ seal completions powershell
 $ seal man -o seal.1
 $ seal lint --deny unused_import
+$ seal lint --deny deprecated
+$ seal lint --allow deprecated
 $ seal lint --deny warnings
 ```
 
@@ -411,11 +413,19 @@ clap metadata as the parser. `man` renders a troff page with every command and
 global option. Both write to stdout unless `-o/--output` names a file.
 
 `lint` applies the compiler's warning policy instead of reimplementing lint in
-the CLI. The stable names are `warnings` (the whole group) and `unused_import`;
-`--deny` makes a match fail the command with the compiler's diagnostic, while
-`--allow` validates a name for scripts. Unknown names are `E8112`. `--json`
-prints `{status, denied_lints, allowed_lints}`. Test-only lints are checked by
+the CLI. The stable individual names are `unused_import` and `deprecated`;
+`warnings` is the whole-warning group. `--deny` maps an individual name to the
+driver's `--deny-lint`, and `warnings` to `--deny-warnings`; `--allow` maps to
+`--allow-lint` and suppresses that lint. The `warnings` group cannot be allowed;
+allow individual lints instead. Unknown names are `E8112`, and naming the same
+lint on both sides is rejected. `--json` prints
+`{status, denied_lints, allowed_lints}`. Test-only lints are checked by
 `seal test`, which compiles the `cfg(test)` bodies.
+
+`sealc` accepts the same names directly through repeatable `--allow-lint` and
+`--deny-lint` flags. Unknown names are a usage error (exit `2`) before any
+source is read. `--deny-warnings` remains the group policy and denies warnings
+that were not individually allowed or denied.
 
 ## Toolchains and targets
 

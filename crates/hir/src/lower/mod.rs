@@ -406,6 +406,7 @@ impl<'a> Lowering<'a> {
             return Some(res);
         }
         if let Some(definition) = self.value_def(name) {
+            self.warn_deprecated(definition, span);
             let res = match self.hir.definitions().kind(definition) {
                 DefKind::Const => Res::Const(definition),
                 DefKind::Static | DefKind::ExternStatic => Res::Static(definition),
@@ -474,6 +475,31 @@ impl<'a> Lowering<'a> {
     }
 
     /// Returns the value declared as `name` in the current module or imported.
+    /// Emits the shared use-site deprecation warning for `definition`.
+    ///
+    /// Uses inside a deprecated function's own body are suppressed. The
+    /// definition span alone is not enough here because the stored span of a
+    /// function covers its declaration, while the body is a separate arena entry.
+    pub(super) fn warn_deprecated(&self, definition: DefId, use_span: Span) {
+        if self.current_owner_is_deprecated() {
+            return;
+        }
+        crate::warn_deprecated(&self.hir, self.dcx, self.interner, definition, use_span);
+    }
+
+    /// Returns whether the body being lowered belongs to a deprecated item.
+    fn current_owner_is_deprecated(&self) -> bool {
+        let mut owner = self.function;
+        while let Some(definition) = owner {
+            let data = self.hir.definitions().get(definition);
+            if data.deprecated.is_some() {
+                return true;
+            }
+            owner = data.parent;
+        }
+        false
+    }
+
     pub(super) fn value_def(&self, name: Symbol) -> Option<DefId> {
         self.module_def(Namespace::Value, name)
             .or_else(|| self.imported(name, Namespace::Value))
@@ -662,12 +688,49 @@ impl<'a> Lowering<'a> {
         Some(module)
     }
 
+    /// Emits use-site warnings for imports and re-exports.
+    ///
+    /// An import is a source-level use even when the local binding is unused.
+    /// A re-export is also a use of its canonical target, so both warn at the
+    /// span of the import path. Diagnostics are emitted after every definition
+    /// exists, which is why this runs at the end of lowering.
+    fn warn_deprecated_imports(&mut self) {
+        for (_, _, binding) in self.hir.module_exports().collect::<Vec<_>>() {
+            let crate::module::ExportTarget::Item {
+                module,
+                name,
+                namespace,
+            } = binding.target
+            else {
+                continue;
+            };
+            let definition = match namespace {
+                Namespace::Value => self.globals.get(&(module, name)).copied(),
+                Namespace::Type => self.types.get(&(module, name)).copied(),
+                Namespace::Trait => self.traits.get(&(module, name)).copied(),
+            };
+            if let Some(definition) = definition {
+                self.warn_deprecated(definition, binding.span);
+            }
+        }
+    }
+
     /// Emits `unused_import` for every binding the file never resolved.
     fn finish_imports(&mut self) {
+        self.warn_deprecated_imports();
         for (index, table) in self.imports.clone().iter().enumerate() {
             let used = self.used_imports.borrow();
             let used = used.get(index);
             for (name, binding) in table.iter() {
+                if let crate::module::ImportTarget::Item {
+                    module,
+                    name: target,
+                    namespace,
+                } = binding.target
+                    && let Some((definition, _)) = self.module_item(module, target, namespace)
+                {
+                    self.warn_deprecated(definition, binding.span);
+                }
                 if used.is_some_and(|used| used.contains(&name)) {
                     continue;
                 }
@@ -676,6 +739,7 @@ impl<'a> Lowering<'a> {
                         "the import `{}` is never used",
                         self.interner.resolve(name)
                     ))
+                    .lint(seal_diagnostics::UNUSED_IMPORT)
                     .primary(binding.span, "this import is unused")
                     .help("remove it, or use the imported name")
                     .emit();

@@ -1,20 +1,20 @@
 //! `seal lint`: run the compiler's stable lint policy over a project.
 //!
-//! Compiler warnings are the source of truth. This command adds names for the
-//! lints that can be denied without a second analysis pass and maps them to the
-//! driver's `--deny-warnings` policy. The `unused_import` lint is currently the
-//! only individual lint the compiler emits, so denying it and denying the
-//! `warnings` group have the same effect; the distinct names keep scripts
-//! stable when more lints exist.
+//! Compiler warnings are the source of truth. This command maps individual lint
+//! names to the driver's `--allow-lint` and `--deny-lint` flags, and maps the
+//! `warnings` group to the existing `--deny-warnings` policy. The names come from
+//! `seal-diagnostics`, so `seal lint` and the compiler cannot drift apart.
 
 use std::process::ExitCode;
+
+use seal_diagnostics::{ALL_WARNINGS, DEPRECATED, UNUSED_IMPORT};
 
 use crate::cli::check::check_jobs_with;
 use crate::cli::{Cli, LintArgs};
 use crate::ui;
 
 /// The lints this command understands.
-const LINTS: [&str; 2] = ["unused_import", "warnings"];
+const LINTS: [&str; 3] = [UNUSED_IMPORT, DEPRECATED, ALL_WARNINGS];
 
 pub(crate) fn lint(cli: &Cli, root: &std::path::Path, args: &LintArgs) -> ExitCode {
     if let Err(code) = validate(&args.deny, &args.allow) {
@@ -37,11 +37,22 @@ pub(crate) fn lint(cli: &Cli, root: &std::path::Path, args: &LintArgs) -> ExitCo
         Ok(jobs) => jobs,
         Err(code) => return code,
     };
-    let deny = !args.deny.is_empty();
-    let extra: Vec<String> = deny
-        .then(|| "--deny-warnings".to_owned())
-        .into_iter()
-        .collect();
+    let mut extra = Vec::new();
+    if args.deny.iter().any(|lint| lint == ALL_WARNINGS) {
+        extra.push("--deny-warnings".to_owned());
+    }
+    for lint in &args.deny {
+        if lint != ALL_WARNINGS {
+            extra.push("--deny-lint".to_owned());
+            extra.push(lint.clone());
+        }
+    }
+    for lint in &args.allow {
+        if lint != ALL_WARNINGS {
+            extra.push("--allow-lint".to_owned());
+            extra.push(lint.clone());
+        }
+    }
     let code = check_jobs_with(cli, &project, &jobs, &args.selection, &extra, !args.json);
     let denied = code != ExitCode::SUCCESS;
     if args.json {
@@ -74,6 +85,12 @@ fn validate(deny: &[String], allow: &[String]) -> Result<(), ExitCode> {
                 ),
             ));
         }
+    }
+    if allow.iter().any(|lint| lint == ALL_WARNINGS) {
+        return Err(ui::error(
+            "E8112",
+            "the `warnings` group cannot be allowed; allow individual lints instead",
+        ));
     }
     for lint in deny {
         if allow.contains(lint) {

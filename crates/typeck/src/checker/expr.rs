@@ -679,6 +679,7 @@ impl Checker<'_> {
                     let field_ty = self.hir.ty_ctxt().substitute(field.ty, args);
                     let field_def = field.def;
                     let _ = self.require_item_visible(field_def, name_span);
+                    self.warn_deprecated(field_def, name_span);
                     (field_ty, Some(field_def))
                 }
                 None => {

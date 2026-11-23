@@ -376,6 +376,29 @@ removal happens only in an edition named by an accepted RFC with a migration
 recipe. The complete policy is in
 [`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
 
+The warning points at the use, not at the declaration:
+
+```text
+warning[deprecated]: `old_api` is deprecated since 0.2.0
+  --> src/main.sl:8:3
+   |
+ 8 |   old_api();
+   |   ^^^^^^^ this use is deprecated
+   |
+  --> src/lib.sl:2:8
+   |
+ 2 | func old_api() {}
+   |      ^^^^^^^ the function was deprecated here
+   = help: use new_api
+```
+
+It covers unqualified and qualified values, types, traits, imports, re-exports,
+struct and variant literals, patterns, field accesses, method calls, trait impl
+headers, and type arguments. A use inside the deprecated declaration's own body
+is suppressed. The lint is controlled with `--allow-lint deprecated` and
+`--deny-lint deprecated` (or `--allow`/`--deny` through `seal lint`), and
+`--deny-warnings` still denies it with every other warning.
+
 The public API snapshot and `seal doc` expose the metadata:
 
 ```json

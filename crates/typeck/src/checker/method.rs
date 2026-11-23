@@ -123,6 +123,7 @@ impl Checker<'_> {
                     receiver_place,
                     target,
                     name,
+                    name_span,
                     generic_args,
                     args,
                     span,
@@ -659,6 +660,7 @@ impl Checker<'_> {
             receiver_place,
             target,
             name,
+            name_span,
             generic_args,
             args,
             span,
@@ -676,6 +678,28 @@ impl Checker<'_> {
                 self.infer_expr(*arg, None, flow);
             }
             return self.error_ty();
+        }
+        match &target {
+            UserMethod::Concrete {
+                function,
+                source: MethodSource::Inherent,
+                ..
+            } => self.warn_deprecated(*function, name_span),
+            UserMethod::Concrete {
+                function,
+                source: MethodSource::Trait(trait_def),
+                ..
+            } => {
+                self.warn_deprecated(*function, name_span);
+                if let Some(method) = self
+                    .hir
+                    .trait_definition(*trait_def)
+                    .and_then(|definition| definition.method(name).map(|method| method.def))
+                {
+                    self.warn_deprecated(method, name_span);
+                }
+            }
+            UserMethod::Bound { method, .. } => self.warn_deprecated(method.def, name_span),
         }
         // The reachable declaration is the method itself for an inherent
         // impl, and the trait for a trait method: a trait method inherits the
@@ -1553,6 +1577,7 @@ struct UserCall<'a> {
     receiver_place: Option<ResolvedPlace>,
     target: UserMethod,
     name: Symbol,
+    name_span: Span,
     generic_args: Option<seal_ty::SubstsId>,
     args: &'a [HirExprId],
     span: Span,

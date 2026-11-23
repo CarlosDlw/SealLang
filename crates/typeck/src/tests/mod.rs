@@ -8,6 +8,7 @@ mod calls;
 mod casts;
 mod closures;
 mod copy_optin;
+mod deprecated;
 mod drop_builtin;
 mod drop_calls;
 mod dyn_types;

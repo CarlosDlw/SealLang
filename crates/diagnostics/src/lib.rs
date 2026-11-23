@@ -22,6 +22,7 @@ mod context;
 mod diagnostic;
 mod emitter;
 mod level;
+mod lint;
 
 pub use code::DiagCode;
 pub use context::{
@@ -33,3 +34,4 @@ pub use emitter::{
     ColorChoice, Emitter, JsonEmitter, RichEmitter, SCHEMA_VERSION, SilentEmitter, should_use_color,
 };
 pub use level::Level;
+pub use lint::{ALL_WARNINGS, DEPRECATED, KNOWN_LINTS, LintLevel, UNUSED_IMPORT, known_lint};

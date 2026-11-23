@@ -25,8 +25,14 @@ impl SourceFile {
 
     /// Type-checks the file and captures the compiler output.
     pub(crate) fn check(&self) -> Output {
+        self.check_with(&[])
+    }
+
+    /// Type-checks the file with extra compiler arguments.
+    pub(crate) fn check_with(&self, arguments: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_sealc"))
             .arg("check")
+            .args(arguments)
             .arg(&self.0)
             .output()
             .expect("the compiler runs")

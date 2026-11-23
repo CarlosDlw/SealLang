@@ -37,6 +37,17 @@ impl OptLevel {
     }
 }
 
+/// Hashes a lint list as a set, so command-line order cannot change a cache key.
+fn hash_lint_names(names: &[String], hasher: &mut StableHasher) {
+    let mut names: Vec<&str> = names.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    names.dedup();
+    hasher.write_usize(names.len());
+    for name in names {
+        name.stable_hash(hasher);
+    }
+}
+
 /// How diagnostics are written.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum ErrorFormat {
@@ -69,6 +80,10 @@ pub struct Options {
     pub edition: Edition,
     /// Allow unstable features. Tracked.
     pub allow_unstable: bool,
+    /// Lints downgraded to allow. Tracked: changes the diagnostic set.
+    pub allow_lints: Vec<String>,
+    /// Lints upgraded to deny. Tracked: changes the diagnostic set.
+    pub deny_lints: Vec<String>,
     /// `--remap-path-prefix` specifications. Tracked: affects emitted paths.
     pub remap_prefixes: Vec<String>,
     /// Maximum number of errors before emission stops. Tracked only in the sense
@@ -94,6 +109,8 @@ impl Default for Options {
             language_version: LanguageVersion::CURRENT,
             edition: Edition::CURRENT,
             allow_unstable: false,
+            allow_lints: Vec::new(),
+            deny_lints: Vec::new(),
             remap_prefixes: Vec::new(),
             max_errors: DEFAULT_ERROR_LIMIT,
             error_format: ErrorFormat::default(),
@@ -146,6 +163,8 @@ impl Options {
         self.language_version.minor().stable_hash(&mut hasher);
         self.edition.year().stable_hash(&mut hasher);
         self.allow_unstable.stable_hash(&mut hasher);
+        hash_lint_names(&self.allow_lints, &mut hasher);
+        hash_lint_names(&self.deny_lints, &mut hasher);
         hasher.write_usize(self.remap_prefixes.len());
         for spec in &self.remap_prefixes {
             spec.stable_hash(&mut hasher);
@@ -211,6 +230,23 @@ mod tests {
         let mut remap = base.clone();
         remap.remap_prefixes = vec!["/a=/b".to_owned()];
         assert_ne!(base.tracked_fingerprint(), remap.tracked_fingerprint());
+
+        let mut lints = base.clone();
+        lints.deny_lints = vec!["deprecated".to_owned()];
+        assert_ne!(base.tracked_fingerprint(), lints.tracked_fingerprint());
+    }
+
+    #[test]
+    fn lint_order_does_not_change_the_fingerprint() {
+        let first = Options {
+            allow_lints: vec!["deprecated".to_owned(), "unused_import".to_owned()],
+            deny_lints: vec!["unused_import".to_owned(), "deprecated".to_owned()],
+            ..Options::default()
+        };
+        let mut second = first.clone();
+        second.allow_lints.reverse();
+        second.deny_lints.reverse();
+        assert_eq!(first.tracked_fingerprint(), second.tracked_fingerprint());
     }
 
     #[test]

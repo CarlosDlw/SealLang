@@ -299,6 +299,7 @@ impl Lowering<'_> {
             }
             return None;
         };
+        self.warn_deprecated(trait_def, path.name_span);
         if let Some(kind) = self.hir.fn_trait_kind(trait_def) {
             return self
                 .lower_fn_trait_arguments(kind, path)

@@ -55,6 +55,7 @@ pub struct Suggestion {
 pub struct Diagnostic {
     pub(crate) level: Level,
     pub(crate) code: Option<DiagCode>,
+    pub(crate) lint: Option<&'static str>,
     pub(crate) message: String,
     pub(crate) labels: Vec<Label>,
     pub(crate) notes: Vec<String>,
@@ -68,6 +69,7 @@ impl Diagnostic {
         Self {
             level,
             code: None,
+            lint: None,
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
@@ -80,6 +82,13 @@ impl Diagnostic {
     #[must_use]
     pub fn with_code(mut self, code: DiagCode) -> Self {
         self.code = Some(code);
+        self
+    }
+
+    /// Attaches the lint that owns this diagnostic.
+    #[must_use]
+    pub fn with_lint(mut self, lint: &'static str) -> Self {
+        self.lint = Some(lint);
         self
     }
 
@@ -125,6 +134,12 @@ impl Diagnostic {
     #[inline]
     pub fn code(&self) -> Option<DiagCode> {
         self.code
+    }
+
+    /// Returns the lint that owns this diagnostic, if any.
+    #[inline]
+    pub fn lint(&self) -> Option<&'static str> {
+        self.lint
     }
 
     /// Returns the main message.
@@ -173,6 +188,7 @@ mod tests {
         let span = map.span(id, 0..1).expect("valid span");
         let diagnostic = Diagnostic::new(Level::Error, "boom")
             .with_code(DiagCode::new("E0001"))
+            .with_lint("unused_import")
             .with_label(span, "here", LabelStyle::Primary)
             .with_note("note")
             .with_help("help")
@@ -183,6 +199,7 @@ mod tests {
             });
         assert_eq!(diagnostic.level(), Level::Error);
         assert_eq!(diagnostic.code().map(DiagCode::as_str), Some("E0001"));
+        assert_eq!(diagnostic.lint(), Some("unused_import"));
         assert_eq!(diagnostic.message(), "boom");
         assert_eq!(diagnostic.labels().len(), 1);
         assert_eq!(diagnostic.labels()[0].style, LabelStyle::Primary);

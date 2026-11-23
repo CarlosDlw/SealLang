@@ -492,6 +492,7 @@ impl Lowering<'_> {
             }
             return ExprKind::Error;
         };
+        self.warn_deprecated(type_def, type_span);
         let type_args = self.lower_nominal_arguments(type_def, type_args);
 
         if let Some(variant) = self.hir.variant(type_def, name) {
@@ -504,6 +505,7 @@ impl Lowering<'_> {
                 .ty_ctxt()
                 .variant(adt, variant)
                 .expect("a registered variant belongs to its enum");
+            self.warn_deprecated(definition.def, name_span);
             if !definition.fields.is_empty() {
                 let type_name = self.interner.resolve(type_name).to_owned();
                 let variant_name = self.interner.resolve(name).to_owned();
@@ -530,6 +532,7 @@ impl Lowering<'_> {
 
         match self.select_inherent_function(type_def, name, type_args, name_span) {
             InherentLookup::Found(function) => {
+                self.warn_deprecated(function, name_span);
                 let expected = self.own_generic_count(function);
                 let function_args = self.lower_expr_arguments(function_args, expected);
                 return self.qualified_function(
@@ -551,6 +554,8 @@ impl Lowering<'_> {
                 function,
                 ..
             } => {
+                self.warn_deprecated(function, name_span);
+                self.warn_deprecated(trait_def, name_span);
                 let expected = self.own_generic_count(function);
                 let function_args = self.lower_expr_arguments(function_args, expected);
                 self.qualified_function(
@@ -606,6 +611,8 @@ impl Lowering<'_> {
                 if !self.require_visible(trait_ref.trait_def, name_span) {
                     return ExprKind::Error;
                 }
+                self.warn_deprecated(trait_ref.trait_def, name_span);
+                self.warn_deprecated(function, name_span);
                 let expected = self.own_generic_count(function);
                 let function_args = self.lower_expr_arguments(function_args, expected);
                 ExprKind::Path {
@@ -1482,6 +1489,7 @@ impl Lowering<'_> {
             if !self.require_visible(definition, last.name_span) {
                 return ExprKind::Error;
             }
+            self.warn_deprecated(definition, last.name_span);
             let res = match self.hir.definitions().kind(definition) {
                 seal_def::DefKind::Const => crate::Res::Const(definition),
                 seal_def::DefKind::Static | seal_def::DefKind::ExternStatic => {
@@ -1669,6 +1677,7 @@ impl Lowering<'_> {
         type_args: Option<seal_ty::SubstsId>,
         initializers: Vec<(Symbol, Span, HirExprId)>,
     ) -> ExprKind {
+        self.warn_deprecated(definition, name_span);
         let adt = self
             .hir
             .adt(definition)
@@ -1764,6 +1773,7 @@ impl Lowering<'_> {
             return ExprKind::Error;
         };
 
+        self.warn_deprecated(definition, type_span);
         let type_args = self.lower_nominal_arguments(definition, type_args);
         let adt = self
             .hir
@@ -1808,6 +1818,7 @@ impl Lowering<'_> {
             .variant(variant)
             .expect("a registered variant belongs to its enum")
             .clone();
+        self.warn_deprecated(variant_def.def, name_span);
 
         if variant_def.is_tuple() {
             let enum_type = self.interner.resolve(type_name).to_owned();
@@ -1894,6 +1905,7 @@ impl Lowering<'_> {
                         .help("write each field exactly once")
                         .emit();
                     } else {
+                        self.warn_deprecated(field.def, field_span);
                         resolved.push((field.def, value));
                     }
                 }

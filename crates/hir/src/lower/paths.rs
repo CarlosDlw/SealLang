@@ -54,6 +54,7 @@ impl Lowering<'_> {
             return None;
         };
 
+        self.warn_deprecated(trait_def, path.name_span);
         let expected = self
             .hir
             .generics(trait_def)

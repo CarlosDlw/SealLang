@@ -27,7 +27,7 @@ use crate::cli::plan::resolve_entry;
 use crate::frontend::Lowered;
 
 use crate::cli::{BuildArgs, CheckArgs, CompileArgs, EmitArg, LinkArgs, OutputArgs, RunArgs};
-use crate::options::session_options;
+use crate::options::{session_options, validate_lints};
 use crate::output::artifact_path;
 use crate::report;
 use crate::temp::TemporaryDirectory;
@@ -263,6 +263,7 @@ pub(crate) fn check(args: &CheckArgs) -> Result<ExitCode, String> {
 
 /// Creates the session, compiles each input, and reports the final status.
 fn compile(arguments: &CompileArgs, request: Request<'_>) -> Result<Outcome, String> {
+    validate_lints(arguments)?;
     let plan = match &arguments.plan_file {
         Some(path) => match CompilePlan::load(path) {
             Ok(plan) => Some(plan),

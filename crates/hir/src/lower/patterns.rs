@@ -225,6 +225,8 @@ impl Lowering<'_> {
             .variant(variant)
             .expect("a registered variant belongs to its enum")
             .clone();
+        self.warn_deprecated(definition, type_span);
+        self.warn_deprecated(variant_def.def, name_span);
 
         match fields {
             VariantPatternFields::Unit => {
@@ -375,7 +377,9 @@ impl Lowering<'_> {
                         .find(|declared| declared.name == Some(field.name))
                     {
                         Some(declared) => {
-                            if matched.insert(declared.def, pattern).is_some() {
+                            if matched.insert(declared.def, pattern).is_none() {
+                                self.warn_deprecated(declared.def, field.name_span);
+                            } else {
                                 self.error(
                                     codes::E2044,
                                     field.name_span,
@@ -483,6 +487,7 @@ impl Lowering<'_> {
             return RawPatternKind::Error;
         }
 
+        self.warn_deprecated(definition, name_span);
         let mut matched: FxHashMap<DefId, RawPattern> = FxHashMap::default();
         for field in fields {
             let pattern = self.build_raw_pattern(field.pattern);
@@ -492,7 +497,9 @@ impl Lowering<'_> {
                 .find(|declared| declared.name == Some(field.name))
             {
                 Some(declared) => {
-                    if matched.insert(declared.def, pattern).is_some() {
+                    if matched.insert(declared.def, pattern).is_none() {
+                        self.warn_deprecated(declared.def, field.name_span);
+                    } else {
                         self.error(
                             codes::E2047,
                             field.name_span,

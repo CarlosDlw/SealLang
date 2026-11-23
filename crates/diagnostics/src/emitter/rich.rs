@@ -93,8 +93,11 @@ impl<W: Write> RichEmitter<W> {
         let code = diagnostic
             .code()
             .map_or_else(String::new, |code| format!("[{code}]"));
+        let lint = diagnostic
+            .lint()
+            .map_or_else(String::new, |lint| format!("[{lint}]"));
         format!(
-            "{label}{code}: {}\n",
+            "{label}{code}{lint}: {}\n",
             self.paint(BOLD, diagnostic.message())
         )
     }
@@ -453,6 +456,13 @@ mod tests {
                 "{level:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_warning_prints_its_lint_once() {
+        let output = render(&Diagnostic::new(Level::Warning, "old").with_lint("deprecated"));
+        assert!(output.starts_with("warning[deprecated]: old"));
+        assert_eq!(output.matches("deprecated").count(), 1);
     }
 
     #[test]
