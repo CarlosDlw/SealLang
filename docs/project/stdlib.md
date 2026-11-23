@@ -25,7 +25,17 @@ stdlib/
 │       ├── lib.sl
 │       ├── option.sl
 │       ├── result.sl
+│       ├── str.sl
+│       ├── str/
+│       │   ├── bytes.sl
+│       │   ├── chars.sl
+│       │   ├── compare.sl
+│       │   ├── search.sl
+│       │   ├── split.sl
+│       │   ├── trim.sl
+│       │   └── two_way.sl
 │       ├── mem.sl
+│       ├── char.sl
 │       └── prelude.sl
 └── std/
     ├── seal.toml
@@ -42,8 +52,9 @@ stdlib/
 ```
 
 Every package directory contains its own `seal.toml` and source tree. `core`
-defines `Option` and `Result` in `option` and `result`, the safe `forget`
-wrapper in `mem`, and exposes those modules plus its prelude. `std` re-exports
+defines `Option` and `Result` in `option` and `result`, the `str` surface in
+`str` and its submodules, the safe `forget` wrapper in `mem`, and an internal
+`char` helper, then exposes those modules plus its prelude. `std` re-exports
 those modules from its root, re-exports both types from its prelude, and exposes
 its own `alloc` module. `std::alloc` contains the validated layout and error
 types, the private runtime ABI declarations, the unsafe allocation wrappers, and

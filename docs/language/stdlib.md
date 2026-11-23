@@ -113,7 +113,14 @@ panic-message, empty-pattern, and line-ending rules live in
 `as_str` reinterpretation and its distinction from the safe constructor are in
 [`raw-pointers.md`](raw-pointers.md#raw-string-pointers).
 
-## Forgetting
+## Memory utilities
+
+`core::mem` is the compiler-backed memory module. Its public surface is ordinary
+Seal source: a function whose ownership effect has no source syntax calls a
+private `core`-only intrinsic, while callers see a safe function. `forget` is the
+current public operation; future utilities extend the same compiler boundary.
+
+### `forget`
 
 `core::mem::forget<T>(value: T)` takes ownership of a value and runs no
 destructor. `std::mem` is a re-export of the same module, so `std::mem::forget`
@@ -130,16 +137,34 @@ struct Buffer {
 func release_by_leaking(buffer: Buffer) {
   forget(buffer);
 }
+
+func keep_a_copy_usable() -> i32 {
+  let number = 7;
+  forget(number);
+  number
+}
 ```
 
-Forgetting is a deliberate leak: the value's fields and any allocation it owns
-are never released. It cannot make a live reference dangling, so no `unsafe`
-block is required. A direct call compiles to no work after its argument is
-evaluated; a call through the function value still consumes the argument at the
-wrapper boundary and runs no destructor. `forget` is not a `const` function
-(`E4011`), and using a consumed value afterwards is `E5005`: the ownership
-rules are the same as for any other move. The complete model is in
-[`../memory-model.md`](../memory-model.md) (D27).
+For a non-`Copy` value the call is a move: the argument is initialized before
+the call, the callee owns it afterwards, and the caller cannot read, borrow, or
+move the place again. Using it afterwards is `E5005`, the same diagnostic as
+any other use after a move. For a `Copy` value the call copies the value and
+emits no ownership operation, so the source remains usable.
+
+Forgetting is a deliberate leak. The operation is safe because a leaked value
+cannot make a live reference dangling, read uninitialized memory, or violate
+aliasing; no `unsafe` block is required. It is still a leak: the value's fields
+and any allocation it owns are never released, and no later operation can
+recover the forgotten owner. A direct call compiles to no work after its
+argument is evaluated; a call through the function value still consumes the
+argument at the wrapper boundary and runs no destructor.
+
+`forget` is not a `const func`. A call in a constant initializer is `E4011`,
+and a call from a `const func` is `E4018`: constant evaluation has no runtime
+owner to transfer. The complete model is in
+[`../memory-model.md`](../memory-model.md) (D27), and
+[`examples/054_mem_forget.sl`](../../examples/054_mem_forget.sl) is a runnable
+program with the destructor and `Copy` results asserted.
 
 ## Allocation
 

@@ -751,7 +751,7 @@ non-`Copy` dereference is `E3018`, a static root is `E3058`, and an unsized
 operand is rejected like any other by-value move. A direct call is not
 available in a constant context (`E4011`), and an explicit type-argument call
 or a function value stays an ordinary call to the public wrapper, whose body
-contains the private `__forget` builtin. Wrong arity is `E3008`.
+contains the private core-only intrinsic. Wrong arity is `E3008`.
 
 MIR represents the operation as `StatementKind::Forget { place }`, separate from
 `Drop`. A non-`Copy` operand emits the statement; a `Copy` operand emits none,
@@ -770,6 +770,28 @@ change the layout of any type, and does not make the forgotten value reachable
 again. It is intentionally not a `const` function: a compile-time leak has no
 meaningful runtime owner, so constant evaluation rejects it with `E4011` instead
 of silently discarding a value.
+
+### Memory-utility growth path
+
+`mem::forget` fixes the compiler boundary for consuming memory utilities. The
+next primitives follow this dependency order; none is part of the current public
+surface until its implementation and tests land together:
+
+1. `mem::swap` and `mem::replace` add `BuiltinFunction` variants and transfer
+   ownership between initialized places. They reuse place validation, move
+   analysis, and drop-flag maintenance, but require a simultaneous transfer so
+   no exit path observes one side as uninitialized.
+2. `mem::take` reuses `mem::replace` with `Default::default()` once the `Default`
+   trait exists; it is library code and needs no new HIR node.
+3. `ptr::drop_in_place` reuses drop elaboration and MIR validation for a raw
+   place. It is `unsafe` and does not consume ownership, so it must not use the
+   `Forget` statement: running the destructor is its defining effect.
+4. `needs_drop::<T>()` exposes the existing `TyCtxt::needs_drop` answer as a
+   compile-time type query. It adds no runtime operation and no ownership rule.
+5. A `const` form of `forget` is a separate semantic extension: constant
+   evaluation must model consumption and the transfer of an owner that never
+   runs at runtime. It is deliberately not a hidden gap in the current
+   operation.
 
 ## Type-system encoding
 

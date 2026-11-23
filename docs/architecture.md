@@ -1102,6 +1102,19 @@ The section invariants are:
   types, and MIR validation must not duplicate its data. Add a catalog test, a
   type-checking test for each accepted and rejected receiver, and an end-to-end
   test for observable behavior and panics.
+- **New compiler-backed standard-library function.** Add a variant to
+  `seal_hir::BuiltinFunction` and classify the canonical package, module, and
+  name once in `Hir::builtin_function`; lowering, type checking, MIR, borrow
+  checking, monomorphization, constant evaluation, and code generation must
+  consume that classifier instead of repeating textual comparisons. The public
+  function remains ordinary Seal source, so function values and explicit type
+  arguments still call it, while its body uses a private intrinsic for the
+  operation that source cannot express. Give a new ownership operation its own
+  HIR node and MIR statement when sharing `Drop` or `Forget` would hide an
+  effect; validate the statement's places, extend initialization and drop
+  elaboration explicitly, and keep the intrinsic private to the canonical core
+  declaration. Tests cover direct, imported, explicit-argument, and
+  function-value calls, every rejected context, and the no-code contract.
 - **New inherent method or associated function.** Parse it inside `impl` as a
   normal `FnDecl`, then register it in `seal-hir`'s per-type method map and, when
   its first parameter is `self`, record its receiver kind. Type checking
@@ -1132,7 +1145,9 @@ The section invariants are:
 - **New MIR statement or rvalue.** Add the variant in `seal-mir`, teach
   `validate` about every place and operand it carries, lower it from `seal-hir`,
   and extend `successors` only if it can change control flow. `Rvalue::Call` is
-  the template for a value-producing operation with one successor.
+  the template for a value-producing operation with one successor; a consuming
+  statement such as `Forget` is the template for an operation with an ownership
+  effect and no runtime code.
 - **New control-flow construct.** Lower it to blocks and `Goto`/`SwitchInt`
   edges; `while` shows the loop-target stack and `&&`/`||` the short-circuit
   shape. Every new edge must go through `validate`'s target check.
