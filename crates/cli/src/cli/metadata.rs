@@ -49,6 +49,7 @@ struct TargetInfo {
 struct PackageInfo {
     name: String,
     version: String,
+    edition: String,
     root: String,
     source: String,
     description: Option<String>,
@@ -171,6 +172,7 @@ fn package_info(package: &Package, project: &Project, include_dependencies: bool
     PackageInfo {
         name: package.name.clone(),
         version: package.version.clone(),
+        edition: package.edition.to_string(),
         root: package.root.display().to_string(),
         source: package_source(package),
         description: package

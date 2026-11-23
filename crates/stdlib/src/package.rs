@@ -26,6 +26,8 @@ pub struct Package {
     pub name: String,
     /// Package version.
     pub version: String,
+    /// Compatibility edition selected by the package manifest.
+    pub edition: seal_version::Edition,
     /// Canonical package directory.
     pub root: PathBuf,
     /// Source files, sorted by relative path.
@@ -93,6 +95,13 @@ pub(crate) fn load_all(root: &Path, descriptor: &Descriptor) -> StdlibResult<Vec
                 "the standard-library package `{name}` has a non-semantic version: {error}"
             ))
         })?;
+        if let Some(edition) = &package.edition {
+            seal_version::Edition::parse(edition).map_err(|error| {
+                StdlibError::package(format!(
+                    "the standard-library package `{name}` declares the edition `{edition}`, which is invalid: {error}"
+                ))
+            })?;
+        }
         roots.insert(name.clone(), canonical);
         manifests.insert(name.clone(), loaded.manifest);
     }
@@ -116,9 +125,18 @@ pub(crate) fn load_all(root: &Path, descriptor: &Descriptor) -> StdlibResult<Vec
             .filter(|expose| !expose.is_empty())
             .unwrap_or_else(|| vec!["root".to_owned()]);
         let dependencies = internal_dependencies(name, &package_root, &manifest, &roots, root)?;
+        let edition = match package.edition.as_deref() {
+            Some(text) => seal_version::Edition::parse(text).map_err(|error| {
+                StdlibError::package(format!(
+                    "the standard-library package `{name}` declares the edition `{text}`, which is invalid: {error}"
+                ))
+            })?,
+            None => seal_version::Edition::CURRENT,
+        };
         packages.push(Package {
             name: name.clone(),
             version: package.version.clone(),
+            edition,
             root: package_root,
             files,
             exposed,

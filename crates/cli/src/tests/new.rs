@@ -7,6 +7,30 @@ use crate::cli::Template;
 use super::{fixture, load};
 
 #[test]
+fn every_template_writes_the_current_edition() {
+    for (name, template) in [
+        ("new-edition-bin", Template::Bin),
+        ("new-edition-lib", Template::Lib),
+        ("new-edition-workspace", Template::Workspace),
+        ("new-edition-kernel", Template::Kernel),
+        ("new-edition-compiler", Template::Compiler),
+    ] {
+        let fixture = fixture(name);
+        crate::cli::new::scaffold(&fixture.root, name, template)
+            .unwrap_or_else(|error| panic!("{name} scaffold failed: {error}"));
+        let project = load(&fixture);
+        assert!(!project.packages.is_empty(), "{name} has packages");
+        assert!(
+            project
+                .packages
+                .iter()
+                .all(|package| package.edition.to_string() == "2026"),
+            "{name} writes the current edition"
+        );
+    }
+}
+
+#[test]
 fn a_binary_scaffold_is_a_loadable_multi_file_project() {
     let fixture = fixture("new-bin");
     crate::cli::new::scaffold(&fixture.root, "demo-app", Template::Bin)

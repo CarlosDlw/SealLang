@@ -394,6 +394,7 @@ fn compile_input(session: &Session, request: Request<'_>, input: &Path, argument
     };
     let user = seal_hir::PackagePlanEntry {
         name: session.interner().intern("main"),
+        edition: session.edition(),
         instance: PackageInstanceId::from_usize(0),
         files: vec![seal_hir::PackagePlanFile {
             file: file_id,
@@ -879,6 +880,7 @@ fn compile_plan_file(
         };
         package_plan.packages.push(seal_hir::PackagePlanEntry {
             name,
+            edition: package.edition(),
             instance: PackageInstanceId::from_usize(index),
             files,
             exposed,
@@ -896,7 +898,7 @@ fn compile_plan_file(
         plan.target,
         plan.packages
             .iter()
-            .map(|package| package.name.as_str())
+            .map(|package| format!("{}:{}", package.name, package.edition))
             .collect::<Vec<_>>()
             .join(",")
     );

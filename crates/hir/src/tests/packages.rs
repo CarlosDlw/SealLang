@@ -1,5 +1,9 @@
 //! Cross-package implementation rules.
 
+use seal_def::PackageId;
+use seal_index::Idx;
+use seal_version::Edition;
+
 use crate::tests::support::{Fixture, PackageSpec};
 
 fn geometry() -> PackageSpec {
@@ -13,6 +17,36 @@ fn geometry() -> PackageSpec {
         exposed: &[],
         dependencies: &[],
     }
+}
+
+#[test]
+fn packages_keep_their_own_edition() {
+    let fixture = Fixture::from_packages_with_editions(
+        &[
+            geometry(),
+            PackageSpec {
+                name: "app",
+                files: &[(
+                    "main.sl",
+                    "use geometry::Point;\n\
+                     func main() { let point = Point { x: 0 }; let _ = point; }",
+                )],
+                exposed: &[],
+                dependencies: &[("geometry", 0)],
+            },
+        ],
+        &[Edition::CURRENT, Edition::new(2029)],
+    );
+    let hir = fixture.lower_packages();
+    assert_eq!(
+        hir.package(PackageId::from_usize(0)).edition,
+        Edition::CURRENT
+    );
+    assert_eq!(
+        hir.package(PackageId::from_usize(1)).edition,
+        Edition::new(2029)
+    );
+    fixture.assert_clean();
 }
 
 #[test]

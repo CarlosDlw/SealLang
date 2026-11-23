@@ -39,6 +39,12 @@ pub struct PackageManifest {
     pub name: String,
     /// The package version, as a semantic version.
     pub version: String,
+    /// The compatibility edition, as a four-digit year.
+    ///
+    /// Absent means the current edition. The project layer resolves the value
+    /// before planning; the compiler never guesses per file.
+    #[serde(default)]
+    pub edition: Option<String>,
     /// A short description.
     #[serde(default)]
     pub description: Option<String>,
@@ -79,6 +85,7 @@ impl Default for PackageManifest {
         Self {
             name: String::new(),
             version: String::new(),
+            edition: None,
             description: None,
             license: None,
             repository: None,

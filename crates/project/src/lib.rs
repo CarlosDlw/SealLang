@@ -178,6 +178,8 @@ pub struct Package {
     pub name: String,
     /// The package version.
     pub version: String,
+    /// The compatibility edition selected by the package.
+    pub edition: seal_version::Edition,
     /// The package root.
     pub root: PathBuf,
     /// Where the package came from.

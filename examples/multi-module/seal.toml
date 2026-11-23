@@ -5,4 +5,5 @@ language = "0.1"
 [package]
 name = "multi-module"
 version = "0.1.0"
+edition = "2026"
 description = "A package split across modules and fragments"

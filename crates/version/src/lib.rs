@@ -67,6 +67,120 @@ impl fmt::Display for LanguageVersion {
     }
 }
 
+/// A year-named language edition.
+///
+/// An edition is a compatibility line, not a compiler version. Every package
+/// selects its own edition, so a dependency keeps the semantics it was written
+/// against while its dependents move to a newer line.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Edition(u16);
+
+impl Edition {
+    /// Edition `2026`, the current compatibility line.
+    pub const CURRENT: Self = Self(2026);
+
+    /// Every edition this compiler supports, in numeric order.
+    pub const ALL: &'static [Self] = &[Self::CURRENT];
+
+    /// Creates an edition from a year. The value may be unsupported; use
+    /// [`Self::is_supported`] before compiling with it.
+    #[inline]
+    pub const fn new(year: u16) -> Self {
+        Self(year)
+    }
+
+    /// Returns the four-digit year.
+    #[inline]
+    pub const fn year(self) -> u16 {
+        self.0
+    }
+
+    /// Returns `true` when this compiler implements the edition.
+    #[inline]
+    pub const fn is_supported(self) -> bool {
+        matches!(self.0, 2026)
+    }
+
+    /// Parses a four-digit edition name.
+    pub fn parse(text: &str) -> Result<Self, EditionError> {
+        if text.len() != 4 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(EditionError::Malformed {
+                text: text.to_owned(),
+            });
+        }
+        let year = text
+            .bytes()
+            .fold(0u16, |value, byte| value * 10 + u16::from(byte - b'0'));
+        let edition = Self(year);
+        if edition.is_supported() {
+            Ok(edition)
+        } else {
+            Err(EditionError::Unsupported { year })
+        }
+    }
+
+    /// Returns whether `edition` governs `feature`.
+    ///
+    /// The table is closed and currently empty: edition `2026` introduces no
+    /// breaking change. An accepted RFC adds a variant when it ratifies one.
+    #[inline]
+    pub const fn supports(self, feature: EditionFeature) -> bool {
+        let _ = self;
+        match feature {}
+    }
+}
+
+impl fmt::Display for Edition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A breaking change gated by edition.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
+pub enum EditionFeature {}
+
+/// Failure to parse an edition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditionError {
+    /// The text was not four decimal digits.
+    Malformed {
+        /// The rejected text.
+        text: String,
+    },
+    /// The year is well formed but this compiler does not implement it.
+    Unsupported {
+        /// The rejected year.
+        year: u16,
+    },
+}
+
+impl fmt::Display for EditionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed { text } => {
+                write!(f, "invalid edition `{text}`: expected a four-digit year")
+            }
+            Self::Unsupported { year } => {
+                write!(
+                    f,
+                    "the edition `{year}` is not supported; supported editions: "
+                )?;
+                for (index, edition) in Edition::ALL.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{edition}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for EditionError {}
+
 /// Failure to parse a language version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionError {
@@ -185,7 +299,10 @@ impl FeatureGates {
 
 #[cfg(test)]
 mod tests {
-    use super::{FeatureGates, FeatureStability, GateError, LanguageVersion, VersionError};
+    use super::{
+        Edition, EditionError, FeatureGates, FeatureStability, GateError, LanguageVersion,
+        VersionError,
+    };
 
     #[test]
     fn version_parsing() {
@@ -208,6 +325,36 @@ mod tests {
     fn version_ordering() {
         assert!(LanguageVersion::new(0, 2) > LanguageVersion::new(0, 1));
         assert!(LanguageVersion::new(1, 0) > LanguageVersion::new(0, 9));
+    }
+
+    #[test]
+    fn edition_parsing_is_strict_and_names_the_supported_line() {
+        assert_eq!(Edition::parse("2026"), Ok(Edition::CURRENT));
+        assert_eq!(Edition::CURRENT.to_string(), "2026");
+        for rejected in ["2025", "2027", "2026.1", "", "26", "abcd", " 2026"] {
+            let error = Edition::parse(rejected).expect_err("the edition is rejected");
+            assert!(!error.to_string().is_empty());
+        }
+        let unsupported = Edition::parse("2027").expect_err("the edition is unsupported");
+        assert!(matches!(
+            unsupported,
+            EditionError::Unsupported { year: 2027 }
+        ));
+        assert!(unsupported.to_string().contains("2026"));
+        assert!(
+            Edition::parse("2026.1")
+                .unwrap_err()
+                .to_string()
+                .contains("four-digit")
+        );
+    }
+
+    #[test]
+    fn editions_order_by_year() {
+        assert!(Edition::new(2029) > Edition::CURRENT);
+        assert_eq!(Edition::CURRENT.year(), 2026);
+        assert!(Edition::CURRENT.is_supported());
+        assert!(!Edition::new(2027).is_supported());
     }
 
     #[test]

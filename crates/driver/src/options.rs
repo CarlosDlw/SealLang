@@ -6,7 +6,7 @@
 use seal_diagnostics::DEFAULT_ERROR_LIMIT;
 use seal_session::{OptLevel, Options};
 use seal_target::host_triple;
-use seal_version::LanguageVersion;
+use seal_version::{Edition, LanguageVersion};
 
 use crate::cli::{CompileArgs, OutputArgs};
 
@@ -24,6 +24,7 @@ pub(crate) fn session_options(arguments: &CompileArgs, output: Option<&OutputArg
             .target
             .language_version
             .unwrap_or(LanguageVersion::CURRENT),
+        edition: arguments.target.edition.unwrap_or(Edition::CURRENT),
         allow_unstable: arguments.target.allow_unstable_features,
         remap_prefixes: arguments.diagnostics.remap_path_prefix.clone(),
         max_errors: arguments

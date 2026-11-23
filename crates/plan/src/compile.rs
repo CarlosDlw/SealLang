@@ -3,16 +3,17 @@
 use std::path::PathBuf;
 
 use seal_target::{CAbiDefinition, TargetDefinition, TargetSpec, TargetTriple};
-use seal_version::LanguageVersion;
+use seal_version::{Edition, LanguageVersion};
 use serde::{Deserialize, Serialize};
 
 use crate::{PlanError, PlanResult};
 
 /// The plan schema version understood by this compiler.
 ///
-/// Version 2 adds the standard library metadata and the per-package mode.
-/// Version 1 plans are read as `stdlib = "none"` with no prelude.
-pub const FORMAT_VERSION: u32 = 2;
+/// Version 3 adds the per-package edition. Version 2 plans are upgraded to the
+/// current edition in memory; version 1 plans are read as `stdlib = "none"`
+/// with no prelude.
+pub const FORMAT_VERSION: u32 = 3;
 
 /// What the compiler should produce.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +126,9 @@ pub struct PlanPackage {
     pub name: String,
     /// The package version.
     pub version: String,
+    /// The compatibility edition selected by the package.
+    #[serde(default)]
+    pub edition: String,
     /// The compiled package instance.
     pub instance: u32,
     /// Absolute path to the package root.
@@ -146,6 +150,20 @@ pub struct PlanPackage {
     /// The standard-library mode injected into this package.
     #[serde(default)]
     pub stdlib: PlanStdlibMode,
+}
+
+impl PlanPackage {
+    /// Returns the parsed edition after the plan has been validated.
+    ///
+    /// A version 2 plan with no edition is the current edition; a version 3
+    /// plan without one is rejected by [`CompilePlan::validate`].
+    pub fn edition(&self) -> Edition {
+        if self.edition.is_empty() {
+            Edition::CURRENT
+        } else {
+            Edition::parse(&self.edition).unwrap_or(Edition::CURRENT)
+        }
+    }
 }
 
 /// The profile values that affect the artifact.
@@ -348,7 +366,7 @@ impl CompilePlan {
 
     /// Validates every structural invariant the driver relies on.
     pub fn validate(&self) -> PlanResult<()> {
-        if self.version != FORMAT_VERSION {
+        if !(2..=FORMAT_VERSION).contains(&self.version) {
             return Err(PlanError::version(self.version));
         }
         if TargetTriple::parse(&self.target).is_err() {
@@ -450,6 +468,21 @@ impl CompilePlan {
                     "package `{}` has no source files",
                     package.name
                 )));
+            }
+            if package.edition.is_empty() {
+                if self.version >= 3 {
+                    return Err(PlanError::invalid(format!(
+                        "package `{}` names no edition",
+                        package.name
+                    )));
+                }
+            } else {
+                Edition::parse(&package.edition).map_err(|error| {
+                    PlanError::invalid(format!(
+                        "package `{}` names the edition `{}`, which is invalid: {error}",
+                        package.name, package.edition
+                    ))
+                })?;
             }
             if package.stdlib != PlanStdlibMode::None && self.stdlib.is_none() {
                 return Err(PlanError::stdlib_inconsistent(format!(
@@ -571,6 +604,7 @@ mod tests {
             packages: vec![PlanPackage {
                 name: "demo".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: PathBuf::from("/demo"),
                 files: vec![PlanFile {

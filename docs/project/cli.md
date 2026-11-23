@@ -18,8 +18,10 @@ $ seal init --template bin
 and a second file joined through `module app::util;`; the generated program
 calls that module. `lib` has no `main`. `workspace` creates a root manifest and
 two members with a path dependency; `crates/app` is the default member, so
-`seal build` at the root selects it without `--workspace`. Every template writes
-`seal.toml`, `seal.lock`, `src/`, `tests/`, and `.gitignore`; `--vcs git`
+`seal build` at the root selects it without `--workspace`. Every package
+template writes `edition = "2026"` explicitly, and the project template writes
+`language = "0.1"`. Every template writes `seal.toml`, `seal.lock`, `src/`,
+`tests/`, and `.gitignore`; `--vcs git`
 additionally runs `git init`. The `kernel` template is freestanding: it writes
 `runtime = "none"`, `panic = "trap"`, a `kernel.ld` entry script, and a
 `_start` function that exits with 42 through a generated `exit` stub. It builds
@@ -341,10 +343,10 @@ $ seal doctor --json --fix
 
 `metadata` prints versioned, deterministic JSON containing the workspace
 (`name`, `root`, members, default members, lockfile state), target triple,
-packages, package source and descriptive fields, targets (including required
-features, generators, generated targets, and native aliases), the module index,
-files, features, dependency edges with resolved names and versions, and concrete
-package instances. It is enough for an editor or CI job to list, select, and
+packages, each package's edition and source, descriptive fields, targets
+(including required features, generators, generated targets, and native
+aliases), the module index, files, features, dependency edges with resolved
+names and versions, and concrete package instances. It is enough for an editor or CI job to list, select, and
 navigate the workspace without running code generation. `--no-deps` keeps only
 the default package.
 
@@ -469,10 +471,14 @@ $ sealc build --emit=cdylib math.sl -o libmath.so
 ```
 
 A plan names the target, profile, packages in dependency order, source files,
-exposed modules, dependency aliases, cfg values, the entry function, and the
-artifact path. Invalid JSON or an unknown schema is `E8001`; a graph that
-violates the plan invariants is `E8010`. Neither can panic the driver. The
-historical `sealc build file.sl` path is unchanged.
+each package's edition, exposed modules, dependency aliases, cfg values, the
+entry function, and the artifact path. Invalid JSON or an unknown schema is
+`E8001`; a graph that violates the plan invariants is `E8010`. Neither can
+panic the driver. Plan version 3 carries the edition; version 2 plans are
+upgraded to edition `2026` in memory, and version 1 plans keep
+`stdlib = "none"`. The historical `sealc build file.sl` path is unchanged;
+there, `--edition YEAR` selects the edition, and `--language-version
+MAJOR.MINOR` selects the language version.
 
 `--emit=api` writes a JSON snapshot of the package modules and public items
 instead of code. It is a tool-facing snapshot, not a stable ABI.

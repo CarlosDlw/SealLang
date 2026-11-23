@@ -57,7 +57,13 @@ language = "0.1"
 [package]
 name = "my-program"
 version = "0.1.0"
+edition = "2026"
 ```
+
+`edition` may be omitted; it then defaults to the current edition, `2026`.
+`project.language = "0.2"` is not accepted by this compiler: `0.1` is the
+implemented language surface, and a claimed `0.2` is `E8005` instead of being
+silently compiled as `0.1`.
 
 `package.sources` defaults to `src/**/*.sl`, and a package with `src/main.sl`
 infers a `bin` target with `entry = "root::main"`. A library is `src/lib.sl`
@@ -85,6 +91,7 @@ to `stdlib = "core"`. Select it explicitly when the default is not wanted:
 [package]
 name = "my-program"
 version = "0.1.0"
+edition = "2026"
 stdlib = "std"          # "std" | "core" | "none"
 implicit-prelude = true # false keeps the dependency without implicit names
 ```

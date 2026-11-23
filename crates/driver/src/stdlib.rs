@@ -180,6 +180,7 @@ pub(crate) fn load(
         }
         entries.push(PackagePlanEntry {
             name: session.interner().intern(&package.name),
+            edition: package.edition,
             instance: PackageInstanceId::from_usize(instance_base + position),
             files,
             exposed,

@@ -32,6 +32,7 @@ fn metadata_lists_modules_files_and_targets() {
     let package = &value["packages"][0];
     assert_eq!(package["name"], "demo");
     assert_eq!(package["version"], "0.1.0");
+    assert_eq!(package["edition"], "2026");
     assert!(
         package["targets"]
             .as_array()

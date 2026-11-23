@@ -45,6 +45,7 @@ fn plan(
         packages: vec![PlanPackage {
             name: "test".to_owned(),
             version: "0.1.0".to_owned(),
+            edition: "2026".to_owned(),
             instance: 0,
             root: source.parent().expect("source parent").to_path_buf(),
             files: vec![PlanFile {
@@ -134,6 +135,7 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
             PlanPackage {
                 name: "greet".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: fixture.root.clone(),
                 files: vec![PlanFile {
@@ -149,6 +151,7 @@ fn two_packages_with_the_same_function_name_do_not_collide() {
             PlanPackage {
                 name: "app".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: fixture.root.clone(),
                 files: vec![PlanFile {
@@ -197,6 +200,7 @@ fn a_plan_prelude_can_be_disabled_with_no_prelude() {
             PlanPackage {
                 name: "core".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: fixture.root.clone(),
                 files: vec![PlanFile {
@@ -212,6 +216,7 @@ fn a_plan_prelude_can_be_disabled_with_no_prelude() {
             PlanPackage {
                 name: "app".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: fixture.root.clone(),
                 files: vec![PlanFile {

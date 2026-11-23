@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
+use seal_version::{Edition, LanguageVersion};
 use semver::Version;
-use toml_edit::{DocumentMut, Item, Table, Value};
+use toml_edit::{Item, Table, Value};
 
 use crate::error::{ManifestError, ManifestResult, ManifestWarning};
 use crate::{DependencySpec, Location, Manifest, TargetKind};
@@ -27,13 +28,14 @@ pub fn load(path: &Path) -> ManifestResult<LoadedManifest> {
 
 /// Parses a manifest from text.
 pub fn load_str(source: &str) -> ManifestResult<LoadedManifest> {
-    let document: DocumentMut = source.parse().map_err(|error: toml_edit::TomlError| {
-        let span = error.span();
-        let location = span
-            .as_ref()
-            .map(|range| Location::from_offset(source, range.start));
-        ManifestError::invalid(format!("invalid TOML: {error}")).at(location)
-    })?;
+    let document: toml_edit::ImDocument<String> =
+        source.parse().map_err(|error: toml_edit::TomlError| {
+            let span = error.span();
+            let location = span
+                .as_ref()
+                .map(|range| Location::from_offset(source, range.start));
+            ManifestError::invalid(format!("invalid TOML: {error}")).at(location)
+        })?;
 
     let manifest: Manifest = toml::from_str(source).map_err(|error: toml::de::Error| {
         let location = error
@@ -42,8 +44,8 @@ pub fn load_str(source: &str) -> ManifestResult<LoadedManifest> {
         ManifestError::invalid(format!("invalid manifest: {error}")).at(location)
     })?;
 
-    let index = KeyIndex::build(&document, source);
-    let warnings = unknown_keys(&document);
+    let index = KeyIndex::build(document.as_table(), source);
+    let warnings = unknown_keys(document.as_table());
     validate(&manifest, &index)?;
     Ok(LoadedManifest { manifest, warnings })
 }
@@ -54,25 +56,27 @@ struct KeyIndex {
 }
 
 impl KeyIndex {
-    fn build(document: &DocumentMut, source: &str) -> Self {
+    fn build(document: &Table, source: &str) -> Self {
         let mut index = Self {
             locations: BTreeMap::new(),
             source: source.to_owned(),
         };
-        index.walk_table(document.as_table(), "");
+        index.walk_table(document, "");
         index
     }
 
     fn walk_table(&mut self, table: &Table, prefix: &str) {
         for (name, item) in table.iter() {
             let path = join(prefix, name);
-            if let Some(key) = table.key(name) {
-                if let Some(span) = key.span() {
-                    self.locations.insert(
-                        path.clone(),
-                        Location::from_offset(&self.source, span.start),
-                    );
-                }
+            let span = table
+                .key(name)
+                .and_then(|key| key.span())
+                .or_else(|| item.span());
+            if let Some(span) = span {
+                self.locations.insert(
+                    path.clone(),
+                    Location::from_offset(&self.source, span.start),
+                );
             }
             match item {
                 Item::Table(table) => self.walk_table(table, &path),
@@ -84,13 +88,15 @@ impl KeyIndex {
                 Item::Value(Value::InlineTable(table)) => {
                     for (key, value) in table.iter() {
                         let child = join(&path, key);
-                        if let Some(key) = table.key(key) {
-                            if let Some(span) = key.span() {
-                                self.locations.insert(
-                                    child.clone(),
-                                    Location::from_offset(&self.source, span.start),
-                                );
-                            }
+                        let span = table
+                            .key(key)
+                            .and_then(|key| key.span())
+                            .or_else(|| value.span());
+                        if let Some(span) = span {
+                            self.locations.insert(
+                                child.clone(),
+                                Location::from_offset(&self.source, span.start),
+                            );
                         }
                         if let Value::InlineTable(nested) = value {
                             self.walk_inline(nested, &child);
@@ -106,13 +112,15 @@ impl KeyIndex {
     fn walk_inline(&mut self, table: &toml_edit::InlineTable, prefix: &str) {
         for (key, value) in table.iter() {
             let path = join(prefix, key);
-            if let Some(key) = table.key(key) {
-                if let Some(span) = key.span() {
-                    self.locations.insert(
-                        path.clone(),
-                        Location::from_offset(&self.source, span.start),
-                    );
-                }
+            let span = table
+                .key(key)
+                .and_then(|key| key.span())
+                .or_else(|| value.span());
+            if let Some(span) = span {
+                self.locations.insert(
+                    path.clone(),
+                    Location::from_offset(&self.source, span.start),
+                );
             }
             if let Value::InlineTable(nested) = value {
                 self.walk_inline(nested, &path);
@@ -147,10 +155,14 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
     if let Some(project) = &manifest.project {
         validate_name("project", &project.name, index, "project.name")?;
         if let Some(language) = &project.language {
-            if !matches!(language.as_str(), "0.1" | "0.2") {
+            let parsed = LanguageVersion::parse(language).ok();
+            if parsed != Some(LanguageVersion::CURRENT) {
                 return Err(index.fail(
                     "project.language",
-                    format!("the language version `{language}` is not supported; expected `0.1` or `0.2`"),
+                    format!(
+                        "the language version `{language}` is not supported; expected `{}`",
+                        LanguageVersion::CURRENT
+                    ),
                 ));
             }
         }
@@ -247,6 +259,14 @@ fn validate(manifest: &Manifest, index: &KeyIndex) -> ManifestResult<()> {
                 ),
             )
         })?;
+        if let Some(edition) = &package.edition {
+            Edition::parse(edition).map_err(|error| {
+                index.fail(
+                    "package.edition",
+                    format!("the package edition `{edition}` is invalid: {error}"),
+                )
+            })?;
+        }
         for source in &package.sources {
             validate_glob(source, index, "package.sources")?;
         }
@@ -723,7 +743,7 @@ fn validate_glob(glob: &str, index: &KeyIndex, path: &str) -> ManifestResult<()>
 // Unknown-key detection. Every known table is checked independently so a typo
 // points at the exact key and suggests the intended one.
 
-fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
+fn unknown_keys(document: &Table) -> Vec<ManifestWarning> {
     let mut warnings = Vec::new();
     let root = [
         "project",
@@ -739,9 +759,9 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
         "tasks",
         "native",
     ];
-    check_static(document.as_table(), &root, "", &mut warnings);
+    check_static(document, &root, "", &mut warnings);
 
-    if let Some(registry) = table(document.as_table(), "registry") {
+    if let Some(registry) = table(document, "registry") {
         check_static(
             registry,
             &[
@@ -774,7 +794,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             );
         }
     }
-    if let Some(project) = table(document.as_table(), "project") {
+    if let Some(project) = table(document, "project") {
         check_static(
             project,
             &["name", "language", "members", "default-members", "metadata"],
@@ -782,12 +802,13 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             &mut warnings,
         );
     }
-    if let Some(package) = table(document.as_table(), "package") {
+    if let Some(package) = table(document, "package") {
         check_static(
             package,
             &[
                 "name",
                 "version",
+                "edition",
                 "description",
                 "license",
                 "repository",
@@ -812,7 +833,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             );
         }
     }
-    if let Some(targets) = table(document.as_table(), "targets") {
+    if let Some(targets) = table(document, "targets") {
         for (name, item) in targets.iter() {
             if let Some(target) = item.as_table_like() {
                 check_table_like(
@@ -846,7 +867,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
         }
     }
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(dependencies) = table(document.as_table(), section) {
+        if let Some(dependencies) = table(document, section) {
             for (name, item) in dependencies.iter() {
                 if let Some(detail) = item.as_table_like() {
                     check_table_like(
@@ -869,7 +890,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             }
         }
     }
-    if let Some(env) = table(document.as_table(), "env") {
+    if let Some(env) = table(document, "env") {
         for (name, item) in env.iter() {
             if let Some(detail) = item.as_table_like() {
                 check_table_like(
@@ -881,7 +902,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             }
         }
     }
-    if let Some(native) = table(document.as_table(), "native") {
+    if let Some(native) = table(document, "native") {
         for (name, item) in native.iter() {
             if let Some(detail) = item.as_table_like() {
                 check_table_like(
@@ -893,7 +914,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             }
         }
     }
-    if let Some(tasks) = table(document.as_table(), "tasks") {
+    if let Some(tasks) = table(document, "tasks") {
         for (name, item) in tasks.iter() {
             if let Some(task) = item.as_table_like() {
                 check_table_like(
@@ -915,7 +936,7 @@ fn unknown_keys(document: &DocumentMut) -> Vec<ManifestWarning> {
             }
         }
     }
-    if let Some(profiles) = table(document.as_table(), "profiles") {
+    if let Some(profiles) = table(document, "profiles") {
         for (name, item) in profiles.iter() {
             if let Some(profile) = item.as_table_like() {
                 check_table_like(
@@ -1026,6 +1047,71 @@ mod tests {
     fn a_minimal_package_manifest_is_valid() {
         let manifest = load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
         assert_eq!(manifest.manifest.package.unwrap().name, "demo");
+    }
+
+    #[test]
+    fn key_index_records_nested_keys() {
+        let source = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2027\"\n";
+        let document: toml_edit::ImDocument<String> = source.parse().expect("the fixture parses");
+        let index = KeyIndex::build(document.as_table(), source);
+        assert!(index.location("package.edition").is_some());
+    }
+
+    #[test]
+    fn a_package_edition_is_optional_and_validated() {
+        let manifest = load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+        assert!(
+            manifest
+                .manifest
+                .package
+                .expect("package")
+                .edition
+                .is_none()
+        );
+
+        let manifest =
+            load("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2026\"\n");
+        assert_eq!(
+            manifest
+                .manifest
+                .package
+                .expect("package")
+                .edition
+                .as_deref(),
+            Some("2026")
+        );
+
+        let error =
+            load_str("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2027\"\n")
+                .expect_err("an unsupported edition is rejected");
+        assert_eq!(error.code(), "E8005");
+        assert!(error.location().is_some());
+        assert!(error.message().contains("2027"));
+        assert!(error.message().contains("2026"));
+    }
+
+    #[test]
+    fn the_language_version_must_match_the_compiler_exactly() {
+        let accepted = load("[project]\nname = \"demo\"\nlanguage = \"0.1\"\n");
+        assert_eq!(
+            accepted
+                .manifest
+                .project
+                .expect("project")
+                .language
+                .as_deref(),
+            Some("0.1")
+        );
+
+        let absent = load("[project]\nname = \"demo\"\n");
+        assert!(absent.manifest.project.expect("project").language.is_none());
+
+        let error = load_str("[project]\nname = \"demo\"\nlanguage = \"0.2\"\n")
+            .expect_err("an unimplemented language version is rejected");
+        assert_eq!(error.code(), "E8005");
+        assert!(error.location().is_some());
+        assert!(error.message().contains("0.2"));
+        assert!(error.message().contains("0.1"));
     }
 
     #[test]

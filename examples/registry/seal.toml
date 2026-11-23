@@ -5,6 +5,7 @@ language = "0.1"
 [package]
 name = "registry-example"
 version = "0.1.0"
+edition = "2026"
 description = "A package that consumes a TUF-verified registry dependency"
 
 # The reference acceptance fixture replaces this URL with a local registry.

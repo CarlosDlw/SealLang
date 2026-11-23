@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use seal_version::Edition;
+
 use crate::{CompilePlan, PlanError, PlanResult};
 
 impl CompilePlan {
@@ -22,10 +24,11 @@ impl CompilePlan {
 
     /// Parses and validates a plan from JSON text.
     ///
-    /// Version 1 plans are migrated in place: they gain the version-2 schema
+    /// Version 1 plans are migrated in place: they gain the current schema
     /// number, every package keeps `stdlib = "none"`, and the plan names no
-    /// standard library. This preserves the behavior of plans written before
-    /// the standard library existed.
+    /// standard library. Version 2 plans gain the current edition for every
+    /// package. Both preserve the behavior of plans written before the field
+    /// existed.
     pub fn from_json(text: &str) -> PlanResult<Self> {
         let mut value: serde_json::Value = serde_json::from_str(text).map_err(|error| {
             PlanError::schema(format!("the compile plan is not valid JSON: {error}"))
@@ -34,8 +37,20 @@ impl CompilePlan {
             .get("version")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| PlanError::schema("the compile plan has no integer `version` field"))?;
-        if version == 1 {
+        if version <= 2 {
             value["version"] = serde_json::Value::from(crate::FORMAT_VERSION);
+            if let Some(packages) = value
+                .get_mut("packages")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for package in packages {
+                    if let Some(object) = package.as_object_mut() {
+                        object.entry("edition").or_insert_with(|| {
+                            serde_json::Value::from(Edition::CURRENT.to_string())
+                        });
+                    }
+                }
+            }
         }
         let plan: Self = serde_json::from_value(value).map_err(|error| {
             PlanError::schema(format!(
@@ -107,6 +122,7 @@ mod tests {
             packages: vec![PlanPackage {
                 name: "demo".to_owned(),
                 version: "0.1.0".to_owned(),
+                edition: "2026".to_owned(),
                 instance: 0,
                 root: PathBuf::from("/demo"),
                 files: vec![PlanFile {
@@ -170,9 +186,39 @@ mod tests {
         let text = "{\"version\":1,\"target\":\"x86_64-unknown-linux-gnu\",\"profile\":{},\"mode\":\"check\",\"packages\":[{\"name\":\"demo\",\"version\":\"0.1.0\",\"instance\":0,\"root\":\"/demo\",\"files\":[{\"path\":\"/demo/src/main.sl\",\"primary\":true}]}],\"primary\":0}";
         let plan = CompilePlan::from_json(text).expect("the legacy plan loads");
         assert_eq!(plan.version, FORMAT_VERSION);
+        assert_eq!(plan.packages[0].edition, "2026");
         assert!(plan.stdlib.is_none());
         assert_eq!(plan.packages[0].stdlib, crate::PlanStdlibMode::None);
         assert!(plan.packages[0].prelude.is_none());
+    }
+
+    #[test]
+    fn a_version_two_plan_gains_the_current_edition() {
+        let text = "{\"version\":2,\"target\":\"x86_64-unknown-linux-gnu\",\"profile\":{},\"mode\":\"check\",\"packages\":[{\"name\":\"demo\",\"version\":\"0.1.0\",\"instance\":0,\"root\":\"/demo\",\"files\":[{\"path\":\"/demo/src/main.sl\",\"primary\":true}]}],\"primary\":0}";
+        let plan = CompilePlan::from_json(text).expect("the version two plan loads");
+        assert_eq!(plan.version, FORMAT_VERSION);
+        assert_eq!(plan.packages[0].edition, "2026");
+    }
+
+    #[test]
+    fn the_edition_is_part_of_the_serialized_plan() {
+        let plan = plan();
+        let first = plan.to_json().expect("the plan serializes");
+        let mut changed = plan;
+        changed.packages[0].edition = "2029".to_owned();
+        let second = changed.to_json().expect("the changed plan serializes");
+        assert_ne!(first, second);
+        assert!(second.contains("\"edition\": \"2029\""));
+    }
+
+    #[test]
+    fn a_current_plan_requires_a_supported_edition() {
+        let mut plan = plan();
+        plan.packages[0].edition = "2027".to_owned();
+        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
+
+        plan.packages[0].edition.clear();
+        assert_eq!(plan.validate().unwrap_err().code(), "E8010");
     }
 
     #[test]

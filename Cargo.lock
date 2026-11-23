@@ -1756,6 +1756,7 @@ dependencies = [
  "seal-symbol",
  "seal-target",
  "seal-ty",
+ "seal-version",
 ]
 
 [[package]]
@@ -1804,6 +1805,7 @@ dependencies = [
 name = "seal-manifest"
 version = "0.1.0"
 dependencies = [
+ "seal-version",
  "semver",
  "serde",
  "toml",
@@ -1906,6 +1908,7 @@ dependencies = [
  "seal-registry",
  "seal-stdlib",
  "seal-target",
+ "seal-version",
  "semver",
  "serde",
  "serde_json",

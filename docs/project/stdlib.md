@@ -61,7 +61,8 @@ types, the private runtime ABI declarations, the unsafe allocation wrappers, and
 `RawBuffer`; the module files are listed in `std/seal.toml` under
 `[package.api] expose = ["root", "prelude", "alloc"]`. Both manifests set
 `stdlib = "none"` and `implicit-prelude = false` so the library never injects
-itself. The language surface is documented in
+itself. Both package manifests also declare `edition = "2026"`. The language
+surface is documented in
 [`../language/stdlib.md`](../language/stdlib.md).
 
 ## Descriptor
@@ -71,7 +72,7 @@ format = 1
 language = "0.1"
 version = "0.1.0"
 packages = ["core", "std"]
-digest = "864afa825e5ba8e889bd23ae9206f0f1c1e06da8825c74619f8790b241bcbd54"
+digest = "ae2a6814728ececd00f899c247f6b39ae6b8fb1bffc261c74994a1e6167c61f5"
 
 [prelude]
 std = "std::prelude"
@@ -106,6 +107,7 @@ A package selects a mode in its manifest:
 [package]
 name = "kernel"
 version = "0.1.0"
+edition = "2026"
 stdlib = "core"        # "std" | "core" | "none"
 implicit-prelude = true
 ```
@@ -135,21 +137,23 @@ $ sealc check --no-prelude main.sl    # std without implicit names
 `--plan-file` uses the modes recorded in the plan and ignores `--core-only` and
 `--no-stdlib`.
 
-## plan v2
+## plan v3
 
-`CompilePlan` version 2 carries only the standard-library identity:
+`CompilePlan` version 3 carries the standard-library identity and the edition
+of every package:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "stdlib": {
     "language": "0.1",
     "version": "0.1.0",
-    "digest": "864afa82..."
+    "digest": "ae2a6814..."
   },
   "packages": [
     {
       "name": "app",
+      "edition": "2026",
       "stdlib": "std",
       "prelude": { "stdlib": "std", "module": "prelude" }
     }
@@ -161,8 +165,9 @@ The plan contains no absolute standard-library path and no sources. The driver
 loads the local installation, verifies language, version, and digest, and only
 then injects the packages. A user package's prelude may name another user
 package (`"package": 0`) or a standard-library package (`"stdlib": "std"`).
-Version 1 plans are read as `stdlib = "none"` with no prelude, preserving the
-behaviour they were written for.
+Version 2 plans have no per-package edition; the driver upgrades every package
+to `Edition::CURRENT` in memory. Version 1 plans are read as `stdlib = "none"`
+with no prelude, preserving the behaviour they were written for.
 
 Injection preserves user package indexes: `seal tree` and every API surface see
 the same user packages in the same order. Standard-library packages are placed

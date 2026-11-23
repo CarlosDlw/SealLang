@@ -326,6 +326,7 @@ fn metadata_is_parseable_and_lists_modules_and_targets() {
         serde_json::from_slice(&metadata.stdout).expect("metadata is JSON");
     assert_eq!(value["version"], 1);
     let package = &value["packages"][0];
+    assert_eq!(package["edition"], "2026");
     assert!(
         package["name"]
             .as_str()

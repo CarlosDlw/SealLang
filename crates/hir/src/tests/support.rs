@@ -16,6 +16,7 @@ use seal_index::Idx;
 use seal_span::{FileName, SourceFile, SourceMap, Span};
 use seal_symbol::{Interner, Symbol};
 use seal_ty::TyId;
+use seal_version::Edition;
 
 #[derive(Clone, Default)]
 struct Recording(Arc<Mutex<Vec<Diagnostic>>>);
@@ -47,6 +48,7 @@ pub(crate) struct Fixture {
     files: Vec<seal_span::FileId>,
     package_files: Vec<Vec<seal_span::FileId>>,
     packages: Vec<PackageSpec>,
+    editions: Vec<Edition>,
     recording: Recording,
 }
 
@@ -80,6 +82,7 @@ impl Fixture {
             files: vec![id],
             package_files: Vec::new(),
             packages: Vec::new(),
+            editions: Vec::new(),
             recording,
         }
     }
@@ -110,6 +113,7 @@ impl Fixture {
             files: ids.clone(),
             package_files: vec![ids],
             packages: Vec::new(),
+            editions: Vec::new(),
             recording,
         }
     }
@@ -150,8 +154,21 @@ impl Fixture {
             files,
             package_files,
             packages: specs.to_vec(),
+            editions: Vec::new(),
             recording,
         }
+    }
+
+    /// Creates a multi-package fixture with one edition per package.
+    pub(crate) fn from_packages_with_editions(specs: &[PackageSpec], editions: &[Edition]) -> Self {
+        assert_eq!(
+            specs.len(),
+            editions.len(),
+            "every package needs one edition"
+        );
+        let mut fixture = Self::from_packages(specs);
+        fixture.editions = editions.to_vec();
+        fixture
     }
 
     fn parse(&self) -> Ast {
@@ -298,6 +315,11 @@ impl Fixture {
                 .collect();
             packages.push(PackagePlanEntry {
                 name: self.interner.intern(spec.name),
+                edition: self
+                    .editions
+                    .get(index)
+                    .copied()
+                    .unwrap_or(Edition::CURRENT),
                 instance: PackageInstanceId::from_usize(index),
                 files,
                 exposed,

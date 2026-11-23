@@ -10,7 +10,7 @@ use seal_codegen::Emit;
 use seal_diagnostics::ColorChoice;
 use seal_session::{ErrorFormat, OptLevel};
 use seal_target::TargetTriple;
-use seal_version::LanguageVersion;
+use seal_version::{Edition, LanguageVersion};
 
 /// Artifact selected by `build --emit`.
 ///
@@ -118,6 +118,11 @@ pub(crate) fn parse_language_version(value: &str) -> Result<LanguageVersion, Str
     LanguageVersion::parse(value).map_err(|error| error.to_string())
 }
 
+/// Parses a four-digit edition for `--edition`.
+pub(crate) fn parse_edition(value: &str) -> Result<Edition, String> {
+    Edition::parse(value).map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use seal_codegen::Emit;
@@ -125,8 +130,8 @@ mod tests {
     use seal_session::{ErrorFormat, OptLevel};
 
     use super::{
-        ColorArg, EmitArg, ErrorFormatArg, parse_language_version, parse_opt_level, parse_positive,
-        parse_target,
+        ColorArg, EmitArg, ErrorFormatArg, parse_edition, parse_language_version, parse_opt_level,
+        parse_positive, parse_target,
     };
 
     #[test]
@@ -169,6 +174,16 @@ mod tests {
             "0.1"
         );
         assert!(parse_language_version("one").is_err());
+    }
+
+    #[test]
+    fn editions_are_validated_eagerly() {
+        assert_eq!(
+            parse_edition("2026").expect("valid edition").to_string(),
+            "2026"
+        );
+        assert!(parse_edition("2027").is_err());
+        assert!(parse_edition("26").is_err());
     }
 
     #[test]

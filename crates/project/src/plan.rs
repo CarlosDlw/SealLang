@@ -252,6 +252,7 @@ pub(crate) fn compile_plan(
         packages.push(seal_plan::PlanPackage {
             name: package.name.clone(),
             version: package.version.clone(),
+            edition: package.edition.to_string(),
             instance: instance_hash(package, &features, &cfg, &profile),
             root: package.root.clone(),
             files,
@@ -337,6 +338,7 @@ pub(crate) fn compile_plan(
             packages.push(seal_plan::PlanPackage {
                 name: package.name.clone(),
                 version: package.version.clone(),
+                edition: package.edition.to_string(),
                 instance: test_instance_hash(
                     package,
                     &test_cfg.features,
@@ -460,10 +462,12 @@ fn test_instance_hash(
     target: &str,
 ) -> u32 {
     let mut hasher = Sha256::new();
-    hasher.update(b"seal-test-package-v1\0");
+    hasher.update(b"seal-test-package-v2\0");
     hasher.update(package.name.as_bytes());
     hasher.update(b"\0");
     hasher.update(package.version.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(package.edition.to_string().as_bytes());
     hasher.update(b"\0");
     hasher.update(target.as_bytes());
     hasher.update(b"\0");
@@ -487,10 +491,12 @@ pub(crate) fn instance_hash(
     profile: &PlanProfile,
 ) -> u32 {
     let mut hasher = Sha256::new();
-    hasher.update(b"seal-package-instance-v1\0");
+    hasher.update(b"seal-package-instance-v2\0");
     hasher.update(package.name.as_bytes());
     hasher.update(b"\0");
     hasher.update(package.version.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(package.edition.to_string().as_bytes());
     hasher.update(b"\0");
     for feature in features {
         hasher.update(feature.as_bytes());

@@ -8,7 +8,7 @@
 use seal_diagnostics::{ColorChoice, DEFAULT_ERROR_LIMIT};
 use seal_hash::{Fingerprint, StableHash, StableHasher};
 use seal_target::{TargetSpec, TargetTriple};
-use seal_version::LanguageVersion;
+use seal_version::{Edition, LanguageVersion};
 
 /// Optimization level.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
@@ -65,6 +65,8 @@ pub struct Options {
     pub debug_info: bool,
     /// Language version. Tracked: changes accepted syntax.
     pub language_version: LanguageVersion,
+    /// Compatibility edition. Tracked: changes edition-gated semantics.
+    pub edition: Edition,
     /// Allow unstable features. Tracked.
     pub allow_unstable: bool,
     /// `--remap-path-prefix` specifications. Tracked: affects emitted paths.
@@ -90,6 +92,7 @@ impl Default for Options {
             opt_level: OptLevel::default(),
             debug_info: false,
             language_version: LanguageVersion::CURRENT,
+            edition: Edition::CURRENT,
             allow_unstable: false,
             remap_prefixes: Vec::new(),
             max_errors: DEFAULT_ERROR_LIMIT,
@@ -141,6 +144,7 @@ impl Options {
         self.debug_info.stable_hash(&mut hasher);
         self.language_version.major().stable_hash(&mut hasher);
         self.language_version.minor().stable_hash(&mut hasher);
+        self.edition.year().stable_hash(&mut hasher);
         self.allow_unstable.stable_hash(&mut hasher);
         hasher.write_usize(self.remap_prefixes.len());
         for spec in &self.remap_prefixes {
@@ -156,7 +160,7 @@ mod tests {
     use seal_diagnostics::ColorChoice;
     use seal_hash::StableHash;
     use seal_target::TargetTriple;
-    use seal_version::LanguageVersion;
+    use seal_version::{Edition, LanguageVersion};
 
     use super::{ErrorFormat, OptLevel, Options};
 
@@ -167,6 +171,7 @@ mod tests {
         assert_eq!(options.error_format, ErrorFormat::Human);
         assert_eq!(options.color, ColorChoice::Auto);
         assert_eq!(options.language_version, LanguageVersion::CURRENT);
+        assert_eq!(options.edition, Edition::CURRENT);
         assert!(!options.allow_unstable);
     }
 
@@ -198,6 +203,10 @@ mod tests {
         let mut version = base.clone();
         version.language_version = LanguageVersion::new(0, 2);
         assert_ne!(base.tracked_fingerprint(), version.tracked_fingerprint());
+
+        let mut edition = base.clone();
+        edition.edition = Edition::new(2029);
+        assert_ne!(base.tracked_fingerprint(), edition.tracked_fingerprint());
 
         let mut remap = base.clone();
         remap.remap_prefixes = vec!["/a=/b".to_owned()];

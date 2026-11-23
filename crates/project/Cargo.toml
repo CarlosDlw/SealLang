@@ -14,6 +14,7 @@ seal-plan.workspace = true
 seal-registry.workspace = true
 seal-stdlib.workspace = true
 seal-target.workspace = true
+seal-version.workspace = true
 globset.workspace = true
 hex.workspace = true
 semver.workspace = true

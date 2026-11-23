@@ -10,6 +10,7 @@ use seal_registry::{
     RegistrySession, Requirement, ResolveOptions, ResolvedPackage, download, semver::Line,
 };
 use seal_target::host_triple;
+use seal_version::Edition;
 use semver::{Version, VersionReq};
 use walkdir::WalkDir;
 
@@ -224,12 +225,22 @@ pub(crate) fn load(root: &Path, options: &ProjectOptions) -> ProjectResult<Proje
                 spec.root.display()
             ))
         })?;
+        let edition = match package.edition.as_deref() {
+            Some(text) => Edition::parse(text).map_err(|error| {
+                ProjectError::manifest(format!(
+                    "the package `{}` declares the edition `{text}`, which is invalid: {error}",
+                    package.name
+                ))
+            })?,
+            None => Edition::CURRENT,
+        };
         let files = source::package_files(&spec.root, &package.sources, &package.exclude)?;
         let targets = targets::build(&spec.root, &manifest, &files)?;
         let dependencies = dependency_edges(key, &spec.root, &manifest, &specs, &indexes)?;
         packages.push(Package {
             name: package.name.clone(),
             version: package.version.clone(),
+            edition,
             root: spec.root.clone(),
             source: spec.source.clone(),
             manifest,

@@ -5,6 +5,7 @@ language = "0.1"
 [package]
 name = "freestanding-example"
 version = "0.1.0"
+edition = "2026"
 description = "A target that links without the Seal runtime or libc"
 
 [targets.kernel]

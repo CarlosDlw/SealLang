@@ -22,6 +22,7 @@ use seal_hash::{FxHashMap, FxHashSet};
 use seal_index::{Idx, IndexVec};
 use seal_span::{FileId, Span};
 use seal_symbol::{Interner, Symbol};
+use seal_version::Edition;
 
 /// An absolute module path inside one package.
 ///
@@ -153,6 +154,8 @@ pub struct PackageData {
     pub instance: PackageInstanceId,
     /// The declared package name.
     pub name: Symbol,
+    /// The compatibility edition selected by the package.
+    pub edition: Edition,
     /// The package root module.
     pub root: ModuleId,
     /// Every module, in creation order with the root first.
@@ -192,6 +195,7 @@ impl PackagePlan {
         Self {
             packages: vec![PackagePlanEntry {
                 name,
+                edition: Edition::CURRENT,
                 instance: PackageInstanceId::from_usize(0),
                 files: vec![PackagePlanFile {
                     file,
@@ -212,6 +216,8 @@ impl PackagePlan {
 pub struct PackagePlanEntry {
     /// The declared package name.
     pub name: Symbol,
+    /// The compatibility edition selected by the package.
+    pub edition: Edition,
     /// The compiled instance.
     pub instance: PackageInstanceId,
     /// The package's source files.
@@ -621,6 +627,7 @@ impl ModuleGraph {
                 id: package_id,
                 instance: entry.instance,
                 name: entry.name,
+                edition: entry.edition,
                 root,
                 modules: vec![root],
                 dependencies: Vec::new(),

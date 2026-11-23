@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{PlanOptions, Project};
 
 pub(crate) mod cfg;
+pub(crate) mod edition;
 pub(crate) mod features;
 pub(crate) mod lockfile;
 pub(crate) mod profiles;

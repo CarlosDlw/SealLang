@@ -15,6 +15,7 @@ seal-index.workspace = true
 seal-span.workspace = true
 seal-symbol.workspace = true
 seal-ty.workspace = true
+seal-version.workspace = true
 
 [dev-dependencies]
 seal-lexer.workspace = true

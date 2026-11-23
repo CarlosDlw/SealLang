@@ -15,6 +15,7 @@ default-members = ["crates/app"]
 [package]
 name = "app"
 version = "0.1.0"
+edition = "2026"
 
 [targets.server]
 kind = "bin"
@@ -32,6 +33,12 @@ root; a glob that matches no package is `E8004`, and a member without a
 commands without `--workspace`.
 
 `[package]` requires a valid lowercase `name` and a semantic `version`.
+`edition` selects the package's compatibility line and is a four-digit year;
+when absent it is the current edition, `2026`. Editions are per package, so a
+dependency keeps the line it was written against. The two standard-library
+packages also declare `edition = "2026"`. `project.language` is different: it
+names the language surface the compiler implements and must currently be
+`0.1`. A value such as `0.2` is `E8005` until a compiler implements it.
 `description`, `license`, `repository`, `readme`, `metadata`, `features`, and
 `[package.api]` are reserved for the project and publishing layers.
 `[package.metadata]` is free-form. `stdlib` selects the standard-library mode:

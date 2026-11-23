@@ -28,7 +28,7 @@ use seal_query::QueryDb;
 use seal_span::{FileId, FileName, PathRemapper, SourceMap};
 use seal_symbol::Interner;
 use seal_target::{TargetError, TargetSpec, TargetTriple};
-use seal_version::{FeatureGates, LanguageVersion};
+use seal_version::{Edition, FeatureGates, LanguageVersion};
 
 pub use options::{ErrorFormat, OptLevel, Options};
 
@@ -195,6 +195,12 @@ impl Session {
     #[inline]
     pub fn queries(&self) -> &QueryDb {
         &self.queries
+    }
+
+    /// Returns the selected compatibility edition.
+    #[inline]
+    pub fn edition(&self) -> Edition {
+        self.options.edition
     }
 
     /// Returns the selected language version.

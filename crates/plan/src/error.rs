@@ -48,7 +48,7 @@ impl PlanError {
     /// Creates a schema-version failure (`E8001`).
     pub fn version(found: u32) -> Self {
         Self::schema(format!(
-            "the compile plan uses schema version {found}, but this compiler understands version {}",
+            "the compile plan uses schema version {found}, but this compiler understands versions 2 through {}",
             crate::FORMAT_VERSION
         ))
     }

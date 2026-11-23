@@ -2,9 +2,9 @@
 
 use clap::Args;
 use seal_target::TargetTriple;
-use seal_version::LanguageVersion;
+use seal_version::{Edition, LanguageVersion};
 
-use super::values::{parse_language_version, parse_target};
+use super::values::{parse_edition, parse_language_version, parse_target};
 
 /// The target and language version a compilation is checked against.
 #[derive(Clone, Debug, Args)]
@@ -21,6 +21,15 @@ pub(crate) struct TargetArgs {
         help_heading = "Target"
     )]
     pub(crate) language_version: Option<LanguageVersion>,
+
+    /// Compile as this compatibility edition instead of the current one.
+    #[arg(
+        long,
+        value_name = "YEAR",
+        value_parser = parse_edition,
+        help_heading = "Target"
+    )]
+    pub(crate) edition: Option<Edition>,
 
     /// Accept unstable language features.
     #[arg(long = "allow-unstable-features", help_heading = "Target")]

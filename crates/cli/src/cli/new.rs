@@ -106,7 +106,7 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
                 root.join("seal.toml"),
                 &format!(
                     "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
-                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n"
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"
                 ),
             )?;
             write(
@@ -123,7 +123,7 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
                 root.join("seal.toml"),
                 &format!(
                     "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
-                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n\
                      [package.api]\nexpose = [\"root\"]\n"
                 ),
             )?;
@@ -138,7 +138,7 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
                 root.join("seal.toml"),
                 &format!(
                     "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
-                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n"
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"
                 ),
             )?;
             write(
@@ -170,7 +170,7 @@ pub(crate) fn scaffold(root: &Path, name: &str, template: Template) -> Result<()
                 root.join("seal.toml"),
                 &format!(
                     "[project]\nname = \"{name}\"\nlanguage = \"0.1\"\n\n\
-                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
+                     [package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n\
                      [targets.kernel]\nkind = \"bin\"\nentry = \"root::_start\"\n\
                      runtime = \"none\"\npanic = \"trap\"\nlinker = \"cc\"\n\
                      linker-script = \"kernel.ld\"\nlink-args = [\"-no-pie\"]\n"
@@ -208,7 +208,7 @@ fn scaffold_workspace(root: &Path, name: &str) -> Result<(), String> {
     std::fs::create_dir_all(greet.join("tests")).map_err(|error| error.to_string())?;
     write(
         app.join("seal.toml"),
-        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n\
          [dependencies]\ngreet = { path = \"../greet\" }\n",
     )?;
     write(
@@ -217,7 +217,7 @@ fn scaffold_workspace(root: &Path, name: &str) -> Result<(), String> {
     )?;
     write(
         greet.join("seal.toml"),
-        "[package]\nname = \"greet\"\nversion = \"0.1.0\"\n\n\
+        "[package]\nname = \"greet\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n\
          [package.api]\nexpose = [\"root\"]\n",
     )?;
     write(

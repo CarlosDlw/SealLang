@@ -5,6 +5,7 @@ language = "0.1"
 [package]
 name = "generator-example"
 version = "0.1.0"
+edition = "2026"
 description = "A generator target whose output is compiled into the program"
 
 [targets.table]
