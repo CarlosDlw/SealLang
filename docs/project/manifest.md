@@ -36,10 +36,14 @@ commands without `--workspace`.
 `edition` selects the package's compatibility line and is a four-digit year;
 when absent it is the current edition, `2026`. An edition is not a deprecation
 switch: `deprecated(...)` is written on the declaration itself, and a deprecated
-item is removed only in an edition named by an accepted RFC. Editions are per
-package, so a
-dependency keeps the line it was written against. The two standard-library
-packages also declare `edition = "2026"`. `project.language` is different: it
+item is removed only in an edition named by an accepted RFC. The modifier is
+accepted on functions, constants, statics, structs, enums, opaque types,
+traits, trait methods, inherent methods, fields, variants, and extern functions
+and statics; modules, imports, extern blocks, and impl blocks reject it with
+`E2079`. Editions
+are per package, so a dependency keeps the line it was written against. The two
+standard-library packages also declare `edition = "2026"`. `project.language`
+is different: it
 names the language surface the compiler implements and must currently be
 `0.1`. A value such as `0.2` is `E8005` until a compiler implements it.
 `description`, `license`, `repository`, `readme`, `metadata`, `features`, and

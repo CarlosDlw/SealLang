@@ -1,7 +1,7 @@
 # RFC 0001: Editions and deprecation
 
 - Status: Accepted
-- Implementation: in progress
+- Implementation: implemented in the current language version
 - Date: 2026-11-23
 - Supersedes: none
 - Superseded by: none

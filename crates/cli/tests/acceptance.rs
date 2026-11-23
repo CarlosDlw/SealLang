@@ -79,6 +79,7 @@ fn every_project_example_builds_and_runs() {
         ("features", 3),
         ("generator", 42),
         ("freestanding", 42),
+        ("deprecation", 42),
     ] {
         let fixture = copy_example(name);
         let check = output(seal().arg("check").arg("--project").arg(&fixture.root));
@@ -94,6 +95,20 @@ fn every_project_example_builds_and_runs() {
             String::from_utf8_lossy(&run.stderr)
         );
     }
+}
+
+#[test]
+fn the_deprecation_example_warns_on_use() {
+    let fixture = copy_example("deprecation");
+    let check = output(seal().arg("check").arg("--project").arg(&fixture.root));
+    assert_success(&check);
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        stderr.contains("warning[deprecated]: `old` is deprecated since 0.1.0"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("this use is deprecated"), "{stderr}");
+    assert!(stderr.contains("use current"), "{stderr}");
 }
 
 #[test]

@@ -296,6 +296,7 @@ The chapters apply the principles in order, from values to projects:
 | [`ffi.md`](ffi.md) | The C ownership and unwinding boundary |
 | [`first-class-functions.md`](first-class-functions.md) | Inline closures, call kinds, and function pointers |
 | [`modules.md`](modules.md) | Names, visibility, configuration, and package APIs |
+| [`editions.md`](editions.md) | Package-scoped editions, deprecation, and lint control |
 | [`stdlib.md`](stdlib.md) | `core`/`std`, `Option`/`Result`, paths, and the prelude |
 | [`testing.md`](testing.md) | Test and benchmark modifiers, harness generation, and assertions |
 | [`../project/manifest.md`](../project/manifest.md) | The project and package contract |
@@ -344,7 +345,8 @@ documentation carry the same metadata. Uses warn under the stable `deprecated`
 lint. Removal is a separate, breaking decision: it happens only in an edition
 named by an accepted RFC, with a release note and a migration recipe. The
 syntax, placement rules, and metadata shape are in
-[`modules.md`](modules.md#deprecation); the policy is in
+[`modules.md`](modules.md#deprecation) and [`editions.md`](editions.md); the
+policy is in
 [`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
 
 The bet behind Seal is simple: if the compiler proves ownership, aliasing,

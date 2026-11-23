@@ -12,6 +12,7 @@ behind unsafe operations.
 | Chapter | Covers |
 |---------|--------|
 | [`overview.md`](overview.md) | Philosophy, goals, design principles, safe-code guarantees, accepted trade-offs, and the rules for extending the language |
+| [`editions.md`](editions.md) | Package-scoped editions, `deprecated(...)` placement, use-site warnings, lint control, API/docs metadata, and removal policy |
 | [`copy.md`](copy.md) | Opt-in `Copy` for structs and enums, generic bounds, fields and variants, `Drop`, references, patterns, loops, statics, and diagnostics |
 | [`raw-pointers.md`](raw-pointers.md) | `*raw T` and `*raw mut T`, casts, arithmetic, fat pointers, owned views, `unsafe`, constants, provenance, diagnostics, and patterns |
 | [`ffi.md`](ffi.md) | Complete guide to C interop: `extern "c"` functions, statics, structs, opaque types, variadics and `c"..."`, function pointers and callbacks, buffers, linking, the safety contract, constant evaluation, diagnostics, and the acceptance matrix |
@@ -27,9 +28,10 @@ behind unsafe operations.
 A package selects its compatibility line with `edition` in `seal.toml`; the
 current edition is `2026` and it changes no syntax today. Deprecated
 declarations stay available and carry `since`, optional `note`, and optional
-`replacement` metadata into the public API and `seal doc`. The syntax and
-placement rules are in [`modules.md`](modules.md#deprecation), and the removal
-policy is in [`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
+`replacement` metadata into the public API and `seal doc`. The full guide is
+[`editions.md`](editions.md); the syntax and placement rules are also in
+[`modules.md`](modules.md#deprecation), and the removal policy is in
+[`../rfcs/0001-editions-and-deprecation.md`](../rfcs/0001-editions-and-deprecation.md).
 
 ## Project guides
 

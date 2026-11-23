@@ -321,8 +321,9 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/project/dependencies.md`](docs/project/dependencies.md) | Resolution, lockfile v2, vendor, audit, SBOM, license policy, and error codes |
 | [`docs/project/registry.md`](docs/project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
 | [`docs/project/architecture.md`](docs/project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
-| [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 41-line acceptance matrix and its executable evidence |
+| [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 42-line acceptance matrix and its executable evidence |
 | [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
+| [`docs/language/editions.md`](docs/language/editions.md) | Package-scoped editions, `deprecated(...)` placement, warnings, lint control, and removal policy |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |
 | [`docs/language/prelude.md`](docs/language/prelude.md) | Plan-selected preludes, precedence, opt-out, and diagnostics |
 | [`docs/language/stdlib.md`](docs/language/stdlib.md) | `core`/`std`, `Option`/`Result`, `mem::forget`, canonical paths, and preludes |

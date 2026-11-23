@@ -63,6 +63,7 @@ inside the file named in the same row.
 | A39 | No `TODO`/“planned” in shipped code; open doors justified | `rg -n "TODO\|unimplemented!\|todo!" crates`; [`architecture.md`](../architecture.md) extension points and the plan's open-door table |
 | A40 | No secret or build artifact committed; `.gitignore` correct | `git ls-files` review; `.gitignore` excludes `.local/`, `target/`, caches, and generated `ztests` state |
 | A41 | D29 targets measured (startup, no-op, graph, resolution) without regression | [`architecture.md#measurements`](../architecture.md#measurements) |
+| A42 | Editions are per package; deprecation warns at every use and is lint-controlled | `crates/version/src/lib.rs::edition_parsing_is_strict_and_names_the_supported_line`, `::editions_order_by_year`; `crates/project/src/tests/edition.rs::changing_the_edition_changes_the_instance_hash`; `crates/parser/src/tests/deprecated.rs::deprecation_metadata_is_parsed_on_functions`, `::deprecation_is_rejected_on_modules_imports_impls_and_extern_blocks`, `::every_deprecatable_item_form_accepts_the_modifier`; `crates/hir/src/tests/deprecated.rs::every_resolved_hir_use_warns_at_its_use_span`, `::imports_and_reexports_warn_at_the_import_path`; `crates/typeck/src/tests/deprecated.rs::field_access_and_inherent_method_calls_warn_once`; `crates/driver/tests/diagnostics.rs::a_deprecation_warning_can_be_allowed_or_denied`; `crates/driver/tests/examples.rs::deprecation_example_warns_and_runs_at_both_optimization_levels`; `crates/cli/tests/acceptance.rs::the_deprecation_example_warns_on_use`; `crates/cli/tests/test_runner.rs::lint_maps_deprecated_to_the_individual_lint_flags`; `examples/deprecation` |
 
 ## Project examples
 
@@ -80,10 +81,11 @@ the program offline.
 | [`generator`](../../examples/generator/) | exits 42 |
 | [`freestanding`](../../examples/freestanding/) | exits 42 |
 | [`registry`](../../examples/registry/) | exits 42 |
+| [`deprecation`](../../examples/deprecation/) | warns on use, exits 42 |
 
 ## Definition of done
 
-1. All 41 rows above are green.
+1. All 42 rows above are green.
 2. All 14 phases of the plan are complete with deviations recorded where a
    different implementation was chosen.
 3. `cargo fmt --all --check` has no diff.

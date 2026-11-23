@@ -92,3 +92,34 @@ fn global_examples_check_cleanly() {
 fn mem_forget_example_checks_cleanly() {
     check_examples(&MEM_FORGET_EXAMPLES);
 }
+
+#[test]
+fn deprecation_example_warns_and_runs_at_both_optimization_levels() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/deprecation/src/main.sl");
+    for level in ["0", "2"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sealc"))
+            .arg("run")
+            .arg(&path)
+            .arg("-O")
+            .arg(level)
+            .output()
+            .expect("the compiler runs");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "-O{level}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("warning[deprecated]: `old` is deprecated since 0.1.0"),
+            "-O{level}: {stderr}"
+        );
+        assert!(
+            stderr.contains("this use is deprecated"),
+            "-O{level}: {stderr}"
+        );
+        assert!(stderr.contains("use current"), "-O{level}: {stderr}");
+    }
+}

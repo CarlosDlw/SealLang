@@ -81,6 +81,38 @@ split, keep every `module` declaration as it is: files are fragments of the
 declared module, and imports are absolute exactly as with `--plan`. The only
 change is that the manifest, not the command line, lists the files.
 
+## Deprecate and migrate an API
+
+A package removing a public item should first keep it with deprecation
+metadata:
+
+```seal
+deprecated(
+    since: "0.2.0",
+    note: "the current implementation replaces it",
+    replacement: "current",
+)
+public func old_api() -> i32 {
+    0
+}
+
+public func current() -> i32 {
+    42
+}
+```
+
+Every use warns under the stable `deprecated` lint without changing behavior.
+Suppress the warning during a staged migration with
+`seal lint --project . --allow deprecated`; make the migration mandatory with
+`--deny deprecated`, or deny every warning with `--deny warnings`. `sealc`
+accepts the same policy through repeatable `--allow-lint` and `--deny-lint`
+flags.
+
+The declaration stays available until a removal edition is named by an accepted
+RFC. Removing it earlier is a breaking change. The complete syntax, the
+supported placements, and the API/documentation metadata are in
+[`language/editions.md`](language/editions.md).
+
 ## Default standard library
 
 A hosted package now receives the standard library by default. Hosted targets

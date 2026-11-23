@@ -1,0 +1,9 @@
+[project]
+name = "deprecation"
+language = "0.1"
+
+[package]
+name = "deprecation"
+version = "0.1.0"
+edition = "2026"
+description = "A deprecated declaration and its replacement"

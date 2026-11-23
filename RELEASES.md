@@ -26,6 +26,23 @@
   migration, and test matrix before implementation.
 - [`docs/rfcs/0001-editions-and-deprecation.md`](docs/rfcs/0001-editions-and-deprecation.md)
   defines year-named, package-scoped editions and the deprecation lifecycle.
+- `[package] edition` is optional and defaults to the current edition, `2026`.
+  It is written by `seal new`/`init`, reported by `seal metadata`, and carried
+  per package through compile-plan version 3. Version 2 plans still load with
+  the current edition in memory; an unknown edition is `E8005` or `E8001`.
+- **Breaking:** `project.language` is exact. `0.1` is accepted and an
+  unimplemented `0.2` is `E8005` instead of being silently compiled as `0.1`.
+  See [`docs/migration.md`](docs/migration.md).
+- `deprecated(since: "...", note: "...", replacement: "...")` marks
+  functions, constants, statics, structs, enums, opaque types, traits, methods,
+  fields, variants, and extern functions and statics. Uses warn at the use site
+  with
+  the stable `deprecated` lint; self-uses and `cfg`-inactive uses stay quiet.
+  The metadata appears in `seal api` and `seal doc`.
+- `sealc` gains repeatable `--allow-lint` and `--deny-lint` flags for individual
+  compiler lints. `seal lint` maps `--allow`/`--deny` to the same policy and
+  keeps `warnings` as the all-warning group. Unknown or contradictory names are
+  rejected.
 
 ### Continuous integration
 
@@ -134,7 +151,7 @@ source of truth for compilation, tests, documentation, and publishing.
 and either moves `src/main.sl`/`src/lib.sl` into place or writes the manifest by
 hand; module declarations and imports are kept verbatim. The complete mapping,
 CI changes, and compatibility guarantees are in
-[`docs/migration.md`](docs/migration.md). The 41-line acceptance matrix and its
+[`docs/migration.md`](docs/migration.md). The 42-line acceptance matrix and its
 executable evidence are in
 [`docs/project/acceptance.md`](docs/project/acceptance.md).
 
