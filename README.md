@@ -314,6 +314,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 |----------|----------|
 | [`docs/memory-model.md`](docs/memory-model.md) | Ownership, moves, borrowing, allocation, and the decisions behind them |
 | [`docs/types.md`](docs/types.md) | The complete type list, properties, literals, layout, and ABI representation |
+| [`docs/spec/README.md`](docs/spec/README.md) | Normative language specification: lexical grammar, concrete grammar, static and dynamic semantics, and conformance |
 | [`docs/architecture.md`](docs/architecture.md) | Compiler phases, crate responsibilities, incremental queries, remote trust boundary, and public invariants |
 | [`docs/project/manifest.md`](docs/project/manifest.md) | Project manifests, members, targets, path dependencies, lockfile, and API exposure |
 | [`docs/project/cli.md`](docs/project/cli.md) | The `seal` commands, selection, compile plans, metadata, doctor, and exit status |
@@ -321,7 +322,7 @@ syntax, casts, `Copy`/`Sized`/`Drop`, reference rules, and the layout algorithm.
 | [`docs/project/dependencies.md`](docs/project/dependencies.md) | Resolution, lockfile v2, vendor, audit, SBOM, license policy, and error codes |
 | [`docs/project/registry.md`](docs/project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
 | [`docs/project/architecture.md`](docs/project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
-| [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 42-line acceptance matrix and its executable evidence |
+| [`docs/project/acceptance.md`](docs/project/acceptance.md) | The 43-line acceptance matrix and its executable evidence |
 | [`docs/language/overview.md`](docs/language/overview.md) | Philosophy, goals, design principles, safe-code guarantees, and the rules for extending the language |
 | [`docs/language/editions.md`](docs/language/editions.md) | Package-scoped editions, `deprecated(...)` placement, warnings, lint control, and removal policy |
 | [`docs/language/modules.md`](docs/language/modules.md) | Modules, imports, visibility, public API, `cfg`, and cycles |

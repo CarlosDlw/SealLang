@@ -4,9 +4,10 @@ This document covers the compiler foundation and every production phase: the
 lexer, the parser, HIR lowering with name resolution, type checking, MIR
 lowering, ownership/borrow checking, and LLVM code generation. The foundation is
 the set of crates that every later phase depends on. It is kept in sync with the
-code; changes to a public invariant must change this file in the same commit. The memory model that
-the type representation encodes is decided in
-[`memory-model.md`](memory-model.md).
+code; changes to a public invariant must change this file in the same commit. The
+normative language contract is [`spec/README.md`](spec/README.md); this document
+explains how the compiler implements it. The memory model that the type
+representation encodes is decided in [`memory-model.md`](memory-model.md).
 
 ## Workspace layout
 

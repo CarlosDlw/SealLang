@@ -2,10 +2,17 @@
 
 This directory teaches the language from the user's point of view. Start with
 [`overview.md`](overview.md) for the philosophy, goals, and design principles;
-the documents in the [parent directory](../) are the normative design and
-compiler references, while the chapters here explain how to use the implemented
-surface correctly, with complete rules, worked examples, and the contracts
-behind unsafe operations.
+the [language specification](../spec/README.md) is the normative definition of
+the accepted syntax and behavior. The chapters here explain how to use the
+implemented surface correctly, with worked examples and the contracts behind
+unsafe operations.
+
+The specification is split into [lexical](../spec/lexical.md),
+[grammar](../spec/grammar.md), [static](../spec/static-semantics.md), and
+[dynamic](../spec/dynamic-semantics.md) chapters, with a
+[conformance matrix](../spec/conformance.md). The guides remain the friendly
+on-ramp; when a guide summary and the specification disagree, the specification
+wins and the guide is corrected.
 
 ## Chapters
 

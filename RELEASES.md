@@ -20,6 +20,10 @@
 
 ### Language evolution
 
+- The normative language specification lives in
+  [`docs/spec/`](docs/spec/README.md). It covers the lexical grammar, complete
+  concrete grammar, static and dynamic semantics, and the conformance matrix for
+  language version `0.1`, including editions and deprecation.
 - Language and contract changes now follow the RFC process in
   [`docs/rfcs/README.md`](docs/rfcs/README.md). An accepted RFC records the
   motivation, semantics, alternatives, edition impact, deprecation plan,
