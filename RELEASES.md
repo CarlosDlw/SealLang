@@ -18,6 +18,16 @@
   idempotence, spaces, unwritable prefixes, `DESTDIR`, and profile preservation.
   A Linux CI job runs `bash -n`, `shellcheck`, and the acceptance test.
 
+### Continuous integration
+
+- `.github/workflows/ci.yml` runs formatting, clippy, build, tests, and
+  reproducibility on every push to `main` and every pull request.
+  `.github/workflows/acceptance.yml` runs the serial suite and reproducibility
+  on `main`, nightly, and manual dispatch. Both use `.github/actions/setup`,
+  which installs LLVM 23, clang, lld, bubblewrap, and shellcheck on demand.
+- The installer job now installs LLVM before it runs the acceptance test; the
+  test builds release binaries, which need the LLVM development packages.
+
 ### Standard library and prelude
 
 - `core` and `std` now ship real `Option` and `Result` enums. They are not

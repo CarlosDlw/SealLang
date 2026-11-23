@@ -36,6 +36,7 @@ that compiles, tests, documents, and publishes packages:
 | [`../project/registry.md`](../project/registry.md) | Sparse index, TUF, publishing, namespaces, transparency log, and the reference server |
 | [`../project/architecture.md`](../project/architecture.md) | How the project, build, registry, test, documentation, and remote layers fit together |
 | [`../project/acceptance.md`](../project/acceptance.md) | The acceptance matrix and the command that proves each line |
+| [`../project/ci.md`](../project/ci.md) | The reusable CI workflows, the shared setup action, and the gates each job runs |
 | [`../migration.md`](../migration.md) | Moving from `sealc` and single-file programs to `seal` projects |
 
 ## Reading conventions

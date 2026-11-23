@@ -158,7 +158,9 @@ $ shellcheck install.sh scripts/test-install.sh
 $ scripts/test-install.sh
 ```
 
-The Linux CI job runs the same syntax, lint, and acceptance steps.
+The Linux CI job in `.github/workflows/install.yml` runs the same syntax, lint,
+and acceptance steps with LLVM installed, because the acceptance test builds
+the release binaries.
 
 ## Limitations
 

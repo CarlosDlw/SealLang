@@ -1,0 +1,88 @@
+name: Set up the Seal build environment
+description: Install the pinned Rust toolchain and the native tools a Seal job needs.
+
+inputs:
+  rust-toolchain:
+    description: Rust toolchain to install.
+    required: false
+    default: "1.98.1"
+  llvm:
+    description: Install LLVM 23, clang, and lld.
+    required: false
+    default: "true"
+  bubblewrap:
+    description: Install bubblewrap for sandbox tests.
+    required: false
+    default: "true"
+  shellcheck:
+    description: Install shellcheck for the installer scripts.
+    required: false
+    default: "false"
+  cache:
+    description: Restore and save the Cargo and target caches.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install the pinned Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.rust-toolchain }}
+        components: clippy, rustfmt
+
+    - name: Cache Cargo and target
+      if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: "true"
+
+    - name: Install native dependencies
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        set -euo pipefail
+        packages=()
+        if [ "${{ inputs.llvm }}" = "true" ]; then
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-23 main" |
+            sudo tee /etc/apt/sources.list.d/llvm-23.list >/dev/null
+          packages+=(build-essential pkg-config clang-23 lld-23 llvm-23-dev zlib1g-dev libzstd-dev libtinfo-dev)
+        fi
+        if [ "${{ inputs.bubblewrap }}" = "true" ]; then
+          packages+=(bubblewrap)
+        fi
+        if [ "${{ inputs.shellcheck }}" = "true" ]; then
+          packages+=(shellcheck)
+        fi
+        if [ "${#packages[@]}" -eq 0 ]; then
+          exit 0
+        fi
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends "${packages[@]}"
+        if [ "${{ inputs.llvm }}" = "true" ]; then
+          echo "/usr/lib/llvm-23/bin" >> "$GITHUB_PATH"
+          echo "LLVM_SYS_231_PREFIX=/usr/lib/llvm-23" >> "$GITHUB_ENV"
+        fi
+
+    - name: Verify the toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        rustc --version
+        cargo --version
+        if [ "${{ inputs.llvm }}" = "true" ]; then
+          llvm-config --version
+          clang-23 --version
+          llvm-split --version
+        fi
+        if [ "${{ inputs.bubblewrap }}" = "true" ]; then
+          bwrap --version
+        fi
+        if [ "${{ inputs.shellcheck }}" = "true" ]; then
+          shellcheck --version
+        fi

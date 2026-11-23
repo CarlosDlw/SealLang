@@ -11,6 +11,12 @@ $ cargo test --workspace -j 1 -- --test-threads=1
 $ scripts/verify-commit.sh HEAD
 ```
 
+The CI gates are the same commands. `ci.yml` runs formatting, clippy, build,
+tests, and reproducibility on every push and pull request; `acceptance.yml`
+runs the serial suite and reproducibility on `main`, nightly, and manual
+dispatch; `install.yml` runs the installer acceptance test. See
+[`ci.md`](ci.md).
+
 Test paths are relative to the repository root. A test name without a path is
 inside the file named in the same row.
 

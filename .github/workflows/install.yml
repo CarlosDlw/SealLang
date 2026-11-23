@@ -3,9 +3,18 @@ name: Linux installer
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   verify-installer:
@@ -15,13 +24,12 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      - name: Install the pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      - name: Set up the build environment
+        uses: ./.github/actions/setup
         with:
-          toolchain: "1.98.1"
-
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+          llvm: "true"
+          bubblewrap: "false"
+          shellcheck: "true"
 
       - name: Check shell syntax
         run: bash -n install.sh scripts/test-install.sh

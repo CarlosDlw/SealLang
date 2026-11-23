@@ -1,0 +1,46 @@
+name: Acceptance
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  serial-suite:
+    name: Serial suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up the build environment
+        uses: ./.github/actions/setup
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build the workspace
+        run: cargo build --workspace --locked
+
+      - name: Run the serial test suite
+        run: cargo test --workspace --locked -j 1 -- --test-threads=1
+
+      - name: Build the same project twice and compare the artifacts
+        run: cargo run --locked -p seal-cli -- --project examples/multi-module verify-repro
