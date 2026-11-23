@@ -16,6 +16,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUST_MIN_STACK: 8388608
 
 jobs:
   formatting:
@@ -30,6 +31,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           llvm: "false"
+          protobuf: "false"
           bubblewrap: "false"
           cache: "false"
 

@@ -10,6 +10,10 @@ inputs:
     description: Install LLVM 23, clang, and lld.
     required: false
     default: "true"
+  protobuf:
+    description: Install protoc for build scripts that generate protocol definitions.
+    required: false
+    default: "true"
   bubblewrap:
     description: Install bubblewrap for sandbox tests.
     required: false
@@ -51,7 +55,10 @@ runs:
             sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-23 main" |
             sudo tee /etc/apt/sources.list.d/llvm-23.list >/dev/null
-          packages+=(build-essential pkg-config clang-23 lld-23 llvm-23-dev zlib1g-dev libzstd-dev libtinfo-dev)
+          packages+=(build-essential pkg-config clang-23 lld-23 llvm-23-dev libpolly-23-dev zlib1g-dev libzstd-dev libtinfo-dev)
+        fi
+        if [ "${{ inputs.protobuf }}" = "true" ]; then
+          packages+=(protobuf-compiler)
         fi
         if [ "${{ inputs.bubblewrap }}" = "true" ]; then
           packages+=(bubblewrap)
@@ -79,6 +86,9 @@ runs:
           llvm-config --version
           clang-23 --version
           llvm-split --version
+        fi
+        if [ "${{ inputs.protobuf }}" = "true" ]; then
+          protoc --version
         fi
         if [ "${{ inputs.bubblewrap }}" = "true" ]; then
           bwrap --version
