@@ -4807,6 +4807,28 @@ mod tests {
     }
 
     #[test]
+    fn type_alias_codes_explain_their_contract() {
+        let cases = [
+            ("E2095", &["transparent", "never terminate", "pointer"][..]),
+            ("E2096", &["bound", "generic struct", "rejects"][..]),
+            ("E2097", &["constructor", "fields", "nominal"][..]),
+            (
+                "E3107",
+                &["public alias", "outside the package", "internal"][..],
+            ),
+        ];
+        for (code, fragments) in cases {
+            let entry = lookup(code).expect("the code is registered");
+            for fragment in fragments {
+                assert!(
+                    entry.explanation().contains(fragment),
+                    "{code} explanation is missing {fragment:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn owned_view_codes_explain_the_owner_contract() {
         let cases = [
             (

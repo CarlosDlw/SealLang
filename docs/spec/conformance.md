@@ -58,7 +58,7 @@ requirements for editors (G45). A recovered file is never a conforming program.
 | Unsafe, raw pointers, C interop | S49–S52 | `crates/typeck/src/tests/{raw_pointers,raw_deref,raw_casts,raw_methods,ffi,c_types}.rs`; `crates/driver/tests/linking.rs`; `examples/` FFI examples |
 | Constants, statics, evaluation | S53–S55 | `crates/const-eval` tests; `crates/driver/tests/global_diagnostics.rs`; `examples/039_const_static.sl` |
 | Deprecation, lints, editions | S56–S57 | `crates/parser/src/tests/deprecated.rs`; `crates/hir/src/tests/deprecated.rs`; `crates/typeck/src/tests/deprecated.rs`; `crates/driver/tests/diagnostics.rs`; `examples/deprecation` |
-| Type aliases | S61–S65 | `crates/parser/src/tests/type_aliases.rs`; `crates/hir/src/tests/type_aliases.rs`; `crates/driver/tests/type_aliases.rs` |
+| Type aliases | S61–S65 | `crates/parser/src/tests/type_aliases.rs`; `crates/hir/src/tests/type_aliases.rs` (including `an_alias_imported_from_a_dependency_expands_in_a_consumer`, `a_dependency_alias_can_be_re_exported_under_a_new_name`, `a_non_nominal_alias_cannot_name_a_constructor`, and `a_public_alias_to_a_private_target_is_rejected`); `crates/driver/tests/type_aliases.rs`; `crates/api/src/semver.rs` (`adding_a_type_alias_is_minor`, `changing_a_type_alias_target_is_breaking`, `removing_a_type_alias_is_breaking`); `crates/driver/tests/plan_file.rs::plan_mode_emits_type_aliases_in_the_api_snapshot`; `crates/doc/src/lib.rs::a_type_alias_keeps_its_kind_and_target_in_json_and_html`; `crates/cli/tests/acceptance.rs::the_type_alias_example_exposes_canonical_aliases`; `examples/type-aliases` |
 
 ## Dynamic evidence
 
@@ -72,6 +72,7 @@ requirements for editors (G45). A recovered file is never a conforming program.
 | ABI, C interop, entry point, exit | D19–D22 | `crates/codegen/tests/end_to_end.rs`; `crates/driver/tests/{linking,runtime_archive}.rs`; `examples/freestanding` |
 | Constants and statics at run time | D23–D24 | `crates/const-eval` tests; `crates/driver/tests/global_diagnostics.rs` |
 | Determinism and optimization agreement | D25, D28–D30 | `crates/driver/tests/examples.rs`; `crates/cli/tests/project_cli.rs::verify_repro_builds_two_copies_and_finds_them_identical`; `examples/README.md` |
+| Type alias erasure | D30 | `crates/driver/tests/type_aliases.rs::aliases_check_through_typeck_borrowck_and_monomorphization`; `examples/type-aliases` |
 
 ## Commands
 

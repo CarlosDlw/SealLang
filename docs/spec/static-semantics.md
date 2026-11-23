@@ -464,4 +464,7 @@ constructor, variant path, associated-function path, pattern, or impl header,
 the expanded target is used as the nominal type: its fields, variants, methods,
 and coherence rules apply. A target that is not a struct or enum in a
 nominal-only position is `E2097`. A public alias is part of the package API and
-its target must be nameable outside the package; otherwise it is `E3107`.
+its target must be nameable outside the package; otherwise it is `E3107`, and
+the rejected alias does not enter the API snapshot, including through a public
+re-export. A public re-export follows S5 and keeps the canonical declaration as
+the API target.

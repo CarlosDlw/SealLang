@@ -115,6 +115,15 @@ fn an_alias_can_name_a_struct_constructor() {
 }
 
 #[test]
+fn a_non_nominal_alias_cannot_name_a_constructor() {
+    let fixture = Fixture::new(
+        "type Number = i32; func main() { let value = Number { x: 1 }; let _ = value; }",
+    );
+    let _ = fixture.lower();
+    fixture.expect("E2097", "does not name a struct or enum");
+}
+
+#[test]
 fn an_alias_can_name_a_struct_pattern() {
     let (fixture, hir) = lower_clean(
         "struct Point { x: i32, y: i32 }\n\
